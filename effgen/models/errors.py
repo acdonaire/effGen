@@ -26,3 +26,25 @@ class ModelRefusalError(Exception):
         self.model_name = model_name
         suffix = f" (model={model_name!r})" if model_name else ""
         super().__init__(f"Model refused to generate structured output{suffix}: {refusal_message}")
+
+
+class ToolIncompatibleError(Exception):
+    """Raised when a tool cannot be used with the configured model.
+
+    Detected at Agent init time (not mid-run) so users get a clear error
+    before any API calls are made.
+
+    Attributes:
+        tool_name: The tool that triggered the error.
+        model_name: The model that does not support the tool.
+        reason: Human-readable explanation.
+    """
+
+    def __init__(self, tool_name: str, model_name: str, reason: str = "") -> None:
+        self.tool_name = tool_name
+        self.model_name = model_name
+        self.reason = reason
+        parts = [f"Tool '{tool_name}' is incompatible with model '{model_name}'."]
+        if reason:
+            parts.append(reason)
+        super().__init__(" ".join(parts))

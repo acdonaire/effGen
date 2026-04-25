@@ -326,6 +326,9 @@ Question: {task}
         # Tools
         self.tools = {tool.name: tool for tool in config.tools}
 
+        # Validate OpenAI native tool compatibility at init time
+        self._validate_native_tool_compatibility(config.tools)
+
         # Tool calling strategy
         self._tool_calling_strategy = get_strategy(
             mode=config.tool_calling_mode,
@@ -436,6 +439,44 @@ Question: {task}
                     self.short_term_memory.add_user_message(content)
                 elif role == "assistant":
                     self.short_term_memory.add_assistant_message(content)
+
+    def _validate_native_tool_compatibility(self, tools: list) -> None:
+        """Raise ToolIncompatibleError if any OpenAI native tool is used with a non-OpenAI model."""
+        try:
+            from ..models.errors import ToolIncompatibleError
+            from ..models.openai_adapter import OpenAIAdapter
+            from ..tools.builtin.openai_native import OpenAINativeTool
+        except ImportError:
+            return
+
+        native_tools = [t for t in tools if isinstance(t, OpenAINativeTool)]
+        if not native_tools:
+            return
+
+        # Check if the primary model is an OpenAI adapter
+        is_openai = isinstance(self.model, OpenAIAdapter)
+        if not is_openai:
+            # Check model name string fallback
+            model_name = getattr(self.model, "model_name", "") or ""
+            provider = getattr(self.model, "_provider", "") or ""
+            is_openai = (
+                "openai" in provider.lower()
+                or model_name.startswith(("gpt-", "o1", "o3", "o4"))
+            )
+
+        if not is_openai:
+            bad = native_tools[0]
+            current_model = getattr(self.model, "model_name", str(self.model)) if self.model else "None"
+            raise ToolIncompatibleError(
+                tool_name=bad.name,
+                model_name=current_model,
+                reason=(
+                    "OpenAI native tools (web_search, code_interpreter, file_search) "
+                    "are executed server-side by OpenAI and require an OpenAIAdapter. "
+                    f"Current model: '{current_model}'. "
+                    "Switch to an OpenAI model or remove the native tool."
+                ),
+            )
 
     @staticmethod
     def _resolve_guardrails(guardrails: Any):
@@ -861,6 +902,11 @@ Question: {task}
         # If no tools available, use direct inference instead of ReAct
         if not self.tools:
             return self._run_direct_inference(task, context, **kwargs)
+
+        # If any native OpenAI tools are present and the model supports it,
+        # route through the Responses API directly (not the ReAct loop).
+        if self._has_native_tools():
+            return self._run_with_native_tools(task, context, **kwargs)
 
         iterations = 0
         tool_calls = 0
@@ -2034,6 +2080,21 @@ Question: {task}
 
             tool = self.tools[tool_name]
 
+            # OpenAI native tools cannot be executed locally — they run server-side
+            # via the Responses API.  If we end up here it means the ReAct loop
+            # tried to call a native tool directly (e.g. "Action: openai_web_search").
+            # Return a helpful note so the loop can recover gracefully.
+            try:
+                from ..tools.builtin.openai_native import OpenAINativeTool
+                if isinstance(tool, OpenAINativeTool):
+                    return (
+                        f"Tool '{tool_name}' is an OpenAI server-side tool and cannot be "
+                        "executed locally in the ReAct loop.  Use tool_calling_mode='native' "
+                        "so the adapter routes it through the OpenAI Responses API."
+                    )
+            except ImportError:
+                pass
+
             # Parse input intelligently
             input_dict = {}
             if tool_input:
@@ -2322,6 +2383,118 @@ Question: {task}
         else:
             # Fallback
             return {"input": str(input_value)}
+
+    def _has_native_tools(self) -> bool:
+        """Return True if any OpenAI native tool is in the tools list and the model supports Responses API."""
+        try:
+            from ..models.openai_adapter import OpenAIAdapter
+            from ..tools.builtin.openai_native import OpenAINativeTool
+        except ImportError:
+            return False
+        has_native = any(isinstance(t, OpenAINativeTool) for t in self.tools.values())
+        is_openai = isinstance(self.model, OpenAIAdapter)
+        return has_native and is_openai
+
+    def _run_with_native_tools(self, task: str, context: dict[str, Any], **kwargs) -> AgentResponse:
+        """Execute a task using OpenAI native tools via the Responses API.
+
+        Separates native tools (web_search, code_interpreter, file_search) from
+        local effGen tools.  Native tools are passed directly to the Responses API
+        spec; local tools are serialised as function-call specs alongside them.
+        """
+        from ..models.openai_adapter import OpenAIAdapter
+        from ..tools.builtin.openai_native import OpenAINativeTool
+
+        native_specs: list[dict] = []
+        function_specs: list[dict] = []
+
+        for tool in self.tools.values():
+            if isinstance(tool, OpenAINativeTool):
+                native_specs.append(tool.to_openai_tool_spec())
+            else:
+                # Regular effGen tool — include as function call spec
+                schema = tool.metadata.to_json_schema()
+                function_specs.append({
+                    "type": "function",
+                    "function": {
+                        "name": schema["name"],
+                        "description": schema["description"],
+                        "parameters": schema["parameters"],
+                    },
+                })
+
+        adapter: OpenAIAdapter = self.model  # already validated in _has_native_tools
+
+        system_prompt = self.config.system_prompt if self.config.stable_system_prompt else None
+
+        try:
+            result = adapter.generate_with_native_tools(
+                prompt=task,
+                native_tool_specs=native_specs,
+                function_tool_specs=function_specs if function_specs else None,
+                system_prompt=system_prompt,
+            )
+        except Exception as e:
+            logger.error("Native tool generation failed: %s", e)
+            return AgentResponse(
+                output=f"Error: {e}",
+                success=False,
+                mode=AgentMode.SINGLE,
+                iterations=1,
+                tool_calls=0,
+                tokens_used=0,
+                metadata={"error": str(e)},
+            )
+
+        # Handle any function tool calls that came back (local effGen tools)
+        native_results = result.metadata.get("native_tool_results", [])
+        local_calls = [r for r in native_results if r.get("type") == "function_call"]
+
+        tool_calls_made = len(native_results)
+
+        # Execute local tool calls and stitch their results into a follow-up
+        if local_calls and function_specs:
+            observations: list[str] = []
+            for call in local_calls:
+                fn_name = call.get("name", "")
+                fn_args_raw = call.get("arguments", "{}")
+                try:
+                    fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                except (json.JSONDecodeError, TypeError):
+                    fn_args = {}
+
+                if fn_name in self.tools:
+                    obs = self._execute_tool(fn_name, json.dumps(fn_args))
+                    tool_calls_made += 1
+                    observations.append(f"[{fn_name}({fn_args})] → {obs}")
+
+            if observations and not result.text:
+                # Re-prompt with the observations to get a final answer
+                obs_text = "\n".join(observations)
+                followup = f"Tool results:\n{obs_text}\n\nBased on these results, answer the user's question: {task}"
+                try:
+                    followup_result = adapter.generate(followup)
+                    return AgentResponse(
+                        output=followup_result.text,
+                        success=True,
+                        mode=AgentMode.SINGLE,
+                        iterations=2,
+                        tool_calls=tool_calls_made,
+                        tokens_used=result.tokens_used + followup_result.tokens_used,
+                        metadata=result.metadata,
+                    )
+                except Exception:
+                    pass
+
+        return AgentResponse(
+            output=result.text or "(no output from native tools call)",
+            success=bool(result.text),
+            mode=AgentMode.SINGLE,
+            iterations=1,
+            tool_calls=tool_calls_made,
+            tokens_used=result.tokens_used,
+            metadata=result.metadata,
+        )
 
     def _run_direct_inference(self,
                                task: str,

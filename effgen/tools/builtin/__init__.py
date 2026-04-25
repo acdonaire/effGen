@@ -6,6 +6,10 @@ This module contains the standard set of tools that ship with effGen.
 
 # Import built-in tools (lazy loading handled by registry)
 __all__ = [
+    # OpenAI native (server-side) tools
+    "OpenAIWebSearchTool",
+    "OpenAICodeInterpreterTool",
+    "OpenAIFileSearchTool",
     # Core tools
     "CodeExecutor",
     "PythonREPL",
@@ -48,7 +52,19 @@ __all__ = [
 
 def __getattr__(name):
     """Lazy import of tools."""
-    if name == "CodeExecutor":
+    if name in ("OpenAIWebSearchTool", "OpenAICodeInterpreterTool", "OpenAIFileSearchTool"):
+        from .openai_native import (
+            OpenAICodeInterpreterTool,
+            OpenAIFileSearchTool,
+            OpenAIWebSearchTool,
+        )
+        if name == "OpenAIWebSearchTool":
+            return OpenAIWebSearchTool
+        elif name == "OpenAICodeInterpreterTool":
+            return OpenAICodeInterpreterTool
+        else:
+            return OpenAIFileSearchTool
+    elif name == "CodeExecutor":
         from .code_executor import CodeExecutor
         return CodeExecutor
     elif name == "PythonREPL":

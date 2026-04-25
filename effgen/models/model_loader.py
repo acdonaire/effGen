@@ -61,12 +61,15 @@ class ModelLoader:
 
     # API model prefixes for automatic detection
     OPENAI_MODELS = [
-        "gpt-3.5", "gpt-4", "text-davinci", "text-curie",
-        "text-babbage", "text-ada"
+        "gpt-3.5", "gpt-4", "gpt-5", "text-davinci", "text-curie",
+        "text-babbage", "text-ada",
+        "o1", "o1-mini", "o1-preview",
+        "o3", "o3-mini",
+        "o4", "o4-mini",
     ]
 
     ANTHROPIC_MODELS = [
-        "claude-3", "claude-2", "claude-instant"
+        "claude-3", "claude-2", "claude-instant", "claude-4", "claude-opus", "claude-sonnet", "claude-haiku"
     ]
 
     GEMINI_MODELS = [
@@ -123,11 +126,31 @@ class ModelLoader:
             logger.info(f"Model '{model_name}' already loaded, returning cached instance")
             return self.loaded_models[model_name]
 
-        # Explicit provider routing (e.g. provider="cerebras")
+        # Explicit provider routing (e.g. provider="cerebras", provider="openai")
         provider = kwargs.pop("provider", None)
+        if provider == "openai":
+            model = self._load_openai_model(model_name, engine_config, **kwargs)
+            model.load()
+            self._validate_model(model)
+            self.loaded_models[model_name] = model
+            return model
+        if provider == "anthropic":
+            model = self._load_anthropic_model(model_name, engine_config, **kwargs)
+            model.load()
+            self._validate_model(model)
+            self.loaded_models[model_name] = model
+            return model
+        if provider == "gemini":
+            model = self._load_gemini_model(model_name, engine_config, **kwargs)
+            model.load()
+            self._validate_model(model)
+            self.loaded_models[model_name] = model
+            return model
         if provider == "cerebras":
             CerebrasAdapter = _get_cerebras_adapter()
             api_key = kwargs.pop("api_key", None)
+            for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
+                kwargs.pop(k, None)
             model = CerebrasAdapter(model_name=model_name, api_key=api_key, **kwargs)
             model.load()
             self._validate_model(model)
@@ -247,6 +270,9 @@ class ModelLoader:
 
         params = config or {}
         params.update(kwargs)
+        # Drop kwargs only meaningful for local/HF engines
+        for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
+            params.pop(k, None)
 
         return OpenAIAdapter(model_name=model_name, **params)
 
@@ -271,6 +297,8 @@ class ModelLoader:
 
         params = config or {}
         params.update(kwargs)
+        for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
+            params.pop(k, None)
 
         return AnthropicAdapter(model_name=model_name, **params)
 
@@ -295,6 +323,8 @@ class ModelLoader:
 
         params = config or {}
         params.update(kwargs)
+        for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
+            params.pop(k, None)
 
         return GeminiAdapter(model_name=model_name, **params)
 

@@ -87,7 +87,7 @@ from effgen.models._rate_limit import RateLimitCoordinator, RateLimitExceeded  #
 from effgen.models.cerebras_models import available_models as cerebras_available_models
 from effgen.models.cerebras_models import free_tier_models as cerebras_free_tier_models
 from effgen.models.cerebras_models import model_info as cerebras_model_info
-from effgen.models.errors import ModelRefusalError
+from effgen.models.errors import ModelRefusalError, ToolIncompatibleError
 from effgen.models.openai_models import available_models as openai_available_models
 from effgen.models.openai_models import chat_models as openai_chat_models
 from effgen.models.openai_models import model_info as openai_model_info
@@ -103,6 +103,17 @@ from effgen.prompts import ChainManager, PromptOptimizer, TemplateManager
 # Tool imports
 from effgen.tools import BaseTool, ToolRegistry
 from effgen.tools import get_registry as get_tool_registry
+
+# OpenAI native tool imports
+try:
+    from effgen.tools.builtin.openai_native import (
+        OpenAICodeInterpreterTool,
+        OpenAIFileSearchTool,
+        OpenAINativeTool,
+        OpenAIWebSearchTool,
+    )
+except ImportError:
+    pass
 
 # MLX engine imports (Apple Silicon only)
 try:

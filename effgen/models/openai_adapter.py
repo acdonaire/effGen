@@ -635,6 +635,170 @@ class OpenAIAdapter(FunctionCallingModel):
             },
         )
 
+    def generate_with_native_tools(
+        self,
+        prompt: str,
+        native_tool_specs: list[dict[str, Any]],
+        function_tool_specs: list[dict[str, Any]] | None = None,
+        system_prompt: str | None = None,
+        config: GenerationConfig | None = None,
+        previous_response_id: str | None = None,
+        **kwargs,
+    ) -> GenerationResult:
+        """Generate using the OpenAI Responses API with server-side native tools.
+
+        This method is the correct path for OpenAI first-party tools
+        (web_search_preview, code_interpreter, file_search) which run inside
+        OpenAI's infrastructure and cannot be executed locally.
+
+        It uses ``client.responses.create`` (Responses API) rather than the
+        Chat Completions API, because native tools are only supported there.
+
+        Args:
+            prompt: User message / task description.
+            native_tool_specs: List of native tool spec dicts from
+                ``OpenAINativeTool.to_openai_tool_spec()``.
+            function_tool_specs: Optional list of regular function-call tool
+                specs (OpenAI format) to include alongside native tools.
+            system_prompt: Optional system instructions.
+            config: Generation configuration.
+            previous_response_id: Responses API conversation ID for multi-turn.
+            **kwargs: Extra params forwarded to the API.
+
+        Returns:
+            GenerationResult with the final text and metadata.
+        """
+        if not self._is_loaded:
+            raise RuntimeError("Client not initialized. Call load() first.")
+        self.validate_prompt(prompt)
+        if config is None:
+            config = GenerationConfig()
+
+        # Build the tools list for the Responses API.
+        # The Responses API uses a flat format for function tools:
+        #   {"type": "function", "name": ..., "description": ..., "parameters": ...}
+        # Unlike Chat Completions which wraps them in {"type": "function", "function": {...}}.
+        tools_list: list[dict[str, Any]] = list(native_tool_specs)
+        if function_tool_specs:
+            for spec in function_tool_specs:
+                if spec.get("type") == "function":
+                    fn = spec.get("function", spec)
+                    tools_list.append({
+                        "type": "function",
+                        "name": fn.get("name", spec.get("name", "")),
+                        "description": fn.get("description", spec.get("description", "")),
+                        "parameters": fn.get("parameters", spec.get("parameters", {})),
+                    })
+                else:
+                    # Already in flat Responses API format
+                    tools_list.append(spec)
+
+        # Build the input messages
+        input_messages: list[dict[str, Any]] = []
+        if system_prompt:
+            input_messages.append({"role": "system", "content": system_prompt})
+        input_messages.append({"role": "user", "content": prompt})
+
+        max_tokens = config.max_tokens or _pick_default_max_output(self.model_name)
+
+        params: dict[str, Any] = {
+            "model": self.model_name,
+            "input": input_messages,
+            "tools": tools_list,
+            "max_output_tokens": max_tokens,
+        }
+        if previous_response_id:
+            params["previous_response_id"] = previous_response_id
+        if not self._is_reasoning_model:
+            params["temperature"] = config.temperature
+        if config.reasoning_effort is not None and self._is_reasoning_model:
+            params["reasoning"] = {"effort": config.reasoning_effort}
+        params.update(kwargs)
+
+        try:
+            response = self.client.responses.create(**params)
+        except Exception as e:
+            logger.error(f"OpenAI Responses API call failed: {e}")
+            raise RuntimeError(f"Native tool generation failed: {e}") from e
+
+        # Extract the output text from the response
+        output_text = ""
+        tool_call_results: list[dict[str, Any]] = []
+
+        for item in response.output:
+            item_type = getattr(item, "type", None)
+            if item_type == "message":
+                for content_block in getattr(item, "content", []):
+                    block_type = getattr(content_block, "type", None)
+                    if block_type == "output_text":
+                        output_text += getattr(content_block, "text", "")
+                    elif block_type == "text":
+                        output_text += getattr(content_block, "text", "")
+            elif item_type == "web_search_call":
+                tool_call_results.append({"type": "web_search_call", "id": getattr(item, "id", "")})
+            elif item_type == "code_interpreter_call":
+                outputs = []
+                for out in getattr(item, "outputs", []) or []:
+                    outputs.append({"type": getattr(out, "type", ""), "logs": getattr(out, "logs", "")})
+                tool_call_results.append({
+                    "type": "code_interpreter_call",
+                    "id": getattr(item, "id", ""),
+                    "code": getattr(item, "code", ""),
+                    "outputs": outputs,
+                })
+            elif item_type == "file_search_call":
+                results = []
+                for r in getattr(item, "results", []) or []:
+                    results.append({
+                        "file_id": getattr(r, "file_id", ""),
+                        "filename": getattr(r, "filename", ""),
+                        "score": getattr(r, "score", 0.0),
+                        "text": getattr(r, "text", ""),
+                    })
+                tool_call_results.append({
+                    "type": "file_search_call",
+                    "id": getattr(item, "id", ""),
+                    "results": results,
+                })
+            elif item_type == "function_call":
+                tool_call_results.append({
+                    "type": "function_call",
+                    "id": getattr(item, "id", ""),
+                    "name": getattr(item, "name", ""),
+                    "arguments": getattr(item, "arguments", "{}"),
+                })
+
+        # Usage
+        usage = getattr(response, "usage", None)
+        prompt_tokens = getattr(usage, "input_tokens", 0) if usage else 0
+        completion_tokens = getattr(usage, "output_tokens", 0) if usage else 0
+        total_tokens = prompt_tokens + completion_tokens
+        cached_tokens = 0
+        if usage:
+            details = getattr(usage, "input_tokens_details", None)
+            if details:
+                cached_tokens = getattr(details, "cached_tokens", 0) or 0
+
+        cost = self._record_cost(prompt_tokens, completion_tokens, total_tokens, cached_tokens)
+
+        return GenerationResult(
+            text=output_text,
+            tokens_used=completion_tokens,
+            finish_reason=getattr(response, "status", "completed"),
+            model_name=self.model_name,
+            metadata={
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "cached_input_tokens": cached_tokens,
+                "cost": cost,
+                "total_cost": self.total_cost,
+                "response_id": getattr(response, "id", None),
+                "tool_calls": tool_call_results,
+                "native_tool_results": tool_call_results,
+            },
+        )
+
     def chat(
         self,
         messages: list[dict[str, Any]],
