@@ -1,8 +1,9 @@
 name: Cerebras Quick Check
 
 # Lightweight push-time verification that CerebrasAdapter still talks to the
-# real API for the two callable free-tier models (llama3.1-8b, qwen-3-235b).
-# Designed to catch regressions BEFORE the nightly suite reports them as bugs.
+# real API. Runs llama3.1-8b only (free-tier callable, low queue pressure);
+# qwen-3-235b is excluded because Cerebras's free-tier queue regularly returns
+# 429 queue_exceeded for that model and we don't want flaky CI.
 
 on:
   push:
@@ -41,14 +42,8 @@ permissions:
 
 jobs:
   cerebras-quick-check:
-    name: Cerebras Quick Check (${{ matrix.model }})
+    name: Cerebras Quick Check (llama3.1-8b)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        model:
-          - "llama3.1-8b"
-          - "qwen-3-235b-a22b-instruct-2507"
     steps:
       - uses: actions/checkout@v4
 
@@ -79,17 +74,16 @@ jobs:
             echo "  - Is this a pull_request from a fork? Forks don't get secrets."
             exit 1
           fi
-          # GitHub auto-redacts the secret value in logs, so we only print
-          # safe metadata (length and a 4-char prefix) to confirm it's wired.
+          # GitHub auto-redacts the value in logs; only safe metadata is printed.
           echo "PRESENT, length=${#K}, first4=${K:0:4}"
 
-      - name: Generation + streaming + tool-calling smoke
+      - name: Generation + streaming + tool-calling smoke (llama3.1-8b)
         env:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          MODEL: ${{ matrix.model }}
+          MODEL: "llama3.1-8b"
         run: |
           python - <<'PY'
-          import os, sys, time
+          import os, random, sys, time
           api_key = os.getenv("CEREBRAS_API_KEY", "")
           model_id = os.environ["MODEL"]
 
@@ -102,29 +96,74 @@ jobs:
           from effgen.core.agent import Agent, AgentConfig
           from effgen.tools.builtin.calculator import Calculator
 
-          # ----- 1. Plain generate ------------------------------------
+          # ----- backoff helper ---------------------------------------
+          # 5 attempts with exponential backoff + jitter:
+          #   ~3s, ~6s, ~12s, ~24s, ~48s   (worst-case ≈ 90s wall-time)
+          # Cerebras's "queue_exceeded" 429 typically clears within 30-60s.
+          MAX_ATTEMPTS = 5
+          BASE_DELAY = 3.0
+          MAX_DELAY = 60.0
+
+          def is_retriable(exc: Exception) -> bool:
+              s = str(exc).lower()
+              return any(tag in s for tag in (
+                  "429", "rate", "queue_exceeded",
+                  "too_many_requests", "high traffic",
+                  "timeout", "service unavailable", "503",
+              ))
+
+          def backoff(attempt: int) -> float:
+              # exponential with full jitter
+              cap = min(MAX_DELAY, BASE_DELAY * (2 ** attempt))
+              return random.uniform(0.5, cap)
+
+          def with_retry(label: str, fn):
+              last_exc = None
+              for attempt in range(MAX_ATTEMPTS):
+                  try:
+                      return fn()
+                  except Exception as exc:
+                      last_exc = exc
+                      retriable = is_retriable(exc)
+                      tag = "RETRIABLE" if retriable else "FATAL"
+                      print(f"WARN[{label}] attempt {attempt+1}/{MAX_ATTEMPTS} {tag}: {exc}")
+                      if not retriable or attempt == MAX_ATTEMPTS - 1:
+                          break
+                      delay = backoff(attempt)
+                      print(f"     sleeping {delay:.1f}s before retry…")
+                      time.sleep(delay)
+              raise RuntimeError(f"{label} failed after {MAX_ATTEMPTS} attempts: {last_exc}")
+
+          # ----- adapter --------------------------------------------------
           adapter = CerebrasAdapter(model_id, enable_rate_limiting=False)
           adapter.load()
-          out = adapter.generate(
-              "Reply with a single word: ALIVE",
-              config=GenerationConfig(temperature=0.0, max_tokens=8),
-          )
+
+          # ----- 1. Plain generate ----------------------------------------
+          def _gen():
+              return adapter.generate(
+                  "Reply with a single word: ALIVE",
+                  config=GenerationConfig(temperature=0.0, max_tokens=8),
+              )
+
+          out = with_retry("generate", _gen)
           if not (out.text or "").strip():
               print(f"FAIL[{model_id}]: generate returned empty text")
               sys.exit(1)
           print(f"OK[{model_id}]: generate -> {out.text!r}")
 
-          # ----- 2. Streaming -----------------------------------------
-          chunks = list(adapter.generate_stream("Count: 1, 2, 3."))
-          text = "".join(chunks)
-          if not text:
-              print(f"FAIL[{model_id}]: stream returned 0 chunks")
-              sys.exit(1)
+          # ----- 2. Streaming ---------------------------------------------
+          def _stream():
+              chunks = list(adapter.generate_stream("Count: 1, 2, 3."))
+              text = "".join(chunks)
+              if not text:
+                  raise RuntimeError("stream returned empty text")
+              return chunks, text
+
+          chunks, text = with_retry("stream", _stream)
           print(f"OK[{model_id}]: stream -> {len(chunks)} chunks, {len(text)} chars")
 
-          # ----- 3. Tool-calling agent (12*12=144) --------------------
-          last_output = ""
-          for attempt in range(2):
+          # ----- 3. Tool-calling agent (12*12=144) ------------------------
+          def _tools():
               cfg = AgentConfig(
                   name=f"quick-{model_id}",
                   model=adapter,
@@ -133,18 +172,19 @@ jobs:
                   max_iterations=5,
                   temperature=0.1,
               )
-              try:
-                  resp = Agent(cfg).run("What is 12 * 12?")
-                  last_output = str(resp.output or "")
-              except Exception as exc:
-                  print(f"WARN[{model_id}] attempt {attempt+1}: {exc}")
-                  last_output = ""
-              if "144" in last_output:
-                  print(f"OK[{model_id}]: tool-calling -> '144' present")
-                  break
-              time.sleep(3)
-          else:
-              print(f"FAIL[{model_id}]: '144' missing from output: {last_output!r}")
+              resp = Agent(cfg).run("What is 12 * 12?")
+              text = str(resp.output or "")
+              if "144" not in text:
+                  # treat empty/wrong output the same as a transient miss; let
+                  # with_retry decide whether to retry (only if it looks 429-ish).
+                  raise RuntimeError(f"'144' missing from output: {text!r}")
+              return text
+
+          try:
+              tools_out = with_retry("tools", _tools)
+              print(f"OK[{model_id}]: tool-calling -> '144' present")
+          except Exception as exc:
+              print(f"FAIL[{model_id}]: {exc}")
               adapter.unload()
               sys.exit(1)
 

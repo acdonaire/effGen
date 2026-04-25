@@ -188,7 +188,7 @@ jobs:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
         run: |
           python - <<'PY'
-          import os, sys, time
+          import os, random, sys, time
           api_key = os.getenv("CEREBRAS_API_KEY", "")
           if not api_key:
               print("SKIPPED: CEREBRAS_API_KEY not set")
@@ -197,18 +197,52 @@ jobs:
           from effgen.models.cerebras_adapter import CerebrasAdapter
           from effgen.models._cost import CostTracker
 
-          for model_id in ["llama3.1-8b", "qwen-3-235b-a22b-instruct-2507"]:
+          # Exponential-backoff retry around Cerebras free-tier 429s.
+          MAX_ATTEMPTS, BASE_DELAY, MAX_DELAY = 5, 3.0, 60.0
+
+          def is_retriable(exc):
+              s = str(exc).lower()
+              return any(t in s for t in (
+                  "429", "rate", "queue_exceeded",
+                  "too_many_requests", "high traffic",
+                  "timeout", "503", "service unavailable",
+              ))
+
+          def backoff(a):
+              return random.uniform(0.5, min(MAX_DELAY, BASE_DELAY * (2 ** a)))
+
+          def stream_once(model_id):
               adapter = CerebrasAdapter(model_id, enable_rate_limiting=False)
               adapter.load()
-              chunks = list(adapter.generate_stream("Say hello in one sentence."))
-              adapter.unload()
-              text = "".join(chunks)
+              try:
+                  chunks = list(adapter.generate_stream("Say hello in one sentence."))
+                  text = "".join(chunks)
+              finally:
+                  adapter.unload()
               if not text:
-                  print(f"FAIL: {model_id} streaming returned empty text")
-                  sys.exit(1)
-              print(f"OK: {model_id} -> {len(chunks)} chunks, {len(text)} chars")
+                  raise RuntimeError("empty stream text")
+              return chunks, text
 
-          print("All streaming checks passed")
+          # llama3.1-8b only — qwen excluded due to repeated free-tier queue 429s.
+          model_id = "llama3.1-8b"
+          last = None
+          for attempt in range(MAX_ATTEMPTS):
+              try:
+                  chunks, text = stream_once(model_id)
+                  print(f"OK: {model_id} -> {len(chunks)} chunks, {len(text)} chars")
+                  break
+              except Exception as exc:
+                  last = exc
+                  retriable = is_retriable(exc)
+                  print(f"WARN[{model_id}] attempt {attempt+1}/{MAX_ATTEMPTS} "
+                        f"{'RETRIABLE' if retriable else 'FATAL'}: {exc}")
+                  if not retriable or attempt == MAX_ATTEMPTS - 1:
+                      print(f"FAIL: {model_id} streaming after {attempt+1} attempts: {exc}")
+                      sys.exit(1)
+                  d = backoff(attempt)
+                  print(f"     sleeping {d:.1f}s before retry…")
+                  time.sleep(d)
+
           for row in CostTracker.get().summary():
               print(f"  {row['provider']}/{row['model']}: prompt={row['prompt_tokens']} cost=${row['cost_usd']:.6f}")
           PY
@@ -221,7 +255,7 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner, repo: context.repo.repo,
               title: `Cerebras streaming smoke failure (${new Date().toISOString().slice(0,10)})`,
-              body: "Nightly streaming smoke test failed for Cerebras llama3.1-8b or qwen-3-235b. Check workflow logs.",
+              body: "Nightly streaming smoke test failed for Cerebras llama3.1-8b after 5 retries with exponential backoff. Check workflow logs — likely an effGen regression rather than a transient queue 429.",
               labels: ["bug", "cerebras", "automated"],
             });
 
@@ -248,7 +282,7 @@ jobs:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
         run: |
           python - <<'PY'
-          import os, sys, time
+          import os, random, sys, time
           api_key = os.getenv("CEREBRAS_API_KEY", "")
           if not api_key:
               print("SKIPPED: CEREBRAS_API_KEY not set")
@@ -258,10 +292,24 @@ jobs:
           from effgen.core.agent import Agent, AgentConfig
           from effgen.tools.builtin.calculator import Calculator
 
-          # Up to 2 attempts; nightly runs occasionally hit Cerebras 429/queue.
+          MAX_ATTEMPTS, BASE_DELAY, MAX_DELAY = 5, 3.0, 60.0
+
+          def is_retriable(exc_or_text):
+              s = str(exc_or_text).lower()
+              return any(t in s for t in (
+                  "429", "rate", "queue_exceeded",
+                  "too_many_requests", "high traffic",
+                  "maximum iterations", "empty response",
+                  "timeout", "503", "service unavailable",
+              ))
+
+          def backoff(a):
+              return random.uniform(0.5, min(MAX_DELAY, BASE_DELAY * (2 ** a)))
+
+          # llama3.1-8b only — qwen excluded due to repeated free-tier queue 429s.
           last_output = ""
-          last_tool_calls = 0
-          for attempt in range(2):
+          last_exc = None
+          for attempt in range(MAX_ATTEMPTS):
               adapter = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False)
               adapter.load()
               config = AgentConfig(
@@ -272,25 +320,31 @@ jobs:
                   max_iterations=5,
                   temperature=0.1,
               )
-              agent = Agent(config)
               try:
-                  response = agent.run("What is 12 * 12?")
-                  last_output = str(response.output or "")
-                  last_tool_calls = getattr(response, "tool_calls", 0) or 0
+                  resp = Agent(config).run("What is 12 * 12?")
+                  last_output = str(resp.output or "")
+                  print(f"[attempt {attempt+1}] Output: {last_output!r}")
+                  print(f"[attempt {attempt+1}] Tool calls: {getattr(resp, 'tool_calls', 0) or 0}")
+                  if "144" in last_output:
+                      adapter.unload()
+                      print("OK: tool-calling smoke passed (12*12=144)")
+                      sys.exit(0)
+                  last_exc = RuntimeError(f"'144' missing from output: {last_output!r}")
               except Exception as exc:
-                  print(f"WARN: attempt {attempt+1} raised: {exc}")
+                  last_exc = exc
                   last_output = ""
+                  print(f"WARN[tools] attempt {attempt+1}/{MAX_ATTEMPTS} raised: {exc}")
               finally:
                   adapter.unload()
 
-              print(f"[attempt {attempt+1}] Output: {last_output!r}")
-              print(f"[attempt {attempt+1}] Tool calls: {last_tool_calls}")
-              if "144" in last_output:
-                  print("OK: tool-calling smoke passed (12*12=144)")
-                  sys.exit(0)
-              time.sleep(3)
+              if attempt < MAX_ATTEMPTS - 1 and is_retriable(last_exc or last_output):
+                  d = backoff(attempt)
+                  print(f"     sleeping {d:.1f}s before retry…")
+                  time.sleep(d)
+              else:
+                  break
 
-          print("FAIL: answer 144 not in output after 2 attempts")
+          print(f"FAIL: answer 144 not in output after {attempt+1} attempts. Last: {last_output!r}")
           sys.exit(1)
           PY
       - name: Open issue on tool-calling failure
@@ -329,7 +383,7 @@ jobs:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
         run: |
           python - <<'PY'
-          import os, sys, time
+          import os, random, sys, time
           api_key = os.getenv("CEREBRAS_API_KEY", "")
           if not api_key:
               print("SKIPPED: CEREBRAS_API_KEY not set")
@@ -339,50 +393,63 @@ jobs:
           from effgen.models.base import GenerationConfig
 
           # Affirmative tokens that signal the model agreed roses need water.
-          # Several real Cerebras outputs include phrases like "Yes, roses need water"
-          # or "They do." — we accept any of these as correct.
           AFFIRM = ("yes", "they do", "they need", "do need", "need water")
 
-          def is_correct(text: str) -> bool:
-              t = text.lower()
-              return any(token in t for token in AFFIRM)
+          MAX_ATTEMPTS, BASE_DELAY, MAX_DELAY = 5, 3.0, 60.0
 
-          passed = 0
-          total = 0
-          # Up to 2 attempts per model — Cerebras free tier sometimes returns empty
-          # text on first call; a single retry is enough.
-          for model_id in ["llama3.1-8b", "qwen-3-235b-a22b-instruct-2507"]:
-              adapter = CerebrasAdapter(model_id, enable_rate_limiting=False)
-              adapter.load()
-              best_text = ""
-              correct = False
-              for attempt in range(2):
-                  try:
-                      result = adapter.generate(
-                          "If all roses are flowers and all flowers need water, "
-                          "do roses need water? Answer with just 'yes' or 'no' first, "
-                          "then a one-sentence explanation.",
-                          config=GenerationConfig(temperature=0.0, max_tokens=64),
-                      )
-                  except Exception as exc:
-                      print(f"WARN: {model_id} attempt {attempt+1} raised: {exc}")
-                      time.sleep(2)
-                      continue
+          def is_correct(text: str) -> bool:
+              return any(t in text.lower() for t in AFFIRM)
+
+          def is_retriable(exc):
+              s = str(exc).lower()
+              return any(t in s for t in (
+                  "429", "rate", "queue_exceeded",
+                  "too_many_requests", "high traffic",
+                  "timeout", "503", "service unavailable",
+              ))
+
+          def backoff(a):
+              return random.uniform(0.5, min(MAX_DELAY, BASE_DELAY * (2 ** a)))
+
+          # llama3.1-8b only — qwen excluded due to repeated free-tier queue 429s.
+          model_id = "llama3.1-8b"
+          adapter = CerebrasAdapter(model_id, enable_rate_limiting=False)
+          adapter.load()
+
+          best_text = ""
+          correct = False
+          last_exc = None
+          for attempt in range(MAX_ATTEMPTS):
+              try:
+                  result = adapter.generate(
+                      "If all roses are flowers and all flowers need water, "
+                      "do roses need water? Answer with just 'yes' or 'no' first, "
+                      "then a one-sentence explanation.",
+                      config=GenerationConfig(temperature=0.0, max_tokens=64),
+                  )
                   best_text = (result.text or "").strip()
                   if is_correct(best_text):
                       correct = True
                       break
-                  time.sleep(2)
-              adapter.unload()
-              total += 1
-              print(f"{'OK' if correct else 'FAIL'}: {model_id} -> {best_text!r}")
-              if correct:
-                  passed += 1
+                  # Wrong content is not retriable — different problem entirely.
+                  last_exc = RuntimeError(f"unexpected text: {best_text!r}")
+                  break
+              except Exception as exc:
+                  last_exc = exc
+                  retriable = is_retriable(exc)
+                  print(f"WARN[{model_id}] attempt {attempt+1}/{MAX_ATTEMPTS} "
+                        f"{'RETRIABLE' if retriable else 'FATAL'}: {exc}")
+                  if not retriable or attempt == MAX_ATTEMPTS - 1:
+                      break
+                  d = backoff(attempt)
+                  print(f"     sleeping {d:.1f}s before retry…")
+                  time.sleep(d)
+          adapter.unload()
 
-          if passed < 1:
-              print(f"FAIL: {passed}/{total} reasoning checks passed (need at least 1)")
+          print(f"{'OK' if correct else 'FAIL'}: {model_id} -> {best_text!r}")
+          if not correct:
+              print(f"FAIL: reasoning check did not pass. Last error: {last_exc}")
               sys.exit(1)
-          print(f"OK: {passed}/{total} reasoning checks passed")
           PY
       - name: Open issue on reasoning failure
         if: failure()
@@ -393,7 +460,7 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner, repo: context.repo.repo,
               title: `Cerebras reasoning smoke failure (${new Date().toISOString().slice(0,10)})`,
-              body: "Nightly reasoning smoke: both llama3.1-8b and qwen-3-235b failed a basic yes/no logic question. This may indicate a model API issue or effGen regression.",
+              body: "Nightly reasoning smoke: llama3.1-8b failed a basic yes/no logic question after 5 retries with exponential backoff. This indicates either a Cerebras model regression or an effGen prompt/parsing regression — not a transient queue 429.",
               labels: ["bug", "cerebras", "automated"],
             });
 
