@@ -68,6 +68,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,cerebras]" -q
 
+      - name: Debug secret presence (no value leak)
+        env:
+          K: ${{ secrets.CEREBRAS_API_KEY }}
+        run: |
+          if [ -z "$K" ]; then
+            echo "MISSING: secrets.CEREBRAS_API_KEY is empty in this job."
+            echo "  - Is the secret named exactly CEREBRAS_API_KEY (case-sensitive)?"
+            echo "  - Is it a repository secret (Settings > Secrets and variables > Actions)?"
+            echo "  - Is this a pull_request from a fork? Forks don't get secrets."
+            exit 1
+          fi
+          # GitHub auto-redacts the secret value in logs, so we only print
+          # safe metadata (length and a 4-char prefix) to confirm it's wired.
+          echo "PRESENT, length=${#K}, first4=${K:0:4}"
+
       - name: Generation + streaming + tool-calling smoke
         env:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
