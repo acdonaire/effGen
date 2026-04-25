@@ -37,6 +37,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (4 free-tier models, streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#021---2026-04-25) |
 | 🚀 | **9 Apr 2026** | **v0.2.0 Released**: Major release — native tool calling, guardrails, multi-agent orchestration, RAG pipeline, 31 tools, eval framework, production API server, MLX Apple Silicon support, Python & TypeScript SDKs. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#020---2026-04-09) |
 | 🍎 | **8 Apr 2026** | **MLX & Apple Silicon support merged** (PR #4): Native Metal GPU acceleration via MLX & MLX-VLM backends. `pip install effgen[mlx]` |
 | 🔧 | **25 Mar 2026** | **v0.1.3 Released**: Verification hardening — smarter loop detection, "skip the tool" prompting, model-aware token counting, sub-agent depth limits, circuit breaker persistence. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#013---2026-03-25) |
@@ -102,6 +103,7 @@ pip install effgen[vllm]
 ### 📊 Optional Extras
 
 ```bash
+pip install effgen[cerebras]  # Cerebras inference backend (cerebras-cloud-sdk)
 pip install effgen[rag]       # RAG pipeline (sentence-transformers, faiss-cpu)
 pip install effgen[finance]   # Finance tools (yfinance)
 pip install effgen[data]      # Data science tools (matplotlib, plotly)
