@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 import os
+import random
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -23,6 +25,10 @@ from effgen.models.base import (
     GenerationResult,
     ModelType,
     TokenCount,
+)
+from effgen.models.gemini_models import (
+    GEMINI_MODEL_ALIASES,
+    GEMINI_MODELS,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,13 +65,16 @@ class GeminiAdapter(FunctionCallingModel):
         "gemini-ultra": (10.0, 30.0),
     }
 
-    # Context lengths for models
+    # Context lengths — pulled from gemini_models registry first, with a
+    # legacy fallback table for the older model IDs.
     CONTEXT_LENGTHS = {
-        "gemini-1.5-pro": 1000000,  # 1M tokens
+        "gemini-1.5-pro": 1000000,
         "gemini-1.5-flash": 1000000,
         "gemini-pro": 32760,
         "gemini-pro-vision": 16384,
         "gemini-ultra": 32760,
+        **{m: info["context"] for m, info in GEMINI_MODELS.items()},
+        **{alias: GEMINI_MODELS[c]["context"] for alias, c in GEMINI_MODEL_ALIASES.items() if c in GEMINI_MODELS},
     }
 
     def __init__(
@@ -252,6 +261,165 @@ class GeminiAdapter(FunctionCallingModel):
 
         return gen_config
 
+    # Gemini's Schema accepts a strict subset of JSON Schema. Strip extras
+    # (minLength/maxLength/minimum/maximum/default/etc.) before sending so
+    # the SDK does not raise "Unknown field for Schema: ..." errors.
+    _GEMINI_SCHEMA_FIELDS = {
+        "type", "description", "enum", "items", "properties",
+        "required", "format", "nullable",
+    }
+
+    @classmethod
+    def _sanitize_schema(cls, schema: Any) -> Any:
+        if isinstance(schema, dict):
+            cleaned: dict[str, Any] = {}
+            for k, v in schema.items():
+                if k not in cls._GEMINI_SCHEMA_FIELDS:
+                    continue
+                if k == "properties" and isinstance(v, dict):
+                    cleaned[k] = {
+                        prop_name: cls._sanitize_schema(prop_schema)
+                        for prop_name, prop_schema in v.items()
+                    }
+                elif k == "items":
+                    cleaned[k] = cls._sanitize_schema(v)
+                elif k == "required":
+                    cleaned[k] = list(v) if isinstance(v, (list, tuple)) else v
+                else:
+                    cleaned[k] = v
+            return cleaned
+        if isinstance(schema, list):
+            return [cls._sanitize_schema(v) for v in schema]
+        return schema
+
+    # Maximum number of retries for transient errors (429 / 5xx). Each retry
+    # honors any ``retry_delay`` the SDK attaches to ResourceExhausted; for
+    # 5xx we fall back to exponential backoff.
+    MAX_RATE_LIMIT_RETRIES = 5
+
+    @staticmethod
+    def _suggested_retry_delay(exc: Exception) -> float | None:
+        """Pull Google's recommended retry delay (seconds) out of *exc*.
+
+        Returns ``None`` if no delay is available.
+        """
+        for attr in ("retry_delay", "_details", "details"):
+            obj = getattr(exc, attr, None)
+            if obj is None:
+                continue
+            try:
+                if hasattr(obj, "seconds"):
+                    return float(obj.seconds) + float(getattr(obj, "nanos", 0)) / 1e9
+                items = obj() if callable(obj) else obj
+                for item in items or []:
+                    rd = getattr(item, "retry_delay", None)
+                    if rd is not None and hasattr(rd, "seconds"):
+                        return float(rd.seconds) + float(getattr(rd, "nanos", 0)) / 1e9
+            except Exception:
+                continue
+        msg = str(exc)
+        if "Please retry in" in msg:
+            try:
+                tail = msg.split("Please retry in", 1)[1]
+                num = ""
+                for ch in tail.strip():
+                    if ch.isdigit() or ch == ".":
+                        num += ch
+                    else:
+                        break
+                return float(num) if num else None
+            except Exception:
+                return None
+        return None
+
+    def _generate_with_retry(self, *, content: Any, generation_config: Any, stream: bool = False, **kwargs):
+        """Call ``self.model.generate_content`` with rate-limit-aware retries.
+
+        Honors ``retry_delay`` from ``ResourceExhausted`` (HTTP 429) and uses
+        exponential backoff for other transient errors (5xx / DEADLINE_EXCEEDED).
+        Non-retryable errors are raised immediately.
+        """
+        try:
+            from google.api_core import exceptions as gax_exc
+        except ImportError:  # pragma: no cover
+            gax_exc = None  # type: ignore[assignment]
+
+        last_exc: Exception | None = None
+        for attempt in range(1, self.MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                if stream:
+                    return self.model.generate_content(
+                        content, generation_config=generation_config, stream=True, **kwargs
+                    )
+                return self.model.generate_content(
+                    content, generation_config=generation_config, **kwargs
+                )
+            except Exception as exc:
+                last_exc = exc
+                is_quota = (
+                    gax_exc is not None and isinstance(exc, gax_exc.ResourceExhausted)
+                ) or "429" in str(exc) or "quota" in str(exc).lower()
+                is_transient_5xx = gax_exc is not None and isinstance(
+                    exc,
+                    (gax_exc.ServiceUnavailable, gax_exc.DeadlineExceeded, gax_exc.InternalServerError),
+                )
+                if not (is_quota or is_transient_5xx):
+                    raise
+
+                if attempt >= self.MAX_RATE_LIMIT_RETRIES:
+                    break
+
+                delay = self._suggested_retry_delay(exc) if is_quota else None
+                if delay is None:
+                    delay = min(60.0, (2 ** attempt) + random.uniform(0, 0.5))
+                else:
+                    delay = max(delay + 0.5, 1.0)
+                logger.warning(
+                    "Gemini transient error on attempt %d/%d: %s — sleeping %.1fs",
+                    attempt, self.MAX_RATE_LIMIT_RETRIES, type(exc).__name__, delay,
+                )
+                time.sleep(delay)
+
+        assert last_exc is not None
+        raise last_exc
+
+    @classmethod
+    def _convert_tools_to_gemini(cls, tools: list) -> list:
+        """Convert OpenAI-style tool specs to Gemini Tool objects.
+
+        Accepts:
+          - Already-converted Gemini Tool objects (passed through).
+          - OpenAI-format dicts: {"type": "function", "function": {...}}.
+          - Raw function dicts: {"name": ..., "description": ..., "parameters": ...}.
+        """
+        from google.generativeai.types import FunctionDeclaration, Tool
+
+        function_declarations = []
+        passthrough = []
+        for t in tools:
+            if isinstance(t, Tool):
+                passthrough.append(t)
+                continue
+            if isinstance(t, dict):
+                if t.get("type") == "function" and "function" in t:
+                    func = t["function"]
+                else:
+                    func = t
+                params = func.get("parameters") or {"type": "object", "properties": {}}
+                params = cls._sanitize_schema(params)
+                function_declarations.append(
+                    FunctionDeclaration(
+                        name=func["name"],
+                        description=func.get("description", ""),
+                        parameters=params,
+                    )
+                )
+
+        result = list(passthrough)
+        if function_declarations:
+            result.append(Tool(function_declarations=function_declarations))
+        return result
+
     def generate(
         self,
         prompt: str | list[str | dict[str, Any]],
@@ -282,16 +450,52 @@ class GeminiAdapter(FunctionCallingModel):
         generation_config = self._create_generation_config(config)
         content = self._prepare_content(prompt)
 
+        # Convert OpenAI-style tool specs to Gemini FunctionDeclaration objects
+        # so the agent's native-tool-calling path works for Gemini models.
+        if "tools" in kwargs and kwargs["tools"]:
+            kwargs["tools"] = self._convert_tools_to_gemini(kwargs["tools"])
+
         try:
             # Generate content
-            response = self.model.generate_content(
-                content,
+            response = self._generate_with_retry(
+                content=content,
                 generation_config=generation_config,
-                **kwargs
+                **kwargs,
             )
 
-            # Extract response
-            generated_text = response.text
+            # Extract response. When the model returns a function_call (no
+            # text part), response.text raises; collect text parts directly
+            # and surface tool calls via metadata so callers can dispatch.
+            generated_text = ""
+            tool_calls: list[dict[str, Any]] = []
+            try:
+                generated_text = response.text
+            except Exception:
+                if hasattr(response, "candidates") and response.candidates:
+                    for part in response.candidates[0].content.parts:
+                        if getattr(part, "text", None):
+                            generated_text += part.text
+                        fc = getattr(part, "function_call", None)
+                        if fc and getattr(fc, "name", None):
+                            args = {}
+                            if hasattr(fc, "args"):
+                                try:
+                                    args = dict(fc.args)
+                                except Exception:
+                                    args = {k: fc.args[k] for k in fc.args}
+                            tool_calls.append({"name": fc.name, "arguments": args})
+
+            # Surface Gemini's structured function calls as Qwen-style
+            # <tool_call> tokens so the agent's native parser can dispatch
+            # them without a Gemini-specific code path.
+            if tool_calls and "<tool_call>" not in generated_text:
+                import json as _json
+                fc = tool_calls[0]
+                generated_text = (
+                    f"{generated_text}\n<tool_call>"
+                    f"{_json.dumps({'name': fc['name'], 'arguments': fc['arguments']})}"
+                    f"</tool_call>"
+                ).strip()
 
             # Get token usage
             try:
@@ -334,6 +538,7 @@ class GeminiAdapter(FunctionCallingModel):
                     "cost": cost,
                     "total_cost": self.total_cost,
                     "safety_ratings": getattr(response, "safety_ratings", None),
+                    "tool_calls": tool_calls,
                 }
             )
 
@@ -371,13 +576,16 @@ class GeminiAdapter(FunctionCallingModel):
         generation_config = self._create_generation_config(config)
         content = self._prepare_content(prompt)
 
+        if "tools" in kwargs and kwargs["tools"]:
+            kwargs["tools"] = self._convert_tools_to_gemini(kwargs["tools"])
+
         try:
             # Generate content with streaming
-            response = self.model.generate_content(
-                content,
+            response = self._generate_with_retry(
+                content=content,
                 generation_config=generation_config,
                 stream=True,
-                **kwargs
+                **kwargs,
             )
 
             for chunk in response:

@@ -88,6 +88,10 @@ from effgen.models.cerebras_models import available_models as cerebras_available
 from effgen.models.cerebras_models import free_tier_models as cerebras_free_tier_models
 from effgen.models.cerebras_models import model_info as cerebras_model_info
 from effgen.models.errors import ModelRefusalError, ToolIncompatibleError
+from effgen.models.gemini_models import available_models as gemini_available_models
+from effgen.models.gemini_models import free_tier_models as gemini_free_tier_models
+from effgen.models.gemini_models import model_info as gemini_model_info
+from effgen.models.gemini_models import recommended_models as gemini_recommended_models
 from effgen.models.openai_models import available_models as openai_available_models
 from effgen.models.openai_models import chat_models as openai_chat_models
 from effgen.models.openai_models import model_info as openai_model_info
@@ -203,6 +207,11 @@ __all__ = [
     "openai_chat_models",
     "openai_reasoning_models",
     "openai_model_info",
+    # Gemini helpers
+    "gemini_available_models",
+    "gemini_free_tier_models",
+    "gemini_model_info",
+    "gemini_recommended_models",
 
     # Tools
     "BaseTool",

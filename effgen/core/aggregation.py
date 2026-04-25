@@ -303,7 +303,7 @@ class ResultAggregator:
             # Combine all unique outputs with separator
             unique_outputs: list[str] = []
             seen: set[str] = set()
-            sources: list[int] = []
+            sources = []
             for i, o in enumerate(outputs):
                 h = hashlib.md5(o.encode()).hexdigest()
                 if h not in seen and o.strip():

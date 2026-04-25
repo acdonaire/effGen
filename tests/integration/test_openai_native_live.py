@@ -8,13 +8,13 @@ Run with: pytest tests/integration/test_openai_native_live.py -v
 from __future__ import annotations
 
 import os
-import time
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
-
 from dotenv import load_dotenv
+
 load_dotenv(Path.home() / ".effgen" / ".env", override=False)
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 
@@ -118,7 +118,8 @@ def test_live_code_interpreter(openai_client):
                 if getattr(block, "type", None) in ("output_text", "text"):
                     text += getattr(block, "text", "")
 
-    assert "1048576" in text or "1,048,576" in text, f"Expected 2**20=1048576 in: {text}"
+    normalized = text.replace("{", "").replace("}", "").replace(",", "").replace(" ", "")
+    assert "1048576" in normalized, f"Expected 2**20=1048576 in: {text}"
 
 
 def test_live_file_search(openai_client):
@@ -138,11 +139,13 @@ def test_live_file_search(openai_client):
         vs_id = vs.id
         openai_client.vector_stores.files.create(vector_store_id=vs_id, file_id=file_id)
 
-        for _ in range(30):
+        for _ in range(60):
             status = openai_client.vector_stores.retrieve(vs_id)
             if status.file_counts.completed > 0:
                 break
             time.sleep(1)
+        else:
+            pytest.skip("Vector store indexing did not complete within 60s")
 
         tool = OpenAIFileSearchTool(vector_store_ids=[vs_id])
         spec = tool.to_openai_tool_spec()
@@ -150,7 +153,10 @@ def test_live_file_search(openai_client):
         response = openai_client.responses.create(
             model=MODEL,
             tools=[spec],
-            input="What is the name of the effGen mascot? Answer only from the provided document.",
+            input=(
+                "Use the file_search tool to find the answer in the attached document. "
+                "What is the name of the effGen mascot?"
+            ),
         )
 
         text = ""
@@ -172,13 +178,12 @@ def test_live_file_search(openai_client):
 
 def test_tool_incompatible_error_with_cerebras_model():
     """ToolIncompatibleError fires at Agent init, not at run time."""
-    from effgen.models.errors import ToolIncompatibleError
-    from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
     from effgen.core.agent import Agent, AgentConfig
     from effgen.models.cerebras_adapter import CerebrasAdapter
+    from effgen.models.errors import ToolIncompatibleError
+    from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
 
     # Create a Cerebras adapter (no real connection needed just for init check)
-    cerebras_key = os.getenv("CEREBRAS_API_KEY", "fake-key-for-test")
     adapter = CerebrasAdapter(model_name="llama3.1-8b")
 
     with pytest.raises(ToolIncompatibleError) as exc_info:
@@ -221,8 +226,8 @@ def test_live_agent_native_plus_effgen_tools():
     """Agent with both OpenAI native tools AND effGen local tools."""
     from effgen.core.agent import Agent, AgentConfig
     from effgen.models.openai_adapter import OpenAIAdapter
-    from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
     from effgen.tools.builtin.calculator import Calculator
+    from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
 
     adapter = OpenAIAdapter(model_name=MODEL, api_key=OPENAI_API_KEY)
     adapter.load()

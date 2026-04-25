@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Import tests
 # ---------------------------------------------------------------------------
@@ -223,9 +222,10 @@ class TestAgentNativeToolIncompatibility:
     def test_cerebras_model_with_native_tool_raises(self):
         """ToolIncompatibleError must fire at Agent.__init__, not at run time."""
         from unittest.mock import MagicMock
+
+        from effgen.core.agent import Agent, AgentConfig
         from effgen.models.errors import ToolIncompatibleError
         from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
-        from effgen.core.agent import Agent, AgentConfig
 
         mock_model = MagicMock()
         mock_model.model_name = "llama3.1-8b"
@@ -248,11 +248,11 @@ class TestAgentNativeToolIncompatibility:
 
     def test_openai_adapter_with_native_tool_does_not_raise(self):
         """No error when native tool is used with an OpenAI model."""
-        from unittest.mock import patch
-        from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
-        from effgen.models.openai_adapter import OpenAIAdapter
-        from effgen.core.agent import Agent, AgentConfig
         import os
+
+        from effgen.core.agent import Agent, AgentConfig
+        from effgen.models.openai_adapter import OpenAIAdapter
+        from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
 
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:

@@ -1379,17 +1379,18 @@ class CLIInterface:
                 self.print(f"[bold]Tags:[/bold] {', '.join(metadata.tags)}" if self.console else f"Tags: {', '.join(metadata.tags)}")
 
             # Show parameters
-            if metadata.input_schema:
+            if metadata.parameters:
                 self.print("\n[bold]Parameters:[/bold]" if self.console else "\nParameters:")
+                schema = metadata.to_json_schema()
                 if self.console:
                     syntax = Syntax(
-                        json.dumps(metadata.input_schema, indent=2),
+                        json.dumps(schema, indent=2),
                         "json",
                         theme="monokai"
                     )
                     self.console.print(syntax)
                 else:
-                    print(json.dumps(metadata.input_schema, indent=2))
+                    print(json.dumps(schema, indent=2))
 
         except KeyError:
             self.print_error(f"Tool not found: {args.name}")

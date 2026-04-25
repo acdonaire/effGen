@@ -2927,6 +2927,14 @@ Provide a well-structured, comprehensive response that integrates all findings."
                             hit_stop = True
                             break
 
+                    # Break early when a complete Final Answer is detected to avoid
+                    # runaway generation — transformers streaming ignores stop_sequences.
+                    if not hit_stop and "Final Answer:" in accumulated:
+                        fa_pos = accumulated.index("Final Answer:")
+                        after_fa = accumulated[fa_pos + len("Final Answer:"):]
+                        if "\n" in after_fa or len(after_fa.strip()) >= 5:
+                            hit_stop = True
+
                     if hit_stop:
                         break
 
