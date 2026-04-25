@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] - 2026-04-25
+
+### Highlights
+
+**effGen v0.2.1** adds the **Cerebras** inference backend (4 free-tier models with streaming, native tool-calling, and cost tracking) and modernizes the **OpenAI** adapter (gpt-5/gpt-5.4-nano + o-series reasoning models, `reasoning_effort`, prompt caching surfacing, structured outputs v2, and OpenAI native tools — web_search, code_interpreter, file_search).
+
+### Added
+
+#### Cerebras Backend (new provider)
+- **`CerebrasAdapter`** — full async adapter on top of `cerebras-cloud-sdk>=1.0`; `load`/`generate`/`generate_stream`/`generate_with_tools`/`unload`; OpenAI-compatible message format
+- **All 4 free-tier models** in `effgen.models.cerebras_models` — `gpt-oss-120b`, `llama3.1-8b`, `qwen-3-235b-a22b-instruct-2507`, `zai-glm-4.7`; `available_models()`, `free_tier_models()`, `model_info()` helpers
+- **`RateLimitCoordinator`** (`effgen/models/_rate_limit.py`) — sliding-window per-(provider,model) RPM/RPH/RPD + TPM/TPH/TPD throttling; `asyncio.Lock`-guarded; raises `RateLimitExceeded` on daily-budget exhaustion; wired into both sync and async Cerebras paths
+- **Streaming** — `generate_stream()` yields token deltas via SDK `stream=True`; preserves usage on the terminal chunk
+- **Native function-calling** — `generate_with_tools()` integrates with the Agent loop in `hybrid` mode; `supports_native_tools` flag per model
+- **`CostTracker`** (`effgen/models/_cost.py`) — thread-safe singleton with per-provider rate table (Cerebras free-tier $0); `record/total_cost/summary/reset`
+- **Loader integration** — `load_model(..., provider="cerebras")` and `effgen.CerebrasAdapter` re-exported
+- **Docs** — `docs/models/cerebras.md` (all 4 models, rate-limit table, streaming + tool examples)
+
+#### OpenAI Modernization
+- **Expanded model registry** (`effgen/models/openai_models.py`) — gpt-5, gpt-5.4-nano, gpt-4.1, gpt-4o family, o1/o1-mini/o3/o3-mini/o4-mini reasoning models; pricing + `supports_reasoning`/`supports_native_tools`/`supports_prompt_caching` flags
+- **`reasoning_effort`** + **`max_reasoning_tokens`** on `GenerationConfig` — `Literal["minimal","low","medium","high"]`; routed only to reasoning models; chat models silently drop with debug log; unknown values raise `ValueError`
+- **`_pick_default_max_output()`** — family-aware default output budget (reasoning models default to 100k)
+- **Prompt caching surfacing** — `AgentConfig.stable_system_prompt` (default True); `cached_input_tokens` exposed via `ModelResponse.usage` and metadata
+- **Structured outputs v2** — `OpenAIAdapter.generate_structured()`; `to_openai_schema()` helper inlines `$ref`s and forces `additionalProperties: false`; `ModelRefusalError` raised on refusal
+- **OpenAI native tools** — `OpenAIWebSearchTool`, `OpenAICodeInterpreterTool`, `OpenAIFileSearchTool` in `effgen.tools.builtin.openai_native`; routed through Responses API; `ToolIncompatibleError` at Agent init when paired with non-OpenAI models
+- **Docs** — `docs/models/openai.md`, `docs/models/openai_advanced.md`, `docs/tools/openai_native.md`
+
+### Changed
+- **`GenerationConfig`** gains `reasoning_effort` and `max_reasoning_tokens` (both `None` by default — fully back-compat)
+- **`AgentConfig`** gains `stable_system_prompt: bool = True`
+- **OpenAI adapter** uses `max_completion_tokens` (replaces deprecated `max_tokens`); drops unsupported `stop`, `temperature`, `top_p` params for reasoning/gpt-5 models
+- **`load_model(..., provider=...)`** routes correctly to OpenAI/Anthropic/Gemini/Cerebras (previously HF-only); HF-specific kwargs are stripped before reaching API adapters; OpenAI auto-detection prefix list extended to gpt-5/o-series
+
+### Fixed
+- **Stability sweep** — ruff cleanup (F821, B023, F841, C401, C408, I001, F401, F541); 2 real bug fixes (missing `Any` import; loop-closure variable capture)
+- **`load_model(..., provider="openai"/"anthropic"/"gemini")`** — was silently treated as HF-only
+- **OpenAI** — warns rather than errors on unknown model ids
+- **Transformers engine** — `unload()` now removes `accelerate` hooks and syncs CUDA, eliminating cross-test CUDA-state bleed
+- **GPU e2e/integration test fixtures** — disabled bitsandbytes 4-bit (CUDA state leak) and narrowed scope to class-level, fixing intermittent Qwen2 RMSNorm aborts
+- **Cerebras streaming test** — retries on Cerebras `429`/`queue_exceeded`
+
+---
+
 ## [0.2.0] - 2026-04-09
 
 ### Highlights

@@ -1,0 +1,138 @@
+name: Cerebras Quick Check
+
+# Lightweight push-time verification that CerebrasAdapter still talks to the
+# real API for the two callable free-tier models (llama3.1-8b, qwen-3-235b).
+# Designed to catch regressions BEFORE the nightly suite reports them as bugs.
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "effgen/models/cerebras_adapter.py"
+      - "effgen/models/cerebras_models.py"
+      - "effgen/models/_rate_limit.py"
+      - "effgen/models/_cost.py"
+      - "effgen/core/agent.py"
+      - "effgen/tools/builtin/calculator.py"
+      - "pyproject.toml"
+      - ".github/workflows/cerebras-quick.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "effgen/models/cerebras_adapter.py"
+      - "effgen/models/cerebras_models.py"
+      - "effgen/models/_rate_limit.py"
+      - "effgen/models/_cost.py"
+      - "effgen/core/agent.py"
+      - "effgen/tools/builtin/calculator.py"
+      - "pyproject.toml"
+      - ".github/workflows/cerebras-quick.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: cerebras-quick-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  cerebras-quick-check:
+    name: Cerebras Quick Check (${{ matrix.model }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        model:
+          - "llama3.1-8b"
+          - "qwen-3-235b-a22b-instruct-2507"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-cerebras-quick-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-cerebras-quick-
+
+      - name: Install effgen with cerebras extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,cerebras]" -q
+
+      - name: Generation + streaming + tool-calling smoke
+        env:
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          MODEL: ${{ matrix.model }}
+        run: |
+          python - <<'PY'
+          import os, sys, time
+          api_key = os.getenv("CEREBRAS_API_KEY", "")
+          model_id = os.environ["MODEL"]
+
+          if not api_key:
+              print(f"SKIPPED: CEREBRAS_API_KEY not set for {model_id}")
+              sys.exit(0)
+
+          from effgen.models.cerebras_adapter import CerebrasAdapter
+          from effgen.models.base import GenerationConfig
+          from effgen.core.agent import Agent, AgentConfig
+          from effgen.tools.builtin.calculator import Calculator
+
+          # ----- 1. Plain generate ------------------------------------
+          adapter = CerebrasAdapter(model_id, enable_rate_limiting=False)
+          adapter.load()
+          out = adapter.generate(
+              "Reply with a single word: ALIVE",
+              config=GenerationConfig(temperature=0.0, max_tokens=8),
+          )
+          if not (out.text or "").strip():
+              print(f"FAIL[{model_id}]: generate returned empty text")
+              sys.exit(1)
+          print(f"OK[{model_id}]: generate -> {out.text!r}")
+
+          # ----- 2. Streaming -----------------------------------------
+          chunks = list(adapter.generate_stream("Count: 1, 2, 3."))
+          text = "".join(chunks)
+          if not text:
+              print(f"FAIL[{model_id}]: stream returned 0 chunks")
+              sys.exit(1)
+          print(f"OK[{model_id}]: stream -> {len(chunks)} chunks, {len(text)} chars")
+
+          # ----- 3. Tool-calling agent (12*12=144) --------------------
+          last_output = ""
+          for attempt in range(2):
+              cfg = AgentConfig(
+                  name=f"quick-{model_id}",
+                  model=adapter,
+                  tools=[Calculator()],
+                  system_prompt="Use the calculator tool. Answer concisely.",
+                  max_iterations=5,
+                  temperature=0.1,
+              )
+              try:
+                  resp = Agent(cfg).run("What is 12 * 12?")
+                  last_output = str(resp.output or "")
+              except Exception as exc:
+                  print(f"WARN[{model_id}] attempt {attempt+1}: {exc}")
+                  last_output = ""
+              if "144" in last_output:
+                  print(f"OK[{model_id}]: tool-calling -> '144' present")
+                  break
+              time.sleep(3)
+          else:
+              print(f"FAIL[{model_id}]: '144' missing from output: {last_output!r}")
+              adapter.unload()
+              sys.exit(1)
+
+          adapter.unload()
+          print(f"All Cerebras quick checks passed for {model_id}")
+          PY

@@ -36,6 +36,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (4 free-tier models, streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](CHANGELOG.md#021---2026-04-25) |
 | 🚀 | **9 Apr 2026** | **v0.2.0 Released**: Major release — native tool calling, guardrails, multi-agent orchestration, RAG pipeline, 31 tools, eval framework, production API server, MLX Apple Silicon support, Python & TypeScript SDKs. [See changelog](CHANGELOG.md#020---2026-04-09) |
 | 🍎 | **8 Apr 2026** | **MLX & Apple Silicon support merged** (PR #4): Native Metal GPU acceleration via MLX & MLX-VLM backends, hardware detection, 5 Gradio GUI examples. `pip install effgen[mlx]` |
 | 🔧 | **25 Mar 2026** | **v0.1.3 Released**: Verification hardening — smarter loop detection, "skip the tool" prompting, model-aware token counting, sub-agent depth limits, circuit breaker persistence. [See changelog](CHANGELOG.md#013---2026-03-25) |
@@ -268,10 +269,30 @@ Production API<br/>
 
 ---
 
-## 🆕 What's New in v0.2.0
+## 🆕 What's New in v0.2.1
 
 <details open>
-<summary><b>Top 5 features that make v0.2.0 special</b></summary>
+<summary><b>Top 5 features in v0.2.1</b></summary>
+
+1. **Cerebras backend** — 4 free-tier models (`llama3.1-8b`, `qwen-3-235b-a22b-instruct-2507`, `gpt-oss-120b`, `zai-glm-4.7`) with streaming, native function-calling, automatic RPM/TPM/RPD/TPD rate-limit coordination, and per-call cost tracking. `pip install effgen[cerebras]` and set `CEREBRAS_API_KEY`.
+
+   ```python
+   from effgen import load_model
+   model = load_model("llama3.1-8b", provider="cerebras")
+   ```
+
+2. **OpenAI gpt-5 / gpt-5.4-nano / o-series reasoning models** — full registry coverage with `reasoning_effort` (`minimal`/`low`/`medium`/`high`) and `max_reasoning_tokens` on `GenerationConfig`. Reasoning payloads are routed only to reasoning-capable models.
+
+3. **OpenAI prompt caching surfacing** — `cached_input_tokens` exposed on `ModelResponse.usage`; `AgentConfig.stable_system_prompt=True` keeps the system prompt anchored at position 0 to maximize OpenAI's automatic ≥1024-token prefix cache hit rate.
+
+4. **Structured outputs v2** — `OpenAIAdapter.generate_structured()` with strict JSON Schema; `to_openai_schema(pydantic_model)` inlines `$ref`s and forces `additionalProperties: false`; refusals raise `ModelRefusalError`.
+
+5. **OpenAI native tools** — `OpenAIWebSearchTool`, `OpenAICodeInterpreterTool`, `OpenAIFileSearchTool` route through OpenAI's Responses API and compose with effGen's local tools in the same agent. `ToolIncompatibleError` fires at Agent init when paired with a non-OpenAI model.
+
+</details>
+
+<details>
+<summary><b>Top 5 features from v0.2.0</b></summary>
 
 1. **Native Tool Calling** — Qwen, Llama, Mistral models use built-in function calling instead of text parsing. Set `tool_calling_mode="native"` or `"hybrid"`. Structured JSON/Pydantic output validation included.
 
@@ -282,8 +303,6 @@ Production API<br/>
 4. **Production API Server** — OpenAI-compatible `/v1/chat/completions`, request queuing, agent pooling, multi-tenancy, API keys. Drop-in OpenAI replacement with local SLMs.
 
 5. **Apple Silicon Native** — MLX & MLX-VLM backends for M1/M2/M3/M4. Metal GPU acceleration, unified memory. `pip install effgen[mlx]`.
-
-**Also new:** 31 built-in tools (was 14), multi-agent DAG workflows, model router with speculative execution, checkpointing & sessions, eval framework (270 test cases), OpenTelemetry tracing, Python & TypeScript SDKs, GGUF/AWQ/GPTQ quantization, continuous batching.
 
 </details>
 
@@ -559,7 +578,7 @@ effGen supports **7 inference backends** and is tested across 11+ model families
 | **MLX-VLM** | Apple Silicon | Vision-Language models (Qwen2-VL, LLaVA, Phi-3 Vision, 30+ architectures) |
 | **vLLM** | NVIDIA GPU | High-throughput batch inference |
 | **Transformers** | Any (CPU/GPU) | Universal compatibility |
-| **API** | Cloud | OpenAI, Anthropic, Google Gemini |
+| **API** | Cloud | OpenAI (gpt-5/gpt-5.4/o-series + reasoning_effort), Anthropic, Google Gemini, Cerebras (4 free-tier models, streaming + native tools) |
 
 ### Top Recommended Models
 
