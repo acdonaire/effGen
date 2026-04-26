@@ -1,19 +1,19 @@
 """
 Google Gemini API adapter.
 
-This module provides integration with Google's Gemini API, supporting:
-- Gemini Pro, Flash, and Ultra models
-- Multimodal support (text, images, video)
-- Function calling
-- Grounding with Google Search
+Uses the `google-genai` SDK (google.genai). Supports Gemini Pro, Flash,
+Flash-Lite, and Gemma models with:
+- Native function calling / tool use
+- Thinking budget (extended reasoning for supporting models)
+- Multimodal inputs
+- Streaming
 - Cost tracking
-- Streaming responses
+- Rate-limit-aware retry with exponential back-off
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import random
 import time
 from collections.abc import Iterator
@@ -38,232 +38,177 @@ class GeminiAdapter(FunctionCallingModel):
     """
     Adapter for Google Gemini API models.
 
-    Provides a unified interface for Gemini models with support for
-    multimodal inputs, function calling, and grounding.
+    Wraps the `google.genai` SDK and exposes a unified effGen interface.
 
     Features:
-    - Support for Gemini Pro, Flash, Ultra models
-    - Multimodal inputs (text, images, video, audio)
-    - Function calling support
-    - Grounding with Google Search
-    - Cost tracking and usage monitoring
-    - Streaming responses
-    - Safety settings configuration
+    - Gemini 2.x / 3.x and Gemma 3 / 4 family support
+    - Native function calling (OpenAI-format tools auto-converted)
+    - thinking_budget / include_thoughts for reasoning models
+    - Streaming via generate_content_stream
+    - Per-call cost tracking
+    - Rate-limit-aware retry (honors Retry-After from 429s)
 
     Attributes:
-        model_name: Gemini model identifier (e.g., 'gemini-pro', 'gemini-pro-vision')
-        api_key: Google API key (reads from env if not provided)
+        model_name: Gemini model ID (e.g. 'gemini-3.1-flash-lite-preview')
+        api_key: Google API key (reads GOOGLE_API_KEY from env if not given)
         safety_settings: Content safety filter settings
     """
 
-    # Cost per 1M tokens (input/output) - Free tier available
-    COST_PER_1M_TOKENS = {
+    COST_PER_1M_TOKENS: dict[str, tuple[float, float]] = {
         "gemini-1.5-pro": (3.5, 10.5),
         "gemini-1.5-flash": (0.35, 1.05),
         "gemini-pro": (0.5, 1.5),
         "gemini-pro-vision": (0.5, 1.5),
         "gemini-ultra": (10.0, 30.0),
+        # Gemini 2.x / 3.x — free tier, cost effectively $0 on free quota
+        "gemini-2.0-flash": (0.1, 0.4),
+        "gemini-2.5-flash": (0.15, 0.6),
+        "gemini-2.5-pro": (1.25, 5.0),
+        "gemini-3.1-flash-lite": (0.01, 0.04),
     }
 
-    # Context lengths — pulled from gemini_models registry first, with a
-    # legacy fallback table for the older model IDs.
-    CONTEXT_LENGTHS = {
-        "gemini-1.5-pro": 1000000,
-        "gemini-1.5-flash": 1000000,
-        "gemini-pro": 32760,
-        "gemini-pro-vision": 16384,
-        "gemini-ultra": 32760,
+    CONTEXT_LENGTHS: dict[str, int] = {
+        "gemini-1.5-pro": 1_000_000,
+        "gemini-1.5-flash": 1_000_000,
+        "gemini-pro": 32_760,
+        "gemini-pro-vision": 16_384,
+        "gemini-ultra": 32_760,
         **{m: info["context"] for m, info in GEMINI_MODELS.items()},
-        **{alias: GEMINI_MODELS[c]["context"] for alias, c in GEMINI_MODEL_ALIASES.items() if c in GEMINI_MODELS},
+        **{
+            alias: GEMINI_MODELS[c]["context"]
+            for alias, c in GEMINI_MODEL_ALIASES.items()
+            if c in GEMINI_MODELS
+        },
     }
+
+    MAX_RATE_LIMIT_RETRIES = 7
 
     def __init__(
         self,
-        model_name: str = "gemini-1.5-pro",
+        model_name: str = "gemini-2.0-flash",
         api_key: str | None = None,
         safety_settings: list[dict[str, Any]] | None = None,
-        **kwargs
-    ):
-        """
-        Initialize Gemini adapter.
-
-        Args:
-            model_name: Gemini model identifier
-            api_key: Google API key (defaults to GOOGLE_API_KEY env var)
-            safety_settings: Content safety filter settings
-            **kwargs: Additional Gemini client parameters
-        """
+        **kwargs: Any,
+    ) -> None:
+        import os
         super().__init__(
             model_name=model_name,
             model_type=ModelType.GEMINI,
-            context_length=self.CONTEXT_LENGTHS.get(model_name, 32760)
+            context_length=self.CONTEXT_LENGTHS.get(model_name, 32_760),
         )
-
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "Google API key not provided. Set GOOGLE_API_KEY environment "
                 "variable or pass api_key parameter."
             )
-
         self.safety_settings = safety_settings
         self.additional_kwargs = kwargs
-
-        self.client = None
-        self.model = None
+        self.client: Any = None
         self.total_cost = 0.0
         self.total_tokens = 0
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
     def load(self) -> None:
-        """
-        Initialize the Gemini client.
-
-        Raises:
-            RuntimeError: If google-generativeai package is not installed
-            ValueError: If API key is invalid
-        """
+        """Initialize the google.genai client."""
         try:
-            import google.generativeai as genai
-        except ImportError as e:
+            import google.genai as genai  # type: ignore[import]
+        except ImportError as exc:
             raise RuntimeError(
-                "google-generativeai package is not installed. Install it with: "
-                "pip install google-generativeai"
-            ) from e
+                "google-genai package is not installed. "
+                "Install it with: pip install google-genai"
+            ) from exc
 
         try:
-            logger.info(f"Initializing Gemini client for model '{self.model_name}'...")
-
-            # Configure API key
-            genai.configure(api_key=self.api_key)
-
-            # Initialize model
-            generation_config = {}
-            if self.safety_settings:
-                generation_config["safety_settings"] = self.safety_settings
-
-            generation_config.update(self.additional_kwargs)
-
-            self.model = genai.GenerativeModel(
-                model_name=self.model_name,
-                **generation_config
-            )
-
-            self.client = genai
-
+            logger.info("Initializing Gemini client for model '%s'…", self.model_name)
+            self.client = genai.Client(api_key=self.api_key)
             self._is_loaded = True
-
             self._metadata = {
                 "model_name": self.model_name,
                 "context_length": self.get_context_length(),
                 "supports_functions": True,
                 "supports_streaming": True,
-                "supports_multimodal": "vision" in self.model_name or "1.5" in self.model_name,
+                "supports_multimodal": True,
             }
+            logger.info("Gemini client initialized for '%s'", self.model_name)
+        except Exception as exc:
+            logger.error("Failed to initialize Gemini client: %s", exc)
+            raise RuntimeError(f"Gemini initialization failed: {exc}") from exc
 
-            logger.info(f"Gemini client initialized for '{self.model_name}'")
+    def unload(self) -> None:
+        """Release the Gemini client."""
+        if self.client is not None:
+            logger.info(
+                "Closing Gemini client. Total cost: $%.4f, Total tokens: %d",
+                self.total_cost,
+                self.total_tokens,
+            )
+            self.client = None
+        self._is_loaded = False
 
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini client: {e}")
-            raise RuntimeError(f"Gemini initialization failed: {e}") from e
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _model_supports_thinking(self) -> bool:
+        """Return True if the registered model entry has supports_thinking=True."""
+        canonical = GEMINI_MODEL_ALIASES.get(self.model_name, self.model_name)
+        info = GEMINI_MODELS.get(canonical) or GEMINI_MODELS.get(self.model_name)
+        if info is None:
+            return False
+        return bool(info.get("supports_thinking", False))
 
     def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
-        """
-        Calculate cost for the API call.
-
-        Args:
-            prompt_tokens: Number of input tokens
-            completion_tokens: Number of output tokens
-
-        Returns:
-            float: Estimated cost in USD
-        """
-        # Find matching cost entry
-        cost_entry = None
+        cost_entry: tuple[float, float] | None = None
         for model_id, costs in self.COST_PER_1M_TOKENS.items():
             if model_id in self.model_name:
                 cost_entry = costs
                 break
-
         if cost_entry is None:
-            logger.warning(f"Unknown cost for model '{self.model_name}', using Pro pricing")
-            cost_entry = (0.5, 1.5)  # Default to Pro pricing
+            cost_entry = (0.5, 1.5)
+        return (prompt_tokens / 1_000_000) * cost_entry[0] + (
+            completion_tokens / 1_000_000
+        ) * cost_entry[1]
 
-        input_cost = (prompt_tokens / 1_000_000) * cost_entry[0]
-        output_cost = (completion_tokens / 1_000_000) * cost_entry[1]
+    def _build_config(self, config: GenerationConfig | None) -> Any:
+        """Build a google.genai GenerateContentConfig from an effGen GenerationConfig."""
+        from google.genai import types  # type: ignore[import]
 
-        return input_cost + output_cost
-
-    def _prepare_content(
-        self,
-        prompt: str | list[str | dict[str, Any]]
-    ) -> str | list:
-        """
-        Prepare content for Gemini API.
-
-        Supports both text-only and multimodal inputs.
-
-        Args:
-            prompt: Text string or list of content parts (text, images, etc.)
-
-        Returns:
-            Formatted content for Gemini API
-        """
-        if isinstance(prompt, str):
-            return prompt
-
-        # Handle multimodal content
-        parts = []
-        for item in prompt:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                # Handle image, video, or other content types
-                if "image" in item:
-                    # Load image
-                    import PIL.Image
-                    image = PIL.Image.open(item["image"])
-                    parts.append(image)
-                elif "video" in item:
-                    # Video content
-                    parts.append(item)
-                else:
-                    parts.append(item)
-            else:
-                parts.append(item)
-
-        return parts
-
-    def _create_generation_config(
-        self,
-        config: GenerationConfig | None = None
-    ) -> dict[str, Any]:
-        """
-        Create Gemini generation config.
-
-        Args:
-            config: Our generation configuration
-
-        Returns:
-            Gemini generation config dict
-        """
         if config is None:
             config = GenerationConfig()
 
-        gen_config = {
+        kwargs: dict[str, Any] = {
             "temperature": config.temperature,
             "top_p": config.top_p,
             "top_k": config.top_k,
             "max_output_tokens": config.max_tokens or 2048,
         }
-
         if config.stop_sequences:
-            gen_config["stop_sequences"] = config.stop_sequences
+            kwargs["stop_sequences"] = config.stop_sequences
 
-        return gen_config
+        # Thinking config — only for models that support it.
+        if config.thinking_budget is not None:
+            if self._model_supports_thinking():
+                kwargs["thinking_config"] = types.ThinkingConfig(
+                    thinking_budget=config.thinking_budget,
+                    include_thoughts=config.include_thoughts,
+                )
+            else:
+                logger.debug(
+                    "Model '%s' does not support thinking_budget; ignoring.",
+                    self.model_name,
+                )
+
+        if self.safety_settings:
+            kwargs["safety_settings"] = self.safety_settings
+
+        return types.GenerateContentConfig(**kwargs)
 
     # Gemini's Schema accepts a strict subset of JSON Schema. Strip extras
-    # (minLength/maxLength/minimum/maximum/default/etc.) before sending so
-    # the SDK does not raise "Unknown field for Schema: ..." errors.
+    # before sending so the SDK does not raise "Unknown field for Schema".
     _GEMINI_SCHEMA_FIELDS = {
         "type", "description", "enum", "items", "properties",
         "required", "format", "nullable",
@@ -278,8 +223,7 @@ class GeminiAdapter(FunctionCallingModel):
                     continue
                 if k == "properties" and isinstance(v, dict):
                     cleaned[k] = {
-                        prop_name: cls._sanitize_schema(prop_schema)
-                        for prop_name, prop_schema in v.items()
+                        name: cls._sanitize_schema(s) for name, s in v.items()
                     }
                 elif k == "items":
                     cleaned[k] = cls._sanitize_schema(v)
@@ -292,17 +236,37 @@ class GeminiAdapter(FunctionCallingModel):
             return [cls._sanitize_schema(v) for v in schema]
         return schema
 
-    # Maximum number of retries for transient errors (429 / 5xx). Each retry
-    # honors any ``retry_delay`` the SDK attaches to ResourceExhausted; for
-    # 5xx we fall back to exponential backoff.
-    MAX_RATE_LIMIT_RETRIES = 5
+    @classmethod
+    def _convert_tools_to_genai(cls, tools: list) -> list:
+        """Convert OpenAI-style tool specs to google.genai Tool objects."""
+        from google.genai import types  # type: ignore[import]
+
+        function_declarations: list[Any] = []
+        passthrough: list[Any] = []
+
+        for t in tools:
+            if isinstance(t, types.Tool):
+                passthrough.append(t)
+                continue
+            if isinstance(t, dict):
+                func = t["function"] if t.get("type") == "function" and "function" in t else t
+                params = func.get("parameters") or {"type": "object", "properties": {}}
+                params = cls._sanitize_schema(params)
+                function_declarations.append(
+                    types.FunctionDeclaration(
+                        name=func["name"],
+                        description=func.get("description", ""),
+                        parameters=params,
+                    )
+                )
+
+        result = list(passthrough)
+        if function_declarations:
+            result.append(types.Tool(function_declarations=function_declarations))
+        return result
 
     @staticmethod
     def _suggested_retry_delay(exc: Exception) -> float | None:
-        """Pull Google's recommended retry delay (seconds) out of *exc*.
-
-        Returns ``None`` if no delay is available.
-        """
         for attr in ("retry_delay", "_details", "details"):
             obj = getattr(exc, attr, None)
             if obj is None:
@@ -332,43 +296,47 @@ class GeminiAdapter(FunctionCallingModel):
                 return None
         return None
 
-    def _generate_with_retry(self, *, content: Any, generation_config: Any, stream: bool = False, **kwargs):
-        """Call ``self.model.generate_content`` with rate-limit-aware retries.
-
-        Honors ``retry_delay`` from ``ResourceExhausted`` (HTTP 429) and uses
-        exponential backoff for other transient errors (5xx / DEADLINE_EXCEEDED).
-        Non-retryable errors are raised immediately.
-        """
-        try:
-            from google.api_core import exceptions as gax_exc
-        except ImportError:  # pragma: no cover
-            gax_exc = None  # type: ignore[assignment]
+    def _generate_with_retry(
+        self,
+        *,
+        contents: Any,
+        gen_config: Any,
+        stream: bool = False,
+        tools: list | None = None,
+    ) -> Any:
+        """Call client.models.generate_content[_stream] with rate-limit retries."""
+        if tools:
+            gen_config = _inject_tools(gen_config, tools)
 
         last_exc: Exception | None = None
         for attempt in range(1, self.MAX_RATE_LIMIT_RETRIES + 1):
             try:
                 if stream:
-                    return self.model.generate_content(
-                        content, generation_config=generation_config, stream=True, **kwargs
+                    return self.client.models.generate_content_stream(
+                        model=self.model_name,
+                        contents=contents,
+                        config=gen_config,
                     )
-                return self.model.generate_content(
-                    content, generation_config=generation_config, **kwargs
+                return self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=gen_config,
                 )
             except Exception as exc:
                 last_exc = exc
-                is_quota = (
-                    gax_exc is not None and isinstance(exc, gax_exc.ResourceExhausted)
-                ) or "429" in str(exc) or "quota" in str(exc).lower()
-                is_transient_5xx = gax_exc is not None and isinstance(
-                    exc,
-                    (gax_exc.ServiceUnavailable, gax_exc.DeadlineExceeded, gax_exc.InternalServerError),
+                exc_str = str(exc)
+                exc_cls = type(exc).__name__
+                is_quota = "429" in exc_str or "quota" in exc_str.lower() or "ResourceExhausted" in exc_cls
+                is_transient = (
+                    any(kw in exc_cls for kw in ("ServiceUnavailable", "DeadlineExceeded", "InternalServerError", "ServerError"))
+                    or "503" in exc_str
+                    or "500" in exc_str
+                    or "UNAVAILABLE" in exc_str
                 )
-                if not (is_quota or is_transient_5xx):
+                if not (is_quota or is_transient):
                     raise
-
                 if attempt >= self.MAX_RATE_LIMIT_RETRIES:
                     break
-
                 delay = self._suggested_retry_delay(exc) if is_quota else None
                 if delay is None:
                     delay = min(60.0, (2 ** attempt) + random.uniform(0, 0.5))
@@ -379,421 +347,236 @@ class GeminiAdapter(FunctionCallingModel):
                     attempt, self.MAX_RATE_LIMIT_RETRIES, type(exc).__name__, delay,
                 )
                 time.sleep(delay)
-
         assert last_exc is not None
         raise last_exc
 
-    @classmethod
-    def _convert_tools_to_gemini(cls, tools: list) -> list:
-        """Convert OpenAI-style tool specs to Gemini Tool objects.
+    def _prepare_content(
+        self, prompt: str | list[str | dict[str, Any]]
+    ) -> str | list:
+        if isinstance(prompt, str):
+            return prompt
+        parts: list[Any] = []
+        for item in prompt:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and "image" in item:
+                import PIL.Image  # type: ignore[import]
+                parts.append(PIL.Image.open(item["image"]))
+            else:
+                parts.append(item)
+        return parts
 
-        Accepts:
-          - Already-converted Gemini Tool objects (passed through).
-          - OpenAI-format dicts: {"type": "function", "function": {...}}.
-          - Raw function dicts: {"name": ..., "description": ..., "parameters": ...}.
-        """
-        from google.generativeai.types import FunctionDeclaration, Tool
-
-        function_declarations = []
-        passthrough = []
-        for t in tools:
-            if isinstance(t, Tool):
-                passthrough.append(t)
-                continue
-            if isinstance(t, dict):
-                if t.get("type") == "function" and "function" in t:
-                    func = t["function"]
-                else:
-                    func = t
-                params = func.get("parameters") or {"type": "object", "properties": {}}
-                params = cls._sanitize_schema(params)
-                function_declarations.append(
-                    FunctionDeclaration(
-                        name=func["name"],
-                        description=func.get("description", ""),
-                        parameters=params,
-                    )
-                )
-
-        result = list(passthrough)
-        if function_declarations:
-            result.append(Tool(function_declarations=function_declarations))
-        return result
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def generate(
         self,
         prompt: str | list[str | dict[str, Any]],
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any,
     ) -> GenerationResult:
-        """
-        Generate text from a prompt.
-
-        Args:
-            prompt: Input text or multimodal content
-            config: Generation configuration
-            **kwargs: Additional Gemini parameters
-
-        Returns:
-            GenerationResult with generated text and metadata
-
-        Raises:
-            RuntimeError: If client is not initialized or request fails
-            ValueError: If prompt exceeds context length
-        """
+        """Generate text (or a tool call) from *prompt*."""
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
-
         if isinstance(prompt, str):
             self.validate_prompt(prompt)
 
-        generation_config = self._create_generation_config(config)
+        gen_config = self._build_config(config)
         content = self._prepare_content(prompt)
 
-        # Convert OpenAI-style tool specs to Gemini FunctionDeclaration objects
-        # so the agent's native-tool-calling path works for Gemini models.
-        if "tools" in kwargs and kwargs["tools"]:
-            kwargs["tools"] = self._convert_tools_to_gemini(kwargs["tools"])
+        raw_tools: list | None = None
+        if kwargs.get("tools"):
+            raw_tools = self._convert_tools_to_genai(kwargs.pop("tools"))
 
         try:
-            # Generate content
             response = self._generate_with_retry(
-                content=content,
-                generation_config=generation_config,
-                **kwargs,
+                contents=content,
+                gen_config=gen_config,
+                tools=raw_tools,
             )
 
-            # Extract response. When the model returns a function_call (no
-            # text part), response.text raises; collect text parts directly
-            # and surface tool calls via metadata so callers can dispatch.
             generated_text = ""
             tool_calls: list[dict[str, Any]] = []
-            try:
-                generated_text = response.text
-            except Exception:
-                if hasattr(response, "candidates") and response.candidates:
-                    for part in response.candidates[0].content.parts:
-                        if getattr(part, "text", None):
-                            generated_text += part.text
-                        fc = getattr(part, "function_call", None)
-                        if fc and getattr(fc, "name", None):
-                            args = {}
-                            if hasattr(fc, "args"):
-                                try:
-                                    args = dict(fc.args)
-                                except Exception:
-                                    args = {k: fc.args[k] for k in fc.args}
-                            tool_calls.append({"name": fc.name, "arguments": args})
+            thinking_text = ""
 
-            # Surface Gemini's structured function calls as Qwen-style
-            # <tool_call> tokens so the agent's native parser can dispatch
-            # them without a Gemini-specific code path.
+            if hasattr(response, "candidates") and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if getattr(part, "thought", False):
+                        # Thinking trace part
+                        thinking_text += getattr(part, "text", "") or ""
+                    elif getattr(part, "text", None):
+                        generated_text += part.text
+                    fc = getattr(part, "function_call", None)
+                    if fc and getattr(fc, "name", None):
+                        args: dict[str, Any] = {}
+                        if hasattr(fc, "args"):
+                            try:
+                                args = dict(fc.args)
+                            except Exception:
+                                args = {k: fc.args[k] for k in fc.args}
+                        tool_calls.append({"name": fc.name, "arguments": args})
+            else:
+                try:
+                    generated_text = response.text or ""
+                except Exception:
+                    pass
+
+            # Emit tool calls as <tool_call> tokens for the agent dispatcher.
             if tool_calls and "<tool_call>" not in generated_text:
                 import json as _json
-                fc = tool_calls[0]
+                fc0 = tool_calls[0]
                 generated_text = (
                     f"{generated_text}\n<tool_call>"
-                    f"{_json.dumps({'name': fc['name'], 'arguments': fc['arguments']})}"
+                    f"{_json.dumps({'name': fc0['name'], 'arguments': fc0['arguments']})}"
                     f"</tool_call>"
                 ).strip()
 
-            # Get token usage
+            # Token usage
             try:
-                prompt_tokens = response.usage_metadata.prompt_token_count
-                completion_tokens = response.usage_metadata.candidates_token_count
-                total_tokens = response.usage_metadata.total_token_count
+                um = response.usage_metadata
+                prompt_tokens = um.prompt_token_count or 0
+                completion_tokens = um.candidates_token_count or 0
+                total_tokens = um.total_token_count or (prompt_tokens + completion_tokens)
+                thoughts_tokens = getattr(um, "thoughts_token_count", None) or 0
             except AttributeError:
-                # Fallback if usage metadata not available
-                logger.warning("Usage metadata not available, using estimates")
                 prompt_tokens = self.count_tokens(
                     prompt if isinstance(prompt, str) else str(prompt)
                 ).count
                 completion_tokens = self.count_tokens(generated_text).count
                 total_tokens = prompt_tokens + completion_tokens
+                thoughts_tokens = 0
 
-            # Calculate cost
             cost = self._calculate_cost(prompt_tokens, completion_tokens)
             self.total_cost += cost
             self.total_tokens += total_tokens
 
-            logger.info(
-                f"Generated {completion_tokens} tokens. "
-                f"Cost: ${cost:.4f}. Total cost: ${self.total_cost:.4f}"
-            )
-
-            # Get finish reason
             finish_reason = "stop"
             if hasattr(response, "candidates") and response.candidates:
                 finish_reason = str(response.candidates[0].finish_reason)
+
+            metadata: dict[str, Any] = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "thoughts_token_count": thoughts_tokens,
+                "cost": cost,
+                "total_cost": self.total_cost,
+                "safety_ratings": getattr(response, "safety_ratings", None),
+                "tool_calls": tool_calls,
+            }
+            if thinking_text:
+                metadata["thinking"] = thinking_text
 
             return GenerationResult(
                 text=generated_text,
                 tokens_used=completion_tokens,
                 finish_reason=finish_reason,
                 model_name=self.model_name,
-                metadata={
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
-                    "cost": cost,
-                    "total_cost": self.total_cost,
-                    "safety_ratings": getattr(response, "safety_ratings", None),
-                    "tool_calls": tool_calls,
-                }
+                metadata=metadata,
             )
 
-        except Exception as e:
-            logger.error(f"Gemini API call failed: {e}")
-            raise RuntimeError(f"Generation failed: {e}") from e
+        except Exception as exc:
+            logger.error("Gemini API call failed: %s", exc)
+            raise RuntimeError(f"Generation failed: {exc}") from exc
 
     def generate_stream(
         self,
         prompt: str | list[str | dict[str, Any]],
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any,
     ) -> Iterator[str]:
-        """
-        Generate text with streaming output.
-
-        Args:
-            prompt: Input text or multimodal content
-            config: Generation configuration
-            **kwargs: Additional Gemini parameters
-
-        Yields:
-            str: Generated text chunks
-
-        Raises:
-            RuntimeError: If client is not initialized or request fails
-            ValueError: If prompt exceeds context length
-        """
+        """Stream generated text chunks."""
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
-
         if isinstance(prompt, str):
             self.validate_prompt(prompt)
 
-        generation_config = self._create_generation_config(config)
+        gen_config = self._build_config(config)
         content = self._prepare_content(prompt)
 
-        if "tools" in kwargs and kwargs["tools"]:
-            kwargs["tools"] = self._convert_tools_to_gemini(kwargs["tools"])
+        raw_tools: list | None = None
+        if kwargs.get("tools"):
+            raw_tools = self._convert_tools_to_genai(kwargs.pop("tools"))
 
         try:
-            # Generate content with streaming
             response = self._generate_with_retry(
-                content=content,
-                generation_config=generation_config,
+                contents=content,
+                gen_config=gen_config,
                 stream=True,
-                **kwargs,
+                tools=raw_tools,
             )
-
             for chunk in response:
-                if chunk.text:
-                    yield chunk.text
-
-        except Exception as e:
-            logger.error(f"Gemini streaming failed: {e}")
-            raise RuntimeError(f"Streaming generation failed: {e}") from e
+                try:
+                    if chunk.text:
+                        yield chunk.text
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.error("Gemini streaming failed: %s", exc)
+            raise RuntimeError(f"Streaming generation failed: {exc}") from exc
 
     def generate_with_tools(
         self,
         prompt: str,
         tools: list[dict[str, Any]],
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any,
     ) -> GenerationResult:
-        """
-        Generate text with function calling support.
+        """Generate with explicit tool list (convenience wrapper over generate)."""
+        return self.generate(prompt, config=config, tools=tools, **kwargs)
 
-        Args:
-            prompt: Input text prompt
-            tools: List of tool definitions in Gemini function format
-            config: Generation configuration
-            **kwargs: Additional Gemini parameters
-
-        Returns:
-            GenerationResult with potential function calls in metadata
-
-        Raises:
-            RuntimeError: If client is not initialized or request fails
-            ValueError: If prompt or tools are invalid
-        """
-        if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
-
-        self.validate_prompt(prompt)
-
-        generation_config = self._create_generation_config(config)
-
-        try:
-            # Convert tools to Gemini format
-            from google.generativeai.types import FunctionDeclaration, Tool
-
-            function_declarations = []
-            for tool in tools:
-                if "function" in tool:
-                    func = tool["function"]
-                    function_declarations.append(
-                        FunctionDeclaration(
-                            name=func["name"],
-                            description=func.get("description", ""),
-                            parameters=func.get("parameters", {}),
-                        )
-                    )
-
-            gemini_tools = [Tool(function_declarations=function_declarations)]
-
-            # Generate content with tools
-            response = self.model.generate_content(
-                prompt,
-                generation_config=generation_config,
-                tools=gemini_tools,
-                **kwargs
-            )
-
-            # Extract response
-            generated_text = response.text if hasattr(response, "text") else ""
-
-            # Extract function calls
-            function_calls = []
-            if hasattr(response, "candidates") and response.candidates:
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, "function_call"):
-                        fc = part.function_call
-                        function_calls.append({
-                            "name": fc.name,
-                            "arguments": dict(fc.args),
-                        })
-
-            # Get token usage
-            try:
-                prompt_tokens = response.usage_metadata.prompt_token_count
-                completion_tokens = response.usage_metadata.candidates_token_count
-                total_tokens = response.usage_metadata.total_token_count
-            except AttributeError:
-                prompt_tokens = self.count_tokens(prompt).count
-                completion_tokens = self.count_tokens(generated_text).count if generated_text else 0
-                total_tokens = prompt_tokens + completion_tokens
-
-            # Calculate cost
-            cost = self._calculate_cost(prompt_tokens, completion_tokens)
-            self.total_cost += cost
-            self.total_tokens += total_tokens
-
-            # Get finish reason
-            finish_reason = "stop"
-            if hasattr(response, "candidates") and response.candidates:
-                finish_reason = str(response.candidates[0].finish_reason)
-
-            return GenerationResult(
-                text=generated_text,
-                tokens_used=completion_tokens,
-                finish_reason=finish_reason,
-                model_name=self.model_name,
-                metadata={
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
-                    "cost": cost,
-                    "total_cost": self.total_cost,
-                    "function_calls": function_calls,
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Gemini API call with tools failed: {e}")
-            raise RuntimeError(f"Generation with tools failed: {e}") from e
+    # ------------------------------------------------------------------
+    # Capabilities / token counting
+    # ------------------------------------------------------------------
 
     def supports_function_calling(self) -> bool:
-        """
-        Check if the model supports function calling.
-
-        Returns:
-            bool: True for most Gemini models
-        """
         return True
 
     def supports_tool_calling(self) -> bool:
-        """Check if the model supports native tool calling.
-
-        Returns:
-            bool: True (Gemini models support native tool calling).
-        """
         return True
 
     def count_tokens(self, text: str) -> TokenCount:
-        """
-        Count tokens in text using Gemini's token counting.
-
-        Args:
-            text: Text to count tokens for
-
-        Returns:
-            TokenCount object
-
-        Raises:
-            RuntimeError: If client is not initialized
-        """
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
-
         try:
-            # Use Gemini's token counting
-            result = self.model.count_tokens(text)
-            return TokenCount(count=result.total_tokens, model_name=self.model_name)
-        except Exception as e:
-            # Fallback to estimation
-            logger.warning(f"Token counting failed: {e}. Using approximation.")
-            # Approximate: 1 token ≈ 4 characters
-            estimated_tokens = len(text) // 4
-            return TokenCount(count=estimated_tokens, model_name=self.model_name)
+            response = self.client.models.count_tokens(
+                model=self.model_name, contents=text
+            )
+            return TokenCount(count=response.total_tokens, model_name=self.model_name)
+        except Exception as exc:
+            logger.warning("Token counting failed: %s. Using approximation.", exc)
+            return TokenCount(count=len(text) // 4, model_name=self.model_name)
 
     def get_context_length(self) -> int:
-        """
-        Get maximum context length.
-
-        Returns:
-            int: Maximum context length in tokens
-        """
         return self._context_length
 
     def get_total_cost(self) -> float:
-        """
-        Get total cost of all API calls.
-
-        Returns:
-            float: Total cost in USD
-        """
         return self.total_cost
 
     def get_total_tokens(self) -> int:
-        """
-        Get total tokens used across all API calls.
-
-        Returns:
-            int: Total token count
-        """
         return self.total_tokens
 
     def reset_usage_stats(self) -> None:
-        """
-        Reset usage statistics (cost and token count).
-        """
         self.total_cost = 0.0
         self.total_tokens = 0
         logger.info("Usage statistics reset")
 
-    def unload(self) -> None:
-        """
-        Close the Gemini client connection.
-        """
-        if self.model is not None:
-            logger.info(
-                f"Closing Gemini client. Total cost: ${self.total_cost:.4f}, "
-                f"Total tokens: {self.total_tokens}"
-            )
-            self.model = None
-            self.client = None
+    # Keep the old _create_generation_config name as a shim so any external
+    # code that called it directly still works (it's not a public API but
+    # let's be safe).
+    def _create_generation_config(self, config: GenerationConfig | None = None) -> Any:
+        return self._build_config(config)
 
-        self._is_loaded = False
+
+# ---------------------------------------------------------------------------
+# Module-level helper (avoids circular import if ever needed)
+# ---------------------------------------------------------------------------
+
+def _inject_tools(gen_config: Any, tools: list) -> Any:
+    """Return a copy of *gen_config* with tools injected."""
+    from google.genai import types  # type: ignore[import]
+
+    d = gen_config.model_dump(exclude_none=True) if hasattr(gen_config, "model_dump") else {}
+    d["tools"] = tools
+    return types.GenerateContentConfig(**d)

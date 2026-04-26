@@ -57,6 +57,57 @@ Limits reflect Google's free-tier defaults as of 2026-04-25 — check
 [ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits)
 for the current numbers.
 
+## Thinking budget (extended reasoning)
+
+Gemini 2.5-Pro and the full Gemini 3.x family support an optional internal
+reasoning step ("thinking") before producing an answer. You can control it
+via two `GenerationConfig` fields:
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `thinking_budget` | `int \| None` | `None` | `None` = field not sent (model decides). `0` = disabled. `> 0` = token budget for reasoning. |
+| `include_thoughts` | `bool` | `False` | When `True`, the reasoning trace is surfaced in `result.metadata["thinking"]`. |
+
+```python
+from effgen.models.gemini_adapter import GeminiAdapter
+from effgen.models.base import GenerationConfig
+
+model = GeminiAdapter(model_name="gemini-3.1-flash-lite-preview")
+model.load()
+
+result = model.generate(
+    "A train travels 120 km in 1.5 hours. What is its average speed?",
+    config=GenerationConfig(
+        thinking_budget=8192,
+        include_thoughts=True,
+        max_tokens=512,
+    ),
+)
+print("Thinking:", result.metadata.get("thinking", "(none)"))
+print("Answer:", result.text)
+print("Thinking tokens:", result.metadata["thoughts_token_count"])
+```
+
+**Notes:**
+- Models that don't support thinking (Gemma, Gemini 2.5-Flash-Lite, Gemini 2.0)
+  silently ignore `thinking_budget`. No error is raised.
+- `include_thoughts=False` (default) still uses the thinking budget internally
+  but doesn't return the trace, saving output tokens.
+- The thinking trace can be long. Set `include_thoughts=True` only when you
+  need to inspect reasoning.
+
+### Models with thinking support
+
+| Model | Thinking | Notes |
+|---|---|---|
+| `gemini-3.1-flash-lite-preview` | yes | Free tier, 15 RPM / 500 RPD |
+| `gemini-3-flash-preview` | yes | Free tier, 5 RPM / 20 RPD |
+| `gemini-3-pro-preview` | yes | Paid only |
+| `gemini-2.5-pro` | yes | Paid only |
+| `gemini-2.5-flash` | no | Free tier |
+| `gemini-2.5-flash-lite` | no | Free tier |
+| `gemma-*` | no | Open weights, generous free-tier RPD |
+
 ## Rate-limit handling
 
 `GeminiAdapter` honors the `retry_delay` Google attaches to 429

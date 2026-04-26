@@ -184,6 +184,21 @@ GEMINI_MODELS: dict[str, dict] = {
     },
 
     # ---- Gemma 3 family (open weights, free-tier hosted) ----
+    "gemma-3-2b": {
+        "family": "gemma",
+        "context": 32_768,
+        "max_output": 8_192,
+        "rpm": 30,
+        "tpm": 15_000,
+        "rpd": 14_400,
+        "free_tier": True,
+        "supports_thinking": False,
+        "supports_grounding": False,
+        "supports_native_tools": False,
+        "supports_vision": False,
+        "tier": "free",
+        "notes": "Gemma 3 2B. Generous free-tier RPD.",
+    },
     "gemma-3-1b": {
         "family": "gemma",
         "context": 32_768,

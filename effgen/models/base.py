@@ -44,6 +44,11 @@ class GenerationConfig:
     # for full back-compat — non-reasoning models silently ignore them.
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
     max_reasoning_tokens: int | None = None
+    # Gemini thinking controls. thinking_budget=None means field not sent;
+    # 0 disables thinking; >0 sets token budget. include_thoughts=True
+    # surfaces the reasoning trace in ModelResponse.metadata["thinking"].
+    thinking_budget: int | None = None
+    include_thoughts: bool = False
 
 
 @dataclass

@@ -64,8 +64,8 @@ def test_sanitize_schema_preserves_property_names():
 # Tool conversion
 # ---------------------------------------------------------------------------
 
-def test_convert_tools_to_gemini_openai_format():
-    pytest.importorskip("google.generativeai")
+def test_convert_tools_to_genai_openai_format():
+    pytest.importorskip("google.genai")
     tools = [{
         "type": "function",
         "function": {
@@ -78,7 +78,7 @@ def test_convert_tools_to_gemini_openai_format():
             },
         },
     }]
-    converted = GeminiAdapter._convert_tools_to_gemini(tools)
+    converted = GeminiAdapter._convert_tools_to_genai(tools)
     assert len(converted) == 1
     fds = converted[0].function_declarations
     assert len(fds) == 1
@@ -106,24 +106,28 @@ def test_generate_with_retry_honors_retry_delay(monkeypatch):
     pytest.importorskip("google.api_core.exceptions")
     from google.api_core import exceptions as gax_exc
 
-    adapter = GeminiAdapter.__new__(GeminiAdapter)  # bypass __init__
+    adapter = GeminiAdapter.__new__(GeminiAdapter)
     adapter.MAX_RATE_LIMIT_RETRIES = 3
+    adapter.model_name = "gemini-3.1-flash-lite-preview"
 
     sleeps: list[float] = []
     monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
 
     calls = {"n": 0}
 
-    class FakeModel:
-        def generate_content(self, *args, **kwargs):
+    class FakeModels:
+        def generate_content(self, **kwargs):
             calls["n"] += 1
             if calls["n"] == 1:
                 exc = gax_exc.ResourceExhausted("Please retry in 7s")
                 raise exc
             return "ok"
 
-    adapter.model = FakeModel()
-    out = adapter._generate_with_retry(content="hi", generation_config=None)
+    class FakeClient:
+        models = FakeModels()
+
+    adapter.client = FakeClient()
+    out = adapter._generate_with_retry(contents="hi", gen_config=None)
     assert out == "ok"
     assert calls["n"] == 2
     assert sleeps and sleeps[0] >= 7.0  # honored suggested delay
@@ -135,15 +139,19 @@ def test_generate_with_retry_gives_up_after_max(monkeypatch):
 
     adapter = GeminiAdapter.__new__(GeminiAdapter)
     adapter.MAX_RATE_LIMIT_RETRIES = 2
+    adapter.model_name = "gemini-3.1-flash-lite-preview"
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
-    class AlwaysFail:
-        def generate_content(self, *args, **kwargs):
+    class FakeModels:
+        def generate_content(self, **kwargs):
             raise gax_exc.ResourceExhausted("Please retry in 1s")
 
-    adapter.model = AlwaysFail()
+    class FakeClient:
+        models = FakeModels()
+
+    adapter.client = FakeClient()
     with pytest.raises(gax_exc.ResourceExhausted):
-        adapter._generate_with_retry(content="hi", generation_config=None)
+        adapter._generate_with_retry(contents="hi", gen_config=None)
 
 
 # ---------------------------------------------------------------------------
