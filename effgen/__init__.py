@@ -119,6 +119,17 @@ try:
 except ImportError:
     pass
 
+# Gemini native tool imports
+try:
+    from effgen.tools.builtin.gemini_native import (
+        GeminiCodeExecutionTool,
+        GeminiNativeTool,
+        GeminiUrlContextTool,
+        GoogleSearchTool,
+    )
+except ImportError:
+    pass
+
 # MLX engine imports (Apple Silicon only)
 try:
     from effgen.models.mlx_engine import MLXEngine

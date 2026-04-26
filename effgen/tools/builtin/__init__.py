@@ -10,6 +10,10 @@ __all__ = [
     "OpenAIWebSearchTool",
     "OpenAICodeInterpreterTool",
     "OpenAIFileSearchTool",
+    # Gemini native (server-side) tools
+    "GoogleSearchTool",
+    "GeminiUrlContextTool",
+    "GeminiCodeExecutionTool",
     # Core tools
     "CodeExecutor",
     "PythonREPL",
@@ -52,7 +56,19 @@ __all__ = [
 
 def __getattr__(name):
     """Lazy import of tools."""
-    if name in ("OpenAIWebSearchTool", "OpenAICodeInterpreterTool", "OpenAIFileSearchTool"):
+    if name in ("GoogleSearchTool", "GeminiUrlContextTool", "GeminiCodeExecutionTool"):
+        from .gemini_native import (
+            GeminiCodeExecutionTool,
+            GeminiUrlContextTool,
+            GoogleSearchTool,
+        )
+        if name == "GoogleSearchTool":
+            return GoogleSearchTool
+        elif name == "GeminiUrlContextTool":
+            return GeminiUrlContextTool
+        else:
+            return GeminiCodeExecutionTool
+    elif name in ("OpenAIWebSearchTool", "OpenAICodeInterpreterTool", "OpenAIFileSearchTool"):
         from .openai_native import (
             OpenAICodeInterpreterTool,
             OpenAIFileSearchTool,

@@ -441,42 +441,66 @@ Question: {task}
                     self.short_term_memory.add_assistant_message(content)
 
     def _validate_native_tool_compatibility(self, tools: list) -> None:
-        """Raise ToolIncompatibleError if any OpenAI native tool is used with a non-OpenAI model."""
+        """Raise ToolIncompatibleError for provider-specific tools used with the wrong model."""
+        from ..models.errors import ToolIncompatibleError
+
+        # --- OpenAI native tools ---
         try:
-            from ..models.errors import ToolIncompatibleError
             from ..models.openai_adapter import OpenAIAdapter
             from ..tools.builtin.openai_native import OpenAINativeTool
+
+            openai_native = [t for t in tools if isinstance(t, OpenAINativeTool)]
+            if openai_native:
+                is_openai = isinstance(self.model, OpenAIAdapter)
+                if not is_openai:
+                    model_name_str = getattr(self.model, "model_name", "") or ""
+                    provider = getattr(self.model, "_provider", "") or ""
+                    is_openai = (
+                        "openai" in provider.lower()
+                        or model_name_str.startswith(("gpt-", "o1", "o3", "o4"))
+                    )
+                if not is_openai:
+                    bad = openai_native[0]
+                    current_model = getattr(self.model, "model_name", str(self.model)) if self.model else "None"
+                    raise ToolIncompatibleError(
+                        tool_name=bad.name,
+                        model_name=current_model,
+                        reason=(
+                            "OpenAI native tools (web_search, code_interpreter, file_search) "
+                            "are executed server-side by OpenAI and require an OpenAIAdapter. "
+                            f"Current model: '{current_model}'. "
+                            "Switch to an OpenAI model or remove the native tool."
+                        ),
+                    )
         except ImportError:
-            return
+            pass
 
-        native_tools = [t for t in tools if isinstance(t, OpenAINativeTool)]
-        if not native_tools:
-            return
+        # --- Gemini native tools ---
+        try:
+            from ..models.gemini_adapter import GeminiAdapter
+            from ..tools.builtin.gemini_native import GeminiNativeTool
 
-        # Check if the primary model is an OpenAI adapter
-        is_openai = isinstance(self.model, OpenAIAdapter)
-        if not is_openai:
-            # Check model name string fallback
-            model_name = getattr(self.model, "model_name", "") or ""
-            provider = getattr(self.model, "_provider", "") or ""
-            is_openai = (
-                "openai" in provider.lower()
-                or model_name.startswith(("gpt-", "o1", "o3", "o4"))
-            )
-
-        if not is_openai:
-            bad = native_tools[0]
-            current_model = getattr(self.model, "model_name", str(self.model)) if self.model else "None"
-            raise ToolIncompatibleError(
-                tool_name=bad.name,
-                model_name=current_model,
-                reason=(
-                    "OpenAI native tools (web_search, code_interpreter, file_search) "
-                    "are executed server-side by OpenAI and require an OpenAIAdapter. "
-                    f"Current model: '{current_model}'. "
-                    "Switch to an OpenAI model or remove the native tool."
-                ),
-            )
+            gemini_native = [t for t in tools if isinstance(t, GeminiNativeTool)]
+            if gemini_native:
+                is_gemini = isinstance(self.model, GeminiAdapter)
+                if not is_gemini:
+                    model_name_str = getattr(self.model, "model_name", "") or ""
+                    is_gemini = model_name_str.startswith("gemini")
+                if not is_gemini:
+                    bad = gemini_native[0]
+                    current_model = getattr(self.model, "model_name", str(self.model)) if self.model else "None"
+                    raise ToolIncompatibleError(
+                        tool_name=bad.name,
+                        model_name=current_model,
+                        reason=(
+                            "Gemini native tools (google_search, url_context, code_execution) "
+                            "are executed server-side by Google and require a GeminiAdapter. "
+                            f"Current model: '{current_model}'. "
+                            "Switch to a Gemini model or remove the native tool."
+                        ),
+                    )
+        except ImportError:
+            pass
 
     @staticmethod
     def _resolve_guardrails(guardrails: Any):
@@ -907,6 +931,11 @@ Question: {task}
         # route through the Responses API directly (not the ReAct loop).
         if self._has_native_tools():
             return self._run_with_native_tools(task, context, **kwargs)
+
+        # If any Gemini native tools are present, route through the Gemini
+        # native-tool path which passes tool objects directly to the adapter.
+        if self._has_gemini_native_tools():
+            return self._run_with_gemini_native_tools(task, context, **kwargs)
 
         iterations = 0
         tool_calls = 0
@@ -2488,6 +2517,110 @@ Question: {task}
 
         return AgentResponse(
             output=result.text or "(no output from native tools call)",
+            success=bool(result.text),
+            mode=AgentMode.SINGLE,
+            iterations=1,
+            tool_calls=tool_calls_made,
+            tokens_used=result.tokens_used,
+            metadata=result.metadata,
+        )
+
+    def _has_gemini_native_tools(self) -> bool:
+        """Return True if any Gemini native tool is in the tools list and model is Gemini."""
+        try:
+            from ..models.gemini_adapter import GeminiAdapter
+            from ..tools.builtin.gemini_native import GeminiNativeTool
+        except ImportError:
+            return False
+        has_native = any(isinstance(t, GeminiNativeTool) for t in self.tools.values())
+        is_gemini = isinstance(self.model, GeminiAdapter)
+        return has_native and is_gemini
+
+    def _run_with_gemini_native_tools(self, task: str, context: dict[str, Any], **kwargs) -> AgentResponse:
+        """Execute a task using Gemini server-side native tools.
+
+        Passes ``GeminiNativeTool`` objects (google_search, url_context, code_execution)
+        directly to the Gemini adapter alongside any local effGen tools serialised
+        as function declarations.  The adapter routes them correctly to the SDK.
+        """
+        from ..tools.builtin.gemini_native import GeminiNativeTool
+
+        # Separate native vs. local tools
+        native_tools: list = []
+        function_tool_specs: list[dict] = []
+        for tool in self.tools.values():
+            if isinstance(tool, GeminiNativeTool):
+                native_tools.append(tool)
+            else:
+                schema = tool.metadata.to_json_schema()
+                function_tool_specs.append({
+                    "type": "function",
+                    "function": {
+                        "name": schema["name"],
+                        "description": schema["description"],
+                        "parameters": schema["parameters"],
+                    },
+                })
+
+        # Combine: native tool objects first, then regular function specs
+        all_tools = native_tools + function_tool_specs
+
+        gen_config = GenerationConfig(
+            temperature=kwargs.get("temperature", self.config.temperature),
+            max_tokens=kwargs.get("max_tokens", 2048),
+        )
+
+        system_note = ""
+        if self.config.system_prompt:
+            system_note = f"{self.config.system_prompt}\n\n"
+
+        prompt = f"{system_note}{task}"
+
+        try:
+            result = self.model.generate(prompt, config=gen_config, tools=all_tools)
+        except Exception as exc:
+            logger.error("Gemini native tool generation failed: %s", exc)
+            return AgentResponse(
+                output=f"Error: {exc}",
+                success=False,
+                mode=AgentMode.SINGLE,
+                iterations=1,
+                tool_calls=0,
+                tokens_used=0,
+                metadata={"error": str(exc)},
+            )
+
+        tool_calls_made = len(result.metadata.get("tool_calls") or [])
+
+        # Execute any local effGen function calls that came back
+        local_tc = result.metadata.get("tool_calls") or []
+        observations: list[str] = []
+        for tc in local_tc:
+            fn_name = tc.get("name", "")
+            fn_args = tc.get("arguments", {})
+            if fn_name in self.tools and not isinstance(self.tools[fn_name], GeminiNativeTool):
+                obs = self._execute_tool(fn_name, json.dumps(fn_args) if isinstance(fn_args, dict) else fn_args)
+                observations.append(f"[{fn_name}({fn_args})] → {obs}")
+
+        if observations and not result.text.strip():
+            obs_text = "\n".join(observations)
+            followup = f"Tool results:\n{obs_text}\n\nBased on these results, answer: {task}"
+            try:
+                followup_result = self.model.generate(followup, config=gen_config)
+                return AgentResponse(
+                    output=followup_result.text,
+                    success=True,
+                    mode=AgentMode.SINGLE,
+                    iterations=2,
+                    tool_calls=tool_calls_made,
+                    tokens_used=result.tokens_used + followup_result.tokens_used,
+                    metadata=result.metadata,
+                )
+            except Exception:
+                pass
+
+        return AgentResponse(
+            output=result.text or "(no output from Gemini native tools call)",
             success=bool(result.text),
             mode=AgentMode.SINGLE,
             iterations=1,

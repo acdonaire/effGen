@@ -19,21 +19,37 @@ pytestmark = pytest.mark.skipif(
     reason="GOOGLE_API_KEY not in ~/.effgen/.env",
 )
 
-# gemini-2.5-flash is required for Google Search grounding;
-# gemini-3.1-flash-lite-preview hits quota on the grounding endpoint.
-MODEL = "gemini-2.5-flash"
+# gemini-2.5-flash supports Google Search grounding.
+# Fall back to gemini-2.5-flash-lite if 2.5-flash hits daily quota.
+_GROUNDING_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
 
-def test_grounding_returns_real_urls():
+def _grounding_generate(prompt: str, grounding: bool, max_tokens: int = 512):
+    """Try grounding-capable models in order; skip on sustained quota exhaustion."""
     from effgen.models.base import GenerationConfig
     from effgen.models.gemini_adapter import GeminiAdapter
 
-    adapter = GeminiAdapter(model_name=MODEL, api_key=GOOGLE_API_KEY)
-    with adapter:
-        result = adapter.generate(
-            "What's a major news headline from this week?",
-            config=GenerationConfig(grounding=True, max_tokens=512),
-        )
+    last_exc: Exception | None = None
+    for model_id in _GROUNDING_MODELS:
+        try:
+            adapter = GeminiAdapter(model_name=model_id, api_key=GOOGLE_API_KEY)
+            with adapter:
+                return adapter.generate(
+                    prompt,
+                    config=GenerationConfig(grounding=grounding, max_tokens=max_tokens),
+                )
+        except RuntimeError as exc:
+            if "quota" in str(exc).lower() or "429" in str(exc):
+                last_exc = exc
+                continue
+            raise
+    pytest.skip(f"All grounding models exhausted daily quota: {last_exc}")
+
+
+def test_grounding_returns_real_urls():
+    result = _grounding_generate(
+        "What's a major news headline from this week?", grounding=True
+    )
 
     assert result.text, "Expected non-empty response text"
     chunks = result.metadata.get("grounding_chunks", [])
@@ -49,15 +65,9 @@ def test_grounding_returns_real_urls():
 
 def test_grounding_false_no_grounding_chunks():
     """Without grounding, metadata.grounding_chunks is empty."""
-    from effgen.models.base import GenerationConfig
-    from effgen.models.gemini_adapter import GeminiAdapter
-
-    adapter = GeminiAdapter(model_name=MODEL, api_key=GOOGLE_API_KEY)
-    with adapter:
-        result = adapter.generate(
-            "Name the capital of France.",
-            config=GenerationConfig(grounding=False, max_tokens=64),
-        )
+    result = _grounding_generate(
+        "Name the capital of France.", grounding=False, max_tokens=64
+    )
 
     chunks = result.metadata.get("grounding_chunks", [])
     assert chunks == [], f"Expected no grounding chunks without grounding=True, got: {chunks}"

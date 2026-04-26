@@ -257,13 +257,28 @@ class GeminiAdapter(FunctionCallingModel):
 
     @classmethod
     def _convert_tools_to_genai(cls, tools: list) -> list:
-        """Convert OpenAI-style tool specs to google.genai Tool objects."""
+        """Convert effGen / OpenAI-style tool specs to google.genai Tool objects.
+
+        Handles:
+        - ``GeminiNativeTool`` subclasses (GoogleSearch, UrlContext, CodeExecution)
+        - ``google.genai.types.Tool`` passthrough
+        - OpenAI-format dicts with ``type="function"``
+        """
         from google.genai import types  # type: ignore[import]
 
         function_declarations: list[Any] = []
         passthrough: list[Any] = []
 
         for t in tools:
+            # Gemini first-party native tools
+            try:
+                from effgen.tools.builtin.gemini_native import GeminiNativeTool
+                if isinstance(t, GeminiNativeTool):
+                    passthrough.append(t.to_gemini_tool())
+                    continue
+            except ImportError:
+                pass
+
             if isinstance(t, types.Tool):
                 passthrough.append(t)
                 continue
@@ -454,10 +469,10 @@ class GeminiAdapter(FunctionCallingModel):
             if hasattr(response, "candidates") and response.candidates:
                 for part in response.candidates[0].content.parts:
                     if getattr(part, "thought", False):
-                        # Thinking trace part
                         thinking_text += getattr(part, "text", "") or ""
                     elif getattr(part, "text", None):
                         generated_text += part.text
+                    # Parallel function calls
                     fc = getattr(part, "function_call", None)
                     if fc and getattr(fc, "name", None):
                         args: dict[str, Any] = {}
@@ -467,21 +482,28 @@ class GeminiAdapter(FunctionCallingModel):
                             except Exception:
                                 args = {k: fc.args[k] for k in fc.args}
                         tool_calls.append({"name": fc.name, "arguments": args})
+                    # Code execution result — surface output in generated text
+                    cer = getattr(part, "code_execution_result", None)
+                    if cer is not None:
+                        output = getattr(cer, "output", None)
+                        if isinstance(output, str) and output:
+                            generated_text += output
             else:
                 try:
                     generated_text = response.text or ""
                 except Exception:
                     pass
 
-            # Emit tool calls as <tool_call> tokens for the agent dispatcher.
+            # Emit ALL tool calls as <tool_call> tokens for the agent dispatcher.
+            # Parallel function calls: Gemini may return multiple functionCall
+            # parts in one response turn.  Append each as a separate tag.
             if tool_calls and "<tool_call>" not in generated_text:
                 import json as _json
-                fc0 = tool_calls[0]
-                generated_text = (
-                    f"{generated_text}\n<tool_call>"
-                    f"{_json.dumps({'name': fc0['name'], 'arguments': fc0['arguments']})}"
-                    f"</tool_call>"
-                ).strip()
+                tc_blocks = "".join(
+                    f"\n<tool_call>{_json.dumps({'name': tc['name'], 'arguments': tc['arguments']})}</tool_call>"
+                    for tc in tool_calls
+                )
+                generated_text = (generated_text + tc_blocks).strip()
 
             # Token usage
             try:
@@ -649,9 +671,36 @@ class GeminiAdapter(FunctionCallingModel):
 # ---------------------------------------------------------------------------
 
 def _inject_tools(gen_config: Any, tools: list) -> Any:
-    """Return a copy of *gen_config* with tools injected."""
+    """Return a copy of *gen_config* with tools injected.
+
+    When the request mixes server-side built-in tools (google_search,
+    url_context, code_execution) with user function declarations, the
+    Gemini API requires ``tool_config.include_server_side_tool_invocations=True``
+    or it returns a 400.
+    """
     from google.genai import types  # type: ignore[import]
 
     d = gen_config.model_dump(exclude_none=True) if hasattr(gen_config, "model_dump") else {}
     d["tools"] = tools
+
+    has_native = False
+    has_function_decls = False
+    for t in tools:
+        if isinstance(t, types.Tool):
+            if any(getattr(t, attr, None) is not None for attr in (
+                "google_search", "url_context", "code_execution",
+                "google_search_retrieval", "retrieval", "computer_use",
+            )):
+                has_native = True
+            if getattr(t, "function_declarations", None):
+                has_function_decls = True
+
+    if has_native and has_function_decls:
+        existing = d.get("tool_config")
+        if isinstance(existing, dict):
+            existing.setdefault("include_server_side_tool_invocations", True)
+            d["tool_config"] = existing
+        else:
+            d["tool_config"] = types.ToolConfig(include_server_side_tool_invocations=True)
+
     return types.GenerateContentConfig(**d)
