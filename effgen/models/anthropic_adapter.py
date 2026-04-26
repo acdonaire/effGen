@@ -1,13 +1,14 @@
 """
 Anthropic Claude API adapter.
 
-This module provides integration with Anthropic's Claude API, supporting:
-- Claude 3 (Opus, Sonnet, Haiku) and newer models
-- Tool use API
-- Extended context (200K tokens)
-- Thinking/chain-of-thought extraction
-- Cost tracking
+Supports:
+- Claude 4.x (Opus 4.7, Sonnet 4.6, Haiku 4.5) and Claude 3.x legacy
+- Extended thinking via GenerationConfig.thinking
+- redacted_thinking block preservation for multi-turn correctness
+- Tool use API with parallel tool calls
+- Prompt caching via cache_control markers
 - Streaming responses
+- Cost tracking
 """
 
 from __future__ import annotations
@@ -17,6 +18,12 @@ import os
 from collections.abc import Iterator
 from typing import Any
 
+from effgen.models.anthropic_models import (
+    get_context_length,
+    get_cost_per_million,
+    get_model_info,
+    supports_thinking,
+)
 from effgen.models.base import (
     FunctionCallingModel,
     GenerationConfig,
@@ -27,70 +34,59 @@ from effgen.models.base import (
 
 logger = logging.getLogger(__name__)
 
+# Anthropic content block types that must be preserved verbatim on re-submit
+_PRESERVE_BLOCK_TYPES = {"thinking", "redacted_thinking", "tool_use"}
+
+
+def _block_to_dict(block: Any) -> dict:
+    """Convert an Anthropic SDK content block to a plain dict for serialization."""
+    if isinstance(block, dict):
+        return block
+    btype = getattr(block, "type", None)
+    if btype == "text":
+        return {"type": "text", "text": block.text}
+    if btype == "thinking":
+        return {"type": "thinking", "thinking": block.thinking}
+    if btype == "redacted_thinking":
+        return {"type": "redacted_thinking", "data": block.data}
+    if btype == "tool_use":
+        return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+    # Fallback: attempt attribute-based serialization
+    d = {"type": btype}
+    for attr in ("text", "thinking", "data", "id", "name", "input"):
+        val = getattr(block, attr, None)
+        if val is not None:
+            d[attr] = val
+    return d
+
 
 class AnthropicAdapter(FunctionCallingModel):
     """
     Adapter for Anthropic Claude API models.
 
-    Provides a unified interface for Claude models with support for
-    tool use, extended context, and advanced features.
-
-    Features:
-    - Support for Claude 3 family (Opus, Sonnet, Haiku) and newer
-    - Tool use API integration
-    - Extended context windows (up to 200K tokens)
-    - Thinking/reasoning extraction
-    - Cost tracking and usage monitoring
-    - Streaming responses
-    - Automatic retries
+    Supports Claude 4.x (Opus 4.7, Sonnet 4.6, Haiku 4.5) and legacy Claude 3.x.
+    Extended thinking, redacted_thinking preservation, tool use, prompt caching,
+    and streaming are all supported.
 
     Attributes:
-        model_name: Anthropic model identifier (e.g., 'claude-3-opus-20240229')
-        api_key: Anthropic API key (reads from env if not provided)
+        model_name: Anthropic model identifier (e.g., 'claude-opus-4-7')
+        api_key: Anthropic API key (reads from ANTHROPIC_API_KEY env var if not provided)
         max_retries: Maximum number of retry attempts
         timeout: Request timeout in seconds
     """
 
-    # Cost per million tokens (input/output) as of 2024
-    COST_PER_1M_TOKENS = {
-        "claude-3-opus-20240229": (15.0, 75.0),
-        "claude-3-sonnet-20240229": (3.0, 15.0),
-        "claude-3-haiku-20240307": (0.25, 1.25),
-        "claude-3-5-sonnet-20240620": (3.0, 15.0),
-        "claude-3-5-sonnet-20241022": (3.0, 15.0),
-    }
-
-    # Context lengths for models
-    CONTEXT_LENGTHS = {
-        "claude-3-opus-20240229": 200000,
-        "claude-3-sonnet-20240229": 200000,
-        "claude-3-haiku-20240307": 200000,
-        "claude-3-5-sonnet-20240620": 200000,
-        "claude-3-5-sonnet-20241022": 200000,
-    }
-
     def __init__(
         self,
-        model_name: str = "claude-3-5-sonnet-20241022",
+        model_name: str = "claude-opus-4-7",
         api_key: str | None = None,
         max_retries: int = 3,
         timeout: int = 60,
-        **kwargs
+        **kwargs,
     ):
-        """
-        Initialize Anthropic adapter.
-
-        Args:
-            model_name: Anthropic model identifier
-            api_key: Anthropic API key (defaults to ANTHROPIC_API_KEY env var)
-            max_retries: Maximum retry attempts for failed requests
-            timeout: Request timeout in seconds
-            **kwargs: Additional Anthropic client parameters
-        """
         super().__init__(
             model_name=model_name,
             model_type=ModelType.ANTHROPIC,
-            context_length=self.CONTEXT_LENGTHS.get(model_name, 200000)
+            context_length=get_context_length(model_name),
         )
 
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -108,20 +104,14 @@ class AnthropicAdapter(FunctionCallingModel):
         self.total_cost = 0.0
         self.total_tokens = 0
 
-    def load(self) -> None:
-        """
-        Initialize the Anthropic client.
+    # ── Lifecycle ─────────────────────────────────────────────────────────
 
-        Raises:
-            RuntimeError: If Anthropic package is not installed
-            ValueError: If API key is invalid
-        """
+    def load(self) -> None:
         try:
             from anthropic import Anthropic
         except ImportError as e:
             raise RuntimeError(
-                "Anthropic package is not installed. Install it with: "
-                "pip install anthropic"
+                "Anthropic package is not installed. Install it with: pip install anthropic"
             ) from e
 
         try:
@@ -132,19 +122,19 @@ class AnthropicAdapter(FunctionCallingModel):
                 "timeout": self.timeout,
                 "max_retries": self.max_retries,
             }
-
             client_kwargs.update(self.additional_kwargs)
-
             self.client = Anthropic(**client_kwargs)
-
             self._is_loaded = True
 
+            info = get_model_info(self.model_name)
             self._metadata = {
                 "model_name": self.model_name,
                 "context_length": self.get_context_length(),
-                "supports_tools": True,
+                "supports_tools": info.get("supports_native_tools", True),
                 "supports_streaming": True,
-                "supports_vision": "claude-3" in self.model_name,
+                "supports_vision": info.get("supports_vision", False),
+                "supports_thinking": info.get("supports_thinking", False),
+                "supports_prompt_caching": info.get("supports_prompt_caching", False),
             }
 
             logger.info(f"Anthropic client initialized for '{self.model_name}'")
@@ -153,48 +143,21 @@ class AnthropicAdapter(FunctionCallingModel):
             logger.error(f"Failed to initialize Anthropic client: {e}")
             raise RuntimeError(f"Anthropic initialization failed: {e}") from e
 
-    def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
-        """
-        Calculate cost for the API call.
+    def unload(self) -> None:
+        if self.client is not None:
+            logger.info(
+                f"Closing Anthropic client. Total cost: ${self.total_cost:.4f}, "
+                f"Total tokens: {self.total_tokens}"
+            )
+            self.client.close()
+            self.client = None
+        self._is_loaded = False
 
-        Args:
-            prompt_tokens: Number of input tokens
-            completion_tokens: Number of output tokens
-
-        Returns:
-            float: Estimated cost in USD
-        """
-        # Find matching cost entry
-        cost_entry = None
-        for model_id, costs in self.COST_PER_1M_TOKENS.items():
-            if self.model_name == model_id:
-                cost_entry = costs
-                break
-
-        if cost_entry is None:
-            logger.warning(f"Unknown cost for model '{self.model_name}', using Sonnet pricing")
-            cost_entry = (3.0, 15.0)  # Default to Sonnet pricing
-
-        input_cost = (prompt_tokens / 1_000_000) * cost_entry[0]
-        output_cost = (completion_tokens / 1_000_000) * cost_entry[1]
-
-        return input_cost + output_cost
+    # ── Request building ───────────────────────────────────────────────────
 
     @staticmethod
     def _build_content(prompt: str | list) -> str | list[dict]:
-        """
-        Build Anthropic content from a prompt.
-
-        Supports plain text and multimodal content (vision).
-
-        Args:
-            prompt: Text string or list of content parts.
-                    Each part can be a string or a dict with ``type``
-                    (``"text"`` or ``"image"`` with ``source``).
-
-        Returns:
-            Content suitable for Anthropic messages API.
-        """
+        """Build Anthropic content from a prompt (text or multimodal list)."""
         if isinstance(prompt, str):
             return prompt
 
@@ -203,17 +166,12 @@ class AnthropicAdapter(FunctionCallingModel):
             if isinstance(item, str):
                 content.append({"type": "text", "text": item})
             elif isinstance(item, dict):
-                # Pass through Anthropic-native content blocks
                 if "type" in item:
                     content.append(item)
                 elif "image_url" in item:
-                    # Convert OpenAI-style image_url to Anthropic image block
                     content.append({
                         "type": "image",
-                        "source": {
-                            "type": "url",
-                            "url": item["image_url"],
-                        },
+                        "source": {"type": "url", "url": item["image_url"]},
                     })
                 else:
                     content.append({"type": "text", "text": str(item)})
@@ -221,28 +179,120 @@ class AnthropicAdapter(FunctionCallingModel):
                 content.append({"type": "text", "text": str(item)})
         return content
 
+    def _build_request(
+        self,
+        prompt: str | list,
+        config: GenerationConfig,
+        system_prompt: str | None,
+        tools: list[dict] | None,
+        extra_kwargs: dict,
+    ) -> dict:
+        """Assemble the full request dict for messages.create."""
+        request: dict[str, Any] = {
+            "model": self.model_name,
+            "max_tokens": config.max_tokens or 4096,
+            "messages": [{"role": "user", "content": self._build_content(prompt)}],
+        }
+
+        # Anthropic does not support top_k or top_p at API level for all models;
+        # only include them when non-default to avoid unexpected 400s on newer models.
+        if config.temperature != 0.7:
+            request["temperature"] = config.temperature
+        if config.top_p != 0.9:
+            request["top_p"] = config.top_p
+        # top_k is supported by some Anthropic models but not all; omit by default.
+
+        if system_prompt:
+            request["system"] = system_prompt
+
+        if config.stop_sequences:
+            request["stop_sequences"] = config.stop_sequences
+
+        # Extended thinking
+        if config.thinking is not None:
+            if supports_thinking(self.model_name):
+                request["thinking"] = config.thinking
+                # When thinking is enabled temperature must be 1 (Anthropic requirement)
+                request["temperature"] = 1.0
+            else:
+                logger.debug(
+                    f"Model '{self.model_name}' does not support thinking; "
+                    "GenerationConfig.thinking ignored."
+                )
+
+        if tools:
+            request["tools"] = tools
+
+        request.update(extra_kwargs)
+        return request
+
+    # ── Response parsing ───────────────────────────────────────────────────
+
+    def _parse_response(self, response: Any) -> tuple[str, list, list, list]:
+        """
+        Parse an Anthropic messages response.
+
+        Returns:
+            (generated_text, thinking_blocks, redacted_thinking_blocks, raw_content_blocks)
+
+        raw_content_blocks contains ALL blocks as plain dicts and must be preserved
+        verbatim when building the next assistant message in multi-turn conversations.
+        Stripping redacted_thinking blocks causes a 400 on the following API call.
+        """
+        generated_text = ""
+        thinking_blocks: list[str] = []
+        redacted_thinking_blocks: list[dict] = []
+        raw_content_blocks: list[dict] = []
+
+        for block in response.content:
+            d = _block_to_dict(block)
+            raw_content_blocks.append(d)
+
+            btype = d.get("type")
+            if btype == "text":
+                generated_text += d.get("text", "")
+            elif btype == "thinking":
+                thinking_blocks.append(d.get("thinking", ""))
+            elif btype == "redacted_thinking":
+                # Must be preserved on re-submit — do not strip
+                redacted_thinking_blocks.append(d)
+
+        return generated_text, thinking_blocks, redacted_thinking_blocks, raw_content_blocks
+
+    def _parse_usage(self, response: Any) -> tuple[int, int]:
+        return response.usage.input_tokens, response.usage.output_tokens
+
+    # ── Cost ──────────────────────────────────────────────────────────────
+
+    def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        input_cost_pm, output_cost_pm = get_cost_per_million(self.model_name)
+        return (prompt_tokens / 1_000_000) * input_cost_pm + (completion_tokens / 1_000_000) * output_cost_pm
+
+    def _record_usage(self, prompt_tokens: int, completion_tokens: int) -> float:
+        cost = self._calculate_cost(prompt_tokens, completion_tokens)
+        self.total_cost += cost
+        self.total_tokens += prompt_tokens + completion_tokens
+        return cost
+
+    # ── Generate ──────────────────────────────────────────────────────────
+
     def generate(
         self,
         prompt: str | list,
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
-        **kwargs
+        **kwargs,
     ) -> GenerationResult:
         """
         Generate text from a prompt.
 
-        Args:
-            prompt: Input text prompt
-            config: Generation configuration
-            system_prompt: Optional system prompt
-            **kwargs: Additional Anthropic parameters
+        When GenerationConfig.thinking is set (e.g., {"type": "enabled",
+        "budget_tokens": 8000}), extended thinking is requested and the
+        thinking trace is surfaced in result.metadata["thinking"].
 
-        Returns:
-            GenerationResult with generated text and metadata
-
-        Raises:
-            RuntimeError: If client is not initialized or request fails
-            ValueError: If prompt exceeds context length
+        For multi-turn conversations, pass the assistant's raw_content_blocks
+        (from result.metadata["raw_content_blocks"]) as the assistant message
+        content in subsequent calls to preserve redacted_thinking blocks.
         """
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
@@ -253,101 +303,61 @@ class AnthropicAdapter(FunctionCallingModel):
             config = GenerationConfig()
 
         try:
-            # Build request parameters
-            request_params = {
-                "model": self.model_name,
-                "max_tokens": config.max_tokens or 4096,
-                "messages": [{"role": "user", "content": self._build_content(prompt)}],
-                "temperature": config.temperature,
-                "top_p": config.top_p,
-                "top_k": config.top_k,
-            }
+            request = self._build_request(prompt, config, system_prompt, None, kwargs)
+            response = self.client.messages.create(**request)
 
-            if system_prompt:
-                request_params["system"] = system_prompt
-
-            if config.stop_sequences:
-                request_params["stop_sequences"] = config.stop_sequences
-
-            # Add any additional kwargs
-            request_params.update(kwargs)
-
-            # Make API call
-            response = self.client.messages.create(**request_params)
-
-            # Extract response
-            generated_text = ""
-            thinking_content = []
-
-            for content_block in response.content:
-                if content_block.type == "text":
-                    generated_text += content_block.text
-                elif content_block.type == "thinking":
-                    # Extended thinking block (Claude's reasoning)
-                    thinking_content.append(content_block.thinking)
-
-            finish_reason = response.stop_reason
-
-            # Get token usage
-            prompt_tokens = response.usage.input_tokens
-            completion_tokens = response.usage.output_tokens
-            total_tokens = prompt_tokens + completion_tokens
-
-            # Calculate cost
-            cost = self._calculate_cost(prompt_tokens, completion_tokens)
-            self.total_cost += cost
-            self.total_tokens += total_tokens
+            text, thinking, redacted, raw_blocks = self._parse_response(response)
+            prompt_tokens, completion_tokens = self._parse_usage(response)
+            cost = self._record_usage(prompt_tokens, completion_tokens)
 
             logger.info(
                 f"Generated {completion_tokens} tokens. "
                 f"Cost: ${cost:.4f}. Total cost: ${self.total_cost:.4f}"
             )
 
-            metadata = {
+            metadata: dict[str, Any] = {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
                 "cost": cost,
                 "total_cost": self.total_cost,
+                # Preserve ALL content blocks for multi-turn re-submission.
+                # Include this list verbatim as the assistant message content
+                # on the next turn — stripping redacted_thinking causes 400.
+                "raw_content_blocks": raw_blocks,
             }
 
-            if thinking_content:
-                metadata["thinking"] = thinking_content
+            if thinking:
+                metadata["thinking"] = thinking
+            if redacted:
+                metadata["redacted_thinking"] = redacted
 
             return GenerationResult(
-                text=generated_text,
+                text=text,
                 tokens_used=completion_tokens,
-                finish_reason=finish_reason,
+                finish_reason=response.stop_reason,
                 model_name=self.model_name,
-                metadata=metadata
+                metadata=metadata,
             )
 
         except Exception as e:
             logger.error(f"Anthropic API call failed: {e}")
             raise RuntimeError(f"Generation failed: {e}") from e
 
+    # ── Generate stream ───────────────────────────────────────────────────
+
     def generate_stream(
         self,
-        prompt: str,
+        prompt: str | list,
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
-        **kwargs
+        **kwargs,
     ) -> Iterator[str]:
         """
         Generate text with streaming output.
 
-        Args:
-            prompt: Input text prompt
-            config: Generation configuration
-            system_prompt: Optional system prompt
-            **kwargs: Additional Anthropic parameters
-
-        Yields:
-            str: Generated text chunks
-
-        Raises:
-            RuntimeError: If client is not initialized or request fails
-            ValueError: If prompt exceeds context length
+        Yields text chunks. Thinking deltas are consumed internally and not
+        yielded; use generate() if you need the thinking trace.
         """
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
@@ -358,57 +368,29 @@ class AnthropicAdapter(FunctionCallingModel):
             config = GenerationConfig()
 
         try:
-            # Build request parameters
-            request_params = {
-                "model": self.model_name,
-                "max_tokens": config.max_tokens or 4096,
-                "messages": [{"role": "user", "content": self._build_content(prompt)}],
-                "temperature": config.temperature,
-                "top_p": config.top_p,
-                "top_k": config.top_k,
-            }
-
-            if system_prompt:
-                request_params["system"] = system_prompt
-
-            if config.stop_sequences:
-                request_params["stop_sequences"] = config.stop_sequences
-
-            # Add any additional kwargs
-            request_params.update(kwargs)
-
-            # Make streaming API call
-            with self.client.messages.stream(**request_params) as stream:
+            request = self._build_request(prompt, config, system_prompt, None, kwargs)
+            with self.client.messages.stream(**request) as stream:
                 yield from stream.text_stream
 
         except Exception as e:
             logger.error(f"Anthropic streaming failed: {e}")
             raise RuntimeError(f"Streaming generation failed: {e}") from e
 
+    # ── Generate with tools ──────────────────────────────────────────────
+
     def generate_with_tools(
         self,
-        prompt: str,
+        prompt: str | list,
         tools: list[dict[str, Any]],
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
-        **kwargs
+        **kwargs,
     ) -> GenerationResult:
         """
         Generate text with tool use support.
 
-        Args:
-            prompt: Input text prompt
-            tools: List of tool definitions in Anthropic tool format
-            config: Generation configuration
-            system_prompt: Optional system prompt
-            **kwargs: Additional Anthropic parameters
-
-        Returns:
-            GenerationResult with potential tool uses in metadata
-
-        Raises:
-            RuntimeError: If client is not initialized or request fails
-            ValueError: If prompt or tools are invalid
+        Tool use results are surfaced in result.metadata["tool_uses"].
+        Multiple parallel tool_use blocks are supported.
         """
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
@@ -419,175 +401,179 @@ class AnthropicAdapter(FunctionCallingModel):
             config = GenerationConfig()
 
         try:
-            # Build request parameters
-            request_params = {
-                "model": self.model_name,
-                "max_tokens": config.max_tokens or 4096,
-                "messages": [{"role": "user", "content": self._build_content(prompt)}],
-                "tools": tools,
-                "temperature": config.temperature,
-                "top_p": config.top_p,
-                "top_k": config.top_k,
-            }
+            request = self._build_request(prompt, config, system_prompt, tools, kwargs)
+            response = self.client.messages.create(**request)
 
-            if system_prompt:
-                request_params["system"] = system_prompt
+            text, thinking, redacted, raw_blocks = self._parse_response(response)
+            prompt_tokens, completion_tokens = self._parse_usage(response)
+            cost = self._record_usage(prompt_tokens, completion_tokens)
 
-            # Add any additional kwargs
-            request_params.update(kwargs)
+            tool_uses = [
+                {"id": b["id"], "name": b["name"], "input": b["input"]}
+                for b in raw_blocks
+                if b.get("type") == "tool_use"
+            ]
 
-            # Make API call
-            response = self.client.messages.create(**request_params)
-
-            # Extract response
-            generated_text = ""
-            tool_uses = []
-            thinking_content = []
-
-            for content_block in response.content:
-                if content_block.type == "text":
-                    generated_text += content_block.text
-                elif content_block.type == "tool_use":
-                    tool_uses.append({
-                        "id": content_block.id,
-                        "name": content_block.name,
-                        "input": content_block.input,
-                    })
-                elif content_block.type == "thinking":
-                    thinking_content.append(content_block.thinking)
-
-            finish_reason = response.stop_reason
-
-            # Get token usage
-            prompt_tokens = response.usage.input_tokens
-            completion_tokens = response.usage.output_tokens
-            total_tokens = prompt_tokens + completion_tokens
-
-            # Calculate cost
-            cost = self._calculate_cost(prompt_tokens, completion_tokens)
-            self.total_cost += cost
-            self.total_tokens += total_tokens
-
-            metadata = {
+            metadata: dict[str, Any] = {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
                 "cost": cost,
                 "total_cost": self.total_cost,
                 "tool_uses": tool_uses,
+                "raw_content_blocks": raw_blocks,
             }
 
-            if thinking_content:
-                metadata["thinking"] = thinking_content
+            if thinking:
+                metadata["thinking"] = thinking
+            if redacted:
+                metadata["redacted_thinking"] = redacted
 
             return GenerationResult(
-                text=generated_text,
+                text=text,
                 tokens_used=completion_tokens,
-                finish_reason=finish_reason,
+                finish_reason=response.stop_reason,
                 model_name=self.model_name,
-                metadata=metadata
+                metadata=metadata,
             )
 
         except Exception as e:
             logger.error(f"Anthropic API call with tools failed: {e}")
             raise RuntimeError(f"Generation with tools failed: {e}") from e
 
-    def supports_function_calling(self) -> bool:
+    # ── Multi-turn helpers ────────────────────────────────────────────────
+
+    @staticmethod
+    def build_assistant_message(result: GenerationResult) -> dict:
         """
-        Check if the model supports tool use.
+        Build an assistant message dict from a GenerationResult for multi-turn use.
 
-        Returns:
-            bool: True (all Claude 3+ models support tool use)
+        Uses raw_content_blocks (which includes redacted_thinking) from metadata.
+        If raw_content_blocks is absent (e.g., from an older result), falls back
+        to a plain text block.
+
+        Example::
+
+            history = [{"role": "user", "content": "Hello"}]
+            result = adapter.generate_with_history(history)
+            history.append(adapter.build_assistant_message(result))
+            history.append({"role": "user", "content": "Follow-up question"})
         """
-        return "claude-3" in self.model_name
+        raw_blocks = (result.metadata or {}).get("raw_content_blocks")
+        if raw_blocks:
+            return {"role": "assistant", "content": raw_blocks}
+        return {"role": "assistant", "content": result.text}
 
-    def supports_tool_calling(self) -> bool:
-        """Check if the model supports native tool calling.
-
-        Returns:
-            bool: True for Claude 3+ models that support tool use.
+    def generate_with_history(
+        self,
+        messages: list[dict],
+        config: GenerationConfig | None = None,
+        system_prompt: str | None = None,
+        **kwargs,
+    ) -> GenerationResult:
         """
-        return self.supports_function_calling()
+        Generate a response given a full conversation history.
 
-    def count_tokens(self, text: str) -> TokenCount:
-        """
-        Count tokens in text using Anthropic's token counting.
-
-        Args:
-            text: Text to count tokens for
-
-        Returns:
-            TokenCount object
-
-        Raises:
-            RuntimeError: If client is not initialized
+        messages: list of {"role": "user"|"assistant", "content": str|list}
+        When an assistant message was produced with thinking enabled, pass
+        its content as the raw_content_blocks list (from build_assistant_message)
+        to preserve redacted_thinking blocks and avoid 400 errors.
         """
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
 
+        if config is None:
+            config = GenerationConfig()
+
         try:
-            # Use Anthropic's token counting API
+            request: dict[str, Any] = {
+                "model": self.model_name,
+                "max_tokens": config.max_tokens or 4096,
+                "messages": messages,
+            }
+
+            if config.temperature != 0.7:
+                request["temperature"] = config.temperature
+            if config.top_p != 0.9:
+                request["top_p"] = config.top_p
+            if system_prompt:
+                request["system"] = system_prompt
+            if config.stop_sequences:
+                request["stop_sequences"] = config.stop_sequences
+
+            if config.thinking is not None:
+                if supports_thinking(self.model_name):
+                    request["thinking"] = config.thinking
+                    request["temperature"] = 1.0
+
+            request.update(kwargs)
+            response = self.client.messages.create(**request)
+
+            text, thinking, redacted, raw_blocks = self._parse_response(response)
+            prompt_tokens, completion_tokens = self._parse_usage(response)
+            cost = self._record_usage(prompt_tokens, completion_tokens)
+
+            metadata: dict[str, Any] = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+                "cost": cost,
+                "total_cost": self.total_cost,
+                "raw_content_blocks": raw_blocks,
+            }
+            if thinking:
+                metadata["thinking"] = thinking
+            if redacted:
+                metadata["redacted_thinking"] = redacted
+
+            return GenerationResult(
+                text=text,
+                tokens_used=completion_tokens,
+                finish_reason=response.stop_reason,
+                model_name=self.model_name,
+                metadata=metadata,
+            )
+
+        except Exception as e:
+            logger.error(f"Anthropic multi-turn call failed: {e}")
+            raise RuntimeError(f"Multi-turn generation failed: {e}") from e
+
+    # ── Capabilities ──────────────────────────────────────────────────────
+
+    def supports_function_calling(self) -> bool:
+        return get_model_info(self.model_name).get("supports_native_tools", True)
+
+    def supports_tool_calling(self) -> bool:
+        return self.supports_function_calling()
+
+    # ── Token counting ────────────────────────────────────────────────────
+
+    def count_tokens(self, text: str) -> TokenCount:
+        if not self._is_loaded:
+            raise RuntimeError("Client not initialized. Call load() first.")
+
+        try:
             response = self.client.messages.count_tokens(
                 model=self.model_name,
-                messages=[{"role": "user", "content": text}]
+                messages=[{"role": "user", "content": text}],
             )
-
-            return TokenCount(
-                count=response.input_tokens,
-                model_name=self.model_name
-            )
+            return TokenCount(count=response.input_tokens, model_name=self.model_name)
         except Exception as e:
-            # Fallback to simple estimation (rough approximation)
             logger.warning(f"Token counting API failed: {e}. Using approximation.")
-            # Approximate: 1 token ≈ 4 characters for English text
-            estimated_tokens = len(text) // 4
-            return TokenCount(count=estimated_tokens, model_name=self.model_name)
+            return TokenCount(count=len(text) // 4, model_name=self.model_name)
+
+    # ── Context / usage ───────────────────────────────────────────────────
 
     def get_context_length(self) -> int:
-        """
-        Get maximum context length.
-
-        Returns:
-            int: Maximum context length in tokens
-        """
         return self._context_length
 
     def get_total_cost(self) -> float:
-        """
-        Get total cost of all API calls.
-
-        Returns:
-            float: Total cost in USD
-        """
         return self.total_cost
 
     def get_total_tokens(self) -> int:
-        """
-        Get total tokens used across all API calls.
-
-        Returns:
-            int: Total token count
-        """
         return self.total_tokens
 
     def reset_usage_stats(self) -> None:
-        """
-        Reset usage statistics (cost and token count).
-        """
         self.total_cost = 0.0
         self.total_tokens = 0
         logger.info("Usage statistics reset")
-
-    def unload(self) -> None:
-        """
-        Close the Anthropic client connection.
-        """
-        if self.client is not None:
-            logger.info(
-                f"Closing Anthropic client. Total cost: ${self.total_cost:.4f}, "
-                f"Total tokens: {self.total_tokens}"
-            )
-            self.client.close()
-            self.client = None
-
-        self._is_loaded = False

@@ -52,6 +52,9 @@ class GenerationConfig:
     # Gemini grounding. When True AND the model supports_grounding, Google
     # Search grounding is activated and grounding_chunks appear in metadata.
     grounding: bool = False
+    # Anthropic extended thinking. Pass {"type": "enabled", "budget_tokens": N}.
+    # None means the field is not sent (standard generation).
+    thinking: dict | None = None
 
 
 @dataclass

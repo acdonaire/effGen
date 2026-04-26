@@ -24,6 +24,8 @@ Example:
 """
 
 from effgen.models.anthropic_adapter import AnthropicAdapter
+from effgen.models.anthropic_models import ANTHROPIC_MODELS
+from effgen.models.anthropic_models import get_model_info as get_anthropic_model_info
 from effgen.models.base import (
     BaseModel,
     BatchModel,
@@ -129,6 +131,10 @@ __all__ = [
 
     # Schema helpers
     "to_openai_schema",
+
+    # Anthropic registry
+    "ANTHROPIC_MODELS",
+    "get_anthropic_model_info",
 
     # Gemini Files API
     "FileRef",
