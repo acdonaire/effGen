@@ -52,11 +52,11 @@ GEMINI_MODELS: dict[str, dict] = {
         "rpd": 500,
         "free_tier": True,
         "supports_thinking": True,
-        "supports_grounding": True,
+        "supports_grounding": False,  # Google Search grounding hits 429 on free tier for this model
         "supports_native_tools": True,
         "supports_vision": True,
         "tier": "free",
-        "notes": "Cheapest Gemini 3.x text model. Best free-tier choice.",
+        "notes": "Cheapest Gemini 3.x text model. Best free-tier choice. Grounding not available on free tier.",
     },
     "gemini-3-flash-preview": {
         "family": "flash",

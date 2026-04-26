@@ -45,6 +45,7 @@ from effgen.models.capabilities import (
 from effgen.models.cerebras_adapter import CerebrasAdapter
 from effgen.models.errors import ModelRefusalError
 from effgen.models.gemini_adapter import GeminiAdapter
+from effgen.models.gemini_files import FileRef, upload_file
 from effgen.models.lazy import LazyModel
 from effgen.models.model_loader import ModelLoader, load_model
 from effgen.models.openai_adapter import OpenAIAdapter
@@ -128,4 +129,8 @@ __all__ = [
 
     # Schema helpers
     "to_openai_schema",
+
+    # Gemini Files API
+    "FileRef",
+    "upload_file",
 ]

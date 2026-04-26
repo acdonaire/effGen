@@ -26,6 +26,7 @@ from effgen.models.base import (
     ModelType,
     TokenCount,
 )
+from effgen.models.gemini_files import FileRef
 from effgen.models.gemini_models import (
     GEMINI_MODEL_ALIASES,
     GEMINI_MODELS,
@@ -161,6 +162,14 @@ class GeminiAdapter(FunctionCallingModel):
             return False
         return bool(info.get("supports_thinking", False))
 
+    def _model_supports_grounding(self) -> bool:
+        """Return True if the registered model entry has supports_grounding=True."""
+        canonical = GEMINI_MODEL_ALIASES.get(self.model_name, self.model_name)
+        info = GEMINI_MODELS.get(canonical) or GEMINI_MODELS.get(self.model_name)
+        if info is None:
+            return False
+        return bool(info.get("supports_grounding", False))
+
     def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         cost_entry: tuple[float, float] | None = None
         for model_id, costs in self.COST_PER_1M_TOKENS.items():
@@ -199,6 +208,16 @@ class GeminiAdapter(FunctionCallingModel):
             else:
                 logger.debug(
                     "Model '%s' does not support thinking_budget; ignoring.",
+                    self.model_name,
+                )
+
+        # Grounding — attach Google Search tool when requested and supported.
+        if config.grounding:
+            if self._model_supports_grounding():
+                kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
+            else:
+                logger.debug(
+                    "Model '%s' does not support grounding; ignoring grounding=True.",
                     self.model_name,
                 )
 
@@ -374,9 +393,20 @@ class GeminiAdapter(FunctionCallingModel):
         self,
         prompt: str | list[str | dict[str, Any]],
         config: GenerationConfig | None = None,
+        *,
+        files: list[FileRef] | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Generate text (or a tool call) from *prompt*."""
+        """Generate text (or a tool call) from *prompt*.
+
+        Args:
+            prompt: Text prompt or multimodal content list.
+            config: Generation configuration.
+            files: Optional list of :class:`~effgen.models.gemini_files.FileRef`
+                objects returned by :func:`~effgen.models.gemini_files.upload_file`.
+                Each file is prepended to the request content so the model can
+                read it before answering *prompt*.
+        """
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
         if isinstance(prompt, str):
@@ -384,6 +414,27 @@ class GeminiAdapter(FunctionCallingModel):
 
         gen_config = self._build_config(config)
         content = self._prepare_content(prompt)
+
+        # Prepend uploaded files to the content so the model sees them.
+        if files:
+            from google.genai import types as _gt  # type: ignore[import]
+            file_parts: list[Any] = []
+            for fref in files:
+                sdk_obj = fref.raw
+                if sdk_obj is not None:
+                    file_parts.append(_gt.Part.from_uri(
+                        file_uri=fref.uri,
+                        mime_type=fref.mime_type,
+                    ))
+                else:
+                    file_parts.append(_gt.Part.from_uri(
+                        file_uri=fref.uri,
+                        mime_type=fref.mime_type,
+                    ))
+            if isinstance(content, list):
+                content = file_parts + content
+            else:
+                content = file_parts + [content]
 
         raw_tools: list | None = None
         if kwargs.get("tools"):
@@ -455,6 +506,29 @@ class GeminiAdapter(FunctionCallingModel):
             if hasattr(response, "candidates") and response.candidates:
                 finish_reason = str(response.candidates[0].finish_reason)
 
+            # Extract grounding chunks (URLs + snippets) from the response.
+            grounding_chunks: list[dict[str, Any]] = []
+            try:
+                gmd = None
+                if hasattr(response, "candidates") and response.candidates:
+                    cand = response.candidates[0]
+                    gmd = getattr(cand, "grounding_metadata", None)
+                if gmd is None:
+                    gmd = getattr(response, "grounding_metadata", None)
+                if gmd is not None:
+                    raw_chunks = getattr(gmd, "grounding_chunks", None) or []
+                    for chunk in raw_chunks:
+                        web = getattr(chunk, "web", None)
+                        if web is not None:
+                            grounding_chunks.append({
+                                "url": getattr(web, "uri", None),
+                                "title": getattr(web, "title", None),
+                            })
+                        else:
+                            grounding_chunks.append({"raw": str(chunk)})
+            except Exception as _ge:
+                logger.debug("Could not extract grounding_chunks: %s", _ge)
+
             metadata: dict[str, Any] = {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
@@ -464,6 +538,7 @@ class GeminiAdapter(FunctionCallingModel):
                 "total_cost": self.total_cost,
                 "safety_ratings": getattr(response, "safety_ratings", None),
                 "tool_calls": tool_calls,
+                "grounding_chunks": grounding_chunks,
             }
             if thinking_text:
                 metadata["thinking"] = thinking_text

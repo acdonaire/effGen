@@ -49,6 +49,9 @@ class GenerationConfig:
     # surfaces the reasoning trace in ModelResponse.metadata["thinking"].
     thinking_budget: int | None = None
     include_thoughts: bool = False
+    # Gemini grounding. When True AND the model supports_grounding, Google
+    # Search grounding is activated and grounding_chunks appear in metadata.
+    grounding: bool = False
 
 
 @dataclass
