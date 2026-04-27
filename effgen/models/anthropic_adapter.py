@@ -18,6 +18,7 @@ import os
 from collections.abc import Iterator
 from typing import Any
 
+from effgen.models.anthropic_cache import validate_breakpoint_count
 from effgen.models.anthropic_models import (
     get_context_length,
     get_cost_per_million,
@@ -183,15 +184,24 @@ class AnthropicAdapter(FunctionCallingModel):
         self,
         prompt: str | list,
         config: GenerationConfig,
-        system_prompt: str | None,
+        system_prompt: str | list | None,
         tools: list[dict] | None,
         extra_kwargs: dict,
     ) -> dict:
-        """Assemble the full request dict for messages.create."""
+        """
+        Assemble the full request dict for messages.create.
+
+        *system_prompt* may be a plain string or a list of content blocks.
+        Passing a list allows ``cache_control`` markers on individual blocks —
+        the Anthropic API accepts both forms.  When blocks carry
+        ``cache_control``, this method validates that the total breakpoint
+        count across system + messages + tools does not exceed 4.
+        """
+        messages = [{"role": "user", "content": self._build_content(prompt)}]
         request: dict[str, Any] = {
             "model": self.model_name,
             "max_tokens": config.max_tokens or 4096,
-            "messages": [{"role": "user", "content": self._build_content(prompt)}],
+            "messages": messages,
         }
 
         # Anthropic does not support top_k or top_p at API level for all models;
@@ -222,6 +232,14 @@ class AnthropicAdapter(FunctionCallingModel):
 
         if tools:
             request["tools"] = tools
+
+        # Validate cache_control breakpoint count before sending.
+        # Raises ValueError if > MAX_CACHE_BREAKPOINTS (4).
+        validate_breakpoint_count(
+            system=request.get("system"),
+            messages=request.get("messages"),
+            tools=request.get("tools"),
+        )
 
         request.update(extra_kwargs)
         return request
@@ -259,8 +277,22 @@ class AnthropicAdapter(FunctionCallingModel):
 
         return generated_text, thinking_blocks, redacted_thinking_blocks, raw_content_blocks
 
-    def _parse_usage(self, response: Any) -> tuple[int, int]:
-        return response.usage.input_tokens, response.usage.output_tokens
+    def _parse_usage(self, response: Any) -> tuple[int, int, int, int]:
+        """
+        Parse token counts from a response.
+
+        Returns:
+            (input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens)
+
+        ``cached_input_tokens`` — tokens served from cache (cache hit).
+        ``cache_creation_tokens`` — tokens written into a new cache entry (cache miss that
+        populates the cache; billed at 1.25× normal write cost).
+        Both fields are 0 when prompt caching was not used.
+        """
+        usage = response.usage
+        cached_input = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        return usage.input_tokens, usage.output_tokens, cached_input, cache_creation
 
     # ── Cost ──────────────────────────────────────────────────────────────
 
@@ -307,7 +339,7 @@ class AnthropicAdapter(FunctionCallingModel):
             response = self.client.messages.create(**request)
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
-            prompt_tokens, completion_tokens = self._parse_usage(response)
+            prompt_tokens, completion_tokens, cached_input, cache_creation = self._parse_usage(response)
             cost = self._record_usage(prompt_tokens, completion_tokens)
 
             logger.info(
@@ -321,6 +353,9 @@ class AnthropicAdapter(FunctionCallingModel):
                 "total_tokens": prompt_tokens + completion_tokens,
                 "cost": cost,
                 "total_cost": self.total_cost,
+                # Prompt caching usage (0 when not used).
+                "cached_input_tokens": cached_input,
+                "cache_creation_tokens": cache_creation,
                 # Preserve ALL content blocks for multi-turn re-submission.
                 # Include this list verbatim as the assistant message content
                 # on the next turn — stripping redacted_thinking causes 400.
@@ -405,7 +440,7 @@ class AnthropicAdapter(FunctionCallingModel):
             response = self.client.messages.create(**request)
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
-            prompt_tokens, completion_tokens = self._parse_usage(response)
+            prompt_tokens, completion_tokens, cached_input, cache_creation = self._parse_usage(response)
             cost = self._record_usage(prompt_tokens, completion_tokens)
 
             tool_uses = [
@@ -420,6 +455,8 @@ class AnthropicAdapter(FunctionCallingModel):
                 "total_tokens": prompt_tokens + completion_tokens,
                 "cost": cost,
                 "total_cost": self.total_cost,
+                "cached_input_tokens": cached_input,
+                "cache_creation_tokens": cache_creation,
                 "tool_uses": tool_uses,
                 "raw_content_blocks": raw_blocks,
             }
@@ -506,11 +543,18 @@ class AnthropicAdapter(FunctionCallingModel):
                     request["thinking"] = config.thinking
                     request["temperature"] = 1.0
 
+            # Validate cache_control breakpoint count before sending.
+            validate_breakpoint_count(
+                system=request.get("system"),
+                messages=request.get("messages"),
+                tools=request.get("tools"),
+            )
+
             request.update(kwargs)
             response = self.client.messages.create(**request)
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
-            prompt_tokens, completion_tokens = self._parse_usage(response)
+            prompt_tokens, completion_tokens, cached_input, cache_creation = self._parse_usage(response)
             cost = self._record_usage(prompt_tokens, completion_tokens)
 
             metadata: dict[str, Any] = {
@@ -519,6 +563,8 @@ class AnthropicAdapter(FunctionCallingModel):
                 "total_tokens": prompt_tokens + completion_tokens,
                 "cost": cost,
                 "total_cost": self.total_cost,
+                "cached_input_tokens": cached_input,
+                "cache_creation_tokens": cache_creation,
                 "raw_content_blocks": raw_blocks,
             }
             if thinking:

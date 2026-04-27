@@ -24,6 +24,13 @@ Example:
 """
 
 from effgen.models.anthropic_adapter import AnthropicAdapter
+from effgen.models.anthropic_cache import (
+    MAX_CACHE_BREAKPOINTS,
+    apply_cache_to_last_tool,
+    apply_cache_to_system,
+    get_min_cache_tokens,
+    mark_cached,
+)
 from effgen.models.anthropic_models import ANTHROPIC_MODELS
 from effgen.models.anthropic_models import get_model_info as get_anthropic_model_info
 from effgen.models.base import (
@@ -135,6 +142,13 @@ __all__ = [
     # Anthropic registry
     "ANTHROPIC_MODELS",
     "get_anthropic_model_info",
+
+    # Anthropic cache helpers
+    "mark_cached",
+    "apply_cache_to_system",
+    "apply_cache_to_last_tool",
+    "get_min_cache_tokens",
+    "MAX_CACHE_BREAKPOINTS",
 
     # Gemini Files API
     "FileRef",

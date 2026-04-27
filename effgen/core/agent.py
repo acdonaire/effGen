@@ -134,6 +134,13 @@ class AgentConfig:
     # Prompt caching: keep the system prompt at a fixed position so OpenAI
     # can cache the prefix automatically across sequential calls.
     stable_system_prompt: bool = True
+    # Anthropic explicit prompt caching via cache_control markers.
+    # cache_system_prompt=True: Agent marks the last block of the system message
+    #   with cache_control so it is cached across requests.
+    # cache_tools=True: Agent marks the last tool spec with cache_control.
+    # These flags have no effect when the model is not an AnthropicAdapter.
+    cache_system_prompt: bool = True
+    cache_tools: bool = True
 
 
 @dataclass
@@ -516,6 +523,45 @@ Question: {task}
             from ..guardrails.presets import get_guardrail_preset
             return get_guardrail_preset(guardrails)
         return None
+
+    def _get_anthropic_system(self) -> str | list | None:
+        """
+        Return the system prompt for Anthropic requests.
+
+        When ``AgentConfig.cache_system_prompt=True`` and the model is an
+        ``AnthropicAdapter``, the system prompt is returned as a list of
+        content blocks with ``cache_control`` on the last block so that it is
+        cached across sequential requests.
+        """
+        system = self.config.system_prompt if self.config.stable_system_prompt else None
+        if system is None:
+            return None
+        try:
+            from ..models.anthropic_adapter import AnthropicAdapter
+            from ..models.anthropic_cache import apply_cache_to_system
+        except ImportError:
+            return system
+        if isinstance(self.model, AnthropicAdapter) and self.config.cache_system_prompt:
+            return apply_cache_to_system(system)
+        return system
+
+    def _get_anthropic_tools(self, tools: list[dict]) -> list[dict]:
+        """
+        Apply ``cache_control`` to the last tool spec when appropriate.
+
+        Only active when ``AgentConfig.cache_tools=True`` and the model is an
+        ``AnthropicAdapter``.
+        """
+        if not tools:
+            return tools
+        try:
+            from ..models.anthropic_adapter import AnthropicAdapter
+            from ..models.anthropic_cache import apply_cache_to_last_tool
+        except ImportError:
+            return tools
+        if isinstance(self.model, AnthropicAdapter) and self.config.cache_tools:
+            return apply_cache_to_last_tool(tools)
+        return tools
 
     def _build_system_prompt(self) -> str:
         """Build a dynamic system prompt based on agent configuration and tools."""
