@@ -80,6 +80,18 @@ def __getattr__(name):
             return OpenAICodeInterpreterTool
         else:
             return OpenAIFileSearchTool
+    elif name in ("AnthropicBashTool", "AnthropicTextEditorTool", "AnthropicComputerTool"):
+        from .anthropic_native import (
+            AnthropicBashTool,
+            AnthropicComputerTool,
+            AnthropicTextEditorTool,
+        )
+        if name == "AnthropicBashTool":
+            return AnthropicBashTool
+        elif name == "AnthropicTextEditorTool":
+            return AnthropicTextEditorTool
+        else:
+            return AnthropicComputerTool
     elif name == "CodeExecutor":
         from .code_executor import CodeExecutor
         return CodeExecutor

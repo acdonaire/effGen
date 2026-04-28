@@ -137,11 +137,75 @@ for tool_call in result.metadata["tool_uses"]:
 
 ## Streaming
 
+### Basic streaming (text only)
+
 ```python
-with AnthropicAdapter(model_name="claude-opus-4-7") as adapter:
+with AnthropicAdapter(model_name="claude-sonnet-4-6") as adapter:
     for chunk in adapter.generate_stream("Tell me a story"):
         print(chunk, end="", flush=True)
 ```
+
+`generate_stream()` yields plain text strings. Thinking deltas, tool_use blocks,
+and redacted_thinking events are consumed internally and not yielded.
+
+### Full-fidelity streaming with typed chunks
+
+Use `generate_stream_full()` to receive all block types as typed `StreamChunk` objects:
+
+```python
+from effgen.models import AnthropicAdapter, StreamChunk
+from effgen.models.base import GenerationConfig
+
+cfg = GenerationConfig(
+    thinking={"type": "enabled", "budget_tokens": 8000},
+    max_tokens=16000,
+)
+
+with AnthropicAdapter(model_name="claude-sonnet-4-6") as adapter:
+    for chunk in adapter.generate_stream_full("Prove that sqrt(2) is irrational.", config=cfg):
+        if chunk.type == "thinking":
+            print(f"[thinking] {chunk.text}", end="", flush=True)
+        elif chunk.type == "text":
+            print(chunk.text, end="", flush=True)
+        elif chunk.type == "tool_use":
+            print(f"\n[tool] {chunk.data['name']}({chunk.data['input']})")
+        elif chunk.type == "redacted_thinking":
+            print("\n[redacted thinking block — preserved for multi-turn]")
+```
+
+**`StreamChunk` fields:**
+
+| `type` | `text` | `data` | Notes |
+|---|---|---|---|
+| `"text"` | answer delta | `{}` | Incremental answer text |
+| `"thinking"` | thinking delta | `{}` | Visible reasoning trace (budget-controlled) |
+| `"redacted_thinking"` | `""` | `{"type": "redacted_thinking", "data": "<sig>"}` | Safety-filtered thinking block; preserve verbatim on re-submit |
+| `"tool_use"` | `""` | `{"type": "tool_use", "id": ..., "name": ..., "input": {...}}` | Fully accumulated parallel tool call |
+
+### Streaming with parallel tool calls
+
+Claude 4.x can emit multiple `tool_use` blocks in a single response (parallel function
+calling). `generate_stream_full()` accumulates each block's `input_json_delta` fragments,
+parses them on `content_block_stop`, and yields one `StreamChunk(type="tool_use")` per call:
+
+```python
+with AnthropicAdapter(model_name="claude-sonnet-4-6") as adapter:
+    tool_calls = []
+    for chunk in adapter.generate_stream_full("What is 2+3 AND 7*8?"):
+        if chunk.type == "tool_use":
+            tool_calls.append(chunk.data)
+
+# tool_calls may contain multiple entries for parallel calls
+for call in tool_calls:
+    print(call["name"], call["input"])
+```
+
+### Streaming and redacted_thinking in multi-turn
+
+When `generate_stream_full()` emits a `"redacted_thinking"` chunk, the corresponding
+block must be preserved when building the assistant message for the next turn.
+Use `generate()` + `build_assistant_message()` for multi-turn with thinking — it
+handles preservation automatically via `raw_content_blocks`.
 
 ## Environment setup
 

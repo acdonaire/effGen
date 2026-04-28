@@ -23,7 +23,7 @@ Example:
     >>> print(result.text)
 """
 
-from effgen.models.anthropic_adapter import AnthropicAdapter
+from effgen.models.anthropic_adapter import AnthropicAdapter, StreamChunk
 from effgen.models.anthropic_cache import (
     MAX_CACHE_BREAKPOINTS,
     apply_cache_to_last_tool,
@@ -105,6 +105,9 @@ __all__ = [
     "AnthropicAdapter",
     "GeminiAdapter",
     "CerebrasAdapter",
+
+    # Anthropic streaming
+    "StreamChunk",
 
     # Loader
     "ModelLoader",

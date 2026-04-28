@@ -7,7 +7,7 @@ Supports:
 - redacted_thinking block preservation for multi-turn correctness
 - Tool use API with parallel tool calls
 - Prompt caching via cache_control markers
-- Streaming responses
+- Streaming responses (thinking blocks, parallel tool_use, redacted_thinking)
 - Cost tracking
 """
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
 from effgen.models.anthropic_cache import validate_breakpoint_count
@@ -37,6 +38,21 @@ logger = logging.getLogger(__name__)
 
 # Anthropic content block types that must be preserved verbatim on re-submit
 _PRESERVE_BLOCK_TYPES = {"thinking", "redacted_thinking", "tool_use"}
+
+
+@dataclass
+class StreamChunk:
+    """A typed chunk emitted by ``generate_stream_full()``.
+
+    Attributes:
+        type: One of ``"text"``, ``"thinking"``, ``"redacted_thinking"``, ``"tool_use"``.
+        text: The incremental text delta (``type="text"`` or ``type="thinking"``).
+        data: Full block dict for ``"redacted_thinking"`` and ``"tool_use"`` blocks.
+    """
+
+    type: str
+    text: str = ""
+    data: dict = field(default_factory=dict)
 
 
 def _block_to_dict(block: Any) -> dict:
@@ -391,8 +407,10 @@ class AnthropicAdapter(FunctionCallingModel):
         """
         Generate text with streaming output.
 
-        Yields text chunks. Thinking deltas are consumed internally and not
-        yielded; use generate() if you need the thinking trace.
+        Yields text chunks only. Thinking deltas and tool_use blocks are
+        consumed internally (not yielded). Use ``generate_stream_full()``
+        if you need typed chunks that include thinking and tool_use events.
+        Redacted_thinking blocks are preserved for logging but not yielded.
         """
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
@@ -403,9 +421,170 @@ class AnthropicAdapter(FunctionCallingModel):
             config = GenerationConfig()
 
         try:
+            for chunk in self.generate_stream_full(prompt, config=config, system_prompt=system_prompt, **kwargs):
+                if chunk.type == "text":
+                    yield chunk.text
+
+        except Exception as e:
+            logger.error(f"Anthropic streaming failed: {e}")
+            raise RuntimeError(f"Streaming generation failed: {e}") from e
+
+    def generate_stream_full(
+        self,
+        prompt: str | list,
+        config: GenerationConfig | None = None,
+        system_prompt: str | None = None,
+        **kwargs,
+    ) -> Iterator[StreamChunk]:
+        """
+        Generate with streaming, yielding typed ``StreamChunk`` objects.
+
+        Chunk types:
+        - ``"thinking"``: incremental thinking delta (text field populated)
+        - ``"text"``: incremental answer delta (text field populated)
+        - ``"redacted_thinking"``: a complete redacted_thinking block (data field populated)
+        - ``"tool_use"``: a complete accumulated tool_use block (data field populated)
+
+        Thinking deltas arrive before the answer. Parallel tool_use blocks (multiple
+        tool calls emitted in one response) are each yielded as separate ``"tool_use"``
+        chunks after the text stream ends.
+
+        This method correctly handles Claude 4.x streaming which can intermix
+        thinking blocks, text blocks, and multiple parallel tool_use blocks.
+
+        Example::
+
+            for chunk in adapter.generate_stream_full("reason about X", config=cfg):
+                if chunk.type == "thinking":
+                    print(f"[thinking] {chunk.text}", end="")
+                elif chunk.type == "text":
+                    print(chunk.text, end="")
+                elif chunk.type == "tool_use":
+                    print(f"[tool] {chunk.data['name']}: {chunk.data['input']}")
+        """
+        if not self._is_loaded:
+            raise RuntimeError("Client not initialized. Call load() first.")
+
+        self.validate_prompt(prompt)
+
+        if config is None:
+            config = GenerationConfig()
+
+        import json as _json
+
+        try:
             request = self._build_request(prompt, config, system_prompt, None, kwargs)
+
+            # We iterate raw events from .stream() to capture all block types.
+            # The SDK's text_stream helper skips thinking/tool_use/redacted_thinking.
+            #
+            # Streaming block types (per Anthropic docs, 2026-04-28):
+            #   content_block_start.content_block.type in {"text", "thinking", "tool_use"}
+            #   - "thinking" block: receives thinking_delta and signature_delta
+            #     - If the thinking block is redacted (safety-filtered), Anthropic returns
+            #       it with type "redacted_thinking" in non-streaming responses; in
+            #       streaming, it appears as a thinking block whose deltas only include
+            #       a signature_delta (no thinking_delta text). We detect this pattern
+            #       and emit a "redacted_thinking" StreamChunk on block stop.
+            #   - "tool_use" block: receives input_json_delta (partial_json fragments)
+            #     Multiple tool_use blocks may appear in parallel (parallel function calls).
             with self.client.messages.stream(**request) as stream:
-                yield from stream.text_stream
+                # Per-block accumulators keyed by block index.
+                tool_accumulators: dict[int, dict] = {}
+                # For thinking blocks: track accumulated text and signature separately.
+                thinking_accumulators: dict[int, dict] = {}
+                current_block_index: int | None = None
+                current_block_type: str | None = None
+
+                for event in stream:
+                    etype = getattr(event, "type", None)
+
+                    if etype == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        current_block_index = getattr(event, "index", None)
+                        current_block_type = getattr(block, "type", None) if block else None
+
+                        if current_block_type == "tool_use":
+                            tool_id = getattr(block, "id", "")
+                            tool_name = getattr(block, "name", "")
+                            tool_accumulators[current_block_index] = {
+                                "id": tool_id,
+                                "name": tool_name,
+                                "input_json": "",
+                            }
+
+                        elif current_block_type == "thinking":
+                            thinking_accumulators[current_block_index] = {
+                                "text": "",
+                                "signature": "",
+                            }
+
+                    elif etype == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        delta_type = getattr(delta, "type", None) if delta else None
+                        idx = getattr(event, "index", current_block_index)
+
+                        if delta_type == "text_delta":
+                            text_val = getattr(delta, "text", "")
+                            if text_val:
+                                yield StreamChunk(type="text", text=text_val)
+
+                        elif delta_type == "thinking_delta":
+                            thinking_val = getattr(delta, "thinking", "")
+                            if thinking_val:
+                                if idx in thinking_accumulators:
+                                    thinking_accumulators[idx]["text"] += thinking_val
+                                yield StreamChunk(type="thinking", text=thinking_val)
+
+                        elif delta_type == "signature_delta":
+                            # Signature deltas accompany thinking blocks (plain or redacted).
+                            # Accumulate for later; do not yield — this is internal integrity data.
+                            sig_val = getattr(delta, "signature", "")
+                            if idx in thinking_accumulators:
+                                thinking_accumulators[idx]["signature"] += sig_val
+
+                        elif delta_type == "input_json_delta":
+                            # Accumulate partial JSON for tool_use blocks.
+                            json_fragment = getattr(delta, "partial_json", "")
+                            if idx in tool_accumulators:
+                                tool_accumulators[idx]["input_json"] += json_fragment
+
+                    elif etype == "content_block_stop":
+                        idx = getattr(event, "index", current_block_index)
+
+                        if current_block_type == "tool_use" and idx in tool_accumulators:
+                            acc = tool_accumulators.pop(idx)
+                            raw_json = acc["input_json"]
+                            try:
+                                parsed_input = _json.loads(raw_json) if raw_json else {}
+                            except _json.JSONDecodeError:
+                                parsed_input = {"_raw": raw_json}
+                            yield StreamChunk(
+                                type="tool_use",
+                                data={
+                                    "type": "tool_use",
+                                    "id": acc["id"],
+                                    "name": acc["name"],
+                                    "input": parsed_input,
+                                },
+                            )
+
+                        elif current_block_type == "thinking" and idx in thinking_accumulators:
+                            acc = thinking_accumulators.pop(idx)
+                            # Redacted thinking: a thinking block where Anthropic produced no
+                            # visible thinking text (only a signature was emitted for integrity).
+                            if not acc["text"] and acc["signature"]:
+                                logger.debug("Streaming: redacted_thinking block detected (signature-only).")
+                                yield StreamChunk(
+                                    type="redacted_thinking",
+                                    data={
+                                        "type": "redacted_thinking",
+                                        "data": acc["signature"],
+                                    },
+                                )
+
+                        current_block_type = None
+                        current_block_index = None
 
         except Exception as e:
             logger.error(f"Anthropic streaming failed: {e}")

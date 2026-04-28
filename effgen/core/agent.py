@@ -509,6 +509,33 @@ Question: {task}
         except ImportError:
             pass
 
+        # --- Anthropic native tools (computer-use) ---
+        try:
+            from ..models.anthropic_adapter import AnthropicAdapter
+            from ..tools.builtin.anthropic_native import AnthropicNativeTool
+
+            anthropic_native = [t for t in tools if isinstance(t, AnthropicNativeTool)]
+            if anthropic_native:
+                is_anthropic = isinstance(self.model, AnthropicAdapter)
+                if not is_anthropic:
+                    model_name_str = getattr(self.model, "model_name", "") or ""
+                    is_anthropic = model_name_str.startswith("claude")
+                if not is_anthropic:
+                    bad = anthropic_native[0]
+                    current_model = getattr(self.model, "model_name", str(self.model)) if self.model else "None"
+                    raise ToolIncompatibleError(
+                        tool_name=bad.name,
+                        model_name=current_model,
+                        reason=(
+                            "Anthropic native computer-use tools (bash, text_editor, computer) "
+                            "are executed server-side by Anthropic and require an AnthropicAdapter. "
+                            f"Current model: '{current_model}'. "
+                            "Switch to an Anthropic model or remove the native tool."
+                        ),
+                    )
+        except ImportError:
+            pass
+
     @staticmethod
     def _resolve_guardrails(guardrails: Any):
         """Resolve guardrails config to a GuardrailChain or None."""

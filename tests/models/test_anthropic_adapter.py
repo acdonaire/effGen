@@ -484,11 +484,29 @@ class TestToolUseMocked:
 
 class TestStreamingMocked:
     def test_stream_yields_text(self):
+        from types import SimpleNamespace
         adapter = _make_adapter()
+
+        # Build raw events that generate_stream_full consumes.
+        def _text_ev(text):
+            return SimpleNamespace(
+                type="content_block_delta",
+                index=0,
+                delta=SimpleNamespace(type="text_delta", text=text),
+            )
+
+        events = [
+            SimpleNamespace(type="content_block_start", index=0, content_block=SimpleNamespace(type="text")),
+            _text_ev("Hello"),
+            _text_ev(" "),
+            _text_ev("world"),
+            SimpleNamespace(type="content_block_stop", index=0),
+        ]
+
         mock_stream = MagicMock()
         mock_stream.__enter__ = MagicMock(return_value=mock_stream)
         mock_stream.__exit__ = MagicMock(return_value=False)
-        mock_stream.text_stream = iter(["Hello", " ", "world"])
+        mock_stream.__iter__ = MagicMock(return_value=iter(events))
         adapter.client.messages.stream.return_value = mock_stream
 
         chunks = list(adapter.generate_stream("hi"))
