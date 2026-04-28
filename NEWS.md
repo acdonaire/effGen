@@ -1,5 +1,49 @@
 # effGen Release Notes
 
+## v0.2.2 — April 28, 2026
+
+**effGen v0.2.2** brings Gemini's latest thinking and grounding capabilities to effGen, adds the Gemini Files API and three Gemini-native tools, and modernizes Anthropic support for the full Claude 4.x lineup.
+
+### Top Highlights
+
+1. **Gemini 3.x / 2.5 / 2.0 + Gemma 3/4 model registry** — `gemini-3.1-flash-lite`, `gemini-3.0-pro`, `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-2.0-flash`, and Gemma families all recognized with correct context windows, output limits, and feature flags. SDK migrated to `google-genai>=1.0.0`.
+
+2. **Gemini `thinking_budget`** — pass `thinking_budget=8192` (or any token count) in `GenerationConfig` to activate Gemini's internal reasoning. Set `include_thoughts=True` to surface the thinking trace in `ModelResponse.metadata["thinking"]`.
+
+   ```python
+   from effgen import load_model
+   from effgen.models.base import GenerationConfig
+   model = load_model("gemini-3.1-flash-lite", provider="gemini")
+   result = model.generate("Explain why π is irrational.", config=GenerationConfig(thinking_budget=8192, include_thoughts=True))
+   ```
+
+3. **Gemini Google Search grounding** — set `grounding=True` in `GenerationConfig` and the adapter injects Google Search; grounding attributions (URLs + snippets) arrive in `ModelResponse.metadata["grounding_chunks"]`.
+
+4. **Gemini Files API** — `effgen.models.gemini_files.upload_file(path)` returns a `FileRef`; pass it in `generate(prompt, files=[...])` to give the model access to PDFs, images, and other documents (2 GiB limit enforced before upload).
+
+5. **Gemini native tools** — `GoogleSearchTool`, `GeminiUrlContextTool`, `GeminiCodeExecutionTool` in `effgen.tools.builtin.gemini_native`. Use them directly in Agent — they activate Gemini's server-side capabilities with no extra API calls. Pairing with a non-Gemini model raises `ToolIncompatibleError` at init.
+
+6. **Anthropic Claude 4.x registry** — claude-opus-4-7 (1M ctx), claude-sonnet-4-6, claude-haiku-4-5, and the full legacy 3.x / 4.x lineup in `effgen/models/anthropic_models.py`.
+
+7. **Anthropic extended thinking** — `GenerationConfig.thinking = {"type": "enabled", "budget_tokens": N}` activates Claude's extended thinking; `redacted_thinking` blocks are preserved across multi-turn conversations.
+
+8. **Anthropic prompt caching** — `mark_cached(block)` + `AgentConfig.cache_system_prompt=True` / `cache_tools=True` wire `cache_control` automatically; cache hit/creation tokens surfaced in `ModelResponse.usage`.
+
+9. **Anthropic streaming polish** — `generate_stream_full()` handles thinking deltas, redacted-thinking, and parallel `tool_use` blocks in a unified `StreamChunk` API.
+
+10. **Experimental Anthropic native tools** — `AnthropicBashTool`, `AnthropicTextEditorTool`, `AnthropicComputerTool` stubs in `effgen/tools/builtin/anthropic_native.py` (flag-gated, not registered by default).
+
+
+### Upgrading from v0.2.1
+
+No breaking API changes. All new fields (`thinking_budget`, `include_thoughts`, `grounding`, `thinking`, `cache_system_prompt`, `cache_tools`) default to safe backward-compatible values.
+
+```bash
+pip install --upgrade effgen
+```
+
+---
+
 ## v0.2.1 — April 25, 2026
 
 **effGen v0.2.1** brings **Cerebras** to effGen as a first-class inference backend and modernizes the **OpenAI** adapter for the latest reasoning models.

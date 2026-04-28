@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2] - 2026-04-28
+
+### Highlights
+
+**effGen v0.2.2** expands the **Gemini** adapter with the latest model families (3.x, 2.5, 2.0, Gemma 3/4), `thinking_budget`, Google Search grounding, the Files API, and three Gemini-native tools (`GoogleSearchTool`, `GeminiUrlContextTool`, `GeminiCodeExecutionTool`). It also modernizes the **Anthropic** adapter — Claude 4.7 / 4.x registry, extended thinking, prompt caching via `cache_control`, streaming polish, and experimental native tools — implemented and unit-tested; Anthropic live tests are skipped (no key in dev env).
+
+### Added
+
+#### Gemini — New Model Families
+- **Expanded model registry** (`effgen/models/gemini_models.py`) — Gemini 3.1-flash-lite, 3.0-pro, 2.5-flash, 2.5-pro, 2.0-flash, Gemma 3 and Gemma 4 families; `available_models()`, `free_tier_models()`, `recommended_models()`, `model_info()` helpers; context/output/feature flags per model
+- **Migrated SDK** from `google.generativeai` (legacy) to `google.genai` (`google-genai>=1.0.0`)
+
+#### Gemini — Thinking
+- **`GenerationConfig.thinking_budget: int | None`** — pass tokens for Gemini's internal reasoning; wired through `ThinkingConfig` in the adapter
+- **`GenerationConfig.include_thoughts: bool`** (default `False`) — surface thinking trace in `ModelResponse.metadata["thinking"]`
+
+#### Gemini — Grounding
+- **`GenerationConfig.grounding: bool`** (default `False`) — injects Google Search tool when model supports it; grounding attributions surfaced in `ModelResponse.metadata["grounding_chunks"]`
+
+#### Gemini — File Upload
+- **`effgen.models.gemini_files.upload_file(path) → FileRef`** — wraps `genai` Files API; 2 GiB pre-upload guard; accepts `FileRef` objects in `generate(prompt, files=[...])`
+
+#### Gemini — Native Tools
+- **`GoogleSearchTool`** — activates Gemini's built-in search; `ToolIncompatibleError` at Agent init with non-Gemini model
+- **`GeminiUrlContextTool`** — server-side URL content fetching
+- **`GeminiCodeExecutionTool`** — server-side Python execution; output surfaced in `generated_text`
+- All three in `effgen/tools/builtin/gemini_native.py`; re-exported from `effgen`
+- Parallel function calls handled: adapter encodes all parallel `functionCall` parts; `metadata["tool_calls"]` is a list
+
+#### Anthropic — Claude 4.x Registry
+- **`effgen/models/anthropic_models.py`** — claude-opus-4-7 (1M ctx / 128K out), claude-sonnet-4-6 (1M ctx / 64K out), claude-haiku-4-5, legacy 4.x and 3.x lineup; `supports_thinking`, `supports_native_tools`, `supports_prompt_caching`, pricing fields
+
+#### Anthropic — Extended Thinking
+- **`GenerationConfig.thinking: dict | None`** — accepts `{"type": "enabled", "budget_tokens": N}`; temperature is forced to 1.0 when thinking is active
+- Thinking trace surfaced in `ModelResponse.metadata["thinking"]`
+- **`redacted_thinking` multi-turn preservation** — `raw_content_blocks` in metadata; `build_assistant_message()` helper re-inserts redacted blocks on next turn
+
+#### Anthropic — Prompt Caching
+- **`effgen/models/anthropic_cache.py`** — `mark_cached(block, ttl="5m"|"1h")`, `apply_cache_to_system()`, `apply_cache_to_tools()`, `validate_breakpoint_count()` (max 4; raises `ValueError` on 5th)
+- **`AgentConfig.cache_system_prompt: bool = True`** — auto-inserts `cache_control` on the system prompt's final block
+- **`AgentConfig.cache_tools: bool = True`** — auto-inserts `cache_control` on the last tool spec
+- **Usage surfacing** — `ModelResponse.usage.cached_input_tokens` + `ModelResponse.usage.cache_creation_tokens`
+
+#### Anthropic — Streaming + Native Tools
+- **`generate_stream_full()`** — returns typed `StreamChunk` objects; thinking, tool-use, redacted-thinking, and text deltas all handled; parallel `tool_use` blocks accumulated per-index
+- **Experimental native tools** — `AnthropicBashTool`, `AnthropicTextEditorTool`, `AnthropicComputerTool` in `effgen/tools/builtin/anthropic_native.py`; `IS_ANTHROPIC_NATIVE` sentinel; `ToolIncompatibleError` at Agent init with non-Anthropic model; marked `experimental=True`
+
+### Changed
+- **`GenerationConfig`** gains `thinking_budget`, `include_thoughts`, `grounding`, `thinking` (all `None`/`False` by default — fully back-compat)
+- **`AgentConfig`** gains `cache_system_prompt: bool = True`, `cache_tools: bool = True` (additive, safe defaults)
+- **Gemini adapter** migrated to `google-genai` SDK; existing `GeminiAdapter` public API unchanged
+
+### Fixed
+- **`cli.py`** — `ToolMetadata.input_schema` missing field (Phase 0 sweep)
+- **`aggregation.py`** — `sources` variable shadowing / redefinition (Phase 0 sweep)
+- **Gemini mixed native + function-calling** — `tool_config.include_server_side_tool_invocations=True` set when mixing built-in and user-defined tools (Gemini API requirement)
+- **Anthropic `top_k`** — removed unsupported parameter that caused 400 errors
+- **Gemini model aliases** — short aliases (e.g. `gemini-3.1-flash-lite`) now resolve to canonical registry IDs (e.g. `gemini-3.1-flash-lite-preview`) at `GeminiAdapter` init, so API calls succeed when callers pass the friendly short form
+
+---
+
 ## [0.2.1] - 2026-04-25
 
 ### Highlights

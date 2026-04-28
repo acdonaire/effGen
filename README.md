@@ -36,6 +36,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🚀 | **28 Apr 2026** | **v0.2.2 Released**: Gemini 3.x/2.5/2.0 registry, `thinking_budget`, Google Search grounding, Files API, Gemini native tools (GoogleSearch, UrlContext, CodeExecution). Anthropic Claude 4.7 registry, extended thinking, prompt caching (`cache_control`), streaming polish, experimental native tools. [See changelog](CHANGELOG.md#022---2026-04-28) |
 | 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (4 free-tier models, streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](CHANGELOG.md#021---2026-04-25) |
 | 🚀 | **9 Apr 2026** | **v0.2.0 Released**: Major release — native tool calling, guardrails, multi-agent orchestration, RAG pipeline, 31 tools, eval framework, production API server, MLX Apple Silicon support, Python & TypeScript SDKs. [See changelog](CHANGELOG.md#020---2026-04-09) |
 | 🍎 | **8 Apr 2026** | **MLX & Apple Silicon support merged** (PR #4): Native Metal GPU acceleration via MLX & MLX-VLM backends, hardware detection, 5 Gradio GUI examples. `pip install effgen[mlx]` |
@@ -269,10 +270,25 @@ Production API<br/>
 
 ---
 
-## 🆕 What's New in v0.2.1
+## 🆕 What's New in v0.2.2
 
 <details open>
-<summary><b>Top 5 features in v0.2.1</b></summary>
+<summary><b>Top 5 features in v0.2.2</b></summary>
+
+1. **Gemini 3.x/2.5/2.0 + Gemma families** — full model registry with correct context windows, output limits, and feature flags; SDK migrated to `google-genai>=1.0.0`.
+
+2. **Gemini `thinking_budget`** — activate Gemini's internal reasoning with `GenerationConfig(thinking_budget=8192, include_thoughts=True)`; thinking trace surfaces in `ModelResponse.metadata["thinking"]`.
+
+3. **Gemini grounding + Files API** — `GenerationConfig(grounding=True)` injects Google Search; `upload_file(path)` passes PDFs/images to the model with a 2 GiB guard.
+
+4. **Gemini native tools** — `GoogleSearchTool`, `GeminiUrlContextTool`, `GeminiCodeExecutionTool` activate server-side Gemini capabilities in any Agent. Parallel function calls handled automatically.
+
+5. **Anthropic Claude 4.7, extended thinking, prompt caching** — full Claude 4.x registry; `GenerationConfig.thinking` for extended reasoning; `mark_cached()` + `AgentConfig.cache_system_prompt/cache_tools` for `cache_control`; cache tokens surfaced in usage.
+
+</details>
+
+<details>
+<summary><b>Top 5 features from v0.2.1</b></summary>
 
 1. **Cerebras backend** — 4 free-tier models (`llama3.1-8b`, `qwen-3-235b-a22b-instruct-2507`, `gpt-oss-120b`, `zai-glm-4.7`) with streaming, native function-calling, automatic RPM/TPM/RPD/TPD rate-limit coordination, and per-call cost tracking. `pip install effgen[cerebras]` and set `CEREBRAS_API_KEY`.
 
@@ -578,7 +594,7 @@ effGen supports **7 inference backends** and is tested across 11+ model families
 | **MLX-VLM** | Apple Silicon | Vision-Language models (Qwen2-VL, LLaVA, Phi-3 Vision, 30+ architectures) |
 | **vLLM** | NVIDIA GPU | High-throughput batch inference |
 | **Transformers** | Any (CPU/GPU) | Universal compatibility |
-| **API** | Cloud | OpenAI (gpt-5/gpt-5.4/o-series + reasoning_effort), Anthropic, Google Gemini, Cerebras (4 free-tier models, streaming + native tools) |
+| **API** | Cloud | OpenAI (gpt-5/gpt-5.4/o-series + reasoning_effort), Anthropic (Claude 4.7/4.x + thinking + caching), Google Gemini (3.x/2.5/2.0 + thinking_budget + grounding + Files API + native tools), Cerebras (4 free-tier models, streaming + native tools) |
 
 ### Top Recommended Models
 

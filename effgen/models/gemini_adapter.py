@@ -92,10 +92,14 @@ class GeminiAdapter(FunctionCallingModel):
         **kwargs: Any,
     ) -> None:
         import os
+        # Resolve short aliases (e.g. "gemini-3.1-flash-lite") to canonical
+        # registry IDs (e.g. "gemini-3.1-flash-lite-preview"). The Gemini API
+        # only recognizes canonical IDs; aliases are an effGen convenience.
+        canonical_name = GEMINI_MODEL_ALIASES.get(model_name, model_name)
         super().__init__(
-            model_name=model_name,
+            model_name=canonical_name,
             model_type=ModelType.GEMINI,
-            context_length=self.CONTEXT_LENGTHS.get(model_name, 32_760),
+            context_length=self.CONTEXT_LENGTHS.get(canonical_name, 32_760),
         )
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
