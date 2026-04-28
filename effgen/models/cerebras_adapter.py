@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -311,28 +313,51 @@ class CerebrasAdapter(BaseModel):
 
         request_params.update(kwargs)
 
-        try:
-            response = self._client.chat.completions.create(**request_params)
-        except Exception as exc:
-            msg = str(exc)
-            if "404" in msg and "model_not_found" in msg:
-                info = CEREBRAS_MODELS.get(self.model_name, {})
-                hint = (
-                    f" Model '{self.model_name}' is currently not accessible on your tier "
-                    "(Cerebras has temporarily restricted free-tier access to high-demand "
-                    "models like gpt-oss-120b and zai-glm-4.7). "
-                    f"Try a free-tier model: {free_tier_models()}."
-                ) if not info.get("free_tier", False) else ""
-                logger.error("Cerebras API 404 for model '%s': %s", self.model_name, exc)
-                raise RuntimeError(f"Cerebras generation failed: {exc}.{hint}") from exc
-            if "429" in msg or "rate_limit" in msg.lower():
-                logger.error("Cerebras rate-limit hit: %s", exc)
-                raise RuntimeError(
-                    f"Cerebras rate-limit exceeded for {self.model_name}: {exc}. "
-                    "Check coordinator status via adapter.rate_limit_status()."
-                ) from exc
-            logger.error("Cerebras API call failed: %s", exc)
-            raise RuntimeError(f"Cerebras generation failed: {exc}") from exc
+        _MAX_RETRIES = 6
+        _last_exc: Exception | None = None
+        for _attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                response = self._client.chat.completions.create(**request_params)
+                break
+            except Exception as exc:
+                _last_exc = exc
+                msg = str(exc)
+                if "404" in msg and "model_not_found" in msg:
+                    info = CEREBRAS_MODELS.get(self.model_name, {})
+                    hint = (
+                        f" Model '{self.model_name}' is currently not accessible on your tier "
+                        "(Cerebras has temporarily restricted free-tier access to high-demand "
+                        "models like gpt-oss-120b and zai-glm-4.7). "
+                        f"Try a free-tier model: {free_tier_models()}."
+                    ) if not info.get("free_tier", False) else ""
+                    logger.error("Cerebras API 404 for model '%s': %s", self.model_name, exc)
+                    raise RuntimeError(f"Cerebras generation failed: {exc}.{hint}") from exc
+                msg_lower = msg.lower()
+                is_rate = "429" in msg or "rate_limit" in msg_lower
+                # Cerebras "queue_exceeded" / "high traffic" — transient backpressure that needs
+                # longer waits than per-minute rate-limits. Treat as retryable but with a longer cap.
+                is_queue = "queue_exceeded" in msg_lower or "high traffic" in msg_lower
+                if is_rate or is_queue:
+                    if _attempt >= _MAX_RETRIES:
+                        logger.error("Cerebras rate-limit hit after %d retries: %s", _attempt, exc)
+                        raise RuntimeError(
+                            f"Cerebras rate-limit exceeded for {self.model_name}: {exc}. "
+                            "Check coordinator status via adapter.rate_limit_status()."
+                        ) from exc
+                    base = 4.0 if is_queue else 2.0
+                    delay = min(60.0, base * (2 ** (_attempt - 1)) + random.uniform(0, 0.5))
+                    logger.warning(
+                        "Cerebras %s on attempt %d/%d — retrying in %.1fs",
+                        "queue_exceeded" if is_queue else "429",
+                        _attempt, _MAX_RETRIES, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.error("Cerebras API call failed: %s", exc)
+                raise RuntimeError(f"Cerebras generation failed: {exc}") from exc
+        else:
+            assert _last_exc is not None
+            raise RuntimeError(f"Cerebras generation failed after {_MAX_RETRIES} retries: {_last_exc}") from _last_exc
 
         choice = response.choices[0]
         message = choice.message

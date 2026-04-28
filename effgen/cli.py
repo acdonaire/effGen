@@ -2100,7 +2100,7 @@ def _handle_batch_command(args, cli) -> int:
             config = AgentConfig(name="batch-agent", model=model, max_iterations=5)
             agent = Agent(config)
 
-        config = BatchConfig(
+        batch_config = BatchConfig(
             max_concurrency=args.concurrency,
             batch_size=args.batch_size,
             retry_failed=args.retries,
@@ -2109,7 +2109,7 @@ def _handle_batch_command(args, cli) -> int:
 
         runner = BatchRunner(agent)
         cli.print(f"Loading queries from {input_path}...")
-        result = runner.run_from_file(input_path, config=config, query_field=query_field)
+        result = runner.run_from_file(input_path, config=batch_config, query_field=query_field)
 
         cli.print(
             f"\nBatch complete: {result.succeeded}/{result.total} succeeded "

@@ -347,6 +347,8 @@ class GeminiAdapter(FunctionCallingModel):
             gen_config = _inject_tools(gen_config, tools)
 
         last_exc: Exception | None = None
+        _retry_start = time.monotonic()
+        _MAX_RETRY_SECONDS = 45.0
         for attempt in range(1, self.MAX_RATE_LIMIT_RETRIES + 1):
             try:
                 if stream:
@@ -373,13 +375,29 @@ class GeminiAdapter(FunctionCallingModel):
                 )
                 if not (is_quota or is_transient):
                     raise
+                # Hard daily/project quota exhausted — no point retrying
+                is_hard_quota = is_quota and (
+                    "exceeded your current quota" in exc_str.lower()
+                    or "per_day" in exc_str.lower()
+                    or "project" in exc_str.lower() and "quota" in exc_str.lower()
+                )
+                if is_hard_quota:
+                    raise
                 if attempt >= self.MAX_RATE_LIMIT_RETRIES:
+                    break
+                if time.monotonic() - _retry_start >= _MAX_RETRY_SECONDS:
+                    logger.warning("Gemini retry budget exhausted after %.1fs", _MAX_RETRY_SECONDS)
                     break
                 delay = self._suggested_retry_delay(exc) if is_quota else None
                 if delay is None:
                     delay = min(60.0, (2 ** attempt) + random.uniform(0, 0.5))
                 else:
                     delay = max(delay + 0.5, 1.0)
+                # Don't sleep past the budget
+                remaining = _MAX_RETRY_SECONDS - (time.monotonic() - _retry_start)
+                delay = min(delay, remaining)
+                if delay <= 0:
+                    break
                 logger.warning(
                     "Gemini transient error on attempt %d/%d: %s — sleeping %.1fs",
                     attempt, self.MAX_RATE_LIMIT_RETRIES, type(exc).__name__, delay,
