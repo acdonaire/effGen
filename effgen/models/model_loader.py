@@ -34,6 +34,16 @@ _TogetherAdapter = None
 _FireworksAdapter = None
 # Replicate import is deferred to avoid hard dependency when replicate extra is absent.
 _ReplicateAdapter = None
+# HF Inference import is deferred to avoid hard dependency when hf extra is absent.
+_HFInferenceAdapter = None
+
+
+def _get_hf_inference_adapter():
+    global _HFInferenceAdapter
+    if _HFInferenceAdapter is None:
+        from effgen.models.hf_inference_adapter import HFInferenceAdapter
+        _HFInferenceAdapter = HFInferenceAdapter
+    return _HFInferenceAdapter
 
 
 def _get_replicate_adapter():
@@ -233,6 +243,22 @@ class ModelLoader:
             for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
                 kwargs.pop(k, None)
             model = ReplicateAdapter(model_name=model_name, api_token=api_token, **kwargs)
+            model.load()
+            self._validate_model(model)
+            self.loaded_models[model_name] = model
+            return model
+        if provider in ("hf_inference", "hf"):
+            HFInferenceAdapter = _get_hf_inference_adapter()
+            api_token = kwargs.pop("api_token", kwargs.pop("api_key", None))
+            endpoint_url = kwargs.pop("endpoint_url", None)
+            for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
+                kwargs.pop(k, None)
+            model = HFInferenceAdapter(
+                model_name=model_name,
+                api_token=api_token,
+                endpoint_url=endpoint_url,
+                **kwargs,
+            )
             model.load()
             self._validate_model(model)
             self.loaded_models[model_name] = model

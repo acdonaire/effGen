@@ -52,13 +52,21 @@ from effgen.models.capabilities import (
     register_model_capability,
 )
 from effgen.models.cerebras_adapter import CerebrasAdapter
-from effgen.models.errors import ModelAuthError, ModelRefusalError, ModelTimeoutError
+from effgen.models.errors import (
+    ModelAuthError,
+    ModelNotFoundError,
+    ModelRefusalError,
+    ModelTimeoutError,
+    ModelUnavailableError,
+)
 from effgen.models.fireworks_adapter import FireworksAdapter
 from effgen.models.fireworks_models import FIREWORKS_MODELS
 from effgen.models.gemini_adapter import GeminiAdapter
 from effgen.models.gemini_files import FileRef, upload_file
 from effgen.models.groq_adapter import GroqAdapter
 from effgen.models.groq_models import GROQ_MODELS
+from effgen.models.hf_inference_adapter import HFInferenceAdapter
+from effgen.models.hf_inference_models import HF_MODELS
 from effgen.models.lazy import LazyModel
 from effgen.models.model_loader import ModelLoader, load_model
 from effgen.models.openai_adapter import OpenAIAdapter
@@ -117,12 +125,14 @@ __all__ = [
     "TogetherAdapter",
     "FireworksAdapter",
     "ReplicateAdapter",
+    "HFInferenceAdapter",
 
     # Model registries
     "GROQ_MODELS",
     "TOGETHER_MODELS",
     "FIREWORKS_MODELS",
     "REPLICATE_MODELS",
+    "HF_MODELS",
 
     # Anthropic streaming
     "StreamChunk",
@@ -158,6 +168,8 @@ __all__ = [
     "ModelRefusalError",
     "ModelAuthError",
     "ModelTimeoutError",
+    "ModelUnavailableError",
+    "ModelNotFoundError",
 
     # Schema helpers
     "to_openai_schema",

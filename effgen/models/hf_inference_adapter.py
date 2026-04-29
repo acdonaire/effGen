@@ -1,0 +1,812 @@
+"""
+HuggingFace Inference API adapter for effGen.
+
+Supports two modes:
+  1. Serverless Inference API — point at any public HF model ID (free tier).
+  2. Dedicated Inference Endpoints — set ModelConfig.endpoint_url (or pass
+     endpoint_url= to the constructor) to route to a private endpoint.
+
+Key behaviours
+--------------
+- generate()         — synchronous, via InferenceClient.chat_completion().
+- generate_stream()  — real SSE streaming, via stream=True.
+- text_generation()  — fallback for base / non-chat models.
+- ModelUnavailableError — raised on 503/404 with helpful alternative suggestions.
+- Native tools       — models that advertise supports_native_tools=True in the
+                       registry get function-calling; others fall back to ReAct.
+- RateLimitCoordinator — wired best-effort (HF limits are per-token/tier, not
+                       easily modelled — see docstring below for the known gap).
+- CostTracker        — free-tier: $0; Pro-tier/Endpoints: registry rates recorded.
+
+Rate-limit gap
+--------------
+HuggingFace Serverless Inference enforces limits by user tier (free/PRO/Enterprise)
+and per-provider-backend (e.g. novita, sambanova) rather than simple RPM/TPM
+windows.  The RateLimitCoordinator is wired with conservative defaults so it
+acts as a local circuit-breaker and does not over-call the API; it does NOT
+accurately model HF's actual server-side limits.  This gap is documented here
+and in docs/models/hf_inference.md.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from collections.abc import Iterator
+from typing import Any
+
+from effgen.models._cost import CostTracker
+from effgen.models._rate_limit import RateLimitCoordinator
+from effgen.models.base import (
+    BaseModel,
+    GenerationConfig,
+    GenerationResult,
+    TokenCount,
+)
+from effgen.models.errors import (
+    ModelAuthError,
+    ModelNotFoundError,
+    ModelUnavailableError,
+)
+from effgen.models.hf_inference_models import (
+    HF_DEFAULT_MODEL,
+    HF_MODELS,
+    REGISTRY_FETCH_DATE,
+    suggest_alternatives,
+)
+
+logger = logging.getLogger(__name__)
+
+_HF_MODEL_TYPE_VALUE = "hf_inference"
+
+# HTTP status codes that indicate a model is temporarily unavailable
+_UNAVAILABLE_STATUS = {503, 404}
+# HTTP status codes that indicate auth failure
+_AUTH_STATUS = {401, 403}
+
+
+class _HFModelType:
+    """Sentinel so ModelType enum doesn't need patching."""
+    value = _HF_MODEL_TYPE_VALUE
+
+
+class HFInferenceAdapter(BaseModel):
+    """
+    Adapter for the HuggingFace Inference API (Serverless + Endpoints).
+
+    Wraps :class:`huggingface_hub.InferenceClient` behind the standard effGen
+    ``BaseModel`` interface.  Supports chat completion, streaming, and native
+    function-calling on models that advertise it.
+
+    Args:
+        model_name: HuggingFace model ID (``"org/name"``), e.g.
+            ``"Qwen/Qwen2.5-7B-Instruct"``.  Ignored when *endpoint_url* is set
+            (the endpoint already encodes the model).  Defaults to
+            ``"Qwen/Qwen2.5-7B-Instruct"``.
+        api_token: HuggingFace access token.  Falls back to the ``HF_TOKEN``
+            and ``HUGGINGFACE_API_KEY`` environment variables.
+        endpoint_url: URL of a dedicated Inference Endpoint.  When set, all
+            requests are routed to that URL instead of the public Serverless API.
+        timeout: Per-request timeout in seconds (default 120s).
+        max_retries: Retry attempts on transient errors.
+        enable_rate_limiting: Wire built-in
+            :class:`~effgen.models._rate_limit.RateLimitCoordinator`.
+            Conservative defaults only — see module docstring for the gap.
+        enable_cost_tracking: Record token usage in the global
+            :class:`~effgen.models._cost.CostTracker`.
+        warn_unknown_model: Emit a warning when the model is not in the
+            bundled registry (still works — just without registry metadata).
+
+    Example — Serverless::
+
+        from effgen.models.hf_inference_adapter import HFInferenceAdapter
+
+        adapter = HFInferenceAdapter("Qwen/Qwen2.5-7B-Instruct")
+        adapter.load()
+
+        result = adapter.generate("What is the capital of France?")
+        print(result.text)
+
+        for chunk in adapter.generate_stream("Count 1 to 5."):
+            print(chunk, end="", flush=True)
+
+        adapter.unload()
+
+    Example — Dedicated Endpoint::
+
+        adapter = HFInferenceAdapter(
+            model_name="my-private-model",
+            endpoint_url="https://my-endpoint.endpoints.huggingface.cloud",
+        )
+        adapter.load()
+        result = adapter.generate("Hello")
+    """
+
+    def __init__(
+        self,
+        model_name: str = HF_DEFAULT_MODEL,
+        api_token: str | None = None,
+        endpoint_url: str | None = None,
+        timeout: float = 120.0,
+        max_retries: int = 3,
+        enable_rate_limiting: bool = True,
+        enable_cost_tracking: bool = True,
+        warn_unknown_model: bool = True,
+        provider: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        info = HF_MODELS.get(model_name)
+        if info is None and warn_unknown_model:
+            logger.warning(
+                "HFInferenceAdapter: model '%s' is not in the bundled registry "
+                "(registry date: %s).  Proceeding with default parameters.",
+                model_name,
+                REGISTRY_FETCH_DATE,
+            )
+            info = {}
+
+        super().__init__(
+            model_name=model_name,
+            model_type=_HFModelType(),  # type: ignore[arg-type]
+            context_length=(info or {}).get("context", 8_192),
+        )
+
+        self._api_token = api_token
+        self._endpoint_url = endpoint_url
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self._extra_kwargs = kwargs
+        self._client: Any = None
+        self._enable_cost_tracking = enable_cost_tracking
+        self._info: dict[str, Any] = info or {}
+        # Provider routing: explicit arg > registry hint > "auto" (HF Router picks).
+        # The legacy "hf-inference" backend no longer hosts most chat models — the
+        # default is "auto" so the HF Router selects an available backend (Together,
+        # Novita, Sambanova, etc.) per request.
+        self._provider = provider or (info or {}).get("provider", "auto")
+
+        self._rate_limiter: RateLimitCoordinator | None = None
+        if enable_rate_limiting:
+            # Conservative defaults — HF limits are tier-based, not simple RPM/TPM.
+            self._rate_limiter = RateLimitCoordinator(
+                provider="hf_inference",
+                model=model_name,
+                rpm=10,
+                rph=300,
+                rpd=10_000,
+                tpm=100_000,
+                tph=2_000_000,
+                tpd=20_000_000,
+            )
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def load(self) -> None:
+        """Instantiate the HuggingFace InferenceClient.
+
+        Raises:
+            RuntimeError: If ``huggingface_hub`` is not installed.
+            ValueError: If no API token is available.
+        """
+        api_token = (
+            self._api_token
+            or os.getenv("HF_TOKEN")
+            or os.getenv("HUGGINGFACE_API_KEY")
+        )
+        if not api_token:
+            raise ValueError(
+                "HuggingFace API token not found.  Set the HF_TOKEN "
+                "environment variable or pass api_token= to HFInferenceAdapter."
+            )
+
+        try:
+            from huggingface_hub import InferenceClient
+        except ImportError as exc:
+            raise RuntimeError(
+                "huggingface_hub is not installed.  "
+                "Install with: pip install 'effgen[hf]'"
+            ) from exc
+
+        if self._endpoint_url:
+            self._client = InferenceClient(
+                base_url=self._endpoint_url,
+                token=api_token,
+                timeout=self.timeout,
+            )
+        else:
+            client_kwargs: dict[str, Any] = {
+                "model": self.model_name,
+                "token": api_token,
+                "timeout": self.timeout,
+            }
+            if self._provider:
+                client_kwargs["provider"] = self._provider
+            self._client = InferenceClient(**client_kwargs)
+
+        self._is_loaded = True
+
+        info = self._info
+        self._metadata = {
+            "model_name": self.model_name,
+            "context_length": self.get_context_length(),
+            "provider": "hf_inference",
+            "family": info.get("family", ""),
+            "organization": info.get("organization", ""),
+            "display_name": info.get("display_name", ""),
+            "supports_native_tools": info.get("supports_native_tools", False),
+            "supports_structured_output": info.get("supports_structured_output", False),
+            "input_modalities": info.get("input_modalities", ["text"]),
+            "output_modalities": info.get("output_modalities", ["text"]),
+            "requires_endpoint": info.get("requires_endpoint", False),
+            "endpoint_url": self._endpoint_url or "",
+            "pricing_per_1m_input": info.get("pricing_per_1m_input", 0.0),
+            "pricing_per_1m_output": info.get("pricing_per_1m_output", 0.0),
+            "preferred_provider": info.get("preferred_provider", ""),
+            "router_provider": (
+                "" if self._endpoint_url else (self._provider or "auto")
+            ),
+            "registry_fetch_date": REGISTRY_FETCH_DATE,
+        }
+        logger.info(
+            "HFInferenceAdapter loaded for model '%s'%s",
+            self.model_name,
+            f" (endpoint: {self._endpoint_url})" if self._endpoint_url else "",
+        )
+
+    def unload(self) -> None:
+        """Release client resources."""
+        self._client = None
+        self._is_loaded = False
+        logger.info("HFInferenceAdapter unloaded")
+
+    # ------------------------------------------------------------------
+    # Token counting (approximate)
+    # ------------------------------------------------------------------
+
+    def count_tokens(self, text: str) -> TokenCount:
+        """Approximate token count (4 chars ≈ 1 token)."""
+        count = max(1, len(text) // 4)
+        return TokenCount(count=count, model_name=self.model_name)
+
+    def get_context_length(self) -> int:
+        return self._info.get("context", 8_192)
+
+    # ------------------------------------------------------------------
+    # Error helpers
+    # ------------------------------------------------------------------
+
+    def _raise_for_unavailable(self, exc: Exception, context: str = "") -> None:
+        """Convert HF HTTP errors to typed effGen exceptions."""
+        exc_str = str(exc)
+        exc_type = type(exc).__name__
+
+        # Auth errors
+        if any(code in exc_str for code in ("401", "403")):
+            raise ModelAuthError(
+                provider="hf_inference",
+                model_name=self.model_name,
+                message=exc_str[:200],
+            ) from exc
+
+        # Model that doesn't exist on the Hub at all (typo, deleted, private).
+        # Distinct from "exists but unavailable" — surface as ModelNotFoundError.
+        if "does not exist" in exc_str or "model_not_found" in exc_str:
+            raise ModelNotFoundError(
+                provider="hf_inference",
+                model_name=self.model_name,
+                message=exc_str[:200],
+            ) from exc
+
+        # Model unavailable: 503 / 404 / "Not Found" / "Service Temporarily Unavailable"
+        # Also: HF Router 400 "Model not supported by provider <x>" — the model
+        # exists on Hub but no provider currently serves it.  Treat as unavailable
+        # and surface helpful suggestions.
+        is_unsupported_400 = (
+            "Model not supported by provider" in exc_str
+            or "is not supported for task" in exc_str
+            or "is not supported by any provider" in exc_str
+            or "model_not_supported" in exc_str
+            or "no available providers" in exc_str.lower()
+        )
+        if (
+            any(code in exc_str for code in ("503", "404"))
+            or "Not Found" in exc_str
+            or "Service Temporarily Unavailable" in exc_str
+            or is_unsupported_400
+        ):
+            alts = suggest_alternatives(self.model_name)
+            raise ModelUnavailableError(
+                provider="hf_inference",
+                model_name=self.model_name,
+                suggestions=alts,
+                message=(
+                    f"Model is temporarily unavailable on HuggingFace Serverless "
+                    f"Inference{' (' + context + ')' if context else ''}.  "
+                    f"This is common for models that rotate in/out of the free tier."
+                ),
+            ) from exc
+
+        # Re-raise unknown errors
+        raise RuntimeError(
+            f"HuggingFace Inference error for '{self.model_name}': {exc}"
+        ) from exc
+
+    # ------------------------------------------------------------------
+    # Message builder
+    # ------------------------------------------------------------------
+
+    def _build_messages(
+        self,
+        prompt: str,
+        system_prompt: str = "You are a helpful assistant.",
+        messages: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        if messages is not None:
+            return messages
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+
+    # ------------------------------------------------------------------
+    # Generation (non-streaming)
+    # ------------------------------------------------------------------
+
+    def generate(
+        self,
+        prompt: str,
+        config: GenerationConfig | None = None,
+        **kwargs: Any,
+    ) -> GenerationResult:
+        """Generate a response via HuggingFace Inference API.
+
+        Uses ``chat_completion()`` for chat models; ``text_generation()`` for
+        base models (``use_text_generation=True`` in registry).
+
+        Args:
+            prompt: User prompt.
+            config: Optional generation config.
+            **kwargs: Forwarded to the underlying API call.
+
+        Returns:
+            GenerationResult with text, usage, and metadata.
+
+        Raises:
+            RuntimeError: If not loaded.
+            ModelAuthError: On authentication failure.
+            ModelUnavailableError: When the model is not available on Serverless.
+        """
+        if not self._is_loaded or self._client is None:
+            raise RuntimeError("HFInferenceAdapter not loaded. Call load() first.")
+
+        if config is None:
+            config = GenerationConfig()
+
+        if self._rate_limiter is not None:
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    pass
+                else:
+                    loop.run_until_complete(self._rate_limiter.acquire(500))
+            except RuntimeError:
+                import asyncio
+                asyncio.run(self._rate_limiter.acquire(500))
+
+        tools = kwargs.pop("tools", None)
+        messages = kwargs.pop("messages", None)
+        system_prompt = kwargs.pop("system_prompt", "You are a helpful assistant.")
+
+        use_text_gen = self._info.get("use_text_generation", False)
+
+        if use_text_gen:
+            result = self._generate_text(prompt, config, **kwargs)
+        else:
+            msgs = self._build_messages(prompt, system_prompt, messages)
+            result = self._generate_chat(msgs, config, tools=tools, **kwargs)
+
+        if self._rate_limiter is not None:
+            total = result.metadata.get("total_tokens", 0) if result.metadata else 0
+            self._rate_limiter.record(total)
+
+        return result
+
+    def _generate_chat(
+        self,
+        messages: list[dict[str, Any]],
+        config: GenerationConfig,
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> GenerationResult:
+        """Internal: call chat_completion() and assemble GenerationResult."""
+        call_kwargs: dict[str, Any] = {}
+        if config.max_tokens is not None:
+            call_kwargs["max_tokens"] = config.max_tokens
+        if config.temperature is not None:
+            call_kwargs["temperature"] = config.temperature
+        if config.top_p is not None:
+            call_kwargs["top_p"] = config.top_p
+        if config.stop_sequences:
+            call_kwargs["stop"] = config.stop_sequences
+        if config.seed is not None:
+            call_kwargs["seed"] = config.seed
+
+        if tools and self._info.get("supports_native_tools"):
+            call_kwargs["tools"] = tools
+            call_kwargs["tool_choice"] = "auto"
+
+        call_kwargs.update(kwargs)
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                resp = self._client.chat_completion(
+                    messages=messages,
+                    model=None if self._endpoint_url else self.model_name,
+                    **call_kwargs,
+                )
+                break
+            except Exception as exc:
+                if attempt < self.max_retries and self._is_transient(exc):
+                    import time
+                    time.sleep(2 ** attempt)
+                    continue
+                self._raise_for_unavailable(exc)
+
+        choice = resp.choices[0]
+        text = choice.message.content or ""
+        finish_reason = choice.finish_reason or "stop"
+
+        # Extract tool calls if present
+        tool_calls = []
+        if choice.message.tool_calls:
+            for tc in choice.message.tool_calls:
+                args = tc.function.arguments
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                tool_calls.append({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": args,
+                    },
+                })
+
+        # Usage
+        usage = resp.usage
+        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        output_tokens = getattr(usage, "completion_tokens", 0) or 0
+        total_tokens = getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens)
+
+        return self._build_result(
+            text=text,
+            finish_reason=finish_reason,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            tool_calls=tool_calls,
+        )
+
+    def _generate_text(
+        self,
+        prompt: str,
+        config: GenerationConfig,
+        **kwargs: Any,
+    ) -> GenerationResult:
+        """Internal: call text_generation() for base (non-chat) models."""
+        call_kwargs: dict[str, Any] = {
+            "details": True,
+        }
+        if config.max_tokens is not None:
+            call_kwargs["max_new_tokens"] = config.max_tokens
+        if config.temperature is not None:
+            call_kwargs["temperature"] = config.temperature
+        if config.top_p is not None:
+            call_kwargs["top_p"] = config.top_p
+        if config.stop_sequences:
+            call_kwargs["stop_sequences"] = config.stop_sequences
+        call_kwargs.update(kwargs)
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                resp = self._client.text_generation(
+                    prompt,
+                    model=None if self._endpoint_url else self.model_name,
+                    **call_kwargs,
+                )
+                break
+            except Exception as exc:
+                if attempt < self.max_retries and self._is_transient(exc):
+                    import time
+                    time.sleep(2 ** attempt)
+                    continue
+                self._raise_for_unavailable(exc)
+
+        if hasattr(resp, "generated_text"):
+            text = resp.generated_text or ""
+            details = getattr(resp, "details", None)
+            output_tokens = len(getattr(details, "tokens", [])) if details else max(1, len(text) // 4)
+            input_tokens = max(1, len(prompt) // 4)
+        else:
+            text = str(resp)
+            input_tokens = max(1, len(prompt) // 4)
+            output_tokens = max(1, len(text) // 4)
+
+        total_tokens = input_tokens + output_tokens
+        return self._build_result(
+            text=text,
+            finish_reason="stop",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            tool_calls=[],
+        )
+
+    def _build_result(
+        self,
+        text: str,
+        finish_reason: str,
+        input_tokens: int,
+        output_tokens: int,
+        total_tokens: int,
+        tool_calls: list[dict[str, Any]],
+    ) -> GenerationResult:
+        """Assemble a GenerationResult and record cost."""
+        info = self._info
+        cost_usd = 0.0
+        price_in = info.get("pricing_per_1m_input", 0.0)
+        price_out = info.get("pricing_per_1m_output", 0.0)
+        if price_in and input_tokens:
+            cost_usd = (
+                input_tokens * price_in / 1_000_000
+                + output_tokens * price_out / 1_000_000
+            )
+
+        if self._enable_cost_tracking and cost_usd:
+            try:
+                CostTracker.instance().record(
+                    provider="hf_inference",
+                    model=self.model_name,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost_usd=cost_usd,
+                )
+            except Exception:
+                pass
+
+        metadata = {
+            "provider": "hf_inference",
+            "model_name": self.model_name,
+            "endpoint_url": self._endpoint_url or "",
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cost_usd": cost_usd,
+            "tool_calls": tool_calls,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+            },
+        }
+
+        return GenerationResult(
+            text=text,
+            tokens_used=total_tokens,
+            finish_reason=finish_reason,
+            model_name=self.model_name,
+            metadata=metadata,
+        )
+
+    # ------------------------------------------------------------------
+    # Streaming
+    # ------------------------------------------------------------------
+
+    def generate_stream(
+        self,
+        prompt: str,
+        config: GenerationConfig | None = None,
+        **kwargs: Any,
+    ) -> Iterator[str]:
+        """Stream tokens from HuggingFace Inference via SSE.
+
+        Uses ``chat_completion(stream=True)`` which delivers token-by-token
+        output in real time.  Falls back to ``text_generation(stream=True)``
+        for base models.
+
+        Args:
+            prompt: User prompt.
+            config: Optional generation config.
+            **kwargs: Forwarded to the underlying API call.
+
+        Yields:
+            str: Token/chunk strings as they arrive.
+
+        Raises:
+            RuntimeError: If not loaded.
+            ModelAuthError: On authentication failure.
+            ModelUnavailableError: When the model is unavailable on Serverless.
+        """
+        if not self._is_loaded or self._client is None:
+            raise RuntimeError("HFInferenceAdapter not loaded. Call load() first.")
+
+        if config is None:
+            config = GenerationConfig()
+
+        system_prompt = kwargs.pop("system_prompt", "You are a helpful assistant.")
+        messages_arg = kwargs.pop("messages", None)
+
+        use_text_gen = self._info.get("use_text_generation", False)
+
+        if use_text_gen:
+            yield from self._stream_text(prompt, config, **kwargs)
+        else:
+            msgs = self._build_messages(prompt, system_prompt, messages_arg)
+            yield from self._stream_chat(msgs, config, **kwargs)
+
+    def _stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        config: GenerationConfig,
+        **kwargs: Any,
+    ) -> Iterator[str]:
+        call_kwargs: dict[str, Any] = {}
+        if config.max_tokens is not None:
+            call_kwargs["max_tokens"] = config.max_tokens
+        if config.temperature is not None:
+            call_kwargs["temperature"] = config.temperature
+        if config.top_p is not None:
+            call_kwargs["top_p"] = config.top_p
+        if config.stop_sequences:
+            call_kwargs["stop"] = config.stop_sequences
+        if config.seed is not None:
+            call_kwargs["seed"] = config.seed
+        call_kwargs.update(kwargs)
+
+        try:
+            for chunk in self._client.chat_completion(
+                messages=messages,
+                model=None if self._endpoint_url else self.model_name,
+                stream=True,
+                **call_kwargs,
+            ):
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except Exception as exc:
+            self._raise_for_unavailable(exc, context="streaming")
+
+    def _stream_text(
+        self,
+        prompt: str,
+        config: GenerationConfig,
+        **kwargs: Any,
+    ) -> Iterator[str]:
+        call_kwargs: dict[str, Any] = {}
+        if config.max_tokens is not None:
+            call_kwargs["max_new_tokens"] = config.max_tokens
+        if config.temperature is not None:
+            call_kwargs["temperature"] = config.temperature
+        if config.top_p is not None:
+            call_kwargs["top_p"] = config.top_p
+        call_kwargs.update(kwargs)
+
+        try:
+            for token in self._client.text_generation(
+                prompt,
+                model=None if self._endpoint_url else self.model_name,
+                stream=True,
+                **call_kwargs,
+            ):
+                yield token if isinstance(token, str) else str(token)
+        except Exception as exc:
+            self._raise_for_unavailable(exc, context="streaming text_generation")
+
+    # ------------------------------------------------------------------
+    # Async generate
+    # ------------------------------------------------------------------
+
+    async def async_generate(
+        self,
+        prompt: str,
+        config: GenerationConfig | None = None,
+        **kwargs: Any,
+    ) -> GenerationResult:
+        """Async version of generate() — runs blocking call in thread pool."""
+        import asyncio
+        import functools
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            functools.partial(self.generate, prompt, config, **kwargs),
+        )
+
+    # ------------------------------------------------------------------
+    # Tool-call generate (native tools on supported models)
+    # ------------------------------------------------------------------
+
+    def generate_with_tools(
+        self,
+        prompt: str,
+        tools: list[Any],
+        config: GenerationConfig | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        system_prompt: str = "You are a helpful assistant.",
+        **kwargs: Any,
+    ) -> GenerationResult:
+        """Generate with native tool-calling on supported models.
+
+        For models with ``supports_native_tools=True`` in the registry, the
+        tools list is forwarded to ``chat_completion(tools=...)``.
+
+        For unsupported models, raises ``NotImplementedError`` — use an Agent
+        with ``strategy='react'`` instead.
+
+        Args:
+            prompt: User prompt / task description.
+            tools: List of tool dicts (OpenAI function-calling schema) or
+                effGen Tool objects.
+            config: Optional generation config.
+            messages: Full conversation history; overrides prompt if provided.
+            system_prompt: System prompt when building messages from *prompt*.
+            **kwargs: Forwarded to the underlying API call.
+
+        Returns:
+            GenerationResult with ``tool_calls`` in metadata.
+        """
+        if not self._info.get("supports_native_tools"):
+            raise NotImplementedError(
+                f"Model '{self.model_name}' does not support native tool calling.  "
+                f"Use an Agent with strategy='react' instead, or switch to "
+                f"a tool-capable model like 'Qwen/Qwen2.5-7B-Instruct'."
+            )
+
+        openai_tools: list[dict[str, Any]] = []
+        for t in tools:
+            if isinstance(t, dict):
+                openai_tools.append(t if "type" in t else {"type": "function", "function": t})
+            else:
+                try:
+                    schema = t.metadata.to_json_schema()
+                    openai_tools.append({"type": "function", "function": schema})
+                except AttributeError:
+                    openai_tools.append({"type": "function", "function": str(t)})
+
+        return self.generate(
+            prompt,
+            config,
+            tools=openai_tools,
+            messages=messages,
+            system_prompt=system_prompt,
+            **kwargs,
+        )
+
+    # ------------------------------------------------------------------
+    # Introspection
+    # ------------------------------------------------------------------
+
+    def supports_tool_calling(self) -> bool:
+        return bool(self._info.get("supports_native_tools", False))
+
+    def supports_streaming(self) -> bool:
+        return True
+
+    def get_endpoint_url(self) -> str | None:
+        return self._endpoint_url
+
+    # ------------------------------------------------------------------
+    # Transient error helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_transient(exc: Exception) -> bool:
+        """Return True if the exception looks like a transient network/rate error."""
+        exc_str = str(exc)
+        return any(code in exc_str for code in ("429", "500", "502", "503", "504"))

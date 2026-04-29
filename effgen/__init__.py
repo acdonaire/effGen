@@ -79,6 +79,7 @@ from effgen.models import (
     GenerationConfig,
     GenerationResult,
     GroqAdapter,
+    HFInferenceAdapter,
     ModelLoader,
     OpenAIAdapter,
     ReplicateAdapter,
@@ -94,8 +95,10 @@ from effgen.models.cerebras_models import free_tier_models as cerebras_free_tier
 from effgen.models.cerebras_models import model_info as cerebras_model_info
 from effgen.models.errors import (
     ModelAuthError,
+    ModelNotFoundError,
     ModelRefusalError,
     ModelTimeoutError,
+    ModelUnavailableError,
     ToolIncompatibleError,
 )
 from effgen.models.fireworks_models import available_models as fireworks_available_models
@@ -110,6 +113,17 @@ from effgen.models.gemini_models import recommended_models as gemini_recommended
 from effgen.models.groq_models import available_models as groq_available_models
 from effgen.models.groq_models import chat_models as groq_chat_models
 from effgen.models.groq_models import tool_capable_models as groq_tool_capable_models
+from effgen.models.hf_inference_models import available_models as hf_available_models
+from effgen.models.hf_inference_models import catalog_summary as hf_catalog_summary
+from effgen.models.hf_inference_models import chat_models as hf_chat_models
+from effgen.models.hf_inference_models import cheapest_provider as hf_cheapest_provider
+from effgen.models.hf_inference_models import check_drift as hf_check_drift
+from effgen.models.hf_inference_models import get_model_info as hf_get_model_info
+from effgen.models.hf_inference_models import list_providers_for as hf_list_providers_for
+from effgen.models.hf_inference_models import refresh_models as hf_refresh_models
+from effgen.models.hf_inference_models import serverless_models as hf_serverless_models
+from effgen.models.hf_inference_models import suggest_alternatives as hf_suggest_alternatives
+from effgen.models.hf_inference_models import tool_capable_models as hf_tool_capable_models
 from effgen.models.openai_models import available_models as openai_available_models
 from effgen.models.openai_models import chat_models as openai_chat_models
 from effgen.models.openai_models import model_info as openai_model_info
@@ -236,6 +250,7 @@ __all__ = [
     "TogetherAdapter",
     "FireworksAdapter",
     "ReplicateAdapter",
+    "HFInferenceAdapter",
     "ModelLoader",
     "GenerationConfig",
     "GenerationResult",
@@ -244,6 +259,8 @@ __all__ = [
     "ModelRefusalError",
     "ModelAuthError",
     "ModelTimeoutError",
+    "ModelUnavailableError",
+    "ModelNotFoundError",
     "to_openai_schema",
     # Cerebras helpers
     "cerebras_available_models",
@@ -282,6 +299,18 @@ __all__ = [
     "replicate_tool_capable_models",
     "replicate_refresh_models",
     "replicate_get_model_info",
+    # HF Inference helpers
+    "hf_available_models",
+    "hf_chat_models",
+    "hf_tool_capable_models",
+    "hf_serverless_models",
+    "hf_suggest_alternatives",
+    "hf_get_model_info",
+    "hf_refresh_models",
+    "hf_check_drift",
+    "hf_catalog_summary",
+    "hf_list_providers_for",
+    "hf_cheapest_provider",
 
     # Tools
     "BaseTool",

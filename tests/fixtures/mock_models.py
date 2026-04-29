@@ -5,6 +5,8 @@ These models return predetermined responses, allowing tests to run
 without GPU or real model inference.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 
 from effgen.models.base import BaseModel, GenerationConfig, GenerationResult, ModelType, TokenCount

@@ -83,6 +83,56 @@ class ModelTimeoutError(Exception):
         )
 
 
+class ModelUnavailableError(Exception):
+    """Raised when a model is temporarily unavailable on the provider's serverless tier.
+
+    HuggingFace Serverless Inference rotates model availability.  This error
+    surfaces the 503/404 with actionable suggestions so callers know what to try
+    instead of getting a raw HTTP error.
+
+    Attributes:
+        provider: Provider name (e.g. ``"hf"``).
+        model_name: The model that is unavailable.
+        suggestions: List of alternative model IDs to try.
+        message: Human-readable cause.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        model_name: str = "",
+        suggestions: list[str] | None = None,
+        message: str = "",
+    ) -> None:
+        self.provider = provider
+        self.model_name = model_name
+        self.suggestions = suggestions or []
+        self.message = message
+        suffix = f" (model={model_name!r})" if model_name else ""
+        body = message or "model is not available on the serverless tier"
+        suggest_str = ""
+        if self.suggestions:
+            suggest_str = "  Try one of: " + ", ".join(self.suggestions)
+        super().__init__(f"{provider} unavailable{suffix}: {body}.{suggest_str}")
+
+
+class ModelNotFoundError(Exception):
+    """Raised when a requested model ID does not exist on the provider.
+
+    Attributes:
+        provider: Provider name.
+        model_name: The model that was not found.
+    """
+
+    def __init__(self, provider: str, model_name: str = "", message: str = "") -> None:
+        self.provider = provider
+        self.model_name = model_name
+        self.message = message
+        suffix = f" (model={model_name!r})" if model_name else ""
+        body = message or "model not found"
+        super().__init__(f"{provider} error{suffix}: {body}")
+
+
 class ToolIncompatibleError(Exception):
     """Raised when a tool cannot be used with the configured model.
 
