@@ -281,7 +281,6 @@ class HFInferenceAdapter(BaseModel):
     def _raise_for_unavailable(self, exc: Exception, context: str = "") -> None:
         """Convert HF HTTP errors to typed effGen exceptions."""
         exc_str = str(exc)
-        exc_type = type(exc).__name__
 
         # Auth errors
         if any(code in exc_str for code in ("401", "403")):

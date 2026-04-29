@@ -67,7 +67,7 @@ class TestHFRegistry:
             assert info["context"] > 0, f"Model '{mid}' non-positive context"
 
     def test_pricing_non_negative(self):
-        for mid, info in HF_MODELS.items():
+        for info in HF_MODELS.values():
             assert info.get("pricing_per_1m_input", 0.0) >= 0
             assert info.get("pricing_per_1m_output", 0.0) >= 0
 
@@ -115,7 +115,7 @@ class TestHFAdapterConstruction:
     def test_unknown_model_warns(self, caplog):
         import logging
         with caplog.at_level(logging.WARNING, logger="effgen.models.hf_inference_adapter"):
-            adapter = HFInferenceAdapter("org/unknown-model", warn_unknown_model=True)
+            HFInferenceAdapter("org/unknown-model", warn_unknown_model=True)
         assert "not in the bundled registry" in caplog.text
 
     def test_unknown_model_no_warn(self, caplog):
