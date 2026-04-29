@@ -81,6 +81,7 @@ from effgen.models import (
     GroqAdapter,
     ModelLoader,
     OpenAIAdapter,
+    ReplicateAdapter,
     StreamChunk,
     TogetherAdapter,
     TransformersEngine,
@@ -91,7 +92,12 @@ from effgen.models._rate_limit import RateLimitCoordinator, RateLimitExceeded  #
 from effgen.models.cerebras_models import available_models as cerebras_available_models
 from effgen.models.cerebras_models import free_tier_models as cerebras_free_tier_models
 from effgen.models.cerebras_models import model_info as cerebras_model_info
-from effgen.models.errors import ModelRefusalError, ToolIncompatibleError
+from effgen.models.errors import (
+    ModelAuthError,
+    ModelRefusalError,
+    ModelTimeoutError,
+    ToolIncompatibleError,
+)
 from effgen.models.fireworks_models import available_models as fireworks_available_models
 from effgen.models.fireworks_models import chat_models as fireworks_chat_models
 from effgen.models.fireworks_models import pricing_table as fireworks_pricing_table
@@ -109,6 +115,11 @@ from effgen.models.openai_models import chat_models as openai_chat_models
 from effgen.models.openai_models import model_info as openai_model_info
 from effgen.models.openai_models import reasoning_models as openai_reasoning_models  # noqa: I001
 from effgen.models.openai_schema import to_openai_schema
+from effgen.models.replicate_models import available_models as replicate_available_models
+from effgen.models.replicate_models import get_model_info as replicate_get_model_info
+from effgen.models.replicate_models import refresh_models as replicate_refresh_models
+from effgen.models.replicate_models import streaming_models as replicate_streaming_models
+from effgen.models.replicate_models import tool_capable_models as replicate_tool_capable_models
 from effgen.models.together_models import available_models as together_available_models
 from effgen.models.together_models import chat_models as together_chat_models
 from effgen.models.together_models import pricing_table as together_pricing_table
@@ -224,12 +235,15 @@ __all__ = [
     "GroqAdapter",
     "TogetherAdapter",
     "FireworksAdapter",
+    "ReplicateAdapter",
     "ModelLoader",
     "GenerationConfig",
     "GenerationResult",
     "RateLimitCoordinator",
     "RateLimitExceeded",
     "ModelRefusalError",
+    "ModelAuthError",
+    "ModelTimeoutError",
     "to_openai_schema",
     # Cerebras helpers
     "cerebras_available_models",
@@ -262,6 +276,12 @@ __all__ = [
     "fireworks_tool_capable_models",
     "fireworks_pricing_table",
     "fireworks_refresh_models",
+    # Replicate helpers
+    "replicate_available_models",
+    "replicate_streaming_models",
+    "replicate_tool_capable_models",
+    "replicate_refresh_models",
+    "replicate_get_model_info",
 
     # Tools
     "BaseTool",

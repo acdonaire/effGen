@@ -50,6 +50,39 @@ class ModelAuthError(Exception):
         super().__init__(f"{provider} auth error{suffix}: {body}")
 
 
+class ModelTimeoutError(Exception):
+    """Raised when a model prediction does not complete within the timeout.
+
+    Replicate and other async-polling providers may take variable time to
+    complete.  This error is raised when the configurable timeout is exceeded
+    so callers can distinguish a slow/stuck prediction from a network error.
+
+    Attributes:
+        provider: Provider name (e.g. ``"replicate"``).
+        model_name: The model that was requested.
+        timeout_seconds: The timeout that was exceeded.
+        prediction_id: The prediction ID (if available) so it can be cancelled.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        model_name: str = "",
+        timeout_seconds: float = 300,
+        prediction_id: str = "",
+    ) -> None:
+        self.provider = provider
+        self.model_name = model_name
+        self.timeout_seconds = timeout_seconds
+        self.prediction_id = prediction_id
+        suffix = f" (model={model_name!r})" if model_name else ""
+        pid = f", prediction_id={prediction_id!r}" if prediction_id else ""
+        super().__init__(
+            f"{provider} prediction timed out after {timeout_seconds}s{suffix}{pid}. "
+            f"Increase timeout= on the adapter or check provider status."
+        )
+
+
 class ToolIncompatibleError(Exception):
     """Raised when a tool cannot be used with the configured model.
 

@@ -52,7 +52,7 @@ from effgen.models.capabilities import (
     register_model_capability,
 )
 from effgen.models.cerebras_adapter import CerebrasAdapter
-from effgen.models.errors import ModelRefusalError
+from effgen.models.errors import ModelAuthError, ModelRefusalError, ModelTimeoutError
 from effgen.models.fireworks_adapter import FireworksAdapter
 from effgen.models.fireworks_models import FIREWORKS_MODELS
 from effgen.models.gemini_adapter import GeminiAdapter
@@ -64,6 +64,8 @@ from effgen.models.model_loader import ModelLoader, load_model
 from effgen.models.openai_adapter import OpenAIAdapter
 from effgen.models.openai_schema import to_openai_schema
 from effgen.models.pool import ModelPool, PoolConfig
+from effgen.models.replicate_adapter import ReplicateAdapter
+from effgen.models.replicate_models import REPLICATE_MODELS
 from effgen.models.router import (
     ComplexityEstimate,
     ComplexityLevel,
@@ -114,11 +116,13 @@ __all__ = [
     "GroqAdapter",
     "TogetherAdapter",
     "FireworksAdapter",
+    "ReplicateAdapter",
 
     # Model registries
     "GROQ_MODELS",
     "TOGETHER_MODELS",
     "FIREWORKS_MODELS",
+    "REPLICATE_MODELS",
 
     # Anthropic streaming
     "StreamChunk",
@@ -152,6 +156,8 @@ __all__ = [
 
     # Errors
     "ModelRefusalError",
+    "ModelAuthError",
+    "ModelTimeoutError",
 
     # Schema helpers
     "to_openai_schema",
