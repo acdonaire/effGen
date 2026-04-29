@@ -143,6 +143,19 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
 
 def _rate(provider: str, model: str) -> tuple[float, float]:
     """Lookup (input_per_M, output_per_M) rate for provider/model."""
+    if provider.lower() == "fireworks":
+        try:
+            from effgen.models.fireworks_models import FIREWORKS_MODELS
+            info = FIREWORKS_MODELS.get(model)
+            if info is not None:
+                return (
+                    float(info.get("pricing_per_1m_input", 0.0)),
+                    float(info.get("pricing_per_1m_output", 0.0)),
+                )
+        except Exception:
+            pass
+        return (0.0, 0.0)
+
     provider_rates = _RATES.get(provider.lower(), {})
     # Exact match first, then prefix match, then wildcard
     if model in provider_rates:

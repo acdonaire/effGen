@@ -53,6 +53,8 @@ from effgen.models.capabilities import (
 )
 from effgen.models.cerebras_adapter import CerebrasAdapter
 from effgen.models.errors import ModelRefusalError
+from effgen.models.fireworks_adapter import FireworksAdapter
+from effgen.models.fireworks_models import FIREWORKS_MODELS
 from effgen.models.gemini_adapter import GeminiAdapter
 from effgen.models.gemini_files import FileRef, upload_file
 from effgen.models.groq_adapter import GroqAdapter
@@ -111,10 +113,12 @@ __all__ = [
     "CerebrasAdapter",
     "GroqAdapter",
     "TogetherAdapter",
+    "FireworksAdapter",
 
     # Model registries
     "GROQ_MODELS",
     "TOGETHER_MODELS",
+    "FIREWORKS_MODELS",
 
     # Anthropic streaming
     "StreamChunk",

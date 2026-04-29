@@ -74,6 +74,7 @@ from effgen.models import (
     AnthropicAdapter,
     BaseModel,
     CerebrasAdapter,
+    FireworksAdapter,
     GeminiAdapter,
     GenerationConfig,
     GenerationResult,
@@ -91,6 +92,11 @@ from effgen.models.cerebras_models import available_models as cerebras_available
 from effgen.models.cerebras_models import free_tier_models as cerebras_free_tier_models
 from effgen.models.cerebras_models import model_info as cerebras_model_info
 from effgen.models.errors import ModelRefusalError, ToolIncompatibleError
+from effgen.models.fireworks_models import available_models as fireworks_available_models
+from effgen.models.fireworks_models import chat_models as fireworks_chat_models
+from effgen.models.fireworks_models import pricing_table as fireworks_pricing_table
+from effgen.models.fireworks_models import refresh_models as fireworks_refresh_models
+from effgen.models.fireworks_models import tool_capable_models as fireworks_tool_capable_models
 from effgen.models.gemini_models import available_models as gemini_available_models
 from effgen.models.gemini_models import free_tier_models as gemini_free_tier_models
 from effgen.models.gemini_models import model_info as gemini_model_info
@@ -216,6 +222,8 @@ __all__ = [
     "GeminiAdapter",
     "CerebrasAdapter",
     "GroqAdapter",
+    "TogetherAdapter",
+    "FireworksAdapter",
     "ModelLoader",
     "GenerationConfig",
     "GenerationResult",
@@ -241,6 +249,19 @@ __all__ = [
     "gemini_free_tier_models",
     "gemini_model_info",
     "gemini_recommended_models",
+    # Together helpers
+    "together_available_models",
+    "together_chat_models",
+    "together_tool_capable_models",
+    "together_pricing_table",
+    "together_refresh_models",
+    "together_serverless_models",
+    # Fireworks helpers
+    "fireworks_available_models",
+    "fireworks_chat_models",
+    "fireworks_tool_capable_models",
+    "fireworks_pricing_table",
+    "fireworks_refresh_models",
 
     # Tools
     "BaseTool",
