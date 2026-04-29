@@ -28,6 +28,8 @@ from effgen.models.vllm_engine import VLLMEngine
 _CerebrasAdapter = None
 # Groq import is deferred to avoid hard dependency when groq extra is absent.
 _GroqAdapter = None
+# Together import is deferred to avoid hard dependency when together extra is absent.
+_TogetherAdapter = None
 
 
 def _get_cerebras_adapter():
@@ -44,6 +46,15 @@ def _get_groq_adapter():
         from effgen.models.groq_adapter import GroqAdapter
         _GroqAdapter = GroqAdapter
     return _GroqAdapter
+
+
+def _get_together_adapter():
+    global _TogetherAdapter
+    if _TogetherAdapter is None:
+        from effgen.models.together_adapter import TogetherAdapter
+        _TogetherAdapter = TogetherAdapter
+    return _TogetherAdapter
+
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +183,16 @@ class ModelLoader:
             for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
                 kwargs.pop(k, None)
             model = GroqAdapter(model_name=model_name, api_key=api_key, **kwargs)
+            model.load()
+            self._validate_model(model)
+            self.loaded_models[model_name] = model
+            return model
+        if provider == "together":
+            TogetherAdapter = _get_together_adapter()
+            api_key = kwargs.pop("api_key", None)
+            for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
+                kwargs.pop(k, None)
+            model = TogetherAdapter(model_name=model_name, api_key=api_key, **kwargs)
             model.load()
             self._validate_model(model)
             self.loaded_models[model_name] = model

@@ -81,6 +81,7 @@ from effgen.models import (
     ModelLoader,
     OpenAIAdapter,
     StreamChunk,
+    TogetherAdapter,
     TransformersEngine,
     VLLMEngine,
     load_model,
@@ -102,6 +103,12 @@ from effgen.models.openai_models import chat_models as openai_chat_models
 from effgen.models.openai_models import model_info as openai_model_info
 from effgen.models.openai_models import reasoning_models as openai_reasoning_models  # noqa: I001
 from effgen.models.openai_schema import to_openai_schema
+from effgen.models.together_models import available_models as together_available_models
+from effgen.models.together_models import chat_models as together_chat_models
+from effgen.models.together_models import pricing_table as together_pricing_table
+from effgen.models.together_models import refresh_models as together_refresh_models
+from effgen.models.together_models import serverless_models as together_serverless_models
+from effgen.models.together_models import tool_capable_models as together_tool_capable_models
 
 # Preset imports
 from effgen.presets import create_agent, list_presets

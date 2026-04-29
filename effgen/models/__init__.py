@@ -70,6 +70,8 @@ from effgen.models.router import (
     RoutingDecision,
     estimate_complexity,
 )
+from effgen.models.together_adapter import TogetherAdapter
+from effgen.models.together_models import TOGETHER_MODELS
 from effgen.models.transformers_engine import TransformersEngine
 from effgen.models.vllm_engine import VLLMEngine
 
@@ -108,9 +110,11 @@ __all__ = [
     "GeminiAdapter",
     "CerebrasAdapter",
     "GroqAdapter",
+    "TogetherAdapter",
 
-    # Groq registry
+    # Model registries
     "GROQ_MODELS",
+    "TOGETHER_MODELS",
 
     # Anthropic streaming
     "StreamChunk",
