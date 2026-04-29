@@ -77,6 +77,7 @@ from effgen.models import (
     GeminiAdapter,
     GenerationConfig,
     GenerationResult,
+    GroqAdapter,
     ModelLoader,
     OpenAIAdapter,
     StreamChunk,
@@ -93,6 +94,9 @@ from effgen.models.gemini_models import available_models as gemini_available_mod
 from effgen.models.gemini_models import free_tier_models as gemini_free_tier_models
 from effgen.models.gemini_models import model_info as gemini_model_info
 from effgen.models.gemini_models import recommended_models as gemini_recommended_models
+from effgen.models.groq_models import available_models as groq_available_models
+from effgen.models.groq_models import chat_models as groq_chat_models
+from effgen.models.groq_models import tool_capable_models as groq_tool_capable_models
 from effgen.models.openai_models import available_models as openai_available_models
 from effgen.models.openai_models import chat_models as openai_chat_models
 from effgen.models.openai_models import model_info as openai_model_info
@@ -204,6 +208,7 @@ __all__ = [
     "StreamChunk",
     "GeminiAdapter",
     "CerebrasAdapter",
+    "GroqAdapter",
     "ModelLoader",
     "GenerationConfig",
     "GenerationResult",
@@ -215,6 +220,10 @@ __all__ = [
     "cerebras_available_models",
     "cerebras_free_tier_models",
     "cerebras_model_info",
+    # Groq helpers
+    "groq_available_models",
+    "groq_chat_models",
+    "groq_tool_capable_models",
     # OpenAI helpers
     "openai_available_models",
     "openai_chat_models",

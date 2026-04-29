@@ -26,6 +26,8 @@ from effgen.models.vllm_engine import VLLMEngine
 
 # Cerebras import is deferred to avoid hard dependency when cerebras extra is absent.
 _CerebrasAdapter = None
+# Groq import is deferred to avoid hard dependency when groq extra is absent.
+_GroqAdapter = None
 
 
 def _get_cerebras_adapter():
@@ -34,6 +36,14 @@ def _get_cerebras_adapter():
         from effgen.models.cerebras_adapter import CerebrasAdapter
         _CerebrasAdapter = CerebrasAdapter
     return _CerebrasAdapter
+
+
+def _get_groq_adapter():
+    global _GroqAdapter
+    if _GroqAdapter is None:
+        from effgen.models.groq_adapter import GroqAdapter
+        _GroqAdapter = GroqAdapter
+    return _GroqAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +162,16 @@ class ModelLoader:
             for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
                 kwargs.pop(k, None)
             model = CerebrasAdapter(model_name=model_name, api_key=api_key, **kwargs)
+            model.load()
+            self._validate_model(model)
+            self.loaded_models[model_name] = model
+            return model
+        if provider == "groq":
+            GroqAdapter = _get_groq_adapter()
+            api_key = kwargs.pop("api_key", None)
+            for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
+                kwargs.pop(k, None)
+            model = GroqAdapter(model_name=model_name, api_key=api_key, **kwargs)
             model.load()
             self._validate_model(model)
             self.loaded_models[model_name] = model

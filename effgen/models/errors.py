@@ -28,6 +28,28 @@ class ModelRefusalError(Exception):
         super().__init__(f"Model refused to generate structured output{suffix}: {refusal_message}")
 
 
+class ModelAuthError(Exception):
+    """Raised when a model adapter fails to authenticate with its provider.
+
+    Distinguishes auth failures (bad/missing API key, revoked credentials)
+    from other transport or rate-limit errors so callers get a clear
+    "fix your key" signal instead of a generic 500.
+
+    Attributes:
+        provider: Provider name (e.g. ``"groq"``).
+        model_name: The model that was requested.
+        message: Human-readable cause.
+    """
+
+    def __init__(self, provider: str, model_name: str = "", message: str = "") -> None:
+        self.provider = provider
+        self.model_name = model_name
+        self.message = message
+        suffix = f" (model={model_name!r})" if model_name else ""
+        body = message or "authentication failed"
+        super().__init__(f"{provider} auth error{suffix}: {body}")
+
+
 class ToolIncompatibleError(Exception):
     """Raised when a tool cannot be used with the configured model.
 
