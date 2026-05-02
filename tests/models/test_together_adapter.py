@@ -131,7 +131,8 @@ class TestTogetherAdapterInit:
         assert adapter.model_name == "meta-llama/Llama-3.3-70B-Instruct-Turbo"
 
     def test_init_unknown_model_raises(self):
-        with pytest.raises(ValueError, match="Unknown Together model"):
+        from effgen.models.errors import ModelNotFoundError
+        with pytest.raises(ModelNotFoundError, match="Unknown Together model"):
             TogetherAdapter("nonexistent-model-xyz-999")
 
     def test_init_context_length(self):

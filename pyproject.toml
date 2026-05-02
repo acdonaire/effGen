@@ -335,7 +335,6 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--showlocals",
     "--tb=short",
     "--cov=effgen",
     "--cov-report=term-missing",

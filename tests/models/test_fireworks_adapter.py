@@ -269,7 +269,8 @@ class TestFireworksAdapterGenerate:
         adapter._client.chat.completions.create.side_effect = Exception(
             "NOT_FOUND: Model not found, inaccessible, and/or not deployed"
         )
-        with pytest.raises(RuntimeError, match="not found or not deployed"):
+        from effgen.models.errors import ModelNotFoundError
+        with pytest.raises(ModelNotFoundError, match="not found or not deployed"):
             adapter.generate("Hello")
 
     def test_generate_retries_on_rate_limit(self):

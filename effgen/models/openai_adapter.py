@@ -27,7 +27,7 @@ from effgen.models.base import (
     ModelType,
     TokenCount,
 )
-from effgen.models.errors import ModelRefusalError
+from effgen.models.errors import ModelAuthError, ModelNotFoundError, ModelRefusalError
 from effgen.models.openai_models import (
     OPENAI_MODELS,
     VALID_REASONING_EFFORTS,
@@ -329,6 +329,11 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
+            msg = str(e)
+            if "401" in msg or "invalid_api_key" in msg.lower() or "incorrect api key" in msg.lower():
+                raise ModelAuthError("openai", self.model_name, msg) from e
+            if "404" in msg or "model_not_found" in msg.lower():
+                raise ModelNotFoundError("openai", self.model_name, msg) from e
             raise RuntimeError(f"Generation failed: {e}") from e
 
         choice = response.choices[0]

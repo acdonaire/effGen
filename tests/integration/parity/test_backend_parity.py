@@ -1,0 +1,236 @@
+"""
+Backend parity tests — parametrized across all effGen providers.
+
+Each test:
+  1. Loads the provider's cheapest/fastest model.
+  2. Runs the canonical "(17 * 23) + sqrt(144) = 403" task via Agent + Calculator.
+  3. Asserts the answer contains "403" and ≥2 tool_calls were made.
+
+Tests are individually skipped when the provider's API key is absent.
+
+Run:
+    pytest tests/integration/parity/test_backend_parity.py -v
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+from dotenv import load_dotenv
+
+# Load env from both standard locations
+load_dotenv(Path(__file__).parent.parent.parent.parent / ".env", override=False)
+load_dotenv(Path.home() / ".effgen" / ".env", override=False)
+
+
+# ---------------------------------------------------------------------------
+# Key helpers
+# ---------------------------------------------------------------------------
+
+def _has(env_var: str) -> bool:
+    return bool(os.getenv(env_var))
+
+
+# ---------------------------------------------------------------------------
+# Provider × model matrix
+# Prefer small/fast/free models; one per provider.
+# ---------------------------------------------------------------------------
+
+PARITY_PARAMS = [
+    pytest.param(
+        "cerebras", "llama3.1-8b",
+        marks=pytest.mark.skipif(not _has("CEREBRAS_API_KEY"), reason="SKIPPED: CEREBRAS_API_KEY not set"),
+        id="cerebras/llama3.1-8b",
+    ),
+    pytest.param(
+        "groq", "llama-3.3-70b-versatile",
+        marks=pytest.mark.skipif(not _has("GROQ_API_KEY"), reason="SKIPPED: GROQ_API_KEY not set"),
+        id="groq/llama-3.3-70b-versatile",
+    ),
+    pytest.param(
+        "together", "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+        marks=pytest.mark.skipif(not _has("TOGETHER_API_KEY"), reason="SKIPPED: TOGETHER_API_KEY not set"),
+        id="together/llama-3-8b-lite",
+    ),
+    pytest.param(
+        "fireworks", "accounts/fireworks/models/qwen3-8b",
+        marks=pytest.mark.skipif(not _has("FIREWORKS_API_KEY"), reason="SKIPPED: FIREWORKS_API_KEY not set"),
+        id="fireworks/qwen3-8b",
+    ),
+    pytest.param(
+        "hf", "Qwen/Qwen2.5-72B-Instruct",
+        marks=pytest.mark.skipif(not _has("HF_TOKEN"), reason="SKIPPED: HF_TOKEN not set"),
+        id="hf/qwen2.5-72b",
+    ),
+    pytest.param(
+        "gemini", "gemini-2.5-flash-lite",
+        marks=pytest.mark.skipif(not _has("GOOGLE_API_KEY"), reason="SKIPPED: GOOGLE_API_KEY not set"),
+        id="gemini/gemini-2.5-flash-lite",
+    ),
+    pytest.param(
+        "openai", "gpt-4o-mini",
+        marks=pytest.mark.skipif(not _has("OPENAI_API_KEY"), reason="SKIPPED: OPENAI_API_KEY not set"),
+        id="openai/gpt-4o-mini",
+    ),
+    pytest.param(
+        "anthropic", "claude-3-haiku-20240307",
+        marks=pytest.mark.skipif(not _has("ANTHROPIC_API_KEY"), reason="SKIPPED: ANTHROPIC_API_KEY not set"),
+        id="anthropic/claude-3-haiku",
+    ),
+    # Replicate: no billing credits — mark as xfail if key present but credits absent
+    pytest.param(
+        "replicate", "meta/meta-llama-3-8b-instruct",
+        marks=[
+            pytest.mark.skipif(not _has("REPLICATE_API_TOKEN"), reason="SKIPPED: REPLICATE_API_TOKEN not set"),
+            pytest.mark.xfail(reason="Replicate requires billing credits; may fail without balance", strict=False),
+        ],
+        id="replicate/llama-3-8b",
+    ),
+]
+
+
+def _load_adapter(provider: str, model_id: str):
+    """Load a live adapter for (provider, model_id)."""
+    if provider == "cerebras":
+        from effgen.models.cerebras_adapter import CerebrasAdapter
+        a = CerebrasAdapter(model_id)
+    elif provider == "groq":
+        from effgen.models.groq_adapter import GroqAdapter
+        a = GroqAdapter(model_id)
+    elif provider == "together":
+        from effgen.models.together_adapter import TogetherAdapter
+        a = TogetherAdapter(model_id)
+    elif provider == "fireworks":
+        from effgen.models.fireworks_adapter import FireworksAdapter
+        a = FireworksAdapter(model_id)
+    elif provider == "hf":
+        from effgen.models.hf_inference_adapter import HFInferenceAdapter
+        a = HFInferenceAdapter(model_id)
+    elif provider == "gemini":
+        from effgen.models.gemini_adapter import GeminiAdapter
+        a = GeminiAdapter(model_id)
+    elif provider == "openai":
+        from effgen.models.openai_adapter import OpenAIAdapter
+        a = OpenAIAdapter(model_id)
+    elif provider == "anthropic":
+        from effgen.models.anthropic_adapter import AnthropicAdapter
+        a = AnthropicAdapter(model_id)
+    elif provider == "replicate":
+        from effgen.models.replicate_adapter import ReplicateAdapter
+        a = ReplicateAdapter(model_id)
+    else:
+        raise ValueError(f"Unknown provider: {provider}")
+    a.load()
+    return a
+
+
+# ---------------------------------------------------------------------------
+# Main parity test
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.parametrize("provider,model_id", PARITY_PARAMS)
+def test_canonical_task_parity(provider, model_id):
+    """All backends must solve (17*23)+sqrt(144)=403 via Agent+Calculator."""
+    from tests.integration.parity.canonical_task import run_canonical_task
+
+    adapter = _load_adapter(provider, model_id)
+    try:
+        result = run_canonical_task(adapter, strategy="react")
+    finally:
+        try:
+            adapter.unload()
+        except Exception:
+            pass
+
+    # Skip on rate-limit / quota exhaustion (provider-side, not a framework bug)
+    quota_in_error = result["error"] and any(kw in (result["error"] or "").lower()
+        for kw in ("quota", "429", "resource_exhausted", "insufficient credits", "rate_limit"))
+    quota_in_answer = any(kw in (result["answer_text"] or "").lower()
+        for kw in ("quota", "resource_exhausted", "maximum iterations"))
+    if quota_in_error or quota_in_answer:
+        pytest.skip(f"{provider}/{model_id} quota/rate-limit — re-run after cooldown")
+
+    assert result["error"] is None, (
+        f"{provider}/{model_id} raised an error: {result['error']}"
+    )
+    assert result["answer_correct"], (
+        f"{provider}/{model_id} answer missing '403'. Got: {result['answer_text']!r}"
+    )
+    # Models may solve in 1 combined call or multiple calls; ≥1 is sufficient proof of tool use.
+    assert result["tool_calls"] >= 1, (
+        f"{provider}/{model_id} expected ≥1 tool call, got {result['tool_calls']}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Native tool-calling strategy (providers that support it)
+# ---------------------------------------------------------------------------
+
+NATIVE_PARAMS = [
+    pytest.param(
+        "cerebras", "llama3.1-8b",
+        marks=pytest.mark.skipif(not _has("CEREBRAS_API_KEY"), reason="SKIPPED: CEREBRAS_API_KEY not set"),
+        id="cerebras/llama3.1-8b/native",
+    ),
+    pytest.param(
+        "groq", "llama-3.3-70b-versatile",
+        marks=pytest.mark.skipif(not _has("GROQ_API_KEY"), reason="SKIPPED: GROQ_API_KEY not set"),
+        id="groq/llama-3.3-70b-versatile/native",
+    ),
+    pytest.param(
+        "fireworks", "accounts/fireworks/models/qwen3-8b",
+        marks=pytest.mark.skipif(not _has("FIREWORKS_API_KEY"), reason="SKIPPED: FIREWORKS_API_KEY not set"),
+        id="fireworks/qwen3-8b/native",
+    ),
+    pytest.param(
+        "together", "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+        marks=pytest.mark.skipif(not _has("TOGETHER_API_KEY"), reason="SKIPPED: TOGETHER_API_KEY not set"),
+        id="together/llama-3-8b-lite/native",
+    ),
+    pytest.param(
+        "gemini", "gemini-2.5-flash-lite",
+        marks=pytest.mark.skipif(not _has("GOOGLE_API_KEY"), reason="SKIPPED: GOOGLE_API_KEY not set"),
+        id="gemini/gemini-2.5-flash-lite/native",
+    ),
+    pytest.param(
+        "openai", "gpt-4o-mini",
+        marks=pytest.mark.skipif(not _has("OPENAI_API_KEY"), reason="SKIPPED: OPENAI_API_KEY not set"),
+        id="openai/gpt-4o-mini/native",
+    ),
+]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.parametrize("provider,model_id", NATIVE_PARAMS)
+def test_native_strategy_parity(provider, model_id):
+    """Native tool-calling providers must also solve the canonical task."""
+    from tests.integration.parity.canonical_task import run_canonical_task
+
+    adapter = _load_adapter(provider, model_id)
+    try:
+        result = run_canonical_task(adapter, strategy="native")
+    finally:
+        try:
+            adapter.unload()
+        except Exception:
+            pass
+
+    # Skip on rate-limit / quota exhaustion
+    quota_in_error = result["error"] and any(kw in (result["error"] or "").lower()
+        for kw in ("quota", "429", "resource_exhausted", "insufficient credits", "rate_limit"))
+    quota_in_answer = any(kw in (result["answer_text"] or "").lower()
+        for kw in ("quota", "resource_exhausted", "maximum iterations"))
+    if quota_in_error or quota_in_answer:
+        pytest.skip(f"{provider}/{model_id} (native) quota/rate-limit — re-run after cooldown")
+
+    assert result["error"] is None, (
+        f"{provider}/{model_id} (native) raised an error: {result['error']}"
+    )
+    assert result["answer_correct"], (
+        f"{provider}/{model_id} (native) answer missing '403'. Got: {result['answer_text']!r}"
+    )

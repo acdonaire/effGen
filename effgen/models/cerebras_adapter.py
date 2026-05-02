@@ -31,6 +31,7 @@ from effgen.models.cerebras_models import (
     free_tier_models,
     model_info,
 )
+from effgen.models.errors import ModelAuthError, ModelNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +98,11 @@ class CerebrasAdapter(BaseModel):
         **kwargs: Any,
     ) -> None:
         if model_name not in CEREBRAS_MODELS:
-            raise ValueError(
-                f"Unknown Cerebras model '{model_name}'. "
-                f"Available: {available_models()}"
+            raise ModelNotFoundError(
+                provider="cerebras",
+                model_name=model_name,
+                message=f"Unknown Cerebras model '{model_name}'. "
+                        f"Available: {available_models()}",
             )
 
         info = CEREBRAS_MODELS[model_name]
@@ -143,13 +146,6 @@ class CerebrasAdapter(BaseModel):
             RuntimeError: If ``cerebras-cloud-sdk`` is not installed.
             ValueError: If no API key is available.
         """
-        api_key = self._api_key or os.getenv("CEREBRAS_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "Cerebras API key not found. Set the CEREBRAS_API_KEY "
-                "environment variable or pass api_key= to CerebrasAdapter."
-            )
-
         try:
             from cerebras.cloud.sdk import Cerebras
         except ImportError as exc:
@@ -158,7 +154,13 @@ class CerebrasAdapter(BaseModel):
                 "Install with: pip install 'effgen[cerebras]'"
             ) from exc
 
-        self._client = Cerebras(api_key=api_key)
+        if not (self._api_key or os.getenv("CEREBRAS_API_KEY")):
+            raise ValueError(
+                "Cerebras API key not found. Set the CEREBRAS_API_KEY "
+                "environment variable or pass api_key= to CerebrasAdapter."
+            )
+
+        self._client = Cerebras(api_key=self._api_key or os.getenv("CEREBRAS_API_KEY"))
         self._is_loaded = True
 
         info = CEREBRAS_MODELS.get(self.model_name, {})
@@ -322,6 +324,9 @@ class CerebrasAdapter(BaseModel):
             except Exception as exc:
                 _last_exc = exc
                 msg = str(exc)
+                msg_lower = msg.lower()
+                if "401" in msg or "wrong_api_key" in msg_lower or "wrong api key" in msg_lower:
+                    raise ModelAuthError("cerebras", self.model_name, str(exc)) from exc
                 if "404" in msg and "model_not_found" in msg:
                     info = CEREBRAS_MODELS.get(self.model_name, {})
                     hint = (
@@ -331,8 +336,7 @@ class CerebrasAdapter(BaseModel):
                         f"Try a free-tier model: {free_tier_models()}."
                     ) if not info.get("free_tier", False) else ""
                     logger.error("Cerebras API 404 for model '%s': %s", self.model_name, exc)
-                    raise RuntimeError(f"Cerebras generation failed: {exc}.{hint}") from exc
-                msg_lower = msg.lower()
+                    raise ModelNotFoundError("cerebras", self.model_name, str(exc) + hint) from exc
                 is_rate = "429" in msg or "rate_limit" in msg_lower
                 # Cerebras "queue_exceeded" / "high traffic" — transient backpressure that needs
                 # longer waits than per-minute rate-limits. Treat as retryable but with a longer cap.

@@ -80,7 +80,8 @@ class TestCerebrasAdapterInit:
         assert adapter._client is None
 
     def test_unknown_model_raises_value_error(self):
-        with pytest.raises(ValueError, match="Unknown Cerebras model"):
+        from effgen.models.errors import ModelNotFoundError
+        with pytest.raises(ModelNotFoundError, match="Unknown Cerebras model"):
             CerebrasAdapter(model_name="does-not-exist")
 
 

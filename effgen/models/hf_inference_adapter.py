@@ -191,17 +191,6 @@ class HFInferenceAdapter(BaseModel):
             RuntimeError: If ``huggingface_hub`` is not installed.
             ValueError: If no API token is available.
         """
-        api_token = (
-            self._api_token
-            or os.getenv("HF_TOKEN")
-            or os.getenv("HUGGINGFACE_API_KEY")
-        )
-        if not api_token:
-            raise ValueError(
-                "HuggingFace API token not found.  Set the HF_TOKEN "
-                "environment variable or pass api_token= to HFInferenceAdapter."
-            )
-
         try:
             from huggingface_hub import InferenceClient
         except ImportError as exc:
@@ -210,16 +199,29 @@ class HFInferenceAdapter(BaseModel):
                 "Install with: pip install 'effgen[hf]'"
             ) from exc
 
+        def _resolve_token() -> str | None:
+            return (
+                self._api_token
+                or os.getenv("HF_TOKEN")
+                or os.getenv("HUGGINGFACE_API_KEY")
+            )
+
+        if not _resolve_token():
+            raise ValueError(
+                "HuggingFace API token not found.  Set the HF_TOKEN "
+                "environment variable or pass api_token= to HFInferenceAdapter."
+            )
+
         if self._endpoint_url:
             self._client = InferenceClient(
                 base_url=self._endpoint_url,
-                token=api_token,
+                token=_resolve_token(),
                 timeout=self.timeout,
             )
         else:
             client_kwargs: dict[str, Any] = {
                 "model": self.model_name,
-                "token": api_token,
+                "token": _resolve_token(),
                 "timeout": self.timeout,
             }
             if self._provider:

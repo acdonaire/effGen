@@ -27,7 +27,7 @@ from effgen.models.base import (
     GenerationResult,
     TokenCount,
 )
-from effgen.models.errors import ModelAuthError
+from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.fireworks_models import (
     FIREWORKS_DEFAULT_MODEL,
     FIREWORKS_MODELS,
@@ -156,13 +156,6 @@ class FireworksAdapter(BaseModel):
             RuntimeError: If ``fireworks-ai`` is not installed.
             ValueError: If no API key is available.
         """
-        api_key = self._api_key or os.getenv("FIREWORKS_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "Fireworks API key not found. Set the FIREWORKS_API_KEY "
-                "environment variable or pass api_key= to FireworksAdapter."
-            )
-
         try:
             from fireworks.client import Fireworks
         except ImportError as exc:
@@ -171,7 +164,13 @@ class FireworksAdapter(BaseModel):
                 "Install with: pip install 'effgen[fireworks]'"
             ) from exc
 
-        self._client = Fireworks(api_key=api_key)
+        if not (self._api_key or os.getenv("FIREWORKS_API_KEY")):
+            raise ValueError(
+                "Fireworks API key not found. Set the FIREWORKS_API_KEY "
+                "environment variable or pass api_key= to FireworksAdapter."
+            )
+
+        self._client = Fireworks(api_key=self._api_key or os.getenv("FIREWORKS_API_KEY"))
         self._is_loaded = True
 
         info = FIREWORKS_MODELS.get(self.model_name, {})
@@ -354,11 +353,13 @@ class FireworksAdapter(BaseModel):
                     or "not deployed" in msg_lower
                 )
                 if is_not_found:
-                    raise RuntimeError(
-                        f"Fireworks model '{self.model_name}' not found or not deployed. "
-                        f"Check available models with: "
-                        f"from effgen.models.fireworks_models import available_models; "
-                        f"print(available_models())"
+                    raise ModelNotFoundError(
+                        provider="fireworks",
+                        model_name=self.model_name,
+                        message=f"Fireworks model '{self.model_name}' not found or not deployed. "
+                                f"Check available models with: "
+                                f"from effgen.models.fireworks_models import available_models; "
+                                f"print(available_models())",
                     ) from exc
 
                 is_rate = (

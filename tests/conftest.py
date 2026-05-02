@@ -2,6 +2,7 @@
 Shared test fixtures for the effGen test suite.
 """
 
+import os
 import shutil
 import sys
 import tempfile
@@ -13,6 +14,45 @@ import pytest
 # Suppress ImportWarning from optional dependencies before importing effgen
 warnings.filterwarnings("ignore", category=ImportWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# ---------------------------------------------------------------------------
+# Secret scrubbing for traceback locals (defense in depth: even if a future
+# dev re-enables --showlocals, real API key values must not land in test logs).
+# ---------------------------------------------------------------------------
+
+_SECRET_ENV_PATTERNS = (
+    "API_KEY", "API_TOKEN", "SECRET", "TOKEN", "PASSWORD",
+)
+
+
+def _collect_secret_values() -> tuple[str, ...]:
+    values = []
+    for name, val in os.environ.items():
+        if not val or len(val) < 8:
+            continue
+        if any(p in name.upper() for p in _SECRET_ENV_PATTERNS):
+            values.append(val)
+    # Sort longest-first so substrings don't shadow longer matches
+    return tuple(sorted(set(values), key=len, reverse=True))
+
+
+def pytest_exception_interact(node, call, report):
+    """Redact known secret values from rendered traceback text."""
+    secrets = _collect_secret_values()
+    if not secrets:
+        return
+    longrepr = getattr(report, "longrepr", None)
+    if longrepr is None:
+        return
+    text = str(longrepr)
+    redacted = text
+    for s in secrets:
+        redacted = redacted.replace(s, "***REDACTED***")
+    if redacted != text:
+        # Replace longrepr with the scrubbed string so terminal + xml reporters
+        # both see the redacted version.
+        report.longrepr = redacted
 
 # Ensure effgen package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))

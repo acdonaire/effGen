@@ -182,13 +182,6 @@ class ReplicateAdapter(BaseModel):
             RuntimeError: If ``replicate`` is not installed.
             ValueError: If no API token is available.
         """
-        api_token = self._api_token or os.getenv("REPLICATE_API_TOKEN")
-        if not api_token:
-            raise ValueError(
-                "Replicate API token not found.  Set the REPLICATE_API_TOKEN "
-                "environment variable or pass api_token= to ReplicateAdapter."
-            )
-
         try:
             import replicate as _replicate
         except ImportError as exc:
@@ -197,7 +190,15 @@ class ReplicateAdapter(BaseModel):
                 "Install with: pip install 'effgen[replicate]'"
             ) from exc
 
-        self._client = _replicate.Client(api_token=api_token)
+        if not (self._api_token or os.getenv("REPLICATE_API_TOKEN")):
+            raise ValueError(
+                "Replicate API token not found.  Set the REPLICATE_API_TOKEN "
+                "environment variable or pass api_token= to ReplicateAdapter."
+            )
+
+        self._client = _replicate.Client(
+            api_token=self._api_token or os.getenv("REPLICATE_API_TOKEN")
+        )
         self._is_loaded = True
 
         info = self._info

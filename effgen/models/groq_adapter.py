@@ -27,7 +27,7 @@ from effgen.models.base import (
     GenerationResult,
     TokenCount,
 )
-from effgen.models.errors import ModelAuthError
+from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.groq_models import (
     GROQ_DEFAULT_MODEL,
     GROQ_MODELS,
@@ -98,9 +98,11 @@ class GroqAdapter(BaseModel):
         **kwargs: Any,
     ) -> None:
         if model_name not in GROQ_MODELS:
-            raise ValueError(
-                f"Unknown Groq model '{model_name}'. "
-                f"Available: {available_models()}"
+            raise ModelNotFoundError(
+                provider="groq",
+                model_name=model_name,
+                message=f"Unknown Groq model '{model_name}'. "
+                        f"Available: {available_models()}",
             )
 
         info = GROQ_MODELS[model_name]
@@ -149,13 +151,6 @@ class GroqAdapter(BaseModel):
             RuntimeError: If ``groq`` is not installed.
             ValueError: If no API key is available.
         """
-        api_key = self._api_key or os.getenv("GROQ_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "Groq API key not found. Set the GROQ_API_KEY "
-                "environment variable or pass api_key= to GroqAdapter."
-            )
-
         try:
             from groq import Groq
         except ImportError as exc:
@@ -164,7 +159,17 @@ class GroqAdapter(BaseModel):
                 "Install with: pip install 'effgen[groq]'"
             ) from exc
 
-        self._client = Groq(api_key=api_key, timeout=self.timeout, max_retries=self.max_retries)
+        if not (self._api_key or os.getenv("GROQ_API_KEY")):
+            raise ValueError(
+                "Groq API key not found. Set the GROQ_API_KEY "
+                "environment variable or pass api_key= to GroqAdapter."
+            )
+
+        self._client = Groq(
+            api_key=self._api_key or os.getenv("GROQ_API_KEY"),
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+        )
         self._is_loaded = True
 
         info = GROQ_MODELS.get(self.model_name, {})

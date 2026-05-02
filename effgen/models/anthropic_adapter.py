@@ -33,6 +33,7 @@ from effgen.models.base import (
     ModelType,
     TokenCount,
 )
+from effgen.models.errors import ModelAuthError, ModelNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -391,8 +392,15 @@ class AnthropicAdapter(FunctionCallingModel):
                 metadata=metadata,
             )
 
+        except (ModelAuthError, ModelNotFoundError):
+            raise
         except Exception as e:
             logger.error(f"Anthropic API call failed: {e}")
+            msg = str(e)
+            if "401" in msg or "authentication_error" in msg.lower() or "invalid x-api-key" in msg.lower():
+                raise ModelAuthError("anthropic", self.model_name, msg) from e
+            if "404" in msg or "not_found_error" in msg.lower():
+                raise ModelNotFoundError("anthropic", self.model_name, msg) from e
             raise RuntimeError(f"Generation failed: {e}") from e
 
     # ── Generate stream ───────────────────────────────────────────────────

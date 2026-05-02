@@ -73,7 +73,8 @@ class TestGroqModelsRegistry:
 
 class TestGroqAdapterInit:
     def test_unknown_model_raises(self):
-        with pytest.raises(ValueError, match="Unknown Groq model"):
+        from effgen.models.errors import ModelNotFoundError
+        with pytest.raises(ModelNotFoundError, match="Unknown Groq model"):
             GroqAdapter("does-not-exist-model")
 
     def test_stt_model_raises(self):

@@ -28,7 +28,7 @@ from effgen.models.base import (
     GenerationResult,
     TokenCount,
 )
-from effgen.models.errors import ModelAuthError
+from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.together_models import (
     TOGETHER_DEFAULT_MODEL,
     TOGETHER_MODELS,
@@ -100,10 +100,12 @@ class TogetherAdapter(BaseModel):
         **kwargs: Any,
     ) -> None:
         if model_name not in TOGETHER_MODELS:
-            raise ValueError(
-                f"Unknown Together model '{model_name}'. "
-                f"Available: {available_models()}\n"
-                f"Serverless (no dedicated endpoint): {serverless_models()}"
+            raise ModelNotFoundError(
+                provider="together",
+                model_name=model_name,
+                message=f"Unknown Together model '{model_name}'. "
+                        f"Available: {available_models()}\n"
+                        f"Serverless (no dedicated endpoint): {serverless_models()}",
             )
 
         info = TOGETHER_MODELS[model_name]
@@ -153,13 +155,6 @@ class TogetherAdapter(BaseModel):
             RuntimeError: If ``together`` is not installed.
             ValueError: If no API key is available.
         """
-        api_key = self._api_key or os.getenv("TOGETHER_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "Together API key not found. Set the TOGETHER_API_KEY "
-                "environment variable or pass api_key= to TogetherAdapter."
-            )
-
         try:
             from together import Together
         except ImportError as exc:
@@ -168,7 +163,13 @@ class TogetherAdapter(BaseModel):
                 "Install with: pip install 'effgen[together]'"
             ) from exc
 
-        self._client = Together(api_key=api_key)
+        if not (self._api_key or os.getenv("TOGETHER_API_KEY")):
+            raise ValueError(
+                "Together API key not found. Set the TOGETHER_API_KEY "
+                "environment variable or pass api_key= to TogetherAdapter."
+            )
+
+        self._client = Together(api_key=self._api_key or os.getenv("TOGETHER_API_KEY"))
         self._is_loaded = True
 
         info = TOGETHER_MODELS.get(self.model_name, {})

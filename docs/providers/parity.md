@@ -1,0 +1,150 @@
+# Backend Parity — effGen v0.2.3
+
+All effGen backends are interchangeable for the same task. This page documents which
+capabilities each provider supports and the results of the cross-backend parity matrix.
+
+## Parity Test
+
+**Canonical task:** `(17 * 23) + sqrt(144) = 403`
+
+The parity test runs an `Agent` with a `Calculator` tool against every provider using
+both ReAct and native tool-calling strategies. All available providers produced the
+correct answer (403) in validation.
+
+## Provider Support Matrix
+
+| Provider | ReAct | Native Tools | Streaming | Auth Key | Free Tier |
+|----------|-------|-------------|-----------|----------|-----------|
+| Cerebras | ✅ | ✅ | ✅ | `CEREBRAS_API_KEY` | ✅ Free |
+| Groq | ✅ | ✅ | ✅ | `GROQ_API_KEY` | ✅ Free |
+| Together AI | ✅ | ✅ | ✅ | `TOGETHER_API_KEY` | ✅ Free |
+| Fireworks | ✅ | ✅ | ✅ | `FIREWORKS_API_KEY` | ✅ Free |
+| HuggingFace | ✅ | ✅ | ✅ | `HF_TOKEN` | ✅ Free |
+| Gemini | ✅ | ✅ | ✅ | `GOOGLE_API_KEY` | ✅ Free |
+| OpenAI | ✅ | ✅ | ✅ | `OPENAI_API_KEY` | 💳 Paid |
+| Anthropic | ✅ | ✅ | ✅ | `ANTHROPIC_API_KEY` | 💳 Paid |
+| Replicate | ✅ | ⚠️ Limited | ✅ | `REPLICATE_API_TOKEN` | 💳 Paid/Credits |
+
+## Strategy Notes
+
+### ReAct (default)
+All providers use the ReAct (Reason + Act) pattern by default. The agent loop generates
+text responses following the `Thought: / Action: / Action Input: / Observation:` template.
+Works with any model that can follow instructions.
+
+### Native Tool Calling
+Providers that expose a function-calling API surface pass tools in structured JSON format,
+allowing the model to emit structured tool calls rather than parsing free text. Set
+`tool_calling_mode="native"` in `AgentConfig` to use this.
+
+Providers supporting native tools: Cerebras, Groq, Together, Fireworks, HF (Qwen models),
+Gemini, OpenAI, Anthropic.
+
+## Switching Providers
+
+All providers share the same `Agent` API. To switch, simply swap the adapter:
+
+```python
+from effgen import Agent
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator
+
+# Cerebras
+from effgen.models.cerebras_adapter import CerebrasAdapter
+model = CerebrasAdapter("llama3.1-8b")
+
+# Or Groq
+# from effgen.models.groq_adapter import GroqAdapter
+# model = GroqAdapter("llama-3.3-70b-versatile")
+
+# Or via registry
+# from effgen.models import load_model
+# model = load_model("groq:llama-3.3-70b-versatile")
+
+model.load()
+agent = Agent(config=AgentConfig(
+    name="my_agent",
+    model=model,
+    tools=[Calculator()],
+    max_iterations=8,
+))
+result = agent.run("What is (17 * 23) + sqrt(144)?")
+print(result.output)  # → 403
+model.unload()
+```
+
+## Error Handling
+
+All providers raise unified exception types on failure:
+
+| Exception | Meaning |
+|-----------|---------|
+| `ModelAuthError` | Bad or missing API key |
+| `ModelNotFoundError` | Model ID does not exist |
+| `ModelTimeoutError` | Prediction timed out (Replicate) |
+| `ModelUnavailableError` | Model not available on serverless tier (HF) |
+
+```python
+from effgen.models.errors import ModelAuthError, ModelNotFoundError
+
+try:
+    result = model.generate("hello")
+except ModelAuthError as e:
+    print(f"Fix your API key: {e}")
+except ModelNotFoundError as e:
+    print(f"Unknown model: {e}")
+```
+
+## Checking Provider Availability
+
+```python
+from effgen.models.auth import check_keys
+
+keys = check_keys()
+for provider, info in keys.items():
+    status = "READY" if info["available"] else "MISSING"
+    print(f"{provider:15s}  {status}")
+```
+
+Or from the CLI:
+```bash
+effgen doctor
+```
+
+## Streaming
+
+All providers support streaming via `generate_stream()`:
+
+```python
+for chunk in model.generate_stream("Count 1 to 5"):
+    print(chunk, end="", flush=True)
+```
+
+## Rate Limits
+
+Each provider enforces its own rate limits. effGen's `RateLimitCoordinator` tracks
+requests/tokens per minute and day, automatically waiting when limits approach.
+
+| Provider | Free RPM | Free TPM |
+|----------|----------|----------|
+| Cerebras | 30 | 60,000 |
+| Groq | 30 | 6,000–20,000 |
+| Together | varies | varies |
+| Fireworks | varies | varies |
+| HuggingFace | varies (serverless) | — |
+| Gemini | 10 (2.5-flash-lite) | 250,000 |
+
+## Model Recommendations
+
+For the canonical parity task, these models were validated:
+
+| Provider | Model | Notes |
+|----------|-------|-------|
+| Cerebras | `llama3.1-8b` | Fast, free; deprecating 2026-05-27 |
+| Groq | `llama-3.3-70b-versatile` | Best quality/speed on free tier |
+| Together | `meta-llama/Meta-Llama-3-8B-Instruct-Lite` | Free, fast |
+| Fireworks | `accounts/fireworks/models/qwen3-8b` | Free, tool-capable |
+| HuggingFace | `Qwen/Qwen2.5-72B-Instruct` | Best free HF model |
+| Gemini | `gemini-2.5-flash-lite` | Fast, 20 req/day free |
+| OpenAI | `gpt-4o-mini` | Reliable, low cost |
+| Anthropic | `claude-3-haiku-20240307` | Fast Anthropic model |
