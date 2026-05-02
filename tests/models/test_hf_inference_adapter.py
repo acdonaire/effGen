@@ -171,8 +171,12 @@ class TestHFAdapterLifecycle:
     def test_load_raises_without_token(self, mock_getenv):
         mock_getenv.return_value = None
         adapter = HFInferenceAdapter(api_token=None)
-        with pytest.raises(ValueError, match="HuggingFace API token"):
-            adapter.load()
+        # Stub SDK so the no-token path is reached even when huggingface_hub isn't installed
+        stub = MagicMock()
+        stub.InferenceClient = MagicMock()
+        with patch.dict("sys.modules", {"huggingface_hub": stub}):
+            with pytest.raises(ValueError, match="HuggingFace API token"):
+                adapter.load()
 
     def test_load_raises_without_huggingface_hub(self):
         import sys

@@ -125,9 +125,11 @@ class TestCerebrasAdapterLoad:
 
     def test_load_raises_without_key(self, monkeypatch):
         monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
-        adapter = CerebrasAdapter(enable_rate_limiting=False)
-        with pytest.raises(ValueError, match="CEREBRAS_API_KEY"):
-            adapter.load()
+        modules, _, _ = self._sdk_patch("unused")
+        with patch.dict(sys.modules, modules):
+            adapter = CerebrasAdapter(enable_rate_limiting=False)
+            with pytest.raises(ValueError, match="CEREBRAS_API_KEY"):
+                adapter.load()
 
     def test_load_raises_if_sdk_missing(self, monkeypatch):
         monkeypatch.setenv("CEREBRAS_API_KEY", "k")

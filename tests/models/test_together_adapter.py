@@ -242,9 +242,13 @@ class TestTogetherAdapterLoad:
         )
         import os
         saved = os.environ.pop("TOGETHER_API_KEY", None)
+        # Stub SDK so the no-key path is reached even when together isn't installed
+        stub = MagicMock()
+        stub.Together = MagicMock()
         try:
-            with pytest.raises(ValueError, match="TOGETHER_API_KEY"):
-                adapter.load()
+            with patch.dict("sys.modules", {"together": stub}):
+                with pytest.raises(ValueError, match="TOGETHER_API_KEY"):
+                    adapter.load()
         finally:
             if saved is not None:
                 os.environ["TOGETHER_API_KEY"] = saved

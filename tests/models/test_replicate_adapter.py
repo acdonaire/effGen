@@ -154,12 +154,15 @@ class TestReplicateAdapterConstruction:
 class TestReplicateAdapterLifecycle:
     def test_load_no_key_raises_value_error(self):
         adapter = ReplicateAdapter(api_token=None)
-        with patch.dict("os.environ", {}, clear=True):
-            # Ensure REPLICATE_API_TOKEN is not in env
-            import os
-            os.environ.pop("REPLICATE_API_TOKEN", None)
-            with pytest.raises(ValueError, match="REPLICATE_API_TOKEN"):
-                adapter.load()
+        # Stub SDK so the no-key path is reached even when replicate isn't installed
+        stub = MagicMock()
+        stub.Client = MagicMock()
+        with patch.dict("sys.modules", {"replicate": stub}):
+            with patch.dict("os.environ", {}, clear=True):
+                import os
+                os.environ.pop("REPLICATE_API_TOKEN", None)
+                with pytest.raises(ValueError, match="REPLICATE_API_TOKEN"):
+                    adapter.load()
 
     def test_load_missing_sdk_raises_runtime_error(self, monkeypatch):
         import builtins

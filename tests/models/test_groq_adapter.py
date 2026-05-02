@@ -101,12 +101,15 @@ class TestGroqAdapterInit:
 class TestGroqAdapterLoad:
     def test_load_no_key_raises(self):
         adapter = GroqAdapter("llama-3.1-8b-instant", api_key=None)
-        with patch.dict("os.environ", {}, clear=True):
-            # Remove GROQ_API_KEY if present
-            import os
-            os.environ.pop("GROQ_API_KEY", None)
-            with pytest.raises(ValueError, match="GROQ_API_KEY"):
-                adapter.load()
+        # Stub SDK so the no-key path is reached even when groq isn't installed
+        stub = MagicMock()
+        stub.Groq = MagicMock()
+        with patch.dict("sys.modules", {"groq": stub}):
+            with patch.dict("os.environ", {}, clear=True):
+                import os
+                os.environ.pop("GROQ_API_KEY", None)
+                with pytest.raises(ValueError, match="GROQ_API_KEY"):
+                    adapter.load()
 
     def test_load_sets_is_loaded(self):
         with patch("effgen.models.groq_adapter.os.getenv", return_value="fake-key"):

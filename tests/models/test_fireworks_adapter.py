@@ -157,9 +157,15 @@ class TestFireworksAdapterLoadUnload:
             api_key=None,
             enable_rate_limiting=False,
         )
-        with patch("os.getenv", return_value=None):
-            with pytest.raises(ValueError, match="Fireworks API key not found"):
-                adapter.load()
+        # Stub SDK so the no-key path is reached even when fireworks-ai isn't installed
+        client_stub = MagicMock()
+        client_stub.Fireworks = MagicMock()
+        fw_root = MagicMock()
+        fw_root.client = client_stub
+        with patch.dict("sys.modules", {"fireworks": fw_root, "fireworks.client": client_stub}):
+            with patch("os.getenv", return_value=None):
+                with pytest.raises(ValueError, match="Fireworks API key not found"):
+                    adapter.load()
 
     def test_load_sets_is_loaded(self):
         adapter = self._make_adapter()
