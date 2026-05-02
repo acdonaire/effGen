@@ -179,6 +179,34 @@ class ModelLoader:
 
         # Explicit provider routing (e.g. provider="cerebras", provider="openai")
         provider = kwargs.pop("provider", None)
+
+        # Support "provider:model_id" prefix syntax via ProviderRegistry
+        if provider is None and isinstance(model_name, str) and ":" in model_name:
+            _prefix, _rest = model_name.split(":", 1)
+            try:
+                from effgen.models.registry import ProviderRegistry
+                if _prefix in ProviderRegistry.list_providers():
+                    provider = _prefix
+                    model_name = _rest
+            except Exception:
+                pass
+
+        # Disambiguate bare model ids that exist across multiple cloud providers.
+        # Single-provider hits are NOT auto-routed here to preserve the existing
+        # detection path (local HF / Transformers / vLLM) for callers that pass
+        # a HuggingFace model id which happens to also live in one cloud catalog.
+        if provider is None and isinstance(model_name, str):
+            try:
+                from effgen.models.errors import AmbiguousModelError
+                from effgen.models.registry import ProviderRegistry
+                candidates = ProviderRegistry._model_index.get(model_name, [])
+                if len(candidates) > 1:
+                    raise AmbiguousModelError(model_name, candidates)
+            except AmbiguousModelError:
+                raise
+            except Exception:
+                pass
+
         if provider == "openai":
             model = self._load_openai_model(model_name, engine_config, **kwargs)
             model.load()

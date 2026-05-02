@@ -251,7 +251,7 @@ class GeminiAdapter(FunctionCallingModel):
                 elif k == "items":
                     cleaned[k] = cls._sanitize_schema(v)
                 elif k == "required":
-                    cleaned[k] = list(v) if isinstance(v, (list, tuple)) else v
+                    cleaned[k] = list(v) if isinstance(v, list | tuple) else v
                 else:
                     cleaned[k] = v
             return cleaned
@@ -726,3 +726,23 @@ def _inject_tools(gen_config: Any, tools: list) -> Any:
             d["tool_config"] = types.ToolConfig(include_server_side_tool_invocations=True)
 
     return types.GenerateContentConfig(**d)
+
+
+# ---------------------------------------------------------------------------
+# Self-register with the ProviderRegistry on first import (idempotent)
+# ---------------------------------------------------------------------------
+def _register() -> None:
+    try:
+        from effgen.models.gemini_models import GEMINI_MODELS
+        from effgen.models.registry import ProviderRegistry
+        ProviderRegistry.register(
+            "gemini",
+            GeminiAdapter,
+            GEMINI_MODELS,
+            env_keys=["GOOGLE_API_KEY"],
+        )
+    except Exception:
+        pass
+
+
+_register()

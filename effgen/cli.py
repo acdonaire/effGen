@@ -1832,6 +1832,13 @@ Examples:
     # Health check command
     subparsers.add_parser('health', help='Check effGen infrastructure health')
 
+    # Doctor command — API key availability check
+    doctor_parser = subparsers.add_parser('doctor', help='Check provider API key availability')
+    doctor_parser.add_argument('--json', dest='output_json', action='store_true',
+                               help='Output as JSON')
+    doctor_parser.add_argument('--provider', dest='doctor_provider',
+                               help='Check a specific provider only')
+
     # Plugin commands
     plugin_parser = subparsers.add_parser('create-plugin', help='Generate a plugin project scaffold')
     plugin_parser.add_argument('plugin_name', help='Plugin name (e.g. my_tools)')
@@ -2004,6 +2011,101 @@ dependencies = ["effgen"]
     print(f"  {pkg / 'tools.py':}       — add your custom tools here")
     print(f"  {pkg / 'plugin.py'}     — register tools in the plugin class")
     print(f"  {base / 'pyproject.toml'} — package metadata & entry point")
+    return 0
+
+
+def _handle_doctor_command(args) -> int:
+    """Handle the 'effgen doctor' subcommand — check API key availability."""
+    import json as _json
+
+    # Load .env from standard locations before checking keys (all, non-overriding)
+    try:
+        from dotenv import load_dotenv
+        for _env_path in [
+            Path.home() / ".effgen" / ".env",
+            Path(".env"),
+            Path(__file__).parent.parent / ".env",
+        ]:
+            if _env_path.exists():
+                load_dotenv(_env_path, override=False)
+    except ImportError:
+        pass
+
+    from effgen.models.auth import check_keys
+    from effgen.models.registry import ProviderRegistry
+
+    # Ensure all adapters are imported so they self-register
+    try:
+        import effgen.models.anthropic_adapter  # noqa: F401
+        import effgen.models.cerebras_adapter  # noqa: F401
+        import effgen.models.fireworks_adapter  # noqa: F401
+        import effgen.models.gemini_adapter  # noqa: F401
+        import effgen.models.groq_adapter  # noqa: F401
+        import effgen.models.hf_inference_adapter  # noqa: F401
+        import effgen.models.openai_adapter  # noqa: F401
+        import effgen.models.replicate_adapter  # noqa: F401
+        import effgen.models.together_adapter  # noqa: F401
+    except Exception:
+        pass
+
+    provider_filter = getattr(args, 'doctor_provider', None)
+    providers_to_check = [provider_filter] if provider_filter else None
+
+    results = check_keys(providers_to_check)
+
+    if getattr(args, 'output_json', False):
+        print(_json.dumps(results, indent=2))
+        return 0
+
+    # Pretty-print
+    if RICH_AVAILABLE:
+        console = Console()
+        table = Table(title="effgen doctor — Provider API Key Status")
+        table.add_column("Provider", style="cyan", no_wrap=True)
+        table.add_column("Status", style="white")
+        table.add_column("Env Key Found", style="dim")
+        table.add_column("Models", style="dim", justify="right")
+
+        for prov in sorted(results):
+            info = results[prov]
+            available = info.get("available", False)
+            env_key = info.get("env_key") or "—"
+            status = "[green]READY[/green]" if available else "[red]MISSING KEY[/red]"
+            try:
+                n_models = str(len(ProviderRegistry.list_models(prov)))
+            except Exception:
+                n_models = "?"
+            table.add_row(prov, status, env_key, n_models)
+
+        console.print(table)
+
+        # Print hints for missing keys
+        missing = [p for p, i in results.items() if not i.get("available")]
+        if missing:
+            console.print("\n[yellow]Missing keys — set in ~/.effgen/.env or export:[/yellow]")
+            for prov in missing:
+                keys = results[prov].get("env_keys_checked", [])
+                key_str = " or ".join(keys) if keys else f"{prov.upper()}_API_KEY"
+                console.print(f"  export {key_str}=<your-key>")
+        else:
+            console.print("\n[green]All providers ready![/green]")
+    else:
+        print("effgen doctor — Provider API Key Status")
+        print("-" * 50)
+        for prov in sorted(results):
+            info = results[prov]
+            available = info.get("available", False)
+            env_key = info.get("env_key") or "not set"
+            status = "READY" if available else "MISSING KEY"
+            print(f"  {prov:15s} {status:12s}  (key: {env_key})")
+        missing = [p for p, i in results.items() if not i.get("available")]
+        if missing:
+            print("\nMissing keys — set in ~/.effgen/.env or export:")
+            for prov in missing:
+                keys = results[prov].get("env_keys_checked", [])
+                key_str = " or ".join(keys) if keys else f"{prov.upper()}_API_KEY"
+                print(f"  export {key_str}=<your-key>")
+
     return 0
 
 
@@ -2405,6 +2507,8 @@ def main():
             checker = HealthChecker()
             all_passed = checker.print_results()
             exit_code = 0 if all_passed else 1
+        elif args.command == 'doctor':
+            exit_code = _handle_doctor_command(args)
         elif args.command == 'resume':
             exit_code = _handle_resume_command(args, cli)
         elif args.command == 'sessions':

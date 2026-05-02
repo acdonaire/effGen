@@ -662,3 +662,23 @@ class FireworksAdapter(BaseModel):
             "input_per_1m_usd": info.get("pricing_per_1m_input", 0),
             "output_per_1m_usd": info.get("pricing_per_1m_output", 0),
         }
+
+
+# ---------------------------------------------------------------------------
+# Self-register with the ProviderRegistry on first import (idempotent)
+# ---------------------------------------------------------------------------
+def _register() -> None:
+    try:
+        from effgen.models.fireworks_models import FIREWORKS_MODELS
+        from effgen.models.registry import ProviderRegistry
+        ProviderRegistry.register(
+            "fireworks",
+            FireworksAdapter,
+            FIREWORKS_MODELS,
+            env_keys=["FIREWORKS_API_KEY"],
+        )
+    except Exception:
+        pass
+
+
+_register()

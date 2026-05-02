@@ -33,6 +33,7 @@ from effgen.models.anthropic_cache import (
 )
 from effgen.models.anthropic_models import ANTHROPIC_MODELS
 from effgen.models.anthropic_models import get_model_info as get_anthropic_model_info
+from effgen.models.auth import check_keys
 from effgen.models.base import (
     BaseModel,
     BatchModel,
@@ -53,6 +54,7 @@ from effgen.models.capabilities import (
 )
 from effgen.models.cerebras_adapter import CerebrasAdapter
 from effgen.models.errors import (
+    AmbiguousModelError,
     ModelAuthError,
     ModelNotFoundError,
     ModelRefusalError,
@@ -72,6 +74,7 @@ from effgen.models.model_loader import ModelLoader, load_model
 from effgen.models.openai_adapter import OpenAIAdapter
 from effgen.models.openai_schema import to_openai_schema
 from effgen.models.pool import ModelPool, PoolConfig
+from effgen.models.registry import ProviderRegistry, list_models, list_providers, lookup
 from effgen.models.replicate_adapter import ReplicateAdapter
 from effgen.models.replicate_models import REPLICATE_MODELS
 from effgen.models.router import (
@@ -170,6 +173,14 @@ __all__ = [
     "ModelTimeoutError",
     "ModelUnavailableError",
     "ModelNotFoundError",
+    "AmbiguousModelError",
+
+    # Provider registry + auth
+    "ProviderRegistry",
+    "list_providers",
+    "list_models",
+    "lookup",
+    "check_keys",
 
     # Schema helpers
     "to_openai_schema",

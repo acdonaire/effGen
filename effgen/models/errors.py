@@ -133,6 +133,28 @@ class ModelNotFoundError(Exception):
         super().__init__(f"{provider} error{suffix}: {body}")
 
 
+class AmbiguousModelError(Exception):
+    """Raised when a model ID exists in multiple providers and no provider prefix is given.
+
+    Example: ``"llama-3.3-70b"`` could be Groq, Together, or Fireworks.
+    Callers should disambiguate with ``"groq:llama-3.3-70b-versatile"`` syntax.
+
+    Attributes:
+        model_id: The ambiguous model identifier.
+        providers: List of providers that each claim this model ID.
+    """
+
+    def __init__(self, model_id: str, providers: list[str]) -> None:
+        self.model_id = model_id
+        self.providers = list(providers)
+        plist = ", ".join(f'"{p}"' for p in providers)
+        super().__init__(
+            f"Model {model_id!r} is available on multiple providers: [{plist}]. "
+            f"Disambiguate with 'provider:model_id' syntax, e.g. "
+            f'"{providers[0]}:{model_id}".'
+        )
+
+
 class ToolIncompatibleError(Exception):
     """Raised when a tool cannot be used with the configured model.
 

@@ -90,10 +90,12 @@ from effgen.models import (
     load_model,
 )
 from effgen.models._rate_limit import RateLimitCoordinator, RateLimitExceeded  # noqa: I001
+from effgen.models.auth import check_keys
 from effgen.models.cerebras_models import available_models as cerebras_available_models
 from effgen.models.cerebras_models import free_tier_models as cerebras_free_tier_models
 from effgen.models.cerebras_models import model_info as cerebras_model_info
 from effgen.models.errors import (
+    AmbiguousModelError,
     ModelAuthError,
     ModelNotFoundError,
     ModelRefusalError,
@@ -129,6 +131,7 @@ from effgen.models.openai_models import chat_models as openai_chat_models
 from effgen.models.openai_models import model_info as openai_model_info
 from effgen.models.openai_models import reasoning_models as openai_reasoning_models  # noqa: I001
 from effgen.models.openai_schema import to_openai_schema
+from effgen.models.registry import ProviderRegistry, list_models, list_providers, lookup
 from effgen.models.replicate_models import available_models as replicate_available_models
 from effgen.models.replicate_models import get_model_info as replicate_get_model_info
 from effgen.models.replicate_models import refresh_models as replicate_refresh_models
@@ -261,7 +264,15 @@ __all__ = [
     "ModelTimeoutError",
     "ModelUnavailableError",
     "ModelNotFoundError",
+    "AmbiguousModelError",
+    "ToolIncompatibleError",
     "to_openai_schema",
+    # Provider registry + auth
+    "ProviderRegistry",
+    "list_providers",
+    "list_models",
+    "lookup",
+    "check_keys",
     # Cerebras helpers
     "cerebras_available_models",
     "cerebras_free_tier_models",

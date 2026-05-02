@@ -802,3 +802,23 @@ class AnthropicAdapter(FunctionCallingModel):
         self.total_cost = 0.0
         self.total_tokens = 0
         logger.info("Usage statistics reset")
+
+
+# ---------------------------------------------------------------------------
+# Self-register with the ProviderRegistry on first import (idempotent)
+# ---------------------------------------------------------------------------
+def _register() -> None:
+    try:
+        from effgen.models.anthropic_models import ANTHROPIC_MODELS
+        from effgen.models.registry import ProviderRegistry
+        ProviderRegistry.register(
+            "anthropic",
+            AnthropicAdapter,
+            ANTHROPIC_MODELS,
+            env_keys=["ANTHROPIC_API_KEY"],
+        )
+    except Exception:
+        pass
+
+
+_register()

@@ -656,3 +656,23 @@ class TogetherAdapter(BaseModel):
             "input_per_1m_usd": info.get("pricing_per_1m_input", 0),
             "output_per_1m_usd": info.get("pricing_per_1m_output", 0),
         }
+
+
+# ---------------------------------------------------------------------------
+# Self-register with the ProviderRegistry on first import (idempotent)
+# ---------------------------------------------------------------------------
+def _register() -> None:
+    try:
+        from effgen.models.registry import ProviderRegistry
+        from effgen.models.together_models import TOGETHER_MODELS
+        ProviderRegistry.register(
+            "together",
+            TogetherAdapter,
+            TOGETHER_MODELS,
+            env_keys=["TOGETHER_API_KEY"],
+        )
+    except Exception:
+        pass
+
+
+_register()

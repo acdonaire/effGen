@@ -834,3 +834,23 @@ class ReplicateAdapter(BaseModel):
 
     def get_cost_per_second(self) -> float:
         return float(self._info.get("cost_per_second_usd", 0.0))
+
+
+# ---------------------------------------------------------------------------
+# Self-register with the ProviderRegistry on first import (idempotent)
+# ---------------------------------------------------------------------------
+def _register() -> None:
+    try:
+        from effgen.models.registry import ProviderRegistry
+        from effgen.models.replicate_models import REPLICATE_MODELS
+        ProviderRegistry.register(
+            "replicate",
+            ReplicateAdapter,
+            REPLICATE_MODELS,
+            env_keys=["REPLICATE_API_TOKEN"],
+        )
+    except Exception:
+        pass
+
+
+_register()

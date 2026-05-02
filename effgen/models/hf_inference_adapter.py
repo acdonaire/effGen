@@ -809,3 +809,23 @@ class HFInferenceAdapter(BaseModel):
         """Return True if the exception looks like a transient network/rate error."""
         exc_str = str(exc)
         return any(code in exc_str for code in ("429", "500", "502", "503", "504"))
+
+
+# ---------------------------------------------------------------------------
+# Self-register with the ProviderRegistry on first import (idempotent)
+# ---------------------------------------------------------------------------
+def _register() -> None:
+    try:
+        from effgen.models.hf_inference_models import HF_MODELS
+        from effgen.models.registry import ProviderRegistry
+        ProviderRegistry.register(
+            "hf",
+            HFInferenceAdapter,
+            HF_MODELS,
+            env_keys=["HF_TOKEN", "HUGGINGFACE_API_KEY"],
+        )
+    except Exception:
+        pass
+
+
+_register()

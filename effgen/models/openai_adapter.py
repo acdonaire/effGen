@@ -962,3 +962,23 @@ class OpenAIAdapter(FunctionCallingModel):
         """Return registry info for *model_id*."""
         from effgen.models.openai_models import model_info
         return model_info(model_id)
+
+
+# ---------------------------------------------------------------------------
+# Self-register with the ProviderRegistry on first import (idempotent)
+# ---------------------------------------------------------------------------
+def _register() -> None:
+    try:
+        from effgen.models.openai_models import OPENAI_MODELS
+        from effgen.models.registry import ProviderRegistry
+        ProviderRegistry.register(
+            "openai",
+            OpenAIAdapter,
+            OPENAI_MODELS,
+            env_keys=["OPENAI_API_KEY"],
+        )
+    except Exception:
+        pass
+
+
+_register()

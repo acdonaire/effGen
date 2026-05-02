@@ -613,3 +613,23 @@ class GroqAdapter(BaseModel):
     def supports_streaming(self) -> bool:
         """True if this model supports streaming responses."""
         return GROQ_MODELS.get(self.model_name, {}).get("supports_streaming", True)
+
+
+# ---------------------------------------------------------------------------
+# Self-register with the ProviderRegistry on first import (idempotent)
+# ---------------------------------------------------------------------------
+def _register() -> None:
+    try:
+        from effgen.models.groq_models import GROQ_MODELS
+        from effgen.models.registry import ProviderRegistry
+        ProviderRegistry.register(
+            "groq",
+            GroqAdapter,
+            GROQ_MODELS,
+            env_keys=["GROQ_API_KEY"],
+        )
+    except Exception:
+        pass  # Registry not yet available during bootstrap
+
+
+_register()

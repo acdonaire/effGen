@@ -717,3 +717,23 @@ class CerebrasAdapter(BaseModel):
     def get_model_info(cls, model_id: str) -> dict:
         """Return metadata for *model_id* (context, limits, native-tools flag, etc.)."""
         return model_info(model_id)
+
+
+# ---------------------------------------------------------------------------
+# Self-register with the ProviderRegistry on first import (idempotent)
+# ---------------------------------------------------------------------------
+def _register() -> None:
+    try:
+        from effgen.models.cerebras_models import CEREBRAS_MODELS
+        from effgen.models.registry import ProviderRegistry
+        ProviderRegistry.register(
+            "cerebras",
+            CerebrasAdapter,
+            CEREBRAS_MODELS,
+            env_keys=["CEREBRAS_API_KEY"],
+        )
+    except Exception:
+        pass
+
+
+_register()
