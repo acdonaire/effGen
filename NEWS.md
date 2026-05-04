@@ -1,5 +1,63 @@
 # effGen Release Notes
 
+## v0.2.3 — May 4, 2026
+
+**effGen v0.2.3** grows the provider roster from 4 to **9 cloud inference backends** — Groq, Together AI, Fireworks, Replicate, and HuggingFace Inference join the existing OpenAI, Anthropic, Gemini, and Cerebras adapters. Every new backend ships with streaming, native tool-calling where the provider supports it, automatic rate-limit coordination, and per-call cost tracking. A new `ProviderRegistry` consolidates all providers for clean introspection and the `effgen doctor` command tells you at a glance which API keys are wired up. A backend parity matrix proves that the canonical "What is (17 × 23) + sqrt(144)?" agentic task returns the correct answer (403) across every provider, with identical `ModelAuthError` raised on bad credentials.
+
+### Top Highlights
+
+1. **5 new cloud backends** — `GroqAdapter` (16 models, RPM/TPD windows), `TogetherAdapter` (163-model catalog with drift detection), `FireworksAdapter` (80 chat models), `ReplicateAdapter` (async run-poll + SSE streaming + timeout handling), `HFInferenceAdapter` (124-model HuggingFace Router catalog + custom Endpoint URL support). Each supports streaming and native tools.
+
+   ```python
+   from effgen import load_model
+
+   # Groq — ultra-fast inference
+   model = load_model("llama-3.1-8b-instant", provider="groq")
+
+   # Together AI
+   model = load_model("meta-llama/Llama-3.3-70B-Instruct-Turbo", provider="together")
+
+   # Fireworks
+   model = load_model("accounts/fireworks/models/llama-v3p1-8b-instruct", provider="fireworks")
+
+   # HuggingFace Inference Router
+   model = load_model("Qwen/Qwen2.5-72B-Instruct", provider="hf")
+   ```
+
+2. **Unified ProviderRegistry** — `list_providers()`, `list_models(provider)`, `lookup(model_id)` in one place. All 9 adapters self-register on import. Duplicate model IDs across providers raise `AmbiguousModelError` with disambiguation instructions.
+
+3. **`effgen doctor`** — new CLI command that prints a table of all 9 providers and whether their API key is available, with setup instructions for missing keys.
+
+4. **Backend parity matrix** — 7/8 providers passed the canonical agentic task (Anthropic skipped — no key in dev env; Replicate xfail — billing credits). All 9 raise `ModelAuthError` uniformly on bad credentials. Full report in `docs/providers/parity.md`.
+
+5. **HuggingFace Router support** — `HFInferenceAdapter` routes via `provider="auto"` (the new HF Inference Router), supports 124 bundled models with live `refresh_models()` + `check_drift()`, and raises helpful `ModelUnavailableError` with `suggest_alternatives()` when a model is temporarily offline.
+
+### Installing New Backends
+
+```bash
+pip install "effgen[groq]"       # Groq: GROQ_API_KEY
+pip install "effgen[together]"   # Together AI: TOGETHER_API_KEY
+pip install "effgen[fireworks]"  # Fireworks: FIREWORKS_API_KEY
+pip install "effgen[replicate]"  # Replicate: REPLICATE_API_TOKEN
+pip install "effgen[hf]"         # HuggingFace: HF_TOKEN
+```
+
+Or grab everything at once:
+
+```bash
+pip install "effgen[all]"
+```
+
+### Upgrading from v0.2.2
+
+No breaking API changes. All new providers are opt-in extras. Existing `load_model`, `Agent`, and tool calls work without modification.
+
+```bash
+pip install --upgrade effgen
+```
+
+---
+
 ## v0.2.2 — April 28, 2026
 
 **effGen v0.2.2** brings Gemini's latest thinking and grounding capabilities to effGen, adds the Gemini Files API and three Gemini-native tools, and modernizes Anthropic support for the full Claude 4.x lineup.

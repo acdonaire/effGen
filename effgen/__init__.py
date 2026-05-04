@@ -9,7 +9,7 @@ This framework enables SLMs to function as powerful agentic systems through:
 - Comprehensive configuration management
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 __author__ = "effGen Team"
 __license__ = "Apache-2.0"
 

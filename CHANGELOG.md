@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.3] - 2026-05-04
+
+### Highlights
+
+**effGen v0.2.3** expands the provider ecosystem from 4 to **9 inference backends** — adding Groq, Together AI, Fireworks, Replicate, and HuggingFace Inference — each with full streaming, native tool-calling, cost tracking, and rate-limit coordination. A unified `ProviderRegistry` consolidates all adapters for first-class introspection, and a backend parity matrix proves cross-provider correctness on a canonical agentic task.
+
+### Added
+
+#### New Backends (5 providers)
+- **`GroqAdapter`** — 16 chat models (llama-3.3-70b-versatile, llama-3.1-8b-instant, mixtral-8x7b, gemma2-9b-it, qwen3-32b, and the full free-tier roster); native tool-calling; streaming with timestamp-verified chunk delivery; RPM/RPD/TPM/TPD rate-limit windows; free-tier `CostTracker` ($0). `pip install effgen[groq]`.
+- **`TogetherAdapter`** — 163-model catalog (149 chat + 13 language + 1 embedding) with live `refresh_models()` drift detection; native tools; streaming; per-model pricing. `pip install effgen[together]`.
+- **`FireworksAdapter`** — 80 chat models (54 tool-capable); live catalog via `refresh_models()`; OpenAI-compatible interface; streaming; per-model pricing. `pip install effgen[fireworks]`.
+- **`ReplicateAdapter`** — 38 models (25 tool-capable, 34 streaming); async run-then-poll with exponential backoff; SSE streaming; configurable prediction timeout (default 300 s); `ModelTimeoutError` with prediction cancellation; `compute_seconds` in metadata. `pip install effgen[replicate]`.
+- **`HFInferenceAdapter`** — 124-model dynamic registry from HuggingFace Router (refresh + drift detection + `~/.effgen/cache` hot-reload); `chat_completion` + `text_generation` + streaming + native tools; custom Inference Endpoint URL support; `ModelUnavailableError` with `suggest_alternatives()`; `ModelNotFoundError`. `pip install effgen[hf]`.
+
+#### Unified ProviderRegistry + Auth
+- **`ProviderRegistry`** (`effgen/models/registry.py`) — singleton with `register`, `list_providers`, `list_models`, `lookup`; handles duplicate model IDs across providers; `AmbiguousModelError` on bare ambiguous IDs.
+- **Adapter self-registration** — all 9 adapters register on import; idempotent.
+- **`check_keys()`** (`effgen/models/auth.py`) — `provider → {available, env_key, env_keys_checked}` map.
+- **`effgen doctor`** CLI command — prints provider auth table; `--json` and `--provider` filter flags; loads `.env` from `~/.effgen/.env` + project root.
+
+#### Backend Parity Matrix
+- **`tests/integration/parity/canonical_task.py`** — shared Calculator + ReAct task: "What is (17 × 23) + sqrt(144)?" Expected answer: 403.
+- **`tests/integration/parity/test_backend_parity.py`** — parametrized across (provider, model) pairs; per-parametrization skip on missing key.
+- **Parity reports** — `outputs/7-parity-matrix.md` (7/8 providers correct; Anthropic=no key; Replicate=billing), `outputs/7-stream-parity.md` (7/7 providers streaming), `outputs/7-error-parity.md` (9/9 providers raise `ModelAuthError`).
+- **`docs/providers/parity.md`** — full provider capability table.
+
+### Changed
+- **`load_model`** now uses `ProviderRegistry` for `provider:model_id` prefix parsing; existing per-provider branches unchanged (no behavior change for callers).
+- **Provider table in README expanded** to 9 providers with `effgen[groq]` / `[together]` / `[fireworks]` / `[replicate]` / `[hf]` install instructions.
+
+### Fixed
+- **`cli.py`** — `BatchConfig` variable reference (Phase 0 stability sweep).
+- **`aggregation.py`** — `sources` variable shadowing.
+- **`CostTracker._rate`** — Fireworks pricing path added.
+- **`GroqAdapter.supports_tool_calling()`** — was missing; added.
+- **`ModelAuthError`** — unified across all 9 adapters for consistent error surface.
+- **`AmbiguousModelError`** raised by `ModelLoader` on bare IDs shared across multiple providers (previously fell through to HF download path).
+
+---
+
 ## [0.2.2] - 2026-04-28
 
 ### Highlights

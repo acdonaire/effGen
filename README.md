@@ -36,6 +36,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🚀 | **4 May 2026** | **v0.2.3 Released**: 5 new cloud backends (Groq, Together AI, Fireworks, Replicate, HuggingFace Inference) — 9 providers total. Unified ProviderRegistry, `effgen doctor` auth check, backend parity matrix. [See changelog](CHANGELOG.md#023---2026-05-04) |
 | 🚀 | **28 Apr 2026** | **v0.2.2 Released**: Gemini 3.x/2.5/2.0 registry, `thinking_budget`, Google Search grounding, Files API, Gemini native tools (GoogleSearch, UrlContext, CodeExecution). Anthropic Claude 4.7 registry, extended thinking, prompt caching (`cache_control`), streaming polish, experimental native tools. [See changelog](CHANGELOG.md#022---2026-04-28) |
 | 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (4 free-tier models, streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](CHANGELOG.md#021---2026-04-25) |
 | 🚀 | **9 Apr 2026** | **v0.2.0 Released**: Major release — native tool calling, guardrails, multi-agent orchestration, RAG pipeline, 31 tools, eval framework, production API server, MLX Apple Silicon support, Python & TypeScript SDKs. [See changelog](CHANGELOG.md#020---2026-04-09) |
@@ -270,10 +271,30 @@ Production API<br/>
 
 ---
 
-## 🆕 What's New in v0.2.2
+## 🆕 What's New in v0.2.3
 
 <details open>
-<summary><b>Top 5 features in v0.2.2</b></summary>
+<summary><b>Top 5 features in v0.2.3</b></summary>
+
+1. **5 new cloud backends** — `GroqAdapter`, `TogetherAdapter`, `FireworksAdapter`, `ReplicateAdapter`, `HFInferenceAdapter` — each with streaming, native tools, rate-limit coordination, and cost tracking. 9 providers total.
+
+   ```python
+   model = load_model("llama-3.1-8b-instant", provider="groq")
+   model = load_model("Qwen/Qwen2.5-72B-Instruct", provider="hf")
+   ```
+
+2. **Unified ProviderRegistry** — `list_providers()`, `list_models(provider)`, `lookup(model_id)` consolidated across all 9 adapters. `AmbiguousModelError` on bare IDs shared across providers.
+
+3. **`effgen doctor`** — new CLI command showing which providers have API keys configured.
+
+4. **Backend parity matrix** — canonical agentic task ("(17 × 23) + sqrt(144) = 403") runs identically across all providers; streaming and error surfaces verified uniform. See `docs/providers/parity.md`.
+
+5. **HuggingFace Router support** — `HFInferenceAdapter` with 124-model dynamic catalog, `refresh_models()` + `check_drift()`, `ModelUnavailableError` with `suggest_alternatives()`, and custom Inference Endpoint URL.
+
+</details>
+
+<details>
+<summary><b>Top 5 features from v0.2.2</b></summary>
 
 1. **Gemini 3.x/2.5/2.0 + Gemma families** — full model registry with correct context windows, output limits, and feature flags; SDK migrated to `google-genai>=1.0.0`.
 
@@ -586,15 +607,47 @@ result = agent.run("What does the documentation say about configuration?")
 
 ## 🤖 Multi-Model Support
 
-effGen supports **7 inference backends** and is tested across 11+ model families:
+effGen supports **9 cloud inference providers** + 4 local backends, tested across 11+ model families:
 
-| Backend | Platform | Best For |
-|---------|----------|----------|
-| **MLX** | Apple Silicon (M1/M2/M3/M4) | Native Metal GPU, unified memory, 4/8-bit quantization |
-| **MLX-VLM** | Apple Silicon | Vision-Language models (Qwen2-VL, LLaVA, Phi-3 Vision, 30+ architectures) |
-| **vLLM** | NVIDIA GPU | High-throughput batch inference |
-| **Transformers** | Any (CPU/GPU) | Universal compatibility |
-| **API** | Cloud | OpenAI (gpt-5/gpt-5.4/o-series + reasoning_effort), Anthropic (Claude 4.7/4.x + thinking + caching), Google Gemini (3.x/2.5/2.0 + thinking_budget + grounding + Files API + native tools), Cerebras (4 free-tier models, streaming + native tools) |
+| Backend | Platform | Install | Best For |
+|---------|----------|---------|----------|
+| **MLX** | Apple Silicon (M1/M2/M3/M4) | `effgen[mlx]` | Native Metal GPU, unified memory, 4/8-bit quantization |
+| **MLX-VLM** | Apple Silicon | `effgen[mlx-vlm]` | Vision-Language models (Qwen2-VL, LLaVA, Phi-3 Vision, 30+ architectures) |
+| **vLLM** | NVIDIA GPU | `effgen[vllm]` | High-throughput batch inference |
+| **Transformers** | Any (CPU/GPU) | *(bundled)* | Universal compatibility, local models |
+| **OpenAI** | Cloud API | *(bundled)* | gpt-5/gpt-5.4/o-series, reasoning_effort, structured outputs, native tools |
+| **Anthropic** | Cloud API | *(bundled)* | Claude 4.7/4.x, extended thinking, prompt caching, native tools |
+| **Google Gemini** | Cloud API | *(bundled)* | Gemini 3.x/2.5/2.0, thinking_budget, grounding, Files API, native tools |
+| **Cerebras** | Cloud API | `effgen[cerebras]` | 4 free-tier models (llama3.1-8b, qwen-3-235b), ultra-low latency |
+| **Groq** | Cloud API | `effgen[groq]` | 16 models (llama-3.3-70b, mixtral, qwen3-32b), ultra-fast free-tier inference |
+| **Together AI** | Cloud API | `effgen[together]` | 163-model catalog (llama, deepseek, qwen, mistral), per-model pricing |
+| **Fireworks** | Cloud API | `effgen[fireworks]` | 80 chat models (54 tool-capable), serverless + dedicated |
+| **Replicate** | Cloud API | `effgen[replicate]` | 38 models, async run-poll, SSE streaming, compute-second billing |
+| **HuggingFace** | Cloud API | `effgen[hf]` | 124-model HF Router catalog, custom Inference Endpoints, free serverless tier |
+
+### Provider Auth Check
+
+```bash
+# See which API keys are configured
+effgen doctor
+```
+
+### Quick Cloud Start
+
+```python
+from effgen import load_model, Agent
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator
+
+# Any of the 9 cloud providers
+model = load_model("llama-3.1-8b-instant", provider="groq")          # Groq
+# model = load_model("meta-llama/Llama-3.3-70B-Instruct-Turbo", provider="together")
+# model = load_model("Qwen/Qwen2.5-72B-Instruct", provider="hf")
+
+agent = Agent(config=AgentConfig(name="agent", model=model, tools=[Calculator()]))
+result = agent.run("What is (17 * 23) + sqrt(144)?")
+print(result.output)  # → 403
+```
 
 ### Top Recommended Models
 
