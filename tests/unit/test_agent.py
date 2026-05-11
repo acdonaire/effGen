@@ -1,6 +1,7 @@
 """Unit tests for the Agent class."""
 
 from effgen.core.agent import Agent, AgentConfig, AgentMode, AgentResponse
+from tests.fixtures.mock_models import MockToolCallingModel
 
 
 class TestAgentConfig:
@@ -83,6 +84,34 @@ class TestAgentRun:
         result = tool_agent.run("What is 2 + 2?")
         assert isinstance(result, AgentResponse)
         assert result.success is True
+
+    def test_simple_calculator_task_returns_tool_result_directly(self, calculator):
+        model = MockToolCallingModel([
+            {
+                "thought": "I need to calculate this.",
+                "action": "calculator",
+                "action_input": '{"expression": "15 * 23"}',
+            },
+            {
+                "thought": "I should do another calculation.",
+                "action": "calculator",
+                "action_input": '{"expression": "345 + 50"}',
+            },
+        ])
+        agent = Agent(config=AgentConfig(
+            name="direct-calc",
+            model=model,
+            tools=[calculator],
+            enable_memory=False,
+            enable_sub_agents=False,
+        ))
+
+        result = agent.run("What is 15 * 23?")
+
+        assert result.success is True
+        assert result.output == "345"
+        assert result.tool_calls == 1
+        assert model.call_count == 1
 
     def test_response_has_metadata(self, basic_agent):
         result = basic_agent.run("test")

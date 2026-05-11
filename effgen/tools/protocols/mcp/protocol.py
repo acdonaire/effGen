@@ -381,7 +381,7 @@ class MCPProtocolHandler:
             ValueError: If message is invalid
         """
         # Parse JSON if needed
-        if isinstance(data, (str, bytes)):
+        if isinstance(data, str | bytes):
             try:
                 message_dict = json.loads(data)
             except json.JSONDecodeError as e:

@@ -15,6 +15,21 @@ def _has_key() -> bool:
     return bool(os.getenv("CEREBRAS_API_KEY"))
 
 
+def _xfail_if_cerebras_backpressure(exc: Exception) -> None:
+    msg = str(exc).lower()
+    transient_markers = (
+        "429",
+        "rate-limit",
+        "rate limit",
+        "request_quota_exceeded",
+        "queue_exceeded",
+        "high traffic",
+        "too many requests",
+    )
+    if any(marker in msg for marker in transient_markers):
+        pytest.xfail(f"Cerebras transient backpressure/rate limit: {exc}")
+
+
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.skipif(not _has_key(), reason="SKIPPED: CEREBRAS_API_KEY not in ~/.effgen/.env")
@@ -45,10 +60,14 @@ class TestCerebrasNativeTools:
         adapter = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False)
         adapter.load()
         try:
-            result = adapter.generate_with_tools(
-                "What is 17 * 23?",
-                tools=self.TOOLS,
-            )
+            try:
+                result = adapter.generate_with_tools(
+                    "What is 17 * 23?",
+                    tools=self.TOOLS,
+                )
+            except RuntimeError as exc:
+                _xfail_if_cerebras_backpressure(exc)
+                raise
             assert result.metadata is not None
             # The model may return a tool call or an answer directly
             # Both are valid — just assert it returned something
@@ -60,14 +79,21 @@ class TestCerebrasNativeTools:
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
         adapter = CerebrasAdapter(
-            "qwen-3-235b-a22b-instruct-2507", enable_rate_limiting=False
+            "qwen-3-235b-a22b-instruct-2507",
+            enable_rate_limiting=False,
+            max_retries=1,
+            timeout=20,
         )
         adapter.load()
         try:
-            result = adapter.generate_with_tools(
-                "What is 17 * 23?",
-                tools=self.TOOLS,
-            )
+            try:
+                result = adapter.generate_with_tools(
+                    "What is 17 * 23?",
+                    tools=self.TOOLS,
+                )
+            except RuntimeError as exc:
+                _xfail_if_cerebras_backpressure(exc)
+                raise
             assert result.metadata is not None
         finally:
             adapter.unload()
@@ -111,7 +137,11 @@ class TestCerebrasAgentWithTools:
                 temperature=0.1,
             )
             agent = Agent(config)
-            response = agent.run("What is 15 * 15?")
+            try:
+                response = agent.run("What is 15 * 15?")
+            except RuntimeError as exc:
+                _xfail_if_cerebras_backpressure(exc)
+                raise
             assert response.output is not None
             assert len(response.output) > 0
             # Answer should contain 225
@@ -126,7 +156,10 @@ class TestCerebrasAgentWithTools:
         from effgen.tools.builtin.calculator import Calculator
 
         adapter = CerebrasAdapter(
-            "qwen-3-235b-a22b-instruct-2507", enable_rate_limiting=False
+            "qwen-3-235b-a22b-instruct-2507",
+            enable_rate_limiting=False,
+            max_retries=1,
+            timeout=20,
         )
         adapter.load()
         try:
@@ -139,7 +172,11 @@ class TestCerebrasAgentWithTools:
                 temperature=0.1,
             )
             agent = Agent(config)
-            response = agent.run("What is 15 * 15?")
+            try:
+                response = agent.run("What is 15 * 15?")
+            except RuntimeError as exc:
+                _xfail_if_cerebras_backpressure(exc)
+                raise
             assert response.output is not None
             assert len(response.output) > 0
         finally:

@@ -160,7 +160,15 @@ class CerebrasAdapter(BaseModel):
                 "environment variable or pass api_key= to CerebrasAdapter."
             )
 
-        self._client = Cerebras(api_key=self._api_key or os.getenv("CEREBRAS_API_KEY"))
+        api_key = self._api_key or os.getenv("CEREBRAS_API_KEY")
+        try:
+            self._client = Cerebras(
+                api_key=api_key,
+                timeout=self.timeout,
+                max_retries=0,
+            )
+        except TypeError:
+            self._client = Cerebras(api_key=api_key)
         self._is_loaded = True
 
         info = CEREBRAS_MODELS.get(self.model_name, {})
@@ -315,7 +323,7 @@ class CerebrasAdapter(BaseModel):
 
         request_params.update(kwargs)
 
-        _MAX_RETRIES = 6
+        _MAX_RETRIES = max(1, self.max_retries)
         _last_exc: Exception | None = None
         for _attempt in range(1, _MAX_RETRIES + 1):
             try:
@@ -728,6 +736,7 @@ class CerebrasAdapter(BaseModel):
 # ---------------------------------------------------------------------------
 def _register() -> None:
     try:
+        from effgen.models.capabilities import Capability
         from effgen.models.cerebras_models import CEREBRAS_MODELS
         from effgen.models.registry import ProviderRegistry
         ProviderRegistry.register(
@@ -735,6 +744,7 @@ def _register() -> None:
             CerebrasAdapter,
             CEREBRAS_MODELS,
             env_keys=["CEREBRAS_API_KEY"],
+            capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema},
         )
     except Exception:
         pass

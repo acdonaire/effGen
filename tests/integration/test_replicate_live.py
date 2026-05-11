@@ -20,6 +20,20 @@ HAS_TOKEN = bool(REPLICATE_TOKEN)
 SKIP_MSG = "REPLICATE_API_TOKEN not set or account has no billing credits"
 
 
+def _is_replicate_unfunded(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return (
+        "insufficient credit" in msg
+        or "add billing" in msg
+        or "payment method" in msg
+    )
+
+
+def _xfail_if_replicate_unfunded(exc: BaseException) -> None:
+    if _is_replicate_unfunded(exc):
+        pytest.xfail("Replicate account has no billing credits/payment method")
+
+
 @pytest.fixture(scope="module")
 def adapter():
     """Load a ReplicateAdapter for the cheapest text model."""
@@ -34,8 +48,14 @@ def adapter():
         enable_rate_limiting=False,
         enable_cost_tracking=True,
         timeout=120,
+        max_retries=1,
     )
     a.load()
+    try:
+        a.generate("Say exactly: READY")
+    except RuntimeError as exc:
+        _xfail_if_replicate_unfunded(exc)
+        raise
     yield a
     a.unload()
 
@@ -54,8 +74,14 @@ def granite_adapter():
         enable_rate_limiting=False,
         enable_cost_tracking=True,
         timeout=120,
+        max_retries=1,
     )
     a.load()
+    try:
+        a.generate("Say exactly: READY")
+    except RuntimeError as exc:
+        _xfail_if_replicate_unfunded(exc)
+        raise
     yield a
     a.unload()
 
@@ -189,7 +215,7 @@ class TestReplicateLiveNativeTools:
 @pytest.mark.api
 class TestReplicateLiveMultiModel:
     def test_two_different_models(self):
-        """At least 2 text models return real text — Phase 4 exit criterion."""
+        """At least two text models return real text."""
         pytest.importorskip("replicate", reason="replicate SDK not installed")
         if not HAS_TOKEN:
             pytest.skip(SKIP_MSG)
@@ -202,10 +228,19 @@ class TestReplicateLiveMultiModel:
         ]
         results = {}
         for model_id in models_to_test:
-            a = ReplicateAdapter(model_id, enable_rate_limiting=False, timeout=120)
+            a = ReplicateAdapter(
+                model_id,
+                enable_rate_limiting=False,
+                timeout=120,
+                max_retries=1,
+            )
             a.load()
             try:
-                r = a.generate("Say 'hello' in exactly one word.")
+                try:
+                    r = a.generate("Say 'hello' in exactly one word.")
+                except RuntimeError as exc:
+                    _xfail_if_replicate_unfunded(exc)
+                    raise
                 results[model_id] = r.text
             finally:
                 a.unload()

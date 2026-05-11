@@ -1219,7 +1219,22 @@ Question: {task}
                 )
 
             # Check for final answer
-            if parsed.get("final_answer"):
+            final_answer = parsed.get("final_answer")
+            if final_answer and tool_calls > 0 and final_answer.strip().lower() in {
+                "none",
+                "null",
+                "n/a",
+                "na",
+            }:
+                partial = self._extract_partial_answer(scratchpad)
+                if partial:
+                    logger.info(
+                        "Ignoring null-like final answer after tool execution; "
+                        "returning latest observation"
+                    )
+                    return _build_response(partial, reason="null_final_from_model", partial=True)
+
+            if final_answer:
                 # Record final debug iteration
                 if debug_trace is not None:
                     from ..debug.inspector import DebugIteration
@@ -1228,12 +1243,12 @@ Question: {task}
                         raw_prompt=prompt[:2000],
                         raw_response=response["text"][:2000],
                         thought=parsed.get("thought", ""),
-                        final_answer=parsed["final_answer"],
+                        final_answer=final_answer,
                         tokens_used=iter_tokens,
                         latency=time.time() - iter_start,
                         scratchpad_snapshot=scratchpad,
                     ))
-                return _build_response(parsed["final_answer"])
+                return _build_response(final_answer)
 
             # Check if model is stating an answer without "Final Answer:" keyword
             # This happens when model provides result after tool execution
@@ -1275,7 +1290,7 @@ Question: {task}
                 current_pair = (action, normalized_input)
                 action_call_count = sum(1 for a, _ in previous_actions if a == action)
                 exact_loop_count = sum(1 for pair in previous_actions if pair == current_pair)
-                is_exact_loop = exact_loop_count >= 2 and action in self.tools
+                is_exact_loop = exact_loop_count >= 1 and action in self.tools
                 fuzzy_threshold = 5
                 if action in self.tools:
                     tool = self.tools[action]
@@ -1333,6 +1348,16 @@ Question: {task}
 
                     # Log the observation for debugging
                     logger.info(f"Tool result added to scratchpad: {tool_result[:100]}...")
+
+                    if self._should_return_direct_calculator_result(task, action, action_input):
+                        logger.info(
+                            "Returning direct calculator result for simple arithmetic task"
+                        )
+                        return _build_response(
+                            tool_result,
+                            _tool_calls=tool_calls,
+                            reason="direct_calculator_result",
+                        )
 
                     # Nudge model to answer when iterations are running low
                     if iterations >= self.config.max_iterations - 2:
@@ -1443,6 +1468,67 @@ Question: {task}
                 return last_thought
 
         return None
+
+    def _should_return_direct_calculator_result(
+        self,
+        task: str,
+        action: str,
+        action_input: str,
+    ) -> bool:
+        """Return calculator output directly for simple arithmetic questions."""
+        if action != "calculator" or not action_input:
+            return False
+
+        task_lower = task.lower()
+        if any(
+            marker in task_lower
+            for marker in (
+                "explain",
+                "show your work",
+                "step by step",
+                "steps",
+                "why",
+                "reason",
+            )
+        ):
+            return False
+
+        try:
+            parsed_input = json.loads(action_input)
+        except (json.JSONDecodeError, TypeError):
+            parsed_input = {"expression": action_input}
+        if not isinstance(parsed_input, dict):
+            return False
+
+        operation = str(parsed_input.get("operation", "calculate")).lower()
+        if operation != "calculate":
+            return False
+
+        expression = str(parsed_input.get("expression", "")).strip()
+        if not expression:
+            return False
+
+        task_numbers = re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?", task)
+        expr_numbers = re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?", expression)
+        if not task_numbers or not all(num in expr_numbers for num in task_numbers):
+            return False
+
+        arithmetic_markers = (
+            "+",
+            "-",
+            "*",
+            "/",
+            "^",
+            " plus ",
+            " minus ",
+            " times ",
+            " multiplied ",
+            " divide ",
+            " divided ",
+            " square root ",
+            " sqrt",
+        )
+        return any(marker in f" {task_lower} " for marker in arithmetic_markers)
 
     def _run_with_sub_agents(self,
                             task: str,

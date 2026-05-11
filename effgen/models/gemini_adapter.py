@@ -741,6 +741,7 @@ def _inject_tools(gen_config: Any, tools: list) -> Any:
 # ---------------------------------------------------------------------------
 def _register() -> None:
     try:
+        from effgen.models.capabilities import Capability
         from effgen.models.gemini_models import GEMINI_MODELS
         from effgen.models.registry import ProviderRegistry
         ProviderRegistry.register(
@@ -748,6 +749,11 @@ def _register() -> None:
             GeminiAdapter,
             GEMINI_MODELS,
             env_keys=["GOOGLE_API_KEY"],
+            capabilities={
+                Capability.chat, Capability.streaming, Capability.tools,
+                Capability.vision, Capability.grounding, Capability.thinking,
+                Capability.json_schema,
+            },
         )
     except Exception:
         pass

@@ -194,7 +194,7 @@ def validate_number(
     Raises:
         ValidationError: If validation fails
     """
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
+    if not isinstance(value, int | float) or isinstance(value, bool):
         raise ValidationError(f"Expected number, got {type(value).__name__}", value=value)
 
     if not allow_negative and value < 0:
@@ -355,7 +355,7 @@ def validate_path(
     Raises:
         ValidationError: If validation fails
     """
-    if not isinstance(path, (str, Path)):
+    if not isinstance(path, str | Path):
         raise ValidationError(f"Expected path, got {type(path).__name__}", value=path)
 
     path = Path(path)

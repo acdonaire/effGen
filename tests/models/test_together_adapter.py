@@ -228,10 +228,15 @@ class TestTogetherAdapterLoad:
             enable_cost_tracking=False,
         )
         mock_client = MagicMock()
-        with patch.object(_together_mod, "Together", return_value=mock_client):
+        with patch.object(_together_mod, "Together", return_value=mock_client) as mock_together:
             adapter.load()
         assert adapter._is_loaded is True
         assert adapter._client is mock_client
+        mock_together.assert_called_once_with(
+            api_key="test-key",
+            timeout=adapter.timeout,
+            max_retries=adapter.max_retries,
+        )
 
     def test_load_missing_key_raises(self):
         adapter = TogetherAdapter(

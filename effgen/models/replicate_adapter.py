@@ -842,6 +842,7 @@ class ReplicateAdapter(BaseModel):
 # ---------------------------------------------------------------------------
 def _register() -> None:
     try:
+        from effgen.models.capabilities import Capability
         from effgen.models.registry import ProviderRegistry
         from effgen.models.replicate_models import REPLICATE_MODELS
         ProviderRegistry.register(
@@ -849,6 +850,7 @@ def _register() -> None:
             ReplicateAdapter,
             REPLICATE_MODELS,
             env_keys=["REPLICATE_API_TOKEN"],
+            capabilities={Capability.chat, Capability.streaming, Capability.vision},
         )
     except Exception:
         pass

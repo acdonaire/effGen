@@ -169,7 +169,11 @@ class TogetherAdapter(BaseModel):
                 "environment variable or pass api_key= to TogetherAdapter."
             )
 
-        self._client = Together(api_key=self._api_key or os.getenv("TOGETHER_API_KEY"))
+        self._client = Together(
+            api_key=self._api_key or os.getenv("TOGETHER_API_KEY"),
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+        )
         self._is_loaded = True
 
         info = TOGETHER_MODELS.get(self.model_name, {})
@@ -317,7 +321,7 @@ class TogetherAdapter(BaseModel):
 
         request_params.update(kwargs)
 
-        _MAX_RETRIES = 6
+        _MAX_RETRIES = max(1, self.max_retries)
         _last_exc: Exception | None = None
         for _attempt in range(1, _MAX_RETRIES + 1):
             try:
@@ -664,6 +668,7 @@ class TogetherAdapter(BaseModel):
 # ---------------------------------------------------------------------------
 def _register() -> None:
     try:
+        from effgen.models.capabilities import Capability
         from effgen.models.registry import ProviderRegistry
         from effgen.models.together_models import TOGETHER_MODELS
         ProviderRegistry.register(
@@ -671,6 +676,7 @@ def _register() -> None:
             TogetherAdapter,
             TOGETHER_MODELS,
             env_keys=["TOGETHER_API_KEY"],
+            capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema},
         )
     except Exception:
         pass

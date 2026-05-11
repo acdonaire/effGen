@@ -14,9 +14,25 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class Capability(Enum):
+    """Provider-level feature flags used by the policy-based ModelRouter.
+
+    These describe what a cloud provider/model supports — distinct from the
+    per-model quality scores (math, code, reasoning) in ModelCapability below.
+    """
+    chat = "chat"
+    tools = "tools"
+    streaming = "streaming"
+    vision = "vision"
+    grounding = "grounding"
+    thinking = "thinking"
+    json_schema = "json_schema"
 
 
 # Standard capability dimensions

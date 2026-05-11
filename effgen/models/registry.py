@@ -24,9 +24,12 @@ Usage::
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from effgen.models.errors import AmbiguousModelError
+
+if TYPE_CHECKING:
+    from effgen.models.capabilities import Capability
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +37,7 @@ logger = logging.getLogger(__name__)
 class ProviderRegistry:
     """Singleton registry mapping providers → adapters + models."""
 
-    # {provider_name: {"adapter_cls": cls, "models": dict, "env_keys": list[str]}}
+    # {provider_name: {"adapter_cls": cls, "models": dict, "env_keys": list[str], "capabilities": set}}
     _providers: dict[str, dict[str, Any]] = {}
     # {model_id: [provider_name, ...]}  — tracks which providers expose a model id
     _model_index: dict[str, list[str]] = {}
@@ -46,6 +49,7 @@ class ProviderRegistry:
         adapter_cls: type,
         models: dict[str, dict],
         env_keys: list[str] | None = None,
+        capabilities: "set[Capability] | None" = None,
     ) -> None:
         """Register a provider.
 
@@ -60,6 +64,9 @@ class ProviderRegistry:
             env_keys:      Environment variable names that carry the API key,
                            e.g. ``["GROQ_API_KEY"]``.  Checked in order; the
                            first one present counts as "available".
+            capabilities:  Set of ``Capability`` flags this provider supports
+                           (e.g. ``{Capability.chat, Capability.tools}``).
+                           Used by the policy-based ModelRouter to filter candidates.
         """
         if provider_name in cls._providers:
             # Remove old model-index entries for this provider
@@ -75,6 +82,7 @@ class ProviderRegistry:
             "adapter_cls": adapter_cls,
             "models": models,
             "env_keys": list(env_keys or []),
+            "capabilities": set(capabilities) if capabilities else set(),
         }
 
         # Rebuild model index for this provider
@@ -169,6 +177,18 @@ class ProviderRegistry:
         prov = providers_for_model[0]
         rec = cls._providers[prov]
         return prov, rec["adapter_cls"], rec["models"][model_id]
+
+    @classmethod
+    def is_available(cls, provider: str) -> bool:
+        """Return True if *provider* has at least one configured API key."""
+        import os
+        rec = cls._providers.get(provider, {})
+        return any(os.environ.get(k) for k in rec.get("env_keys", []))
+
+    @classmethod
+    def get_capabilities(cls, provider: str) -> "set[Capability]":
+        """Return the capability set registered for *provider*."""
+        return set(cls._providers.get(provider, {}).get("capabilities", set()))
 
     @classmethod
     def reset(cls) -> None:

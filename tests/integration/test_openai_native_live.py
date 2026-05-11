@@ -122,6 +122,7 @@ def test_live_code_interpreter(openai_client):
     assert "1048576" in normalized, f"Expected 2**20=1048576 in: {text}"
 
 
+@pytest.mark.timeout(180)
 def test_live_file_search(openai_client):
     from effgen.tools.builtin.openai_native import OpenAIFileSearchTool
 

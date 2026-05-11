@@ -1,10 +1,17 @@
 """
 Model Router for effGen framework.
 
-Routes queries to the optimal model based on task complexity, available GPU
-memory, model capabilities, latency budget, and cost budget.
+Two routing layers:
 
-Complexity estimation is heuristic-based and designed to be fast (< 1ms).
+1. **Policy-based router** (new in v0.2.4): ``ModelRouter(policies=[...])`` /
+   ``PolicyBasedRouter`` / ``RoutingPolicy`` / ``RouterDecision`` route across
+   cloud *providers* based on declared capabilities, cost, and latency.  Use this
+   when you want to let effGen pick the best provider.
+
+2. **Complexity-based router** (v0.2.3): legacy ``ModelRouter`` for local model
+   pools that scores candidates by task complexity and GPU availability.
+   Preserved for back-compat — existing code using ``ModelRouter(models=[...])``
+   continues to work unchanged.
 """
 
 from __future__ import annotations
@@ -12,12 +19,14 @@ from __future__ import annotations
 import logging
 import re
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, NamedTuple
 
 from effgen.models.base import BaseModel
 from effgen.models.capabilities import (
+    Capability,
     ModelCapability,
     estimate_capability,
 )
@@ -26,7 +35,136 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Task complexity estimation
+# Policy-based routing (v0.2.4+)
+# ---------------------------------------------------------------------------
+
+class ProviderModelPair(NamedTuple):
+    """A (provider, model_id) pair that the router can route to."""
+    provider: str
+    model_id: str
+
+
+@dataclass
+class RoutingContext:
+    """Input to the policy-based router.
+
+    Attributes:
+        prompt_tokens_estimate: Estimated input token count.
+        user_budget_usd:        Max spend per call in USD (None = unlimited).
+        latency_budget_ms:      Max acceptable latency in ms (None = unlimited).
+        required_capabilities:  Set of Capability flags the chosen provider must support.
+    """
+    prompt_tokens_estimate: int = 0
+    user_budget_usd: float | None = None
+    latency_budget_ms: int | None = None
+    required_capabilities: set[Capability] = field(default_factory=set)
+
+
+@dataclass
+class RouterDecision:
+    """Result of a policy-based routing call.
+
+    Attributes:
+        chosen:      The selected (provider, model_id) pair.
+        eliminated:  List of (pair, reason) for every rejected candidate.
+        policy_name: Name of the policy that made the selection.
+        score:       Numeric score for the chosen candidate (policy-defined).
+    """
+    chosen: ProviderModelPair
+    eliminated: list[tuple[ProviderModelPair, str]] = field(default_factory=list)
+    policy_name: str = ""
+    score: float = 0.0
+
+
+class RoutingPolicy(ABC):
+    """Abstract base for all routing policies."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @abstractmethod
+    def select(
+        self,
+        candidates: list[ProviderModelPair],
+        context: RoutingContext,
+    ) -> RouterDecision:
+        """Select the best candidate given *context*.
+
+        Args:
+            candidates: All (provider, model_id) pairs to consider.
+            context:    Routing constraints and requirements.
+
+        Returns:
+            RouterDecision with the chosen pair and elimination log.
+
+        Raises:
+            NoCandidateError: If no candidate satisfies the requirements.
+        """
+
+
+class NoCandidateError(RuntimeError):
+    """Raised when no provider/model satisfies the routing constraints."""
+
+
+class PolicyBasedRouter:
+    """Routes to the best cloud provider by running a chain of policies.
+
+    Usage::
+
+        from effgen.models.router import PolicyBasedRouter, RoutingContext
+        from effgen.models.capabilities import Capability
+        from effgen.models.routing.first_available import FirstAvailablePolicy
+
+        router = PolicyBasedRouter(policies=[FirstAvailablePolicy()])
+        decision = router.route(RoutingContext(required_capabilities={Capability.chat}))
+        print(decision.chosen.provider, decision.chosen.model_id)
+
+    Args:
+        policies:  Ordered list of policies to try.  The first policy that
+                   returns a decision wins.
+        fallback:  Policy used if all others raise NoCandidateError.
+                   Defaults to FirstAvailablePolicy.
+    """
+
+    def __init__(
+        self,
+        policies: list[RoutingPolicy],
+        fallback: RoutingPolicy | None = None,
+    ) -> None:
+        if fallback is None:
+            from effgen.models.routing.first_available import FirstAvailablePolicy
+            fallback = FirstAvailablePolicy()
+        self._policies = list(policies)
+        self._fallback = fallback
+
+    def _get_candidates(self) -> list[ProviderModelPair]:
+        """Return all registered (provider, model_id) pairs."""
+        from effgen.models.registry import ProviderRegistry
+        pairs: list[ProviderModelPair] = []
+        for provider in ProviderRegistry.list_providers():
+            for model_info in ProviderRegistry.list_models(provider):
+                pairs.append(ProviderModelPair(provider, model_info["model_id"]))
+        return pairs
+
+    def route(self, context: RoutingContext) -> RouterDecision:
+        """Run policies in order and return the first successful decision."""
+        candidates = self._get_candidates()
+        last_error: NoCandidateError | None = None
+        for policy in self._policies:
+            try:
+                return policy.select(candidates, context)
+            except NoCandidateError as exc:
+                last_error = exc
+                logger.debug("Policy %r found no candidate: %s", policy.name, exc)
+        try:
+            return self._fallback.select(candidates, context)
+        except NoCandidateError:
+            raise last_error or NoCandidateError("No provider available for the given context")
+
+
+# ---------------------------------------------------------------------------
+# Task complexity estimation (v0.2.3, preserved for back-compat)
 # ---------------------------------------------------------------------------
 
 class ComplexityLevel(Enum):
@@ -233,7 +371,11 @@ class RoutingDecision:
 # ---------------------------------------------------------------------------
 
 class ModelRouter:
-    """Routes queries to the optimal model from a pool of available models.
+    """Routes either across providers by policy or across local model pools.
+
+    Policy-based routing is enabled by passing ``policies`` and using
+    :meth:`route`.  The original complexity-based local pool behavior is
+    preserved when passing ``models`` and using :meth:`select`.
 
     The router scores each candidate model against the estimated task
     complexity and selects the best fit.  It prefers smaller models for
@@ -242,16 +384,26 @@ class ModelRouter:
     Args:
         models: List of BaseModel instances or model-name strings.
         config: Optional RoutingConfig.
+        policies: Optional ordered list of provider routing policies.
+        fallback: Optional fallback provider routing policy.
     """
 
     def __init__(
         self,
         models: list[BaseModel] | None = None,
         config: RoutingConfig | None = None,
+        *,
+        policies: list[RoutingPolicy] | None = None,
+        fallback: RoutingPolicy | None = None,
     ):
         self.config = config or RoutingConfig()
         self._models: list[BaseModel] = list(models) if models else []
         self._capabilities: dict[str, ModelCapability] = {}
+        self._policy_router: PolicyBasedRouter | None = (
+            PolicyBasedRouter(policies=policies, fallback=fallback)
+            if policies is not None
+            else None
+        )
 
         # Pre-fetch capability profiles
         for m in self._models:
@@ -281,6 +433,15 @@ class ModelRouter:
     def models(self) -> list[BaseModel]:
         """Return the list of candidate models."""
         return list(self._models)
+
+    def route(self, context: RoutingContext) -> RouterDecision:
+        """Route across registered providers using the configured policies."""
+        if self._policy_router is None:
+            raise TypeError(
+                "ModelRouter.route() requires policies=[...]. "
+                "Use select() for complexity-based model-pool routing."
+            )
+        return self._policy_router.route(context)
 
     def select(
         self,

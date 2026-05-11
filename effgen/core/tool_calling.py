@@ -486,7 +486,7 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
         text_stripped = text.strip()
         if text_stripped and not any(marker in text for marker in [
             "<tool_call>", "<|python_tag|>", "<function=", "[TOOL_CALLS]",
-            "Action:", "Tool:", '"name"', '"function"',
+            "Thought:", "Action:", "Tool:", '"name"', '"function"',
         ]):
             result.final_answer = text_stripped
             logger.debug("No tool call markers found, treating as final answer")

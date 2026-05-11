@@ -818,12 +818,17 @@ class AnthropicAdapter(FunctionCallingModel):
 def _register() -> None:
     try:
         from effgen.models.anthropic_models import ANTHROPIC_MODELS
+        from effgen.models.capabilities import Capability
         from effgen.models.registry import ProviderRegistry
         ProviderRegistry.register(
             "anthropic",
             AnthropicAdapter,
             ANTHROPIC_MODELS,
             env_keys=["ANTHROPIC_API_KEY"],
+            capabilities={
+                Capability.chat, Capability.streaming, Capability.tools,
+                Capability.vision, Capability.thinking,
+            },
         )
     except Exception:
         pass

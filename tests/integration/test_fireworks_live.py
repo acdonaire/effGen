@@ -23,6 +23,22 @@ _SMALL_MODEL = "accounts/fireworks/models/qwen3-8b"
 _TOOL_MODEL = "accounts/fireworks/models/kimi-k2p5"
 
 
+def _xfail_if_fireworks_transient(exc: Exception) -> None:
+    msg = str(exc).lower()
+    transient_markers = (
+        "timeout",
+        "timed out",
+        "429",
+        "rate limit",
+        "temporarily unavailable",
+        "503",
+        "500",
+        "internal server",
+    )
+    if any(marker in msg for marker in transient_markers):
+        pytest.xfail(f"Fireworks transient service failure: {exc}")
+
+
 @pytest.fixture(scope="module")
 def small_adapter():
     from pathlib import Path
@@ -30,7 +46,12 @@ def small_adapter():
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parents[3] / ".env", override=True)
     from effgen.models.fireworks_adapter import FireworksAdapter
-    adapter = FireworksAdapter(_SMALL_MODEL, enable_rate_limiting=False)
+    adapter = FireworksAdapter(
+        _SMALL_MODEL,
+        enable_rate_limiting=False,
+        max_retries=2,
+        timeout=30,
+    )
     adapter.load()
     yield adapter
     adapter.unload()
@@ -51,10 +72,16 @@ def tool_adapter():
 
 class TestFireworksLiveGenerate:
     def test_basic_generate(self, small_adapter):
-        result = small_adapter.generate(
-            "What is the capital of France? Answer in one word.",
-            config=None,
-        )
+        from effgen.models.base import GenerationConfig
+
+        try:
+            result = small_adapter.generate(
+                "What is the capital of France? Answer in one word.",
+                config=GenerationConfig(max_tokens=16, temperature=0.0),
+            )
+        except RuntimeError as exc:
+            _xfail_if_fireworks_transient(exc)
+            raise
         assert isinstance(result.text, str)
         assert len(result.text) > 0
         assert "paris" in result.text.lower() or "France" in result.text

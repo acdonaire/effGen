@@ -254,7 +254,7 @@ class Calculator(BaseTool):
                 raise ValueError(f"Unknown operation: {operation}")
 
             # Format result
-            if precision is not None and isinstance(result, (int, float)):
+            if precision is not None and isinstance(result, int | float):
                 formatted = f"{result:.{precision}f}"
             else:
                 formatted = str(result)
@@ -351,7 +351,7 @@ class Calculator(BaseTool):
             Numerical result or list/tuple for aggregate functions
         """
         if isinstance(node, ast.Constant):  # Numbers and constants
-            if isinstance(node.value, (int, float)):
+            if isinstance(node.value, int | float):
                 return node.value
             raise ValueError(f"Unsupported constant type: {type(node.value)}")
 

@@ -118,7 +118,7 @@ def _basic_validate(data: Any, schema: dict[str, Any]) -> tuple[bool, str | None
     elif schema_type == "integer":
         return (True, None) if isinstance(data, int) and not isinstance(data, bool) else (False, "Expected integer")
     elif schema_type == "number":
-        return (True, None) if isinstance(data, (int, float)) and not isinstance(data, bool) else (False, "Expected number")
+        return (True, None) if isinstance(data, int | float) and not isinstance(data, bool) else (False, "Expected number")
     elif schema_type == "boolean":
         return (True, None) if isinstance(data, bool) else (False, "Expected boolean")
     elif schema_type == "null":

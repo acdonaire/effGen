@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -38,6 +39,39 @@ from effgen.models.groq_models import (
 logger = logging.getLogger(__name__)
 
 _GROQ_MODEL_TYPE_VALUE = "groq"
+
+
+def _parse_failed_generation_tool_call(message: str) -> dict[str, Any] | None:
+    """Extract a tool call from Groq's ``tool_use_failed`` failed_generation text."""
+    match = re.search(
+        r"<function=([A-Za-z_]\w*)\s*(.*?)</function>",
+        message,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+
+    name = match.group(1)
+    raw_args = match.group(2).strip()
+    if raw_args.startswith("(") and raw_args.endswith(")"):
+        raw_args = raw_args[1:-1].strip()
+
+    try:
+        arguments = json.loads(raw_args) if raw_args else {}
+    except (json.JSONDecodeError, TypeError):
+        arguments = {"__raw_input__": raw_args}
+
+    if not isinstance(arguments, dict):
+        arguments = {"__raw_input__": raw_args}
+
+    return {
+        "id": "",
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments,
+        },
+    }
 
 
 class _GroqModelType:
@@ -360,6 +394,28 @@ class GroqAdapter(BaseModel):
                     time.sleep(delay)
                     continue
 
+                failed_tool_call = _parse_failed_generation_tool_call(msg)
+                if tools and "tool_use_failed" in msg_lower and failed_tool_call is not None:
+                    logger.warning(
+                        "Groq returned tool_use_failed but included a parseable tool call; "
+                        "using failed_generation as structured tool call."
+                    )
+                    return GenerationResult(
+                        text="",
+                        tokens_used=0,
+                        finish_reason="tool_calls",
+                        model_name=self.model_name,
+                        metadata={
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "total_tokens": 0,
+                            "provider": "groq",
+                            "cost_usd": 0.0,
+                            "tool_calls": [failed_tool_call],
+                            "provider_error": "tool_use_failed",
+                        },
+                    )
+
                 logger.error("Groq API call failed: %s", exc)
                 raise RuntimeError(f"Groq generation failed: {exc}") from exc
         else:
@@ -625,6 +681,7 @@ class GroqAdapter(BaseModel):
 # ---------------------------------------------------------------------------
 def _register() -> None:
     try:
+        from effgen.models.capabilities import Capability
         from effgen.models.groq_models import GROQ_MODELS
         from effgen.models.registry import ProviderRegistry
         ProviderRegistry.register(
@@ -632,6 +689,7 @@ def _register() -> None:
             GroqAdapter,
             GROQ_MODELS,
             env_keys=["GROQ_API_KEY"],
+            capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema},
         )
     except Exception:
         pass  # Registry not yet available during bootstrap

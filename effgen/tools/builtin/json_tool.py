@@ -124,7 +124,7 @@ class JSONTool(BaseTool):
             idx_match = re.match(r'^\[(-?\d+)\]$', token)
             if idx_match:
                 idx = int(idx_match.group(1))
-                if isinstance(current, (list, tuple)):
+                if isinstance(current, list | tuple):
                     if abs(idx) <= len(current):
                         current = current[idx]
                     else:
@@ -135,13 +135,13 @@ class JSONTool(BaseTool):
 
             # Wildcard: [*]
             if token == "[*]":
-                if isinstance(current, (list, tuple)):
+                if isinstance(current, list | tuple):
                     return list(current)
                 return None
 
             # Bare number (from path like .0)
             if token.isdigit():
-                if isinstance(current, (list, tuple)):
+                if isinstance(current, list | tuple):
                     idx = int(token)
                     if idx < len(current):
                         current = current[idx]
@@ -194,7 +194,7 @@ class JSONTool(BaseTool):
             return {"result": [], "type": type(parsed).__name__}
 
         if operation == "length":
-            if isinstance(parsed, (dict, list, str)):
+            if isinstance(parsed, dict | list | str):
                 return {"result": len(parsed), "type": type(parsed).__name__}
             return {"result": 1, "type": type(parsed).__name__}
 

@@ -170,7 +170,10 @@ class FireworksAdapter(BaseModel):
                 "environment variable or pass api_key= to FireworksAdapter."
             )
 
-        self._client = Fireworks(api_key=self._api_key or os.getenv("FIREWORKS_API_KEY"))
+        self._client = Fireworks(
+            api_key=self._api_key or os.getenv("FIREWORKS_API_KEY"),
+            timeout=self.timeout,
+        )
         self._is_loaded = True
 
         info = FIREWORKS_MODELS.get(self.model_name, {})
@@ -670,6 +673,7 @@ class FireworksAdapter(BaseModel):
 # ---------------------------------------------------------------------------
 def _register() -> None:
     try:
+        from effgen.models.capabilities import Capability
         from effgen.models.fireworks_models import FIREWORKS_MODELS
         from effgen.models.registry import ProviderRegistry
         ProviderRegistry.register(
@@ -677,6 +681,7 @@ def _register() -> None:
             FireworksAdapter,
             FIREWORKS_MODELS,
             env_keys=["FIREWORKS_API_KEY"],
+            capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema},
         )
     except Exception:
         pass

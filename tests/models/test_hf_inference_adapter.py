@@ -391,6 +391,14 @@ class TestHFErrorHandling:
         with pytest.raises(ModelAuthError, match="hf_inference"):
             adapter.generate("hello")
 
+    def test_404_request_id_containing_403_is_not_auth(self):
+        adapter = self._loaded_adapter()
+        adapter._client.chat_completion.side_effect = Exception(
+            "404 Client Error. Repository Not Found. Request ID: abc-4037"
+        )
+        with pytest.raises(ModelUnavailableError):
+            adapter.generate("hello")
+
     def test_unavailable_error_raised_on_503(self):
         adapter = self._loaded_adapter()
         adapter._client.chat_completion.side_effect = Exception(

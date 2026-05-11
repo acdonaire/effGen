@@ -120,9 +120,9 @@ class EffGenClient:
         raise EffGenAPIError(msg, status_code=status, payload=payload)
 
     def _is_retryable(self, exc: BaseException) -> bool:
-        if isinstance(exc, (EffGenConnectionError, EffGenTimeoutError)):
+        if isinstance(exc, EffGenConnectionError | EffGenTimeoutError):
             return True
-        if isinstance(exc, (EffGenServerError, EffGenRateLimitError)):
+        if isinstance(exc, EffGenServerError | EffGenRateLimitError):
             return True
         return False
 

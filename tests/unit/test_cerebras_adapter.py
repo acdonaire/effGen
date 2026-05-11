@@ -112,7 +112,11 @@ class TestCerebrasAdapterLoad:
         with patch.dict(sys.modules, modules):
             adapter = CerebrasAdapter(enable_rate_limiting=False)
             adapter.load()
-            mock_class.assert_called_once_with(api_key="test-key-abc")
+            mock_class.assert_called_once_with(
+                api_key="test-key-abc",
+                timeout=adapter.timeout,
+                max_retries=0,
+            )
             assert adapter.is_loaded()
 
     def test_load_uses_explicit_key(self, monkeypatch):
@@ -121,7 +125,11 @@ class TestCerebrasAdapterLoad:
         with patch.dict(sys.modules, modules):
             adapter = CerebrasAdapter(api_key="explicit-key", enable_rate_limiting=False)
             adapter.load()
-            mock_class.assert_called_once_with(api_key="explicit-key")
+            mock_class.assert_called_once_with(
+                api_key="explicit-key",
+                timeout=adapter.timeout,
+                max_retries=0,
+            )
 
     def test_load_raises_without_key(self, monkeypatch):
         monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)

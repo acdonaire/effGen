@@ -20,7 +20,7 @@ class TestResearchWorkflow:
             enable_memory=False,
             enable_sub_agents=False,
         ))
-        result = agent.run("What is the current date?")
+        result = agent.run("What is the current date?", max_tokens=128)
         assert result.success
         assert "202" in result.output or "202" in str(result.execution_trace)
 
@@ -33,6 +33,9 @@ class TestResearchWorkflow:
             enable_memory=False,
             enable_sub_agents=False,
         ))
-        result = agent.run("Count the words in: 'The quick brown fox jumps over the lazy dog'")
+        result = agent.run(
+            "Count the words in: 'The quick brown fox jumps over the lazy dog'",
+            max_tokens=128,
+        )
         assert result.success
         assert "9" in result.output or "9" in str(result.execution_trace)

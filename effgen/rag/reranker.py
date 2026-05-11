@@ -197,7 +197,7 @@ class RuleBasedReranker(Reranker):
             return 0.0
         now = self.now_ts if self.now_ts is not None else time.time()
         try:
-            if isinstance(ts, (int, float)):
+            if isinstance(ts, int | float):
                 t = float(ts)
             else:
                 # Try ISO 8601

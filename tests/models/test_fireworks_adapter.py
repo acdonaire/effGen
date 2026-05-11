@@ -175,6 +175,27 @@ class TestFireworksAdapterLoadUnload:
             adapter._is_loaded = True
         assert adapter._is_loaded
 
+    def test_load_passes_timeout_to_sdk(self):
+        adapter = FireworksAdapter(
+            FIREWORKS_DEFAULT_MODEL,
+            api_key="fw_test_key",
+            timeout=17,
+            enable_rate_limiting=False,
+        )
+        client_stub = MagicMock()
+        client_stub.Fireworks = MagicMock()
+        fw_root = MagicMock()
+        fw_root.client = client_stub
+
+        with patch.dict("sys.modules", {"fireworks": fw_root, "fireworks.client": client_stub}):
+            adapter.load()
+
+        client_stub.Fireworks.assert_called_once_with(
+            api_key="fw_test_key",
+            timeout=17,
+        )
+        assert adapter.is_loaded()
+
     def test_unload_clears_client(self):
         adapter = self._make_adapter()
         adapter._client = MagicMock()

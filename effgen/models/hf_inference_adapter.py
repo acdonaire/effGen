@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -283,9 +284,12 @@ class HFInferenceAdapter(BaseModel):
     def _raise_for_unavailable(self, exc: Exception, context: str = "") -> None:
         """Convert HF HTTP errors to typed effGen exceptions."""
         exc_str = str(exc)
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        status_match = re.search(r"\b(401|403|404|503)\b", exc_str)
+        status_text = status_match.group(1) if status_match else ""
 
         # Auth errors
-        if any(code in exc_str for code in ("401", "403")):
+        if status_code in {401, 403} or status_text in {"401", "403"}:
             raise ModelAuthError(
                 provider="hf_inference",
                 model_name=self.model_name,
@@ -313,7 +317,8 @@ class HFInferenceAdapter(BaseModel):
             or "no available providers" in exc_str.lower()
         )
         if (
-            any(code in exc_str for code in ("503", "404"))
+            status_code in {404, 503}
+            or status_text in {"404", "503"}
             or "Not Found" in exc_str
             or "Service Temporarily Unavailable" in exc_str
             or is_unsupported_400
@@ -818,6 +823,7 @@ class HFInferenceAdapter(BaseModel):
 # ---------------------------------------------------------------------------
 def _register() -> None:
     try:
+        from effgen.models.capabilities import Capability
         from effgen.models.hf_inference_models import HF_MODELS
         from effgen.models.registry import ProviderRegistry
         ProviderRegistry.register(
@@ -825,6 +831,7 @@ def _register() -> None:
             HFInferenceAdapter,
             HF_MODELS,
             env_keys=["HF_TOKEN", "HUGGINGFACE_API_KEY"],
+            capabilities={Capability.chat, Capability.streaming},
         )
     except Exception:
         pass

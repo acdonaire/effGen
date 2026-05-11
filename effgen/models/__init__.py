@@ -46,6 +46,7 @@ from effgen.models.base import (
 from effgen.models.batching import ContinuousBatcher
 from effgen.models.capabilities import (
     MODEL_CAPABILITIES,
+    Capability,
     ModelCapability,
     estimate_capability,
     get_model_capability,
@@ -81,10 +82,17 @@ from effgen.models.router import (
     ComplexityEstimate,
     ComplexityLevel,
     ModelRouter,
+    NoCandidateError,
+    PolicyBasedRouter,
+    ProviderModelPair,
+    RouterDecision,
     RoutingConfig,
+    RoutingContext,
     RoutingDecision,
+    RoutingPolicy,
     estimate_complexity,
 )
+from effgen.models.routing.first_available import FirstAvailablePolicy
 from effgen.models.together_adapter import TogetherAdapter
 from effgen.models.together_models import TOGETHER_MODELS
 from effgen.models.transformers_engine import TransformersEngine
@@ -144,7 +152,7 @@ __all__ = [
     "ModelLoader",
     "load_model",
 
-    # Router
+    # Complexity-based router (v0.2.3, back-compat)
     "ModelRouter",
     "RoutingConfig",
     "RoutingDecision",
@@ -152,7 +160,17 @@ __all__ = [
     "ComplexityLevel",
     "estimate_complexity",
 
+    # Policy-based router (v0.2.4+)
+    "PolicyBasedRouter",
+    "RoutingPolicy",
+    "RoutingContext",
+    "RouterDecision",
+    "ProviderModelPair",
+    "NoCandidateError",
+    "FirstAvailablePolicy",
+
     # Capabilities
+    "Capability",
     "ModelCapability",
     "MODEL_CAPABILITIES",
     "register_model_capability",

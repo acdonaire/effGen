@@ -75,9 +75,9 @@ class ParameterSpec:
         type_checks = {
             ParameterType.STRING: lambda v: isinstance(v, str),
             ParameterType.INTEGER: lambda v: isinstance(v, int) and not isinstance(v, bool),
-            ParameterType.FLOAT: lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+            ParameterType.FLOAT: lambda v: isinstance(v, int | float) and not isinstance(v, bool),
             ParameterType.BOOLEAN: lambda v: isinstance(v, bool),
-            ParameterType.ARRAY: lambda v: isinstance(v, (list, tuple)),
+            ParameterType.ARRAY: lambda v: isinstance(v, list | tuple),
             ParameterType.OBJECT: lambda v: isinstance(v, dict),
             ParameterType.ANY: lambda v: True,
         }

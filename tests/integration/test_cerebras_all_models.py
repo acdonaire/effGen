@@ -1,6 +1,7 @@
-"""Integration test: all 4 Cerebras models called in parallel via asyncio.gather.
+"""Integration test: Cerebras registered models remain callable where accessible.
 
-Skipped if CEREBRAS_API_KEY is absent.  Requires ≥3/4 real successes.
+Skipped if CEREBRAS_API_KEY is absent. Requires all currently accessible
+free-tier models to return real text.
 """
 
 from __future__ import annotations
@@ -28,38 +29,40 @@ MODELS = [
     "gpt-oss-120b",
 ]
 
+RATE_LIMIT_MARKERS = ("429", "rate-limit", "rate_limit", "queue_exceeded", "too many requests")
+
 
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.skipif(not _has_key(), reason="SKIPPED: CEREBRAS_API_KEY not in env")
 class TestCerebrasAllModelsParallel:
     def test_all_models_gather(self):
-        """Call all 4 models concurrently; require ≥3 successes."""
+        """Call accessible models and report restricted models without timing out."""
 
+        from effgen.models.base import GenerationConfig
         from effgen.models.cerebras_adapter import CerebrasAdapter
+        from effgen.models.cerebras_models import free_tier_models
 
         async def call_model(model_id: str) -> tuple[str, str | None, str | None]:
             """Return (model_id, text_or_None, error_or_None). Retries on 429."""
-            import asyncio
-
             tag = f"Say exactly: MODEL_{model_id.upper().replace('-', '_').replace('.', '_')}_OK"
-            for attempt in range(3):
-                adapter = CerebrasAdapter(model_name=model_id, enable_rate_limiting=False)
-                adapter.load()
-                try:
-                    result = await adapter.async_generate(tag)
-                    return model_id, result.text, None
-                except Exception as exc:
-                    if "429" in str(exc) and attempt < 2:
-                        await asyncio.sleep(5 * (attempt + 1))
-                        continue
-                    return model_id, None, str(exc)
-                finally:
-                    adapter.unload()
-            return model_id, None, "max retries exceeded"
+            adapter = CerebrasAdapter(model_name=model_id, enable_rate_limiting=False)
+            adapter.load()
+            try:
+                cfg = GenerationConfig(max_tokens=16, temperature=0.0)
+                result = await adapter.async_generate(tag, config=cfg)
+                return model_id, result.text, None
+            except Exception as exc:
+                return model_id, None, str(exc)
+            finally:
+                adapter.unload()
 
         async def run_all():
-            return await asyncio.gather(*[call_model(m) for m in MODELS])
+            results = []
+            for model_id in free_tier_models():
+                results.append(await call_model(model_id))
+                await asyncio.sleep(2)
+            return results
 
         results = asyncio.run(run_all())
 
@@ -73,11 +76,14 @@ class TestCerebrasAllModelsParallel:
             else:
                 print(f"  FAIL {mid}: {err}")
 
-        # Two models (gpt-oss-120b, zai-glm-4.7) return 404 on the current free-tier
-        # key due to high demand.  Require ≥2 successes from the accessible models.
-        # See build_plan/v0.2.1/followups/TODO_p2_zai_glm_gptoss_404.md
-        assert len(successes) >= 2, (
-            f"Only {len(successes)}/4 models succeeded.  "
-            f"Failures: {failures}.  "
-            "Need ≥2/4 to pass."
+        if failures and all(
+            any(marker in (err or "").lower() for marker in RATE_LIMIT_MARKERS)
+            for _, err in failures
+        ):
+            pytest.xfail(f"Cerebras free-tier rate limit/backpressure during live run: {failures}")
+
+        expected = set(free_tier_models())
+        successful_models = {mid for mid, _ in successes}
+        assert expected <= successful_models, (
+            f"Accessible Cerebras models failed. Successes: {successes}. Failures: {failures}."
         )

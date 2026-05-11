@@ -195,6 +195,13 @@ all = [
     # torch before pip's isolated build env has torch installed (well-known
     # upstream bug), which makes `pip install effgen[all]` always fail.
     # Install flash-attn separately: see docs/installation.md.
+    # Test runner dependencies are included so the documented fresh-env
+    # verification path (`pip install -e ".[all]" && pytest tests/`) works.
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-timeout>=2.2.0",
+    "pytest-forked>=1.6.0",
     "vllm>=0.2.7",
     "faiss-cpu>=1.7.4",
     "chromadb>=0.4.18",

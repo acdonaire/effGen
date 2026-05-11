@@ -359,7 +359,7 @@ class DocumentIngester:
             A list of `IngestedChunk` objects.
         """
         paths: list[Path] = []
-        if isinstance(source, (list, tuple)):
+        if isinstance(source, list | tuple):
             for s in source:
                 paths.extend(self._expand(Path(s), recursive))
         else:

@@ -974,6 +974,7 @@ class OpenAIAdapter(FunctionCallingModel):
 # ---------------------------------------------------------------------------
 def _register() -> None:
     try:
+        from effgen.models.capabilities import Capability
         from effgen.models.openai_models import OPENAI_MODELS
         from effgen.models.registry import ProviderRegistry
         ProviderRegistry.register(
@@ -981,6 +982,10 @@ def _register() -> None:
             OpenAIAdapter,
             OPENAI_MODELS,
             env_keys=["OPENAI_API_KEY"],
+            capabilities={
+                Capability.chat, Capability.streaming, Capability.tools,
+                Capability.vision, Capability.json_schema, Capability.thinking,
+            },
         )
     except Exception:
         pass

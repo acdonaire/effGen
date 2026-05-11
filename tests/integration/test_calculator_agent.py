@@ -20,7 +20,7 @@ class TestCalculatorAgent:
             enable_memory=False,
             enable_sub_agents=False,
         ))
-        result = agent.run("What is 15 * 23?")
+        result = agent.run("What is 15 * 23?", max_tokens=256)
         assert result.success
         assert "345" in result.output
 
@@ -33,7 +33,7 @@ class TestCalculatorAgent:
             enable_memory=False,
             enable_sub_agents=False,
         ))
-        result = agent.run("What is 127 + 389?")
+        result = agent.run("What is 127 + 389?", max_tokens=256)
         assert result.success
         assert "516" in result.output
 
@@ -47,6 +47,6 @@ class TestCalculatorAgent:
             enable_memory=False,
             enable_sub_agents=False,
         ))
-        result = agent.run("What is the capital of France?")
+        result = agent.run("What is the capital of France?", max_tokens=128)
         assert result.success
         assert "paris" in result.output.lower()
