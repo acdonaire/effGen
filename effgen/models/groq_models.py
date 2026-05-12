@@ -6,6 +6,9 @@ Rate limits from Groq dashboard (Developer plan free tier):
 Fetch date: 2026-04-28
 
 Context windows from Groq Models API (/openai/v1/models).
+
+Per-token pricing from https://groq.com/pricing (verified 2026-05-11).
+Free developer tier available with rate limits.
 """
 
 from __future__ import annotations
@@ -27,6 +30,8 @@ GROQ_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "notes": "Llama 3.3 70B — best quality on free tier",
+        "pricing_per_1m_input": 0.59,
+        "pricing_per_1m_output": 0.79,
     },
     "llama-3.1-8b-instant": {
         "family": "llama",
@@ -41,6 +46,8 @@ GROQ_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "notes": "Llama 3.1 8B — fastest free-tier model",
+        "pricing_per_1m_input": 0.05,
+        "pricing_per_1m_output": 0.08,
     },
     "meta-llama/llama-4-scout-17b-16e-instruct": {
         "family": "llama-4",
@@ -55,6 +62,8 @@ GROQ_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "notes": "Llama 4 Scout 17B-16E — vision capable, MoE",
+        "pricing_per_1m_input": 0.11,
+        "pricing_per_1m_output": 0.34,
     },
     "qwen/qwen3-32b": {
         "family": "qwen",
@@ -69,6 +78,8 @@ GROQ_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "notes": "Qwen3 32B — highest RPM on free tier (60 RPM)",
+        "pricing_per_1m_input": 0.29,
+        "pricing_per_1m_output": 0.59,
     },
     "openai/gpt-oss-120b": {
         "family": "gpt-oss",
@@ -83,6 +94,8 @@ GROQ_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "notes": "OpenAI GPT-OSS 120B open weights",
+        "pricing_per_1m_input": 0.15,
+        "pricing_per_1m_output": 0.60,
     },
     "openai/gpt-oss-20b": {
         "family": "gpt-oss",
@@ -97,6 +110,8 @@ GROQ_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "notes": "OpenAI GPT-OSS 20B open weights",
+        "pricing_per_1m_input": 0.075,
+        "pricing_per_1m_output": 0.30,
     },
     "openai/gpt-oss-safeguard-20b": {
         "family": "gpt-oss",
@@ -111,6 +126,8 @@ GROQ_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "notes": "GPT-OSS 20B safety/guardrail variant",
+        "pricing_per_1m_input": 0.075,
+        "pricing_per_1m_output": 0.30,
     },
     "groq/compound": {
         "family": "compound",

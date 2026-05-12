@@ -986,6 +986,10 @@ def _register() -> None:
                 Capability.chat, Capability.streaming, Capability.tools,
                 Capability.vision, Capability.json_schema, Capability.thinking,
             },
+            # No free tier; pay-per-token. Provider default = cheapest current text model.
+            # gpt-5-nano: $0.05/$0.40; gpt-4o-mini: $0.15/$0.60; gpt-4.1: $2.00/$8.00 per 1M.
+            # Pricing verified: https://platform.openai.com/docs/pricing (2026-05-11)
+            pricing={"input_per_1m": 0.05, "output_per_1m": 0.40, "free_tier": False},
         )
     except Exception:
         pass

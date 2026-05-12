@@ -61,6 +61,7 @@ from effgen.models.errors import (
     ModelRefusalError,
     ModelTimeoutError,
     ModelUnavailableError,
+    NoCandidateWithinBudgetError,
 )
 from effgen.models.fireworks_adapter import FireworksAdapter
 from effgen.models.fireworks_models import FIREWORKS_MODELS
@@ -92,6 +93,7 @@ from effgen.models.router import (
     RoutingPolicy,
     estimate_complexity,
 )
+from effgen.models.routing.cost import CostBasedPolicy
 from effgen.models.routing.first_available import FirstAvailablePolicy
 from effgen.models.together_adapter import TogetherAdapter
 from effgen.models.together_models import TOGETHER_MODELS
@@ -168,6 +170,7 @@ __all__ = [
     "ProviderModelPair",
     "NoCandidateError",
     "FirstAvailablePolicy",
+    "CostBasedPolicy",
 
     # Capabilities
     "Capability",
@@ -192,6 +195,7 @@ __all__ = [
     "ModelUnavailableError",
     "ModelNotFoundError",
     "AmbiguousModelError",
+    "NoCandidateWithinBudgetError",
 
     # Provider registry + auth
     "ProviderRegistry",

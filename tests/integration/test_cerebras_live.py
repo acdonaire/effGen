@@ -54,5 +54,9 @@ class TestCerebrasLive:
             assert len(chunks) >= 1, "Expected at least one chunk from streaming"
             full_text = "".join(chunks)
             assert len(full_text) > 0, "Expected non-empty streamed text"
+        except RuntimeError as exc:
+            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+                pytest.skip(f"Cerebras transiently overloaded: {exc}")
+            raise
         finally:
             adapter.unload()

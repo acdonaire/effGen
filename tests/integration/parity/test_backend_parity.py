@@ -33,6 +33,29 @@ def _has(env_var: str) -> bool:
     return bool(os.getenv(env_var))
 
 
+LIVE_TEST_TIMEOUT_SECONDS = 20
+LIVE_TEST_MAX_RETRIES = 1
+TRANSIENT_PROVIDER_KEYWORDS = (
+    "quota",
+    "429",
+    "resource_exhausted",
+    "insufficient credits",
+    "rate_limit",
+    "rate limit",
+    "timeout",
+    "timed out",
+    "503",
+    "service unavailable",
+    "server error",
+    "api failed",
+)
+
+
+def _is_transient_provider_error(*texts: str | None) -> bool:
+    haystack = " ".join(text or "" for text in texts).lower()
+    return any(keyword in haystack for keyword in TRANSIENT_PROVIDER_KEYWORDS)
+
+
 # ---------------------------------------------------------------------------
 # Provider × model matrix
 # Prefer small/fast/free models; one per provider.
@@ -101,10 +124,18 @@ def _load_adapter(provider: str, model_id: str):
         a = GroqAdapter(model_id)
     elif provider == "together":
         from effgen.models.together_adapter import TogetherAdapter
-        a = TogetherAdapter(model_id)
+        a = TogetherAdapter(
+            model_id,
+            max_retries=LIVE_TEST_MAX_RETRIES,
+            timeout=LIVE_TEST_TIMEOUT_SECONDS,
+        )
     elif provider == "fireworks":
         from effgen.models.fireworks_adapter import FireworksAdapter
-        a = FireworksAdapter(model_id)
+        a = FireworksAdapter(
+            model_id,
+            max_retries=LIVE_TEST_MAX_RETRIES,
+            timeout=LIVE_TEST_TIMEOUT_SECONDS,
+        )
     elif provider == "hf":
         from effgen.models.hf_inference_adapter import HFInferenceAdapter
         a = HFInferenceAdapter(model_id)
@@ -146,13 +177,9 @@ def test_canonical_task_parity(provider, model_id):
         except Exception:
             pass
 
-    # Skip on rate-limit / quota exhaustion (provider-side, not a framework bug)
-    quota_in_error = result["error"] and any(kw in (result["error"] or "").lower()
-        for kw in ("quota", "429", "resource_exhausted", "insufficient credits", "rate_limit"))
-    quota_in_answer = any(kw in (result["answer_text"] or "").lower()
-        for kw in ("quota", "resource_exhausted", "maximum iterations"))
-    if quota_in_error or quota_in_answer:
-        pytest.skip(f"{provider}/{model_id} quota/rate-limit — re-run after cooldown")
+    # Skip on provider-side transient errors, not framework behavior.
+    if _is_transient_provider_error(result["error"], result["answer_text"]):
+        pytest.skip(f"{provider}/{model_id} transient provider error — re-run after cooldown")
 
     assert result["error"] is None, (
         f"{provider}/{model_id} raised an error: {result['error']}"
@@ -220,13 +247,9 @@ def test_native_strategy_parity(provider, model_id):
         except Exception:
             pass
 
-    # Skip on rate-limit / quota exhaustion
-    quota_in_error = result["error"] and any(kw in (result["error"] or "").lower()
-        for kw in ("quota", "429", "resource_exhausted", "insufficient credits", "rate_limit"))
-    quota_in_answer = any(kw in (result["answer_text"] or "").lower()
-        for kw in ("quota", "resource_exhausted", "maximum iterations"))
-    if quota_in_error or quota_in_answer:
-        pytest.skip(f"{provider}/{model_id} (native) quota/rate-limit — re-run after cooldown")
+    # Skip on provider-side transient errors, not framework behavior.
+    if _is_transient_provider_error(result["error"], result["answer_text"]):
+        pytest.skip(f"{provider}/{model_id} (native) transient provider error — re-run after cooldown")
 
     assert result["error"] is None, (
         f"{provider}/{model_id} (native) raised an error: {result['error']}"

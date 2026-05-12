@@ -745,6 +745,10 @@ def _register() -> None:
             CEREBRAS_MODELS,
             env_keys=["CEREBRAS_API_KEY"],
             capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema},
+            # Cerebras does not publish per-token pricing publicly; free tier available.
+            # Pricing verified: https://www.cerebras.ai/pricing (2026-05-11)
+            # Per-model prices added in CEREBRAS_MODELS when available.
+            pricing={"input_per_1m": 0.0, "output_per_1m": 0.0, "free_tier": True},
         )
     except Exception:
         pass

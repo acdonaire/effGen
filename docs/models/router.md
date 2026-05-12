@@ -91,6 +91,89 @@ router = ModelRouter(policies=[FirstAvailablePolicy()])
 `PolicyBasedRouter` is also exported for callers who prefer an explicit
 provider-policy class name.
 
+### CostBasedPolicy — cheapest-first routing
+
+`CostBasedPolicy` selects the cheapest provider/model pair that:
+1. Has a configured API key.
+2. Supports all required capabilities.
+3. Has an estimated cost ≤ `user_budget_usd` (if set).
+
+**Cost estimate:**
+```
+cost = input_per_1m * prompt_tokens / 1_000_000
+     + output_per_1m * expected_output_tokens / 1_000_000
+```
+
+Free-tier providers rank ahead of paid providers when cost is equal. Remaining
+ties are deterministic: provider priority (`groq`, `cerebras`, `hf`, `gemini`,
+`together`, `fireworks`, `openai`, `replicate`, `anthropic`), then published
+list cost, provider name, and model id.
+
+#### Cheapest-first recipe
+
+```python
+from effgen.models.routing.cost import CostBasedPolicy
+from effgen.models.router import ModelRouter, RoutingContext
+from effgen.models.capabilities import Capability
+import effgen.models.cerebras_adapter  # register providers
+import effgen.models.groq_adapter
+import effgen.models.openai_adapter
+
+# Always pick the free-tier provider if one is available
+router = ModelRouter(policies=[CostBasedPolicy()])
+decision = router.route(RoutingContext(
+    prompt_tokens_estimate=500,
+    user_budget_usd=0.001,      # $0.001 max per call
+    required_capabilities={Capability.chat},
+))
+print(f"Chose {decision.chosen.provider}/{decision.chosen.model_id}")
+print(f"Estimated cost: ${decision.score:.6f}")
+```
+
+#### Budget guard
+
+If no candidate fits the budget, `NoCandidateWithinBudgetError` is raised
+with the cheapest available option:
+
+```python
+from effgen.models.errors import NoCandidateWithinBudgetError
+
+try:
+    decision = router.route(RoutingContext(
+        prompt_tokens_estimate=1_000_000,
+        user_budget_usd=0.001,
+        required_capabilities={Capability.chat},
+    ))
+except NoCandidateWithinBudgetError as e:
+    print(f"Budget too tight. Cheapest available: ${e.cheapest_cost_usd:.6f}")
+    print(f"  from {e.cheapest_pair[0]}/{e.cheapest_pair[1]}")
+```
+
+#### Provider Pricing (verified 2026-05-11)
+
+| Provider   | Routing input/1M | Routing output/1M | Notes |
+|------------|------------------|-------------------|-------|
+| cerebras   | $0.00            | $0.00             | Free tier, rate-limited |
+| groq       | $0.00            | $0.00             | Free developer tier; paid list prices retained per model |
+| hf         | $0.00            | $0.00             | HF routed requests include free-tier credits |
+| together   | $0.03            | $0.12             | Cheapest published serverless chat model |
+| gemini     | $0.10            | $0.40             | Paid Flash-Lite price; free quota documented below |
+| fireworks  | $0.10            | $0.10             | Cheapest serverless tier for <4B text models |
+| openai     | $0.05            | $0.40             | Cheapest current text model, `gpt-5-nano` |
+| anthropic  | $1.00            | $5.00             | Claude Haiku 4.5 default |
+| replicate  | $0.80            | $4.00             | Fallback for token-priced LLMs; many public models bill by hardware time |
+
+Provider defaults are used when per-model pricing is not available.
+Per-model pricing in model registry dicts takes precedence.
+
+**Gemini free-tier note:** Flash and Flash-Lite have free quotas, but the free
+tier has stricter rate limits and data-use differences. `CostBasedPolicy`
+therefore uses Gemini's published paid token prices for budget checks.
+
+**Standard routing note:** Models marked as requiring a dedicated endpoint are
+eliminated by `CostBasedPolicy`; start the endpoint explicitly before routing
+to those models directly.
+
 ## Writing a custom policy
 
 ```python

@@ -74,6 +74,7 @@ from effgen.models import (
     AnthropicAdapter,
     BaseModel,
     CerebrasAdapter,
+    CostBasedPolicy,
     FireworksAdapter,
     GeminiAdapter,
     GenerationConfig,
@@ -101,6 +102,7 @@ from effgen.models.errors import (
     ModelRefusalError,
     ModelTimeoutError,
     ModelUnavailableError,
+    NoCandidateWithinBudgetError,
     ToolIncompatibleError,
 )
 from effgen.models.fireworks_models import available_models as fireworks_available_models
@@ -257,6 +259,7 @@ __all__ = [
     "ModelLoader",
     "GenerationConfig",
     "GenerationResult",
+    "CostBasedPolicy",
     "RateLimitCoordinator",
     "RateLimitExceeded",
     "ModelRefusalError",
@@ -265,6 +268,7 @@ __all__ = [
     "ModelUnavailableError",
     "ModelNotFoundError",
     "AmbiguousModelError",
+    "NoCandidateWithinBudgetError",
     "ToolIncompatibleError",
     "to_openai_schema",
     # Provider registry + auth

@@ -50,6 +50,7 @@ class ProviderRegistry:
         models: dict[str, dict],
         env_keys: list[str] | None = None,
         capabilities: "set[Capability] | None" = None,
+        pricing: "dict[str, float | bool] | None" = None,
     ) -> None:
         """Register a provider.
 
@@ -67,6 +68,12 @@ class ProviderRegistry:
             capabilities:  Set of ``Capability`` flags this provider supports
                            (e.g. ``{Capability.chat, Capability.tools}``).
                            Used by the policy-based ModelRouter to filter candidates.
+            pricing:       Provider-level default pricing dict with keys:
+                           ``"input_per_1m"`` (float, USD per 1M input tokens),
+                           ``"output_per_1m"`` (float, USD per 1M output tokens),
+                           ``"free_tier"`` (bool, True if provider has a free tier).
+                           Per-model pricing in ``models[id]["pricing_per_1m_input"]``
+                           takes precedence over these provider defaults when available.
         """
         if provider_name in cls._providers:
             # Remove old model-index entries for this provider
@@ -83,6 +90,11 @@ class ProviderRegistry:
             "models": models,
             "env_keys": list(env_keys or []),
             "capabilities": set(capabilities) if capabilities else set(),
+            "pricing": dict(pricing) if pricing else {
+                "input_per_1m": 0.0,
+                "output_per_1m": 0.0,
+                "free_tier": False,
+            },
         }
 
         # Rebuild model index for this provider
@@ -189,6 +201,19 @@ class ProviderRegistry:
     def get_capabilities(cls, provider: str) -> "set[Capability]":
         """Return the capability set registered for *provider*."""
         return set(cls._providers.get(provider, {}).get("capabilities", set()))
+
+    @classmethod
+    def get_pricing(cls, provider: str) -> "dict[str, float | bool]":
+        """Return the pricing dict for *provider*.
+
+        Returns a dict with keys ``input_per_1m``, ``output_per_1m``,
+        ``free_tier``.  Falls back to zeros/False if not registered.
+        """
+        return dict(cls._providers.get(provider, {}).get("pricing", {
+            "input_per_1m": 0.0,
+            "output_per_1m": 0.0,
+            "free_tier": False,
+        }))
 
     @classmethod
     def reset(cls) -> None:

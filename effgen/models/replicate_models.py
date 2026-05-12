@@ -10,9 +10,9 @@ Replicate billing model:
   - Prices vary by hardware (T4, L40S, A100, H100, etc.).
   - Typical rates:
       - T4 GPU:    ~$0.000225/second
-      - L40S GPU:  ~$0.000575/second
+      - L40S GPU:  ~$0.000975/second
       - A100 GPU:  ~$0.001400/second
-      - H100 GPU:  ~$0.001974/second
+      - H100 GPU:  ~$0.001525/second
   - Some models (via official/hosted deployments) have per-token pricing.
   - cost_per_second_usd is set to the typical hardware cost; actual billing
     depends on which hardware Replicate assigns at run time.
@@ -64,7 +64,7 @@ REPLICATE_MODELS: dict[str, dict[str, Any]] = {
         "input_schema": "prompt_only",
         "system_prompt_key": None,
         "prompt_template": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
-        "cost_per_second_usd": 0.000575,
+        "cost_per_second_usd": 0.000975,
         "run_count": 167_971_116,
         "version": "fbfb20b472b2f3bdfb1a7e9d09d2f8cd374d7aef3bd61c08be5fe79fc38d8a43",
     },
@@ -94,7 +94,7 @@ REPLICATE_MODELS: dict[str, dict[str, Any]] = {
         "input_schema": "prompt_only",
         "system_prompt_key": None,
         "prompt_template": None,
-        "cost_per_second_usd": 0.000575,
+        "cost_per_second_usd": 0.000975,
         "run_count": 866_849,
         "version": "83c5bdea9941e83e8a83b1f04ec01285c6b2b05e4e5e4eda3e9fd41bf940b4e8",
     },
@@ -178,7 +178,7 @@ REPLICATE_MODELS: dict[str, dict[str, Any]] = {
         "input_schema": "prompt_only",
         "system_prompt_key": None,
         "prompt_template": None,
-        "cost_per_second_usd": 0.001974,
+        "cost_per_second_usd": 0.001525,
         "run_count": 814_009,
         "version": "a96f2c4d13a1fa84ebe2bf2e3fcff1c5ca8a4b5426d9571cde35e1e8e8975cbf",
     },
@@ -196,7 +196,7 @@ REPLICATE_MODELS: dict[str, dict[str, Any]] = {
         "input_schema": "prompt_only",
         "system_prompt_key": None,
         "prompt_template": None,
-        "cost_per_second_usd": 0.001974,
+        "cost_per_second_usd": 0.001525,
         "run_count": 36_417,
         "version": "b4d8427a98a2de295fa0454e7d1c5d84e6d20f96e3e0f2fdf95db15ecc2d4f07",
     },
@@ -538,7 +538,7 @@ REPLICATE_MODELS: dict[str, dict[str, Any]] = {
         "input_schema": "messages",
         "system_prompt_key": "system",
         "prompt_template": None,
-        "cost_per_second_usd": 0.000575,
+        "cost_per_second_usd": 0.000975,
         "run_count": 363_056,
         "version": "5cfc571b53ad7aa2c5d5f58bbdce0e5e5a697cfde15b9e5b7d4baf3a7f7a0c4d",
     },

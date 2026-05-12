@@ -851,6 +851,10 @@ def _register() -> None:
             REPLICATE_MODELS,
             env_keys=["REPLICATE_API_TOKEN"],
             capabilities={Capability.chat, Capability.streaming, Capability.vision},
+            # No free tier; pay-per-token for LLM models. Provider default = cheapest hosted LLM.
+            # deepseek-r1: $3.75/$10.00; claude-3.7-sonnet: $3.00/$15.00 per 1M tokens.
+            # Pricing verified: https://replicate.com/pricing (2026-05-11)
+            pricing={"input_per_1m": 0.8, "output_per_1m": 4.0, "free_tier": False},
         )
     except Exception:
         pass

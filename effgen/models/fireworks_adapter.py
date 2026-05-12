@@ -682,6 +682,10 @@ def _register() -> None:
             FIREWORKS_MODELS,
             env_keys=["FIREWORKS_API_KEY"],
             capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema},
+            # $1 free credits on signup; pay-per-token after. Provider default = cheapest chat model.
+            # qwen3-1p7b: $0.10/$0.10; llama-v3p2-1b-instruct: $0.10/$0.10; llama-v3p3-70b: $0.90/$0.90 per 1M.
+            # Pricing verified: https://fireworks.ai/pricing (2026-05-11)
+            pricing={"input_per_1m": 0.10, "output_per_1m": 0.10, "free_tier": False},
         )
     except Exception:
         pass

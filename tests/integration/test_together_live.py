@@ -23,10 +23,20 @@ class TestTogetherLive:
     def test_generate_llama_lite(self):
         from effgen.models.together_adapter import TogetherAdapter
 
-        adapter = TogetherAdapter("meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+        adapter = TogetherAdapter(
+            "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+            max_retries=1,
+            timeout=30,
+        )
         adapter.load()
         try:
             result = adapter.generate("Respond with exactly: TOGETHER_OK")
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(k in msg for k in ("rate", "429", "timeout", "timed out", "503", "service unavailable", "quota")):
+                pytest.skip(f"Together transient: {exc}")
+            raise
+        else:
             assert result.text, "Expected non-empty response"
             assert result.tokens_used > 0
             assert result.metadata["provider"] == "together"

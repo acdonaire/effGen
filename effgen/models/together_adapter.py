@@ -677,6 +677,10 @@ def _register() -> None:
             TOGETHER_MODELS,
             env_keys=["TOGETHER_API_KEY"],
             capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema},
+            # $1 free credits on signup; pay-per-token after. Provider default = cheapest LLM.
+            # LFM2 24B A2B: $0.03/$0.12; gpt-oss-20B: $0.05/$0.20; Llama 3.3 70B: $0.88/$0.88 per 1M.
+            # Pricing verified: https://together.ai/pricing (2026-05-11)
+            pricing={"input_per_1m": 0.03, "output_per_1m": 0.12, "free_tier": False},
         )
     except Exception:
         pass

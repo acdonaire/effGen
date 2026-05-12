@@ -690,6 +690,11 @@ def _register() -> None:
             GROQ_MODELS,
             env_keys=["GROQ_API_KEY"],
             capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema},
+            # Free developer tier routes as zero out-of-pocket cost while quota remains.
+            # Per-model paid list prices are retained in GROQ_MODELS for tie-break metadata.
+            # llama-3.1-8b-instant: $0.05/$0.08; llama-3.3-70b: $0.59/$0.79 per 1M tokens.
+            # Pricing verified: https://groq.com/pricing (2026-05-11)
+            pricing={"input_per_1m": 0.0, "output_per_1m": 0.0, "free_tier": True},
         )
     except Exception:
         pass  # Registry not yet available during bootstrap

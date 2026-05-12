@@ -829,6 +829,11 @@ def _register() -> None:
                 Capability.chat, Capability.streaming, Capability.tools,
                 Capability.vision, Capability.thinking,
             },
+            # No free tier; pay-per-token. Provider default = cheapest current Haiku.
+            # claude-haiku-4-5: $1.00/$5.00; claude-sonnet-4-6: $3.00/$15.00;
+            # claude-opus-4-7: $5.00/$25.00 per 1M tokens.
+            # Pricing verified: https://www.anthropic.com/pricing (2026-05-11)
+            pricing={"input_per_1m": 1.00, "output_per_1m": 5.00, "free_tier": False},
         )
     except Exception:
         pass

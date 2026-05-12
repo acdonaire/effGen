@@ -29,6 +29,10 @@ class TestCerebrasStreaming:
             chunks = list(adapter.generate_stream("Say hello briefly."))
             assert len(chunks) >= 1
             assert "".join(chunks).strip()
+        except RuntimeError as exc:
+            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+                pytest.skip(f"Cerebras transiently overloaded: {exc}")
+            raise
         finally:
             adapter.unload()
 
@@ -82,6 +86,10 @@ class TestCerebrasStreaming:
                 # At least some time passed between first and last chunk
                 # (just not all instantaneous — even 1ms is fine)
                 assert spread >= 0
+        except RuntimeError as exc:
+            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+                pytest.skip(f"Cerebras transiently overloaded: {exc}")
+            raise
         finally:
             adapter.unload()
 
@@ -97,6 +105,10 @@ class TestCerebrasStreaming:
             text = "".join(chunks)
             # max_tokens=20 should stop the stream early
             assert len(text) > 0
+        except RuntimeError as exc:
+            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+                pytest.skip(f"Cerebras transiently overloaded: {exc}")
+            raise
         finally:
             adapter.unload()
 
@@ -111,6 +123,10 @@ class TestCerebrasStreaming:
         adapter.load()
         try:
             list(adapter.generate_stream("Say exactly: OK"))
+        except RuntimeError as exc:
+            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+                pytest.skip(f"Cerebras transiently overloaded: {exc}")
+            raise
         finally:
             adapter.unload()
 

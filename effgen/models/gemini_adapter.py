@@ -754,6 +754,12 @@ def _register() -> None:
                 Capability.vision, Capability.grounding, Capability.thinking,
                 Capability.json_schema,
             },
+            # Provider default = paid gemini-2.5-flash-lite. Gemini has a free
+            # quota for Flash/Flash-Lite, but it has rate-limit and data-use
+            # nuances, so cost routing keeps the published paid token prices.
+            # gemini-2.5-flash-lite: $0.10/$0.40; gemini-2.5-flash: $0.30/$2.50 per 1M tokens.
+            # Pricing verified: https://ai.google.dev/gemini-api/docs/pricing (2026-05-11)
+            pricing={"input_per_1m": 0.10, "output_per_1m": 0.40, "free_tier": False},
         )
     except Exception:
         pass

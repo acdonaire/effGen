@@ -832,6 +832,11 @@ def _register() -> None:
             HF_MODELS,
             env_keys=["HF_TOKEN", "HUGGINGFACE_API_KEY"],
             capabilities={Capability.chat, Capability.streaming},
+            # HuggingFace Serverless Inference: many small/medium models are free via PRO
+            # or community tier. Larger models may require dedicated endpoints (paid).
+            # Free tier available for many open-source models via HF Inference API.
+            # Pricing verified: https://huggingface.co/docs/api-inference/pricing (2026-05-11)
+            pricing={"input_per_1m": 0.0, "output_per_1m": 0.0, "free_tier": True},
         )
     except Exception:
         pass

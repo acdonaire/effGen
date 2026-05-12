@@ -155,6 +155,32 @@ class AmbiguousModelError(Exception):
         )
 
 
+class NoCandidateWithinBudgetError(Exception):
+    """Raised when no provider/model fits within the user's budget.
+
+    Attributes:
+        user_budget_usd:    The budget that was not satisfiable.
+        cheapest_cost_usd:  The lowest estimated cost among available candidates.
+        cheapest_pair:      ``(provider, model_id)`` for the cheapest option.
+    """
+
+    def __init__(
+        self,
+        user_budget_usd: float,
+        cheapest_cost_usd: float,
+        cheapest_pair: "tuple[str, str] | None" = None,
+    ) -> None:
+        self.user_budget_usd = user_budget_usd
+        self.cheapest_cost_usd = cheapest_cost_usd
+        self.cheapest_pair = cheapest_pair
+        pair_str = f" ({cheapest_pair[0]}/{cheapest_pair[1]})" if cheapest_pair else ""
+        super().__init__(
+            f"No candidate fits budget ${user_budget_usd:.6f} USD. "
+            f"Cheapest available: ${cheapest_cost_usd:.6f}{pair_str}. "
+            f"Increase user_budget_usd or use a free-tier provider."
+        )
+
+
 class ToolIncompatibleError(Exception):
     """Raised when a tool cannot be used with the configured model.
 

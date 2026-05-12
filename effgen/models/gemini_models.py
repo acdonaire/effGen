@@ -6,6 +6,11 @@ Rate limits and context/max-output values fetched from:
   https://ai.google.dev/gemini-api/docs/models
 Fetch date: 2026-04-25
 
+Per-token pricing from https://ai.google.dev/gemini-api/docs/pricing (verified 2026-05-11).
+Free tier note: Gemini Flash/Flash-Lite models have free quotas (e.g. 500 RPD for
+gemini-2.5-flash + gemini-2.5-flash-lite combined). Free tier data may be used by
+Google for model improvement. Paid tier removes data use and raises limits.
+
 Free-tier limits apply per Google Cloud project. Whichever metric
 (RPM / TPM / RPD) is hit first triggers a 429 ``ResourceExhausted``
 with an SDK-supplied ``retry_delay`` that effGen's adapter honors
@@ -57,6 +62,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": True,
         "tier": "free",
         "notes": "Cheapest Gemini 3.x text model. Best free-tier choice. Grounding not available on free tier.",
+        "pricing_per_1m_input": 0.25,
+        "pricing_per_1m_output": 1.50,
     },
     "gemini-3-flash-preview": {
         "family": "flash",
@@ -72,6 +79,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": True,
         "tier": "free",
         "notes": "Mid-tier Gemini 3. Free-tier RPD is tight (20/day).",
+        "pricing_per_1m_input": 0.50,
+        "pricing_per_1m_output": 3.00,
     },
     "gemini-3-pro-preview": {
         "family": "pro",
@@ -87,6 +96,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": True,
         "tier": "premium",
         "notes": "Highest-quality Gemini 3. Paid tier only.",
+        "pricing_per_1m_input": 2.00,
+        "pricing_per_1m_output": 12.00,
     },
     "gemini-3.1-pro-preview": {
         "family": "pro",
@@ -102,6 +113,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": True,
         "tier": "premium",
         "notes": "Gemini 3.1 Pro preview. Paid tier only.",
+        "pricing_per_1m_input": 2.00,
+        "pricing_per_1m_output": 12.00,
     },
 
     # ---- Gemini 2.5 family ----
@@ -119,6 +132,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": True,
         "tier": "free",
         "notes": "Stable cheap Gemini 2.5. Free-tier RPD is 20/day.",
+        "pricing_per_1m_input": 0.10,
+        "pricing_per_1m_output": 0.40,
     },
     "gemini-2.5-flash": {
         "family": "flash",
@@ -134,6 +149,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": True,
         "tier": "free",
         "notes": "Stable mid-tier Gemini 2.5. Good for tool use.",
+        "pricing_per_1m_input": 0.30,
+        "pricing_per_1m_output": 2.50,
     },
     "gemini-2.5-pro": {
         "family": "pro",
@@ -149,6 +166,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": True,
         "tier": "premium",
         "notes": "Gemini 2.5 Pro. Paid tier only.",
+        "pricing_per_1m_input": 1.25,
+        "pricing_per_1m_output": 10.00,
     },
 
     # ---- Gemini 2.0 family (legacy but still callable) ----
@@ -166,6 +185,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": True,
         "tier": "premium",
         "notes": "Legacy Gemini 2.0 Flash. Prefer 2.5+ for new work.",
+        "pricing_per_1m_input": 0.10,
+        "pricing_per_1m_output": 0.40,
     },
     "gemini-2.0-flash-lite": {
         "family": "flash-lite",
@@ -181,6 +202,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": True,
         "tier": "premium",
         "notes": "Legacy Gemini 2.0 Flash Lite.",
+        "pricing_per_1m_input": 0.075,
+        "pricing_per_1m_output": 0.30,
     },
 
     # ---- Gemma 3 family (open weights, free-tier hosted) ----
@@ -198,6 +221,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": False,
         "tier": "free",
         "notes": "Gemma 3 2B. Generous free-tier RPD.",
+        "pricing_per_1m_input": 0.0,
+        "pricing_per_1m_output": 0.0,
     },
     "gemma-3-1b": {
         "family": "gemma",
@@ -213,6 +238,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": False,
         "tier": "free",
         "notes": "Smallest Gemma 3 (1B). Generous free-tier RPD.",
+        "pricing_per_1m_input": 0.0,
+        "pricing_per_1m_output": 0.0,
     },
     "gemma-3-4b": {
         "family": "gemma",
@@ -228,6 +255,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": False,
         "tier": "free",
         "notes": "Mid Gemma 3 (4B). Generous free-tier RPD.",
+        "pricing_per_1m_input": 0.0,
+        "pricing_per_1m_output": 0.0,
     },
     "gemma-3-12b": {
         "family": "gemma",
@@ -243,6 +272,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": False,
         "tier": "free",
         "notes": "Gemma 3 12B. Generous free-tier RPD.",
+        "pricing_per_1m_input": 0.0,
+        "pricing_per_1m_output": 0.0,
     },
     "gemma-3-27b": {
         "family": "gemma",
@@ -258,6 +289,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": False,
         "tier": "free",
         "notes": "Largest stable Gemma 3 (27B). Generous free-tier RPD.",
+        "pricing_per_1m_input": 0.0,
+        "pricing_per_1m_output": 0.0,
     },
 
     # ---- Gemma 4 family (preview / paid burst limits) ----
@@ -275,6 +308,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": False,
         "tier": "free",
         "notes": "Gemma 4 26B preview. TPM unlimited; lower RPD.",
+        "pricing_per_1m_input": 0.0,
+        "pricing_per_1m_output": 0.0,
     },
     "gemma-4-31b": {
         "family": "gemma",
@@ -290,6 +325,8 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_vision": False,
         "tier": "free",
         "notes": "Gemma 4 31B preview. TPM unlimited; lower RPD.",
+        "pricing_per_1m_input": 0.0,
+        "pricing_per_1m_output": 0.0,
     },
 }
 
