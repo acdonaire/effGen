@@ -181,6 +181,32 @@ class NoCandidateWithinBudgetError(Exception):
         )
 
 
+class NoCandidateWithinLatencyError(Exception):
+    """Raised when no provider/model fits within the latency budget.
+
+    Attributes:
+        latency_budget_ms:    The SLA budget that was not satisfiable.
+        fastest_latency_ms:   The lowest p50 latency among available candidates.
+        fastest_pair:         ``(provider, model_id)`` for the fastest option.
+    """
+
+    def __init__(
+        self,
+        latency_budget_ms: float,
+        fastest_latency_ms: float,
+        fastest_pair: "tuple[str, str] | None" = None,
+    ) -> None:
+        self.latency_budget_ms = latency_budget_ms
+        self.fastest_latency_ms = fastest_latency_ms
+        self.fastest_pair = fastest_pair
+        pair_str = f" ({fastest_pair[0]}/{fastest_pair[1]})" if fastest_pair else ""
+        super().__init__(
+            f"No candidate fits latency budget {latency_budget_ms:.0f}ms. "
+            f"Fastest available p50: {fastest_latency_ms:.0f}ms{pair_str}. "
+            "Increase latency_budget_ms or seed the tracker with faster providers."
+        )
+
+
 class ToolIncompatibleError(Exception):
     """Raised when a tool cannot be used with the configured model.
 

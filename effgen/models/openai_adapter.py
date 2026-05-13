@@ -28,6 +28,7 @@ from effgen.models.base import (
     TokenCount,
 )
 from effgen.models.errors import ModelAuthError, ModelNotFoundError, ModelRefusalError
+from effgen.models.latency_tracker import timed_call
 from effgen.models.openai_models import (
     OPENAI_MODELS,
     VALID_REASONING_EFFORTS,
@@ -326,7 +327,8 @@ class OpenAIAdapter(FunctionCallingModel):
         request_params.update(kwargs)
 
         try:
-            response = self.client.chat.completions.create(**request_params)
+            with timed_call("openai", self.model_name):
+                response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
             msg = str(e)
@@ -386,10 +388,15 @@ class OpenAIAdapter(FunctionCallingModel):
         request_params.update(kwargs)
 
         try:
-            stream = self.client.chat.completions.create(**request_params)
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content
+            with timed_call("openai", self.model_name) as _stream_timer:
+                stream = self.client.chat.completions.create(**request_params)
+                _first_token = True
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content is not None:
+                        if _first_token:
+                            _stream_timer.mark_first_token()
+                            _first_token = False
+                        yield chunk.choices[0].delta.content
         except Exception as e:
             logger.error(f"OpenAI streaming failed: {e}")
             raise RuntimeError(f"Streaming generation failed: {e}") from e

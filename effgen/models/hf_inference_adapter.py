@@ -56,6 +56,7 @@ from effgen.models.hf_inference_models import (
     REGISTRY_FETCH_DATE,
     suggest_alternatives,
 )
+from effgen.models.latency_tracker import timed_call
 
 logger = logging.getLogger(__name__)
 
@@ -409,11 +410,12 @@ class HFInferenceAdapter(BaseModel):
 
         use_text_gen = self._info.get("use_text_generation", False)
 
-        if use_text_gen:
-            result = self._generate_text(prompt, config, **kwargs)
-        else:
-            msgs = self._build_messages(prompt, system_prompt, messages)
-            result = self._generate_chat(msgs, config, tools=tools, **kwargs)
+        with timed_call("hf", self.model_name):
+            if use_text_gen:
+                result = self._generate_text(prompt, config, **kwargs)
+            else:
+                msgs = self._build_messages(prompt, system_prompt, messages)
+                result = self._generate_chat(msgs, config, tools=tools, **kwargs)
 
         if self._rate_limiter is not None:
             total = result.metadata.get("total_tokens", 0) if result.metadata else 0
@@ -651,11 +653,16 @@ class HFInferenceAdapter(BaseModel):
 
         use_text_gen = self._info.get("use_text_generation", False)
 
-        if use_text_gen:
-            yield from self._stream_text(prompt, config, **kwargs)
-        else:
-            msgs = self._build_messages(prompt, system_prompt, messages_arg)
-            yield from self._stream_chat(msgs, config, **kwargs)
+        with timed_call("hf", self.model_name) as _stream_timer:
+            _first_token = True
+            src = self._stream_text(prompt, config, **kwargs) if use_text_gen else self._stream_chat(
+                self._build_messages(prompt, system_prompt, messages_arg), config, **kwargs
+            )
+            for token in src:
+                if _first_token:
+                    _stream_timer.mark_first_token()
+                    _first_token = False
+                yield token
 
     def _stream_chat(
         self,

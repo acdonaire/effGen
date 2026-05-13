@@ -29,6 +29,7 @@ from effgen.models.base import (
     TokenCount,
 )
 from effgen.models.errors import ModelAuthError, ModelNotFoundError
+from effgen.models.latency_tracker import timed_call
 from effgen.models.together_models import (
     TOGETHER_DEFAULT_MODEL,
     TOGETHER_MODELS,
@@ -243,7 +244,8 @@ class TogetherAdapter(BaseModel):
             except RuntimeError:
                 asyncio.run(self._rate_limiter.acquire(est_tokens))
 
-        result = self._do_generate(prompt, config, **kwargs)
+        with timed_call("together", self.model_name):
+            result = self._do_generate(prompt, config, **kwargs)
 
         if self._rate_limiter is not None:
             actual = result.metadata.get("total_tokens", 0) if result.metadata else 0
@@ -511,60 +513,65 @@ class TogetherAdapter(BaseModel):
         self._last_stream_finish_reason: str | None = None
 
         try:
-            stream = self._client.chat.completions.create(**request_params)
+            with timed_call("together", self.model_name) as _stream_timer:
+                _first_token = True
+                stream = self._client.chat.completions.create(**request_params)
 
-            prompt_tokens = 0
-            completion_tokens = 0
-            tool_calls_buf: dict[int, dict[str, Any]] = {}
+                prompt_tokens = 0
+                completion_tokens = 0
+                tool_calls_buf: dict[int, dict[str, Any]] = {}
 
-            for chunk in stream:
-                if not chunk.choices:
-                    continue
-                choice = chunk.choices[0]
-                delta = choice.delta
-                if delta and delta.content:
-                    yield delta.content
+                for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+                    if delta and delta.content:
+                        if _first_token:
+                            _stream_timer.mark_first_token()
+                            _first_token = False
+                        yield delta.content
 
-                if delta and getattr(delta, "tool_calls", None):
-                    for tc in delta.tool_calls:
-                        idx = tc.index if getattr(tc, "index", None) is not None else 0
-                        buf = tool_calls_buf.setdefault(
-                            idx, {"id": "", "type": "function",
-                                  "function": {"name": "", "arguments": ""}}
-                        )
-                        if getattr(tc, "id", None):
-                            buf["id"] = tc.id
-                        fn = getattr(tc, "function", None)
-                        if fn is not None:
-                            if getattr(fn, "name", None):
-                                buf["function"]["name"] = fn.name
-                            if getattr(fn, "arguments", None):
-                                buf["function"]["arguments"] += fn.arguments
+                    if delta and getattr(delta, "tool_calls", None):
+                        for tc in delta.tool_calls:
+                            idx = tc.index if getattr(tc, "index", None) is not None else 0
+                            buf = tool_calls_buf.setdefault(
+                                idx, {"id": "", "type": "function",
+                                      "function": {"name": "", "arguments": ""}}
+                            )
+                            if getattr(tc, "id", None):
+                                buf["id"] = tc.id
+                            fn = getattr(tc, "function", None)
+                            if fn is not None:
+                                if getattr(fn, "name", None):
+                                    buf["function"]["name"] = fn.name
+                                if getattr(fn, "arguments", None):
+                                    buf["function"]["arguments"] += fn.arguments
 
-                if choice.finish_reason:
-                    self._last_stream_finish_reason = choice.finish_reason
+                    if choice.finish_reason:
+                        self._last_stream_finish_reason = choice.finish_reason
 
-                if hasattr(chunk, "usage") and chunk.usage is not None:
-                    usage = chunk.usage
-                    prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-                    completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+                    if hasattr(chunk, "usage") and chunk.usage is not None:
+                        usage = chunk.usage
+                        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
 
-            finalized: list[dict[str, Any]] = []
-            for _idx, buf in sorted(tool_calls_buf.items()):
-                raw_args = buf["function"]["arguments"]
-                try:
-                    parsed_args = json.loads(raw_args) if raw_args else {}
-                except (json.JSONDecodeError, TypeError):
-                    parsed_args = {}
-                finalized.append({
-                    "id": buf["id"],
-                    "type": buf["type"],
-                    "function": {
-                        "name": buf["function"]["name"],
-                        "arguments": parsed_args,
-                    },
-                })
-            self._last_stream_tool_calls = finalized
+                finalized: list[dict[str, Any]] = []
+                for _idx, buf in sorted(tool_calls_buf.items()):
+                    raw_args = buf["function"]["arguments"]
+                    try:
+                        parsed_args = json.loads(raw_args) if raw_args else {}
+                    except (json.JSONDecodeError, TypeError):
+                        parsed_args = {}
+                    finalized.append({
+                        "id": buf["id"],
+                        "type": buf["type"],
+                        "function": {
+                            "name": buf["function"]["name"],
+                            "arguments": parsed_args,
+                        },
+                    })
+                self._last_stream_tool_calls = finalized
 
             if self._enable_cost_tracking and (prompt_tokens or completion_tokens):
                 CostTracker.get().record(

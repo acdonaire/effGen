@@ -32,6 +32,7 @@ from effgen.models.gemini_models import (
     GEMINI_MODEL_ALIASES,
     GEMINI_MODELS,
 )
+from effgen.models.latency_tracker import timed_call
 
 logger = logging.getLogger(__name__)
 
@@ -479,11 +480,12 @@ class GeminiAdapter(FunctionCallingModel):
             raw_tools = self._convert_tools_to_genai(kwargs.pop("tools"))
 
         try:
-            response = self._generate_with_retry(
-                contents=content,
-                gen_config=gen_config,
-                tools=raw_tools,
-            )
+            with timed_call("gemini", self.model_name):
+                response = self._generate_with_retry(
+                    contents=content,
+                    gen_config=gen_config,
+                    tools=raw_tools,
+                )
 
             generated_text = ""
             tool_calls: list[dict[str, Any]] = []
@@ -627,18 +629,23 @@ class GeminiAdapter(FunctionCallingModel):
             raw_tools = self._convert_tools_to_genai(kwargs.pop("tools"))
 
         try:
-            response = self._generate_with_retry(
-                contents=content,
-                gen_config=gen_config,
-                stream=True,
-                tools=raw_tools,
-            )
-            for chunk in response:
-                try:
-                    if chunk.text:
-                        yield chunk.text
-                except Exception:
-                    pass
+            with timed_call("gemini", self.model_name) as _stream_timer:
+                response = self._generate_with_retry(
+                    contents=content,
+                    gen_config=gen_config,
+                    stream=True,
+                    tools=raw_tools,
+                )
+                _first_token = True
+                for chunk in response:
+                    try:
+                        if chunk.text:
+                            if _first_token:
+                                _stream_timer.mark_first_token()
+                                _first_token = False
+                            yield chunk.text
+                    except Exception:
+                        pass
         except Exception as exc:
             logger.error("Gemini streaming failed: %s", exc)
             raise RuntimeError(f"Streaming generation failed: {exc}") from exc

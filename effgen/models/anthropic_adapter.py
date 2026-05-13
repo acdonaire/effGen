@@ -34,6 +34,7 @@ from effgen.models.base import (
     TokenCount,
 )
 from effgen.models.errors import ModelAuthError, ModelNotFoundError
+from effgen.models.latency_tracker import timed_call
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +354,8 @@ class AnthropicAdapter(FunctionCallingModel):
 
         try:
             request = self._build_request(prompt, config, system_prompt, None, kwargs)
-            response = self.client.messages.create(**request)
+            with timed_call("anthropic", self.model_name):
+                response = self.client.messages.create(**request)
 
             text, thinking, redacted, raw_blocks = self._parse_response(response)
             prompt_tokens, completion_tokens, cached_input, cache_creation = self._parse_usage(response)
@@ -429,10 +431,19 @@ class AnthropicAdapter(FunctionCallingModel):
             config = GenerationConfig()
 
         try:
-            for chunk in self.generate_stream_full(prompt, config=config, system_prompt=system_prompt, **kwargs):
-                if chunk.type == "text":
-                    yield chunk.text
-
+            with timed_call("anthropic", self.model_name) as _stream_timer:
+                _first_token = True
+                for chunk in self.generate_stream_full(
+                    prompt,
+                    config=config,
+                    system_prompt=system_prompt,
+                    **kwargs,
+                ):
+                    if chunk.type == "text":
+                        if _first_token:
+                            _stream_timer.mark_first_token()
+                            _first_token = False
+                        yield chunk.text
         except Exception as e:
             logger.error(f"Anthropic streaming failed: {e}")
             raise RuntimeError(f"Streaming generation failed: {e}") from e

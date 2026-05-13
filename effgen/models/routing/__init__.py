@@ -2,5 +2,6 @@
 
 from effgen.models.routing.cost import CostBasedPolicy
 from effgen.models.routing.first_available import FirstAvailablePolicy
+from effgen.models.routing.latency import LatencyBasedPolicy
 
-__all__ = ["FirstAvailablePolicy", "CostBasedPolicy"]
+__all__ = ["FirstAvailablePolicy", "CostBasedPolicy", "LatencyBasedPolicy"]

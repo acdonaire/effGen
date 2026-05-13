@@ -174,6 +174,106 @@ therefore uses Gemini's published paid token prices for budget checks.
 eliminated by `CostBasedPolicy`; start the endpoint explicitly before routing
 to those models directly.
 
+### LatencyBasedPolicy — SLA-aware routing
+
+`LatencyBasedPolicy` selects the fastest provider/model pair that satisfies
+a latency SLA. It uses p50 observed latency from `LatencyTracker`, which is
+automatically populated by every `generate()` and `generate_stream()` call.
+When any real measurements exist, seed values are treated only as cold-start
+hints and cannot outrank measured providers.
+
+#### SLA recipe
+
+```python
+from effgen.models.routing.latency import LatencyBasedPolicy
+from effgen.models.router import ModelRouter, RoutingContext
+from effgen.models.capabilities import Capability
+import effgen.models  # register all providers
+
+# Require sub-2-second responses
+router = ModelRouter(policies=[LatencyBasedPolicy()])
+decision = router.route(RoutingContext(
+    latency_budget_ms=2000,
+    required_capabilities={Capability.chat},
+))
+print(f"Chose {decision.chosen.provider}/{decision.chosen.model_id}")
+print(f"p50 latency: {decision.score:.0f}ms")
+```
+
+#### Combined cost + latency routing
+
+```python
+from effgen.models.routing.cost import CostBasedPolicy
+from effgen.models.routing.latency import LatencyBasedPolicy
+
+# CostBasedPolicy runs first; LatencyBasedPolicy is the fallback
+router = ModelRouter(policies=[CostBasedPolicy(), LatencyBasedPolicy()])
+decision = router.route(RoutingContext(
+    prompt_tokens_estimate=200,
+    user_budget_usd=0.0001,     # free-tier only
+    latency_budget_ms=10_000,   # up to 10s
+    required_capabilities={Capability.chat},
+))
+```
+
+#### Warm-up probe
+
+On first latency route with empty history, `LatencyBasedPolicy` automatically
+fires tiny 10-token probes in parallel to eligible providers and seeds the
+tracker with real latency observations before scoring candidates:
+
+```python
+from effgen.models.routing._probe import warm_up_providers
+from effgen.models.capabilities import Capability
+
+# Optional manual startup warm-up; subsequent calls are no-ops
+warm_up_providers(context_caps={Capability.chat})
+```
+
+The probe runs each candidate in a thread pool (default 8 threads) with a
+15-second per-provider timeout.  Results are cached for the session.
+
+If no measured candidate satisfies `latency_budget_ms`, the policy raises
+`NoCandidateWithinLatencyError` with the fastest available p50 and provider
+pair. This exception is not converted to the default first-available fallback,
+so an SLA miss is visible to the caller.
+
+#### How latency data is collected
+
+Every adapter's `generate()` records `total_ms` via `LatencyTracker`.
+Every adapter's `generate_stream()` additionally records `ttft_ms`
+(time-to-first-token) separately so latency-sensitive streaming applications
+can route on TTFT.
+
+```python
+from effgen.models.latency_tracker import LatencyTracker
+
+tracker = LatencyTracker.get()
+# After a few calls:
+print(tracker.p50("cerebras", "llama3.1-8b"))     # total p50
+print(tracker.p50_ttft("cerebras", "llama3.1-8b")) # TTFT p50 (streaming)
+print(tracker.all_stats())                          # all tracked pairs
+```
+
+#### Provider latency seeds (no-data fallback)
+
+When a provider has no observed data yet, the policy uses these conservative
+seed values (in ms):
+
+| Provider   | Seed latency |
+|------------|-------------|
+| cerebras   | 300 ms      |
+| groq       | 350 ms      |
+| hf         | 800 ms      |
+| together   | 1000 ms     |
+| fireworks  | 1100 ms     |
+| openai     | 1200 ms     |
+| anthropic  | 1400 ms     |
+| gemini     | 1300 ms     |
+| replicate  | 2000 ms     |
+
+Run the warm-up probe to replace seeds with real observations.
+
 ## Writing a custom policy
 
 ```python

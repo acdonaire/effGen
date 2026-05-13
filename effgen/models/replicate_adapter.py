@@ -56,6 +56,7 @@ from effgen.models.base import (
     TokenCount,
 )
 from effgen.models.errors import ModelAuthError, ModelTimeoutError
+from effgen.models.latency_tracker import timed_call
 from effgen.models.replicate_models import (
     REGISTRY_FETCH_DATE,
     REPLICATE_DEFAULT_MODEL,
@@ -423,7 +424,8 @@ class ReplicateAdapter(BaseModel):
         inp = self._build_input(prompt, config, system_prompt, tools, messages)
         inp.update(kwargs)
 
-        result = self._do_generate(inp)
+        with timed_call("replicate", self.model_name):
+            result = self._do_generate(inp)
 
         if self._rate_limiter is not None:
             actual = result.metadata.get("total_tokens", 0) if result.metadata else 0
@@ -650,10 +652,14 @@ class ReplicateAdapter(BaseModel):
 
         supports_streaming = self._info.get("supports_streaming", True)
 
-        if supports_streaming:
-            yield from self._stream_sse(inp)
-        else:
-            yield from self._stream_poll(inp)
+        with timed_call("replicate", self.model_name) as _stream_timer:
+            _first_token = True
+            src = self._stream_sse(inp) if supports_streaming else self._stream_poll(inp)
+            for token in src:
+                if _first_token:
+                    _stream_timer.mark_first_token()
+                    _first_token = False
+                yield token
 
     def _stream_sse(self, inp: dict[str, Any]) -> Iterator[str]:
         """Stream via Replicate SSE (real token-by-token)."""
