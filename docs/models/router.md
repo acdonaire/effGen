@@ -206,7 +206,8 @@ print(f"p50 latency: {decision.score:.0f}ms")
 from effgen.models.routing.cost import CostBasedPolicy
 from effgen.models.routing.latency import LatencyBasedPolicy
 
-# CostBasedPolicy runs first; LatencyBasedPolicy is the fallback
+# Policies run in order. The first policy that finds a valid candidate wins;
+# later policies are fallbacks for cases where earlier policies cannot route.
 router = ModelRouter(policies=[CostBasedPolicy(), LatencyBasedPolicy()])
 decision = router.route(RoutingContext(
     prompt_tokens_estimate=200,
@@ -273,6 +274,121 @@ seed values (in ms):
 | replicate  | 2000 ms     |
 
 Run the warm-up probe to replace seeds with real observations.
+
+## Failover + Retry
+
+`PolicyBasedRouter.route_and_execute()` combines routing with automatic
+provider failover.  When the chosen provider raises a retriable error, the
+router temporarily blocks that provider, re-routes to another provider, and
+retries the call. `failover_hops` is the number of failovers allowed after the
+first attempt, so `failover_hops=1` permits two provider attempts.
+
+### Retriable vs non-retriable errors
+
+| Exception                | Retriable | Action                          |
+|--------------------------|-----------|---------------------------------|
+| `RateLimitExceeded`      | ✓         | Failover to next provider       |
+| `ProviderTransientError` | ✓         | Failover (e.g. 5xx response)    |
+| `ModelTimeoutError`      | ✓         | Failover                        |
+| `ModelAuthError`         | ✗         | Raise immediately (bad API key) |
+| `ModelRefusalError`      | ✗         | Raise immediately               |
+| `InvalidRequestError`    | ✗         | Raise immediately               |
+
+### route_and_execute recipe
+
+```python
+import effgen.models  # register all providers
+from effgen.models.router import ModelRouter, RoutingContext
+from effgen.models.routing.cost import CostBasedPolicy
+from effgen.models.routing.retry import RetryPolicy
+from effgen.models.capabilities import Capability
+from effgen.models.groq_adapter import GroqAdapter
+from effgen.models.cerebras_adapter import CerebrasAdapter
+
+retry = RetryPolicy(max_retries=2, backoff_base=1.0, jitter=0.5)
+router = ModelRouter(
+    policies=[CostBasedPolicy()],
+    failover_hops=2,
+    retry_policy=retry,
+)
+
+# Subscribe to failover events
+events = []
+router.subscribe(events.append)
+
+def call_provider(pair):
+    if pair.provider == "groq":
+        adapter = GroqAdapter(pair.model_id, max_retries=0)
+    elif pair.provider == "cerebras":
+        adapter = CerebrasAdapter("llama3.1-8b", max_retries=0)
+    else:
+        raise RuntimeError(f"Unsupported provider: {pair.provider}")
+    adapter.load()
+    try:
+        return adapter.generate("Say hello").text
+    finally:
+        adapter.unload()
+
+ctx = RoutingContext(required_capabilities={Capability.chat})
+result = router.route_and_execute(ctx, call_provider)
+
+for ev in events:
+    print(ev.as_dict())
+    # {"from": "groq/llama-3.1-8b-instant", "to": "cerebras/llama3.1-8b",
+    #  "reason": "rate_limited", "hop": 1, ...}
+```
+
+### AllCandidatesExhaustedError
+
+When every candidate in the hop limit fails retriably:
+
+```python
+from effgen.models.errors import AllCandidatesExhaustedError
+
+try:
+    result = router.route_and_execute(ctx, call_provider)
+except AllCandidatesExhaustedError as e:
+    print(f"All {e.attempts} attempts failed after {e.hop_limit} failover hops")
+    for provider, model, exc in e.failures:
+        print(f"  {provider}/{model}: {type(exc).__name__}")
+```
+
+### RouterEvent
+
+Each failover emits a `RouterEvent` to all subscribers:
+
+```python
+@dataclass
+class RouterEvent:
+    from_provider: str     # provider that failed
+    from_model: str        # model that failed
+    to_provider: str       # provider being tried next
+    to_model: str          # model being tried next
+    reason: str            # "rate_limited" | "transient_error_503" | "timeout"
+    hop: int               # 1-indexed failover hop number
+    exception: Exception   # the exception that triggered failover
+
+    def as_dict(self) -> dict: ...
+```
+
+### RetryPolicy
+
+`RetryPolicy` handles retries *within* a single provider before failing over.
+Exponential backoff with additive jitter prevents synchronized retries:
+
+```python
+from effgen.models.routing.retry import RetryPolicy
+
+# 3 retries per provider, up to 30s cap
+retry = RetryPolicy(max_retries=3, backoff_base=1.0, jitter=0.5, backoff_cap=30.0)
+
+# Check if an exception is retriable
+retry.is_retriable(exc)  # True for rate limit / 5xx / timeout
+
+# Standalone usage (without router):
+result, state = retry.execute_with_retry(my_fn, arg1, kwarg=val)
+print(f"Took {state.attempt} attempts, slept {state.total_sleep_seconds:.1f}s")
+```
 
 ## Writing a custom policy
 

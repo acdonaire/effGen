@@ -26,8 +26,7 @@ def human_loop_model(gpu_id):
     """Load the human-loop test model once per module to avoid GPU pressure."""
     if gpu_id is None:
         pytest.skip("No GPU available")
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    model = load_model(MODEL_NAME)
+    model = load_model(MODEL_NAME, device_map={"": int(gpu_id)})
     yield model
     try:
         model.unload()

@@ -45,7 +45,7 @@ _GROQ_MODEL_TYPE_VALUE = "groq"
 def _parse_failed_generation_tool_call(message: str) -> dict[str, Any] | None:
     """Extract a tool call from Groq's ``tool_use_failed`` failed_generation text."""
     match = re.search(
-        r"<function=([A-Za-z_]\w*)\s*(.*?)</function>",
+        r"<function=([A-Za-z_]\w*)\s*>?\s*(.*?)</function>",
         message,
         re.DOTALL,
     )
@@ -382,11 +382,22 @@ class GroqAdapter(BaseModel):
                 is_server = "500" in msg or "503" in msg or "internal" in msg_lower
                 is_timeout = "timeout" in msg_lower
 
-                if is_rate or is_server or is_timeout:
+                if is_rate:
+                    # Raise RateLimitExceeded so the router can failover to another provider
+                    from effgen.models._rate_limit import RateLimitExceeded as _RLE
+                    raise _RLE(
+                        f"Groq rate limit hit for {self.model_name}: {msg}"
+                    ) from exc
+
+                if is_server or is_timeout:
                     if _attempt >= _MAX_RETRIES:
                         logger.error("Groq API error after %d retries: %s", _attempt, exc)
-                        raise RuntimeError(
-                            f"Groq API failed for {self.model_name} after {_MAX_RETRIES} retries: {exc}"
+                        from effgen.models.errors import ProviderTransientError as _PTE
+                        raise _PTE(
+                            provider="groq",
+                            model_name=self.model_name,
+                            status_code=500 if is_server else 0,
+                            message=f"Groq API failed after {_MAX_RETRIES} retries: {exc}",
                         ) from exc
                     delay = min(60.0, 2.0 * (2 ** (_attempt - 1)) + random.uniform(0, 0.5))
                     logger.warning(
@@ -633,6 +644,14 @@ class GroqAdapter(BaseModel):
                     model_name=self.model_name,
                     message=msg,
                 ) from exc
+            is_rate = "429" in msg or "rate_limit" in msg_lower or "rate limit" in msg_lower
+            if is_rate:
+                from effgen.models._rate_limit import RateLimitExceeded as _RLE
+                raise _RLE(f"Groq rate limit hit for {self.model_name}: {msg}") from exc
+            is_server = "500" in msg or "503" in msg or "internal" in msg_lower
+            if is_server:
+                from effgen.models.errors import ProviderTransientError as _PTE
+                raise _PTE(provider="groq", model_name=self.model_name, status_code=500, message=msg) from exc
             logger.error("Groq streaming failed: %s", exc)
             raise RuntimeError(f"Groq streaming failed: {exc}") from exc
 

@@ -65,7 +65,7 @@ class TestCerebrasNativeTools:
                     "What is 17 * 23?",
                     tools=self.TOOLS,
                 )
-            except RuntimeError as exc:
+            except Exception as exc:
                 _xfail_if_cerebras_backpressure(exc)
                 raise
             assert result.metadata is not None
@@ -91,7 +91,7 @@ class TestCerebrasNativeTools:
                     "What is 17 * 23?",
                     tools=self.TOOLS,
                 )
-            except RuntimeError as exc:
+            except Exception as exc:
                 _xfail_if_cerebras_backpressure(exc)
                 raise
             assert result.metadata is not None
@@ -139,7 +139,7 @@ class TestCerebrasAgentWithTools:
             agent = Agent(config)
             try:
                 response = agent.run("What is 15 * 15?")
-            except RuntimeError as exc:
+            except Exception as exc:
                 _xfail_if_cerebras_backpressure(exc)
                 raise
             assert response.output is not None
@@ -174,7 +174,7 @@ class TestCerebrasAgentWithTools:
             agent = Agent(config)
             try:
                 response = agent.run("What is 15 * 15?")
-            except RuntimeError as exc:
+            except Exception as exc:
                 _xfail_if_cerebras_backpressure(exc)
                 raise
             assert response.output is not None

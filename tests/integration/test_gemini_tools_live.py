@@ -26,6 +26,31 @@ SKIP = pytest.mark.skipif(
 MODEL = "gemini-3.1-flash-lite-preview"
 
 
+def _skip_if_gemini_transient(value: object) -> None:
+    msg = str(value)
+    msg_lower = msg.lower()
+    if (
+        "503 unavailable" in msg_lower
+        or "high demand" in msg_lower
+        or "try again later" in msg_lower
+        or "resource_exhausted" in msg_lower
+        or "rate limit" in msg_lower
+        or "timeout" in msg_lower
+        or "timed out" in msg_lower
+    ):
+        pytest.skip(f"Gemini transient service pressure: {msg[:200]}")
+
+
+def _run_agent_or_skip_transient(agent, prompt: str):
+    try:
+        return agent.run(prompt)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as exc:
+        _skip_if_gemini_transient(exc)
+        raise
+
+
 @SKIP
 def test_google_search_tool_live():
     """GoogleSearchTool returns a non-empty answer about a current event."""
@@ -42,10 +67,16 @@ def test_google_search_tool_live():
         tools=[GoogleSearchTool()],
     ))
 
-    response = agent.run("What is the latest major AI model released by Google in 2025?")
-    assert response.output.strip(), "Expected non-empty answer"
-    print("GoogleSearchTool response:", response.output[:300])
-    model.unload()
+    try:
+        response = _run_agent_or_skip_transient(
+            agent,
+            "What is the latest major AI model released by Google in 2025?",
+        )
+        _skip_if_gemini_transient(response.output)
+        assert response.output.strip(), "Expected non-empty answer"
+        print("GoogleSearchTool response:", response.output[:300])
+    finally:
+        model.unload()
 
 
 @SKIP
@@ -64,13 +95,18 @@ def test_url_context_tool_live():
         tools=[GeminiUrlContextTool()],
     ))
 
-    response = agent.run(
-        "Please summarize what this page is about: https://en.wikipedia.org/wiki/Python_(programming_language)"
-    )
-    assert response.output.strip(), "Expected non-empty summary"
-    assert len(response.output) > 50, "Summary is too short"
-    print("GeminiUrlContextTool response:", response.output[:300])
-    model.unload()
+    try:
+        response = _run_agent_or_skip_transient(
+            agent,
+            "Please summarize what this page is about: "
+            "https://en.wikipedia.org/wiki/Python_(programming_language)",
+        )
+        _skip_if_gemini_transient(response.output)
+        assert response.output.strip(), "Expected non-empty summary"
+        assert len(response.output) > 50, "Summary is too short"
+        print("GeminiUrlContextTool response:", response.output[:300])
+    finally:
+        model.unload()
 
 
 @SKIP
@@ -89,14 +125,19 @@ def test_code_execution_tool_live():
         tools=[GeminiCodeExecutionTool()],
     ))
 
-    response = agent.run("Compute 100! (100 factorial) exactly.")
-    # 100! starts with 93326215443944152681699238856266700490715968264381621468592963895217599993229915608941463976156518286253697920827223758251185210916864000000000000000000000000
-    FACTORIAL_100 = "93326215443944152681699238856266700490715968264381621468592963895217599993229915608941463976156518286253697920827223758251185210916864000000000000000000000000"
-    assert FACTORIAL_100 in response.output, (
-        f"Expected 100! value in response, got: {response.output[:200]}"
-    )
-    print("GeminiCodeExecutionTool 100! response:", response.output[:200])
-    model.unload()
+    try:
+        response = _run_agent_or_skip_transient(
+            agent,
+            "Compute 100! (100 factorial) exactly.",
+        )
+        _skip_if_gemini_transient(response.output)
+        FACTORIAL_100 = "93326215443944152681699238856266700490715968264381621468592963895217599993229915608941463976156518286253697920827223758251185210916864000000000000000000000000"
+        assert FACTORIAL_100 in response.output, (
+            f"Expected 100! value in response, got: {response.output[:200]}"
+        )
+        print("GeminiCodeExecutionTool 100! response:", response.output[:200])
+    finally:
+        model.unload()
 
 
 @SKIP
@@ -116,10 +157,16 @@ def test_parallel_function_calls_live():
     ))
 
     # The question asks for two independent calculations — model should use two calls
-    response = agent.run("What is 2+3? Also, what is 7*8? Give me both answers.")
-    assert response.output.strip(), "Expected non-empty answer"
-    # Both results should appear somewhere in the final answer
-    assert "5" in response.output, "Expected 2+3=5 in answer"
-    assert "56" in response.output, "Expected 7*8=56 in answer"
-    print("Parallel function calls response:", response.output[:300])
-    model.unload()
+    try:
+        response = _run_agent_or_skip_transient(
+            agent,
+            "What is 2+3? Also, what is 7*8? Give me both answers.",
+        )
+        _skip_if_gemini_transient(response.output)
+        assert response.output.strip(), "Expected non-empty answer"
+        # Both results should appear somewhere in the final answer
+        assert "5" in response.output, "Expected 2+3=5 in answer"
+        assert "56" in response.output, "Expected 7*8=56 in answer"
+        print("Parallel function calls response:", response.output[:300])
+    finally:
+        model.unload()

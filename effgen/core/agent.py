@@ -3199,8 +3199,9 @@ Provide a well-structured, comprehensive response that integrates all findings."
 
             # Stream tokens from model
             accumulated = ""
+            stream_iter = self.model.generate_stream(prompt, config=gen_config)
             try:
-                for token in self.model.generate_stream(prompt, config=gen_config):
+                for token in stream_iter:
                     accumulated += token
 
                     # Check for stop sequences
@@ -3236,6 +3237,10 @@ Provide a well-structured, comprehensive response that integrates all findings."
                 logger.error(f"Streaming generation failed: {e}")
                 yield f"\n[Error: {e}]"
                 return
+            finally:
+                close_stream = getattr(stream_iter, "close", None)
+                if close_stream is not None:
+                    close_stream()
 
             # Parse the accumulated response
             parsed = self._parse_react_response(accumulated)

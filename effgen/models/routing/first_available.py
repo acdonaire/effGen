@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import os
-
 from effgen.models.router import (
     NoCandidateError,
     ProviderModelPair,
     RouterDecision,
     RoutingContext,
     RoutingPolicy,
+    candidate_unavailable_reason,
 )
 
 
@@ -31,8 +30,6 @@ class FirstAvailablePolicy(RoutingPolicy):
         candidates: list[ProviderModelPair],
         context: RoutingContext,
     ) -> RouterDecision:
-        from effgen.models.registry import ProviderRegistry
-
         eliminated: list[tuple[ProviderModelPair, str]] = []
         seen_providers: dict[str, str] = {}
         chosen: ProviderModelPair | None = None
@@ -45,21 +42,8 @@ class FirstAvailablePolicy(RoutingPolicy):
                 eliminated.append((pair, f"provider already evaluated: {seen_providers[provider]}"))
                 continue
 
-            # Check API key availability
-            rec = ProviderRegistry.get_provider_info(provider)
-            env_keys = rec.get("env_keys", [])
-            if env_keys and not any(os.environ.get(k) for k in env_keys):
-                reason = f"no API key configured ({', '.join(env_keys)})"
-                eliminated.append((pair, reason))
-                seen_providers[provider] = reason
-                continue
-
-            # Check capabilities
-            provider_caps = ProviderRegistry.get_capabilities(provider)
-            missing = context.required_capabilities - provider_caps
-            if missing:
-                names = ", ".join(c.value for c in missing)
-                reason = f"missing capabilities: {names}"
+            reason = candidate_unavailable_reason(pair, context)
+            if reason:
                 eliminated.append((pair, reason))
                 seen_providers[provider] = reason
                 continue

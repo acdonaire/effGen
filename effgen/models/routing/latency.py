@@ -13,7 +13,6 @@ tracker before routing when history is empty.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 
 from effgen.models.errors import NoCandidateWithinLatencyError
@@ -24,6 +23,7 @@ from effgen.models.router import (
     RouterDecision,
     RoutingContext,
     RoutingPolicy,
+    candidate_unavailable_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -129,8 +129,6 @@ class LatencyBasedPolicy(RoutingPolicy):
         candidates: list[ProviderModelPair],
         context: RoutingContext,
     ) -> RouterDecision:
-        from effgen.models.registry import ProviderRegistry
-
         self._warm_up_if_needed(context)
 
         budget_ms = context.latency_budget_ms
@@ -138,34 +136,13 @@ class LatencyBasedPolicy(RoutingPolicy):
         available: list[_LatencyScore] = []
 
         for pair in candidates:
-            provider = pair.provider
-
-            # Check API key
-            rec = ProviderRegistry.get_provider_info(provider)
-            env_keys = rec.get("env_keys", [])
-            if env_keys and not any(os.environ.get(k) for k in env_keys):
-                eliminated.append((pair, f"no API key ({', '.join(env_keys)})"))
+            unavailable_reason = candidate_unavailable_reason(pair, context)
+            if unavailable_reason:
+                eliminated.append((pair, unavailable_reason))
                 continue
 
-            # Check capabilities
-            provider_caps = ProviderRegistry.get_capabilities(provider)
-            missing = context.required_capabilities - provider_caps
-            if missing:
-                names = ", ".join(c.value for c in missing)
-                eliminated.append((pair, f"missing capabilities: {names}"))
-                continue
-
-            # Check model availability
-            model_info = rec.get("models", {}).get(pair.model_id, {})
-            if model_info.get("active") is False:
-                eliminated.append((pair, "model inactive"))
-                continue
-            if model_info.get("requires_endpoint") is True:
-                eliminated.append((pair, "requires dedicated endpoint"))
-                continue
-
-            latency = self._get_latency(provider, pair.model_id)
-            has_data = self._tracker.has_data(provider, pair.model_id)
+            latency = self._get_latency(pair.provider, pair.model_id)
+            has_data = self._tracker.has_data(pair.provider, pair.model_id)
             available.append(_LatencyScore(
                 latency_ms=latency,
                 pair=pair,

@@ -30,6 +30,11 @@ class TestCerebrasLive:
             assert result.text, "Expected non-empty response from Cerebras"
             assert result.tokens_used > 0
             assert result.model_name == CEREBRAS_DEFAULT_MODEL
+        except Exception as exc:
+            msg = str(exc)
+            if "429" in msg or "queue_exceeded" in msg or "high traffic" in msg.lower() or "rate limit" in msg.lower():
+                pytest.skip(f"Cerebras transiently overloaded: {exc}")
+            raise
         finally:
             adapter.unload()
 
@@ -41,6 +46,11 @@ class TestCerebrasLive:
         try:
             result = model.generate("Say hello")
             assert result.text
+        except Exception as exc:
+            msg = str(exc)
+            if "429" in msg or "queue_exceeded" in msg or "high traffic" in msg.lower() or "rate limit" in msg.lower():
+                pytest.skip(f"Cerebras transiently overloaded: {exc}")
+            raise
         finally:
             model.unload()
 
@@ -54,8 +64,9 @@ class TestCerebrasLive:
             assert len(chunks) >= 1, "Expected at least one chunk from streaming"
             full_text = "".join(chunks)
             assert len(full_text) > 0, "Expected non-empty streamed text"
-        except RuntimeError as exc:
-            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+        except Exception as exc:
+            msg = str(exc)
+            if "429" in msg or "queue_exceeded" in msg or "high traffic" in msg.lower() or "rate limit" in msg.lower():
                 pytest.skip(f"Cerebras transiently overloaded: {exc}")
             raise
         finally:

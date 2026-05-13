@@ -11,29 +11,66 @@ warnings.filterwarnings("ignore", category=ImportWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
+def _visible_cuda_indices() -> list[int] | None:
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if not visible:
+        return None
+    indices = []
+    for raw in visible.split(","):
+        raw = raw.strip()
+        if raw.isdigit():
+            indices.append(int(raw))
+    return indices or None
+
+
 def _find_free_gpu():
-    """Find a free GPU (minimal memory usage)."""
+    """Find a GPU with enough free memory for the integration SLM."""
+    min_free_gb = float(os.environ.get("EFFGEN_TEST_MIN_FREE_GPU_GB", "8"))
+    min_free_bytes = int(min_free_gb * 1024**3)
+
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        visible = _visible_cuda_indices()
+        candidates = visible if visible is not None else list(range(pynvml.nvmlDeviceGetCount()))
+        best = None
+        best_free = -1
+        for visible_idx, physical_idx in enumerate(candidates):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(physical_idx)
+            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            if info.free > best_free:
+                best_free = info.free
+                best = visible_idx if visible is not None else physical_idx
+        if best is not None and best_free >= min_free_bytes:
+            return best
+        return None
+    except Exception:
+        pass
+
     try:
         import torch
         if not torch.cuda.is_available():
             return None
-        min_mem = float("inf")
-        best = 0
+        best = None
+        best_free = -1
         for i in range(torch.cuda.device_count()):
-            torch.cuda.get_device_properties(i)
-            mem_used = torch.cuda.memory_allocated(i)
+            props = torch.cuda.get_device_properties(i)
+            free_bytes = props.total_memory - torch.cuda.memory_reserved(i)
             # Also check via nvidia-ml-py if available
             try:
                 import pynvml
                 pynvml.nvmlInit()
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                mem_used = info.used
+                free_bytes = info.free
             except Exception:
                 pass
-            if mem_used < min_mem:
-                min_mem = mem_used
+            if free_bytes > best_free:
+                best_free = free_bytes
                 best = i
+        if best is None or best_free < min_free_bytes:
+            return None
         return best
     except ImportError:
         return None
@@ -42,23 +79,24 @@ def _find_free_gpu():
 @pytest.fixture(scope="session")
 def gpu_id():
     """Session-scoped fixture for GPU ID."""
-    gid = _find_free_gpu()
-    if gid is not None:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gid)
-    return gid
+    return _find_free_gpu()
 
 
 def _load_and_yield(gpu_id, quantization=None):
     """Load a model and clean up CUDA state on teardown."""
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     from effgen import load_model
+    load_kwargs = {"device_map": {"": int(gpu_id)}}
     if quantization:
         try:
-            model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization=quantization)
+            model = load_model(
+                "Qwen/Qwen2.5-3B-Instruct",
+                quantization=quantization,
+                **load_kwargs,
+            )
         except Exception:
-            model = load_model("Qwen/Qwen2.5-3B-Instruct")
+            model = load_model("Qwen/Qwen2.5-3B-Instruct", **load_kwargs)
     else:
-        model = load_model("Qwen/Qwen2.5-3B-Instruct")
+        model = load_model("Qwen/Qwen2.5-3B-Instruct", **load_kwargs)
     yield model
     try:
         model.unload()

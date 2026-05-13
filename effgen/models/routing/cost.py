@@ -23,7 +23,6 @@ Pricing data verified against provider pricing pages on 2026-05-11.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 
 from effgen.models.errors import NoCandidateWithinBudgetError
@@ -33,6 +32,7 @@ from effgen.models.router import (
     RouterDecision,
     RoutingContext,
     RoutingPolicy,
+    candidate_unavailable_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,15 +99,6 @@ def _cost_for(
         input_per_1m * prompt_tokens / 1_000_000
         + output_per_1m * expected_output_tokens / 1_000_000
     )
-
-
-def _candidate_unavailable_reason(model_info: dict) -> str | None:
-    """Return why a registered model should not be used by standard routing."""
-    if model_info.get("active") is False:
-        return "model inactive"
-    if model_info.get("serverless") is False or model_info.get("requires_endpoint") is True:
-        return "requires dedicated endpoint"
-    return None
 
 
 def _get_model_pricing(
@@ -201,29 +192,13 @@ class CostBasedPolicy(RoutingPolicy):
 
         for pair in candidates:
             provider = pair.provider
-
-            # Check API key
             rec = ProviderRegistry.get_provider_info(provider)
-            env_keys = rec.get("env_keys", [])
-            if env_keys and not any(os.environ.get(k) for k in env_keys):
-                eliminated.append((pair, f"no API key ({', '.join(env_keys)})"))
-                continue
-
-            # Check capabilities
-            provider_caps = ProviderRegistry.get_capabilities(provider)
-            missing = context.required_capabilities - provider_caps
-            if missing:
-                names = ", ".join(c.value for c in missing)
-                eliminated.append((pair, f"missing capabilities: {names}"))
-                continue
-
-            # Compute cost estimate
-            model_info = rec.get("models", {}).get(pair.model_id, {})
-            unavailable_reason = _candidate_unavailable_reason(model_info)
+            unavailable_reason = candidate_unavailable_reason(pair, context)
             if unavailable_reason:
                 eliminated.append((pair, unavailable_reason))
                 continue
 
+            model_info = rec.get("models", {}).get(pair.model_id, {})
             inp_price, out_price, free_tier = _get_model_pricing(provider, pair.model_id)
             cost = _cost_for(inp_price, out_price, prompt_tokens, self._expected_output)
 

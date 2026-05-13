@@ -17,9 +17,11 @@ Two routing layers:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, NamedTuple
@@ -107,6 +109,151 @@ class NoCandidateError(RuntimeError):
     """Raised when no provider/model satisfies the routing constraints."""
 
 
+def candidate_unavailable_reason(
+    pair: ProviderModelPair,
+    context: RoutingContext,
+) -> str | None:
+    """Return why *pair* cannot satisfy *context*, or ``None`` if it can.
+
+    Provider-level capabilities tell the router what an adapter family can do,
+    while model registries carry per-model details such as modality and tool
+    support. Both have to match for a candidate to be routeable.
+    """
+    from effgen.models.registry import ProviderRegistry
+
+    rec = ProviderRegistry.get_provider_info(pair.provider)
+    env_keys = rec.get("env_keys", [])
+    if env_keys and not any(os.environ.get(k) for k in env_keys):
+        return f"no API key ({', '.join(env_keys)})"
+
+    provider_caps = ProviderRegistry.get_capabilities(pair.provider)
+    missing = context.required_capabilities - provider_caps
+    if missing:
+        names = ", ".join(c.value for c in sorted(missing, key=lambda c: c.value))
+        return f"missing capabilities: {names}"
+
+    model_info = rec.get("models", {}).get(pair.model_id, {})
+    if model_info.get("active") is False:
+        return "model inactive"
+    if model_info.get("serverless") is False or model_info.get("requires_endpoint") is True:
+        return "requires dedicated endpoint"
+
+    model_reason = _model_capability_reason(model_info, context.required_capabilities)
+    if model_reason:
+        return model_reason
+
+    return None
+
+
+def _model_capability_reason(
+    model_info: dict[str, Any],
+    required_capabilities: set[Capability],
+) -> str | None:
+    """Return a model-level capability miss, preserving compatibility by default."""
+    modality = str(model_info.get("modality", "")).lower()
+    non_chat_modalities = {
+        "audio",
+        "embedding",
+        "image",
+        "moderation",
+        "rerank",
+        "stt",
+        "transcribe",
+        "tts",
+        "video",
+    }
+
+    missing: list[str] = []
+    if Capability.chat in required_capabilities and modality in non_chat_modalities:
+        missing.append(Capability.chat.value)
+    if (
+        Capability.streaming in required_capabilities
+        and model_info.get("supports_streaming") is False
+    ):
+        missing.append(Capability.streaming.value)
+    if (
+        Capability.tools in required_capabilities
+        and model_info.get("supports_native_tools") is False
+    ):
+        missing.append(Capability.tools.value)
+    if (
+        Capability.json_schema in required_capabilities
+        and model_info.get("supports_native_tools") is False
+    ):
+        missing.append(Capability.json_schema.value)
+    if Capability.vision in required_capabilities:
+        has_vision_metadata = "supports_vision" in model_info or modality in {
+            "vision",
+            "multimodal",
+        }
+        if has_vision_metadata and not (
+            model_info.get("supports_vision") is True
+            or modality in {"vision", "multimodal"}
+        ):
+            missing.append(Capability.vision.value)
+    if (
+        Capability.grounding in required_capabilities
+        and "supports_grounding" in model_info
+        and model_info.get("supports_grounding") is False
+    ):
+        missing.append(Capability.grounding.value)
+    if (
+        Capability.thinking in required_capabilities
+        and "supports_thinking" in model_info
+        and model_info.get("supports_thinking") is False
+    ):
+        missing.append(Capability.thinking.value)
+
+    if missing:
+        return f"model missing capabilities: {', '.join(missing)}"
+    return None
+
+
+@dataclass
+class RouterEvent:
+    """Emitted whenever the router fails over from one provider to another.
+
+    Attributes:
+        from_provider:  Provider that failed (e.g. ``"groq"``).
+        from_model:     Model that failed (e.g. ``"llama-3.1-8b-instant"``).
+        to_provider:    Provider the router is failing over to.
+        to_model:       Model the router is failing over to.
+        reason:         Short human-readable reason (e.g. ``"rate_limited"``).
+        hop:            Failover hop number (1-indexed).
+        exception:      The exception that triggered the failover.
+    """
+    from_provider: str
+    from_model: str
+    to_provider: str
+    to_model: str
+    reason: str
+    hop: int
+    exception: Exception | None = None
+
+    def as_dict(self) -> dict:
+        """Return a JSON-serialisable representation."""
+        return {
+            "from": f"{self.from_provider}/{self.from_model}",
+            "to": f"{self.to_provider}/{self.to_model}",
+            "reason": self.reason,
+            "hop": self.hop,
+            "exception_type": type(self.exception).__name__ if self.exception else None,
+        }
+
+
+def _exc_to_reason(exc: Exception) -> str:
+    """Map an exception to a short human-readable failover reason string."""
+    from effgen.models._rate_limit import RateLimitExceeded
+    from effgen.models.errors import ModelTimeoutError, ProviderTransientError
+    if isinstance(exc, RateLimitExceeded):
+        return "rate_limited"
+    if isinstance(exc, ProviderTransientError):
+        return f"transient_error_{exc.status_code}"
+    if isinstance(exc, ModelTimeoutError):
+        return "timeout"
+    return type(exc).__name__.lower()
+
+
 class PolicyBasedRouter:
     """Routes to the best cloud provider by running a chain of policies.
 
@@ -131,12 +278,39 @@ class PolicyBasedRouter:
         self,
         policies: list[RoutingPolicy],
         fallback: RoutingPolicy | None = None,
+        failover_hops: int = 3,
+        retry_policy: "Any | None" = None,
     ) -> None:
+        if failover_hops < 0:
+            raise ValueError("failover_hops must be >= 0")
         if fallback is None:
             from effgen.models.routing.first_available import FirstAvailablePolicy
             fallback = FirstAvailablePolicy()
         self._policies = list(policies)
         self._fallback = fallback
+        self._failover_hops = failover_hops
+        self._retry_policy = retry_policy
+        self._subscribers: list[Callable[[RouterEvent], None]] = []
+
+    def subscribe(self, callback: Callable[[RouterEvent], None]) -> None:
+        """Register a callback to receive ``RouterEvent`` notifications.
+
+        The callback is called synchronously on the calling thread each time
+        a failover hop occurs.  Exceptions raised by the callback are logged
+        and swallowed so that routing is never disrupted by subscriber errors.
+
+        Args:
+            callback: Callable accepting a single ``RouterEvent`` argument.
+        """
+        self._subscribers.append(callback)
+
+    def _emit(self, event: RouterEvent) -> None:
+        """Dispatch *event* to all registered subscribers."""
+        for cb in self._subscribers:
+            try:
+                cb(event)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("RouterEvent subscriber raised: %s", exc)
 
     def _get_candidates(self) -> list[ProviderModelPair]:
         """Return all registered (provider, model_id) pairs."""
@@ -147,9 +321,26 @@ class PolicyBasedRouter:
                 pairs.append(ProviderModelPair(provider, model_info["model_id"]))
         return pairs
 
-    def route(self, context: RoutingContext) -> RouterDecision:
-        """Run policies in order and return the first successful decision."""
+    def route(
+        self,
+        context: RoutingContext,
+        blocklist: "set[ProviderModelPair] | None" = None,
+        excluded_providers: "set[str] | None" = None,
+    ) -> RouterDecision:
+        """Run policies in order and return the first successful decision.
+
+        Args:
+            context:   Routing constraints.
+            blocklist: Optional set of pairs to exclude from this routing call
+                       (used internally by ``route_and_execute`` during failover).
+            excluded_providers: Optional provider names to exclude from this
+                       routing call after provider-level failures.
+        """
         candidates = self._get_candidates()
+        if excluded_providers:
+            candidates = [c for c in candidates if c.provider not in excluded_providers]
+        if blocklist:
+            candidates = [c for c in candidates if c not in blocklist]
         last_error: NoCandidateError | None = None
         for policy in self._policies:
             try:
@@ -161,6 +352,97 @@ class PolicyBasedRouter:
             return self._fallback.select(candidates, context)
         except NoCandidateError:
             raise last_error or NoCandidateError("No provider available for the given context")
+
+    def route_and_execute(
+        self,
+        context: RoutingContext,
+        fn: "Callable[[ProviderModelPair], Any]",
+    ) -> "Any":
+        """Route to the best provider and execute *fn*, failing over on errors.
+
+        On a retriable failure (rate-limit, 5xx, timeout) the failed provider
+        is added to a temporary blocklist, the router re-routes, and *fn* is
+        called against the new provider.  This continues until either:
+        - *fn* succeeds, OR
+        - the hop limit (``failover_hops``) is reached.
+
+        Non-retriable failures (auth, refusal, invalid request) are re-raised
+        immediately without any failover.
+
+        Args:
+            context: Routing constraints used for every routing call.
+            fn:      Callable that accepts a ``ProviderModelPair`` and performs
+                     the actual API call.  It must raise one of the recognised
+                     exceptions on failure.
+
+        Returns:
+            The return value of *fn* on success.
+
+        Raises:
+            AllCandidatesExhaustedError: When every candidate fails retriably
+                within the hop limit.
+            Any non-retriable exception from *fn* directly.
+        """
+        from effgen.models.errors import AllCandidatesExhaustedError
+        from effgen.models.routing.retry import RetryPolicy
+
+        retry = self._retry_policy or RetryPolicy(max_retries=0)  # per-provider, single attempt
+
+        excluded_providers: set[str] = set()
+        hop_failures: list[tuple[str, str, Exception]] = []
+
+        max_attempts = self._failover_hops + 1
+        for attempt in range(max_attempts):
+            try:
+                decision = self.route(context, excluded_providers=excluded_providers)
+            except NoCandidateError as exc:
+                raise AllCandidatesExhaustedError(hop_failures, self._failover_hops) from exc
+
+            pair = decision.chosen
+
+            try:
+                result, _state = retry.execute_with_retry(fn, pair)
+                return result
+            except Exception as exc:  # noqa: BLE001
+                if not retry.is_retriable(exc):
+                    raise
+
+                hop_failures.append((pair.provider, pair.model_id, exc))
+                excluded_providers.add(pair.provider)
+
+                if attempt >= self._failover_hops:
+                    raise AllCandidatesExhaustedError(hop_failures, self._failover_hops) from exc
+
+                reason = _exc_to_reason(exc)
+                logger.info(
+                    "Failover hop %d: %s/%s failed (%s), re-routing",
+                    attempt + 1, pair.provider, pair.model_id, reason,
+                )
+
+                # Find what the next hop will be before emitting an event.
+                try:
+                    next_decision = self.route(
+                        context,
+                        excluded_providers=excluded_providers,
+                    )
+                    next_pair = next_decision.chosen
+                except NoCandidateError:
+                    raise AllCandidatesExhaustedError(
+                        hop_failures,
+                        self._failover_hops,
+                    ) from exc
+
+                self._emit(RouterEvent(
+                    from_provider=pair.provider,
+                    from_model=pair.model_id,
+                    to_provider=next_pair.provider,
+                    to_model=next_pair.model_id,
+                    reason=reason,
+                    hop=attempt + 1,
+                    exception=exc,
+                ))
+
+        raise AllCandidatesExhaustedError(hop_failures, self._failover_hops)
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +668,8 @@ class ModelRouter:
         config: Optional RoutingConfig.
         policies: Optional ordered list of provider routing policies.
         fallback: Optional fallback provider routing policy.
+        failover_hops: Provider failovers allowed after the first attempt.
+        retry_policy: Optional per-provider retry policy for route_and_execute.
     """
 
     def __init__(
@@ -395,12 +679,19 @@ class ModelRouter:
         *,
         policies: list[RoutingPolicy] | None = None,
         fallback: RoutingPolicy | None = None,
+        failover_hops: int = 3,
+        retry_policy: Any | None = None,
     ):
         self.config = config or RoutingConfig()
         self._models: list[BaseModel] = list(models) if models else []
         self._capabilities: dict[str, ModelCapability] = {}
         self._policy_router: PolicyBasedRouter | None = (
-            PolicyBasedRouter(policies=policies, fallback=fallback)
+            PolicyBasedRouter(
+                policies=policies,
+                fallback=fallback,
+                failover_hops=failover_hops,
+                retry_policy=retry_policy,
+            )
             if policies is not None
             else None
         )
@@ -442,6 +733,28 @@ class ModelRouter:
                 "Use select() for complexity-based model-pool routing."
             )
         return self._policy_router.route(context)
+
+    def subscribe(self, callback: Callable[[RouterEvent], None]) -> None:
+        """Subscribe to provider failover events for policy-based routing."""
+        if self._policy_router is None:
+            raise TypeError(
+                "ModelRouter.subscribe() requires policies=[...]. "
+                "Use PolicyBasedRouter directly for provider routing."
+            )
+        self._policy_router.subscribe(callback)
+
+    def route_and_execute(
+        self,
+        context: RoutingContext,
+        fn: Callable[[ProviderModelPair], Any],
+    ) -> Any:
+        """Route to a provider, execute *fn*, and fail over on retriable errors."""
+        if self._policy_router is None:
+            raise TypeError(
+                "ModelRouter.route_and_execute() requires policies=[...]. "
+                "Use select() for complexity-based model-pool routing."
+            )
+        return self._policy_router.route_and_execute(context, fn)
 
     def select(
         self,

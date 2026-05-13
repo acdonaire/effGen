@@ -21,6 +21,7 @@ def _has_key() -> bool:
 @pytest.mark.skipif(not _has_key(), reason="SKIPPED: CEREBRAS_API_KEY not in ~/.effgen/.env")
 class TestCerebrasStreaming:
     def test_stream_yields_text_llama(self):
+        from effgen.models._rate_limit import RateLimitExceeded
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
         adapter = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False)
@@ -29,14 +30,15 @@ class TestCerebrasStreaming:
             chunks = list(adapter.generate_stream("Say hello briefly."))
             assert len(chunks) >= 1
             assert "".join(chunks).strip()
-        except RuntimeError as exc:
-            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+        except (RuntimeError, RateLimitExceeded) as exc:
+            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower() or "rate limit" in str(exc).lower():
                 pytest.skip(f"Cerebras transiently overloaded: {exc}")
             raise
         finally:
             adapter.unload()
 
     def test_stream_yields_text_qwen(self):
+        from effgen.models._rate_limit import RateLimitExceeded
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
         adapter = CerebrasAdapter("qwen-3-235b-a22b-instruct-2507", enable_rate_limiting=False)
@@ -49,9 +51,9 @@ class TestCerebrasStreaming:
                     assert len(chunks) >= 1
                     assert "".join(chunks).strip()
                     return
-                except RuntimeError as exc:
+                except (RuntimeError, RateLimitExceeded) as exc:
                     msg = str(exc)
-                    if "429" in msg or "queue_exceeded" in msg or "too_many_requests" in msg:
+                    if "429" in msg or "queue_exceeded" in msg or "too_many_requests" in msg or "rate limit" in msg.lower():
                         last_exc = exc
                         time.sleep(5 * (attempt + 1))
                         continue
@@ -86,14 +88,15 @@ class TestCerebrasStreaming:
                 # At least some time passed between first and last chunk
                 # (just not all instantaneous — even 1ms is fine)
                 assert spread >= 0
-        except RuntimeError as exc:
-            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+        except (RuntimeError, __import__("effgen.models._rate_limit", fromlist=["RateLimitExceeded"]).RateLimitExceeded) as exc:
+            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower() or "rate limit" in str(exc).lower():
                 pytest.skip(f"Cerebras transiently overloaded: {exc}")
             raise
         finally:
             adapter.unload()
 
     def test_stream_passes_config(self):
+        from effgen.models._rate_limit import RateLimitExceeded
         from effgen.models.base import GenerationConfig
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
@@ -105,8 +108,8 @@ class TestCerebrasStreaming:
             text = "".join(chunks)
             # max_tokens=20 should stop the stream early
             assert len(text) > 0
-        except RuntimeError as exc:
-            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+        except (RuntimeError, RateLimitExceeded) as exc:
+            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower() or "rate limit" in str(exc).lower():
                 pytest.skip(f"Cerebras transiently overloaded: {exc}")
             raise
         finally:
@@ -114,6 +117,7 @@ class TestCerebrasStreaming:
 
     def test_stream_cost_tracker_records(self):
         from effgen.models._cost import CostTracker
+        from effgen.models._rate_limit import RateLimitExceeded
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
         CostTracker.reset()
@@ -123,8 +127,8 @@ class TestCerebrasStreaming:
         adapter.load()
         try:
             list(adapter.generate_stream("Say exactly: OK"))
-        except RuntimeError as exc:
-            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower():
+        except (RuntimeError, RateLimitExceeded) as exc:
+            if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower() or "rate limit" in str(exc).lower():
                 pytest.skip(f"Cerebras transiently overloaded: {exc}")
             raise
         finally:

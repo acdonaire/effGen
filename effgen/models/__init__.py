@@ -55,13 +55,16 @@ from effgen.models.capabilities import (
 )
 from effgen.models.cerebras_adapter import CerebrasAdapter
 from effgen.models.errors import (
+    AllCandidatesExhaustedError,
     AmbiguousModelError,
+    InvalidRequestError,
     ModelAuthError,
     ModelNotFoundError,
     ModelRefusalError,
     ModelTimeoutError,
     ModelUnavailableError,
     NoCandidateWithinBudgetError,
+    ProviderTransientError,
 )
 from effgen.models.fireworks_adapter import FireworksAdapter
 from effgen.models.fireworks_models import FIREWORKS_MODELS
@@ -87,6 +90,7 @@ from effgen.models.router import (
     PolicyBasedRouter,
     ProviderModelPair,
     RouterDecision,
+    RouterEvent,
     RoutingConfig,
     RoutingContext,
     RoutingDecision,
@@ -95,6 +99,7 @@ from effgen.models.router import (
 )
 from effgen.models.routing.cost import CostBasedPolicy
 from effgen.models.routing.first_available import FirstAvailablePolicy
+from effgen.models.routing.retry import RetryPolicy
 from effgen.models.together_adapter import TogetherAdapter
 from effgen.models.together_models import TOGETHER_MODELS
 from effgen.models.transformers_engine import TransformersEngine
@@ -167,10 +172,12 @@ __all__ = [
     "RoutingPolicy",
     "RoutingContext",
     "RouterDecision",
+    "RouterEvent",
     "ProviderModelPair",
     "NoCandidateError",
     "FirstAvailablePolicy",
     "CostBasedPolicy",
+    "RetryPolicy",
 
     # Capabilities
     "Capability",
@@ -196,6 +203,9 @@ __all__ = [
     "ModelNotFoundError",
     "AmbiguousModelError",
     "NoCandidateWithinBudgetError",
+    "ProviderTransientError",
+    "AllCandidatesExhaustedError",
+    "InvalidRequestError",
 
     # Provider registry + auth
     "ProviderRegistry",

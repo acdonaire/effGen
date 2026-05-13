@@ -207,6 +207,84 @@ class NoCandidateWithinLatencyError(Exception):
         )
 
 
+class ProviderTransientError(Exception):
+    """Raised when a provider returns a transient server-side error (5xx).
+
+    Attributes:
+        provider:   Provider name (e.g. ``"groq"``).
+        model_name: The model that was requested.
+        status_code: HTTP status code (e.g. 500, 503).
+        message:    Human-readable cause.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        model_name: str = "",
+        status_code: int = 500,
+        message: str = "",
+    ) -> None:
+        self.provider = provider
+        self.model_name = model_name
+        self.status_code = status_code
+        self.message = message
+        suffix = f" (model={model_name!r})" if model_name else ""
+        body = message or "transient server error"
+        super().__init__(f"{provider} {status_code}{suffix}: {body}")
+
+
+class AllCandidatesExhaustedError(Exception):
+    """Raised when all failover hops have been exhausted without a successful response.
+
+    Every candidate in the router's ordered list has either failed with a
+    retriable error or been skipped.  The caller should surface this to the
+    user with the list of failures so they can diagnose the root cause.
+
+    Attributes:
+        failures: List of ``(provider, model_id, exception)`` triples for every
+                  attempted hop.
+        hop_limit: The maximum number of hops that was configured.
+    """
+
+    def __init__(
+        self,
+        failures: "list[tuple[str, str, Exception]]",
+        hop_limit: int = 3,
+    ) -> None:
+        self.failures = failures
+        self.hop_limit = hop_limit
+        self.attempts = len(failures)
+        summary = "; ".join(
+            f"{prov}/{model}: {type(exc).__name__}({exc})"
+            for prov, model, exc in failures
+        )
+        super().__init__(
+            f"All {len(failures)} candidate attempts exhausted after "
+            f"{hop_limit} failover hops. "
+            f"Failures: [{summary}]"
+        )
+
+
+class InvalidRequestError(Exception):
+    """Raised when the request itself is malformed and cannot be retried.
+
+    Examples: invalid JSON schema, unsupported parameter, prompt too long.
+
+    Attributes:
+        provider:   Provider name.
+        model_name: The model that rejected the request.
+        message:    Human-readable cause.
+    """
+
+    def __init__(self, provider: str, model_name: str = "", message: str = "") -> None:
+        self.provider = provider
+        self.model_name = model_name
+        self.message = message
+        suffix = f" (model={model_name!r})" if model_name else ""
+        body = message or "invalid request"
+        super().__init__(f"{provider} invalid request{suffix}: {body}")
+
+
 class ToolIncompatibleError(Exception):
     """Raised when a tool cannot be used with the configured model.
 

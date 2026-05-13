@@ -368,11 +368,31 @@ class TogetherAdapter(BaseModel):
                 is_server = "500" in msg or "503" in msg or "internal" in msg_lower
                 is_timeout = "timeout" in msg_lower
 
-                if is_rate or is_server or is_timeout:
+                if is_rate:
+                    from effgen.models._rate_limit import RateLimitExceeded as _RLE
+
+                    raise _RLE(
+                        f"Together rate limit hit for {self.model_name}: {msg}"
+                    ) from exc
+
+                if is_server or is_timeout:
                     if _attempt >= _MAX_RETRIES:
                         logger.error("Together API error after %d retries: %s", _attempt, exc)
-                        raise RuntimeError(
-                            f"Together API failed for {self.model_name} after {_MAX_RETRIES} retries: {exc}"
+                        if is_timeout:
+                            from effgen.models.errors import ModelTimeoutError as _MTE
+
+                            raise _MTE(
+                                provider="together",
+                                model_name=self.model_name,
+                                timeout_seconds=self.timeout,
+                            ) from exc
+                        from effgen.models.errors import ProviderTransientError as _PTE
+
+                        raise _PTE(
+                            provider="together",
+                            model_name=self.model_name,
+                            status_code=500,
+                            message=f"Together API failed after {_MAX_RETRIES} retries: {exc}",
                         ) from exc
                     delay = min(60.0, 2.0 * (2 ** (_attempt - 1)) + random.uniform(0, 0.5))
                     logger.warning(
@@ -606,6 +626,27 @@ class TogetherAdapter(BaseModel):
                     f"Together model '{self.model_name}' requires a dedicated endpoint. "
                     f"Start it at https://api.together.ai/models/{self.model_name} "
                     f"or use a serverless model: {serverless_models()}"
+                ) from exc
+            if "429" in msg or "rate_limit" in msg_lower or "rate limit" in msg_lower:
+                from effgen.models._rate_limit import RateLimitExceeded as _RLE
+
+                raise _RLE(f"Together rate limit hit for {self.model_name}: {msg}") from exc
+            if "timeout" in msg_lower:
+                from effgen.models.errors import ModelTimeoutError as _MTE
+
+                raise _MTE(
+                    provider="together",
+                    model_name=self.model_name,
+                    timeout_seconds=self.timeout,
+                ) from exc
+            if "500" in msg or "503" in msg or "internal" in msg_lower:
+                from effgen.models.errors import ProviderTransientError as _PTE
+
+                raise _PTE(
+                    provider="together",
+                    model_name=self.model_name,
+                    status_code=500,
+                    message=msg,
                 ) from exc
             logger.error("Together streaming failed: %s", exc)
             raise RuntimeError(f"Together streaming failed: {exc}") from exc

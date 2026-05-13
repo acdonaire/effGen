@@ -351,19 +351,38 @@ class CerebrasAdapter(BaseModel):
                 # Cerebras "queue_exceeded" / "high traffic" — transient backpressure that needs
                 # longer waits than per-minute rate-limits. Treat as retryable but with a longer cap.
                 is_queue = "queue_exceeded" in msg_lower or "high traffic" in msg_lower
-                if is_rate or is_queue:
+                is_server = "500" in msg or "503" in msg or "internal server" in msg_lower
+                if is_rate:
+                    # Raise RateLimitExceeded so the router can failover to another provider
+                    from effgen.models._rate_limit import RateLimitExceeded as _RLE
+                    raise _RLE(
+                        f"Cerebras rate limit hit for {self.model_name}: {exc}"
+                    ) from exc
+                if is_queue:
                     if _attempt >= _MAX_RETRIES:
-                        logger.error("Cerebras rate-limit hit after %d retries: %s", _attempt, exc)
-                        raise RuntimeError(
-                            f"Cerebras rate-limit exceeded for {self.model_name}: {exc}. "
-                            "Check coordinator status via adapter.rate_limit_status()."
+                        logger.error("Cerebras queue exceeded after %d retries: %s", _attempt, exc)
+                        from effgen.models._rate_limit import RateLimitExceeded as _RLE
+                        raise _RLE(
+                            f"Cerebras queue_exceeded for {self.model_name}: {exc}"
                         ) from exc
-                    base = 4.0 if is_queue else 2.0
-                    delay = min(60.0, base * (2 ** (_attempt - 1)) + random.uniform(0, 0.5))
+                    delay = min(60.0, 4.0 * (2 ** (_attempt - 1)) + random.uniform(0, 0.5))
                     logger.warning(
-                        "Cerebras %s on attempt %d/%d — retrying in %.1fs",
-                        "queue_exceeded" if is_queue else "429",
+                        "Cerebras queue_exceeded on attempt %d/%d — retrying in %.1fs",
                         _attempt, _MAX_RETRIES, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                if is_server:
+                    if _attempt >= _MAX_RETRIES:
+                        from effgen.models.errors import ProviderTransientError as _PTE
+                        raise _PTE(
+                            provider="cerebras", model_name=self.model_name, status_code=500,
+                            message=f"Cerebras server error after {_MAX_RETRIES} retries: {exc}",
+                        ) from exc
+                    delay = min(60.0, 2.0 * (2 ** (_attempt - 1)) + random.uniform(0, 0.5))
+                    logger.warning(
+                        "Cerebras server error on attempt %d/%d — retrying in %.1fs: %s",
+                        _attempt, _MAX_RETRIES, delay, exc,
                     )
                     time.sleep(delay)
                     continue
@@ -570,11 +589,18 @@ class CerebrasAdapter(BaseModel):
 
         except Exception as exc:
             msg = str(exc)
+            msg_lower = msg.lower()
             if "404" in msg and "model_not_found" in msg:
                 raise RuntimeError(
                     f"Cerebras streaming failed (model not found): {exc}. "
                     f"Try: {free_tier_models()}"
                 ) from exc
+            if "429" in msg or "rate_limit" in msg_lower:
+                from effgen.models._rate_limit import RateLimitExceeded as _RLE
+                raise _RLE(f"Cerebras rate limit hit for {self.model_name}: {msg}") from exc
+            if "500" in msg or "503" in msg or "internal server" in msg_lower:
+                from effgen.models.errors import ProviderTransientError as _PTE
+                raise _PTE(provider="cerebras", model_name=self.model_name, status_code=500, message=msg) from exc
             logger.error("Cerebras streaming failed: %s", exc)
             raise RuntimeError(f"Cerebras streaming failed: {exc}") from exc
 

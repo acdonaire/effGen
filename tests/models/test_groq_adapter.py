@@ -217,6 +217,32 @@ class TestGroqAdapterGenerate:
         assert tool_call["function"]["name"] == "calculator"
         assert tool_call["function"]["arguments"] == {"expression": "2+2"}
 
+    def test_generate_with_tools_recovers_failed_generation_with_closing_bracket(self):
+        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        adapter._client.chat.completions.create.side_effect = Exception(
+            "Error code: 400 - {'error': {'message': 'Failed to call a function.', "
+            "'type': 'invalid_request_error', 'code': 'tool_use_failed', "
+            "'failed_generation': '<function=calculator>"
+            "{\"expression\": \"(17 * 23) + sqrt(144)\"}</function>'}}"
+        )
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "calculator",
+                "description": "calc",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"expression": {"type": "string"}},
+                },
+            },
+        }]
+        result = adapter.generate_with_tools("What is (17 * 23) + sqrt(144)?", tools)
+        tool_call = result.metadata["tool_calls"][0]
+        assert tool_call["function"]["name"] == "calculator"
+        assert tool_call["function"]["arguments"] == {
+            "expression": "(17 * 23) + sqrt(144)"
+        }
+
     def test_count_tokens_returns_positive(self):
         adapter = self._loaded_adapter()
         tc = adapter.count_tokens("Hello world")

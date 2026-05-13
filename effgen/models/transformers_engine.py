@@ -554,9 +554,9 @@ class TransformersEngine(BatchModel):
                 inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
             # Use TextIteratorStreamer for streaming
-            from threading import Thread
+            from threading import Event, Thread
 
-            from transformers import TextIteratorStreamer
+            from transformers import StoppingCriteria, StoppingCriteriaList, TextIteratorStreamer
 
             streamer = TextIteratorStreamer(
                 self.tokenizer,
@@ -565,6 +565,24 @@ class TransformersEngine(BatchModel):
                 timeout=30.0,  # prevent indefinite block if generation thread dies
             )
 
+            stop_event = Event()
+
+            class _StopOnEvent(StoppingCriteria):
+                def __call__(self, input_ids, scores, **kwargs) -> bool:
+                    return stop_event.is_set()
+
+            stopping_criteria = kwargs.pop("stopping_criteria", None)
+            if stopping_criteria is None:
+                stopping_criteria = StoppingCriteriaList([_StopOnEvent()])
+            elif isinstance(stopping_criteria, StoppingCriteriaList):
+                stopping_criteria.append(_StopOnEvent())
+            else:
+                try:
+                    criteria_items = list(stopping_criteria)
+                except TypeError:
+                    criteria_items = [stopping_criteria]
+                stopping_criteria = StoppingCriteriaList([*criteria_items, _StopOnEvent()])
+
             # Note: stop_sequences not fully supported in streaming mode
             # They would need to be checked in the consumer of the stream
 
@@ -572,6 +590,7 @@ class TransformersEngine(BatchModel):
             generation_kwargs = {
                 **inputs,
                 "generation_config": generation_config,
+                "stopping_criteria": stopping_criteria,
                 "streamer": streamer,
                 **kwargs
             }
@@ -586,13 +605,22 @@ class TransformersEngine(BatchModel):
                     # Unblock the streamer queue so yield-from terminates
                     streamer.end()
 
-            thread = Thread(target=_generate_with_error_capture, daemon=True)
+            thread = Thread(target=_generate_with_error_capture, daemon=False)
             thread.start()
 
-            # Yield tokens as they're generated
-            yield from streamer
+            try:
+                # Yield tokens as they're generated
+                yield from streamer
+            finally:
+                stop_event.set()
+                try:
+                    streamer.end()
+                except Exception:
+                    pass
+                thread.join(timeout=30.0)
 
-            thread.join(timeout=5.0)
+            if thread.is_alive():
+                raise RuntimeError("Streaming generation thread did not exit cleanly")
             if gen_exception:
                 raise gen_exception[0]
 
