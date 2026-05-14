@@ -55,7 +55,7 @@ from effgen.models.base import (
     GenerationResult,
     TokenCount,
 )
-from effgen.models.errors import ModelAuthError, ModelTimeoutError
+from effgen.models.errors import BudgetExceededError, ModelAuthError, ModelTimeoutError
 from effgen.models.latency_tracker import timed_call
 from effgen.models.replicate_models import (
     REGISTRY_FETCH_DATE,
@@ -536,15 +536,17 @@ class ReplicateAdapter(BaseModel):
 
         if self._enable_cost_tracking and cost_usd:
             try:
-                CostTracker.instance().record(
+                CostTracker.get().record(
                     provider="replicate",
                     model=self.model_name,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cost_usd=cost_usd,
                 )
+            except BudgetExceededError:
+                raise
             except Exception:
-                pass
+                logger.debug("CostTracker recording failed for Replicate", exc_info=True)
 
         metadata = {
             "provider": "replicate",

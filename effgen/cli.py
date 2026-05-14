@@ -1231,11 +1231,46 @@ class CLIInterface:
             self._config_validate(args)
         elif args.config_command == 'init':
             self._config_init(args)
+        elif args.config_command == 'set':
+            self._config_set(args)
         else:
             self.print_error(f"Unknown config command: {args.config_command}")
             return 1
 
         return 0
+
+    def _config_set(self, args):
+        """Handle 'effgen config set <key> <value>'."""
+        key: str = args.key
+        value_str: str = args.value
+
+        # Route budget.* keys to the cost tracker's budget config.
+        if key.startswith("budget."):
+            budget_key = key[len("budget."):]
+            if budget_key not in {"daily", "monthly"}:
+                self.print_error(
+                    f"Unknown budget key: {key!r}. Supported: budget.daily, budget.monthly"
+                )
+                return
+            try:
+                value = float(value_str)
+            except ValueError:
+                self.print_error(f"Budget value must be a number, got: {value_str!r}")
+                return
+            from effgen.models._cost import _BUDGET_CONFIG_PATH
+            budget_path = _BUDGET_CONFIG_PATH
+            budget_path.parent.mkdir(parents=True, exist_ok=True)
+            existing: dict = {}
+            if budget_path.exists():
+                try:
+                    existing = json.loads(budget_path.read_text())
+                except Exception:
+                    pass
+            existing[budget_key] = value
+            budget_path.write_text(json.dumps(existing, indent=2))
+            self.print_success(f"Set {key} = {value}")
+        else:
+            self.print_error(f"Unknown config key: {key!r}. Supported: budget.daily, budget.monthly")
 
     def _config_show(self, args):
         """Show current configuration."""
@@ -1789,6 +1824,10 @@ Examples:
     config_init.add_argument('-o', '--output', help='Output file')
     config_init.add_argument('--force', action='store_true', help='Overwrite existing file')
 
+    config_set = config_subparsers.add_parser('set', help='Set a configuration value (e.g. budget.daily 1.0)')
+    config_set.add_argument('key', help='Config key (e.g. budget.daily, budget.monthly)')
+    config_set.add_argument('value', help='Config value')
+
     # Tools commands
     tools_parser = subparsers.add_parser('tools', help='Tool management')
     tools_subparsers = tools_parser.add_subparsers(dest='tool_command', help='Tools command')
@@ -1914,6 +1953,16 @@ Examples:
                               help='Use a preset agent configuration')
     debug_parser.add_argument('--step', action='store_true', help='Step through each iteration')
 
+    # Cost command — spend dashboard + budget management
+    cost_parser = subparsers.add_parser('cost', help='View cost spend and manage budgets')
+    cost_subparsers = cost_parser.add_subparsers(dest='cost_command', help='Cost command')
+    cost_subparsers.add_parser('today', help='Show per-provider/model spend for the last 24 hours')
+    cost_subparsers.add_parser('week', help='Show rolling 7-day spend summary')
+    cost_subparsers.add_parser('by-provider', help='Show lifetime totals grouped by provider')
+    cost_set_budget = cost_subparsers.add_parser('set-budget', help='Set a daily spend budget')
+    cost_set_budget.add_argument('amount', type=float, help='Daily budget in USD (e.g. 1.0)')
+    cost_subparsers.add_parser('clear-budget', help='Remove configured budget limits')
+
     return parser
 
 
@@ -2011,6 +2060,157 @@ dependencies = ["effgen"]
     print(f"  {pkg / 'tools.py':}       — add your custom tools here")
     print(f"  {pkg / 'plugin.py'}     — register tools in the plugin class")
     print(f"  {base / 'pyproject.toml'} — package metadata & entry point")
+    return 0
+
+
+def _handle_cost_command(args, cli: "CLIInterface") -> int:
+    """Handle the 'effgen cost' subcommand: spend dashboard and budget management."""
+    import json as _json
+
+    try:
+        from effgen.models._cost_store import SQLiteCostStore
+    except ImportError:
+        cli.print_error("Cost store not available. Please reinstall effGen.")
+        return 1
+
+    cost_cmd = getattr(args, 'cost_command', None)
+
+    # Budget management subcommands
+    from effgen.models._cost import _BUDGET_CONFIG_PATH
+    budget_path = _BUDGET_CONFIG_PATH
+
+    if cost_cmd == 'set-budget':
+        amount = float(args.amount)
+        budget_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = {}
+        if budget_path.exists():
+            try:
+                existing = _json.loads(budget_path.read_text())
+            except Exception:
+                pass
+        existing['daily'] = amount
+        budget_path.write_text(_json.dumps(existing, indent=2))
+        cli.print_success(f"Daily budget set to ${amount:.4f} USD")
+        return 0
+
+    if cost_cmd == 'clear-budget':
+        if budget_path.exists():
+            try:
+                cfg = _json.loads(budget_path.read_text())
+                cfg.pop('daily', None)
+                cfg.pop('monthly', None)
+                budget_path.write_text(_json.dumps(cfg, indent=2))
+                cli.print_success("Budget limits cleared.")
+            except Exception as e:
+                cli.print_error(f"Failed to clear budget: {e}")
+                return 1
+        else:
+            cli.print("No budget configured.")
+        return 0
+
+    # Spend-report subcommands
+    store = SQLiteCostStore()
+
+    if cost_cmd == 'today' or cost_cmd is None:
+        events = store.query_today()
+        period_label = "Last 24 hours"
+    elif cost_cmd == 'week':
+        events = store.query_week()
+        period_label = "Last 7 days"
+    elif cost_cmd == 'by-provider':
+        events = store.query_all()
+        period_label = "Lifetime"
+    else:
+        cli.print_error(f"Unknown cost command: {cost_cmd}")
+        cli.print("Usage: effgen cost [today|week|by-provider|set-budget|clear-budget]")
+        return 1
+
+    # Aggregate events by (provider, model), except by-provider which intentionally
+    # collapses all models for each provider into one lifetime row.
+    group_by_provider = cost_cmd == 'by-provider'
+    agg: dict[tuple[str, str], dict] = {}
+    for ev in events:
+        model_label = "all models" if group_by_provider else ev.model
+        key = (ev.provider, model_label)
+        if key not in agg:
+            agg[key] = {
+                'provider': ev.provider,
+                'model': model_label,
+                'requests': 0,
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'cost_usd': 0.0,
+            }
+        agg[key]['requests'] += 1
+        agg[key]['prompt_tokens'] += ev.prompt_tokens
+        agg[key]['completion_tokens'] += ev.completion_tokens
+        agg[key]['cost_usd'] += ev.cost_usd
+
+    rows = sorted(agg.values(), key=lambda r: r['cost_usd'], reverse=True)
+    total_cost = sum(r['cost_usd'] for r in rows)
+    total_requests = sum(r['requests'] for r in rows)
+
+    # Load budget for display
+    budget_cfg = {}
+    if budget_path.exists():
+        try:
+            budget_cfg = _json.loads(budget_path.read_text())
+        except Exception:
+            pass
+    daily_budget = budget_cfg.get('daily')
+
+    if RICH_AVAILABLE and cli.console:
+        table = Table(title=f"effGen Cost Summary — {period_label}", show_footer=True)
+        table.add_column("Provider", style="cyan", no_wrap=True)
+        table.add_column("Model", style="white")
+        table.add_column("Requests", style="yellow", justify="right")
+        table.add_column("Prompt Tokens", style="blue", justify="right")
+        table.add_column("Completion Tokens", style="blue", justify="right")
+        table.add_column("Cost (USD)", style="green", justify="right",
+                         footer=f"${total_cost:.6f}")
+
+        if not rows:
+            table.add_row("—", "No data", "0", "0", "0", "$0.000000")
+        else:
+            for r in rows:
+                table.add_row(
+                    r['provider'],
+                    r['model'],
+                    str(r['requests']),
+                    f"{r['prompt_tokens']:,}",
+                    f"{r['completion_tokens']:,}",
+                    f"${r['cost_usd']:.6f}",
+                )
+
+        cli.console.print(table)
+        cli.console.print(f"\n[bold]Total:[/bold] {total_requests} requests  "
+                          f"[green]${total_cost:.6f} USD[/green]")
+        if daily_budget is not None:
+            ratio = total_cost / daily_budget if daily_budget > 0 else 0
+            filled = min(20, max(0, int(ratio * 20)))
+            bar = "█" * filled + "░" * (20 - filled)
+            color = "red" if ratio >= 1.0 else "yellow" if ratio >= 0.8 else "green"
+            cli.console.print(
+                f"[bold]Daily budget:[/bold] [{color}]{bar}[/{color}] "
+                f"${total_cost:.4f} / ${daily_budget:.4f} ({ratio*100:.0f}%)"
+            )
+    else:
+        print(f"\neffGen Cost Summary — {period_label}")
+        print("-" * 80)
+        print(f"{'Provider':<15} {'Model':<35} {'Reqs':>5} {'Cost (USD)':>12}")
+        print("-" * 80)
+        if not rows:
+            print("  (no data)")
+        else:
+            for r in rows:
+                model_short = r['model'][:34] if len(r['model']) > 34 else r['model']
+                print(f"{r['provider']:<15} {model_short:<35} {r['requests']:>5} ${r['cost_usd']:>11.6f}")
+        print("-" * 80)
+        print(f"{'TOTAL':<15} {'':<35} {total_requests:>5} ${total_cost:>11.6f}")
+        if daily_budget is not None:
+            ratio = total_cost / daily_budget if daily_budget > 0 else 0
+            print(f"\nDaily budget: ${total_cost:.4f} / ${daily_budget:.4f} ({ratio*100:.0f}%)")
+
     return 0
 
 
@@ -2530,6 +2730,8 @@ def main():
             exit_code = _handle_eval_command(args, cli)
         elif args.command == 'compare':
             exit_code = _handle_compare_command(args, cli)
+        elif args.command == 'cost':
+            exit_code = _handle_cost_command(args, cli)
         elif args.command == 'debug':
             from effgen.debug.inspector import run_debug_cli
             run_debug_cli(

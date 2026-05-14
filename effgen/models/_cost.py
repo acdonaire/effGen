@@ -1,10 +1,10 @@
 """
-In-memory cost tracker for effGen model adapters.
+Cost tracker for effGen model adapters.
 
 Accumulates prompt and completion token counts per (provider, model) pair
 and converts them to USD using per-provider rate tables.  Cerebras free-tier
-cost is $0.  Other providers use placeholder rates that will be refined in
-later versions.
+cost is $0.  The process-global tracker persists events to SQLite so the
+``effgen cost`` CLI can summarize spend across restarts.
 
 Usage::
 
@@ -18,23 +18,40 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
+import warnings
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
+
+_BUDGET_CONFIG_PATH = Path.home() / ".effgen" / "budget.json"
+
+
+def _load_budget() -> dict:
+    """Load budget config from ~/.effgen/budget.json (returns empty dict if absent)."""
+    try:
+        if _BUDGET_CONFIG_PATH.exists():
+            return json.loads(_BUDGET_CONFIG_PATH.read_text())
+    except Exception:
+        pass
+    return {}
 
 # ---------------------------------------------------------------------------
 # Per-million-token rates (USD).  [input_per_M, output_per_M]
 #
 # Status key:
-#   OFFICIAL   — rate reflects the current provider-published list price
+#   OFFICIAL   - rate reflects the current provider-published list price
 #                (Cerebras free tier = $0 is official; verified 2026-04-24).
-#   PLACEHOLDER — rate will be refined in v0.2.4 (cost-aware router phase).
+#   PLACEHOLDER - rate will be refined as provider pricing changes.
 #                Treat numbers here as rough guidance, not billing truth.
 #
-# Persistence: this tracker is IN-MEMORY only — the per-process singleton is
-# cleared on restart.  A durable backend (sqlite) lands in v0.2.4.
+# The process-global tracker persists events to SQLite. Constructing
+# ``CostTracker(storage=None)`` keeps the old in-memory behavior for callers
+# that need isolated accounting.
 # ---------------------------------------------------------------------------
 _RATES: dict[str, dict[str, tuple[float, float]]] = {
     "cerebras": {
@@ -178,10 +195,23 @@ class _ModelStats:
 
 
 class CostTracker:
-    """Thread-safe, in-memory cost tracker.
+    """Thread-safe cost tracker with optional SQLite persistence and budget alerts.
 
-    A singleton per process (use :meth:`get`).  Supports multiple providers
-    and models simultaneously.  Cerebras free-tier cost is always $0.
+    Use :meth:`get` for the process-global singleton (default: SQLite-backed).
+    Pass ``storage=None`` to get a pure in-memory instance (back-compat).
+
+    Budget alerts
+    -------------
+    Set budgets via ``effgen config set budget.daily 1.0`` (writes
+    ``~/.effgen/budget.json``).  On each :meth:`record` call:
+
+    - At 80% of daily or monthly budget → :class:`UserWarning` is emitted.
+    - At 100% → :class:`~effgen.models.errors.BudgetExceededError` is raised
+      for paid calls. Zero-cost calls are still allowed so router failover can
+      land on free-tier providers.
+
+    The router catches ``BudgetExceededError`` and fails over to a free-tier
+    provider when available.
 
     Example::
 
@@ -190,12 +220,16 @@ class CostTracker:
         print(f"Cost: ${cost:.6f}")  # 0.000000 for Cerebras free tier
     """
 
-    _instance: CostTracker | None = None
+    _instance: "CostTracker | None" = None
     _lock: threading.Lock = threading.Lock()
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        storage: "SQLiteCostStore | None" = None,
+    ) -> None:
         self._data: dict[tuple[str, str], _ModelStats] = {}
         self._lock = threading.Lock()
+        self._storage = storage
 
     # ------------------------------------------------------------------
     # Singleton access
@@ -203,12 +237,23 @@ class CostTracker:
 
     @classmethod
     def get(cls) -> "CostTracker":
-        """Return the process-global CostTracker instance."""
+        """Return the process-global CostTracker instance (SQLite-backed)."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
-                    cls._instance = cls()
+                    from effgen.models._cost_store import SQLiteCostStore
+                    cls._instance = cls(storage=SQLiteCostStore())
         return cls._instance
+
+    @classmethod
+    def instance(cls) -> "CostTracker":
+        """Backward-compatible alias for :meth:`get`."""
+        return cls.get()
+
+    @classmethod
+    def get_instance(cls) -> "CostTracker":
+        """Backward-compatible alias for :meth:`get`."""
+        return cls.get()
 
     @classmethod
     def reset(cls) -> None:
@@ -224,8 +269,12 @@ class CostTracker:
         self,
         provider: str,
         model: str,
-        prompt_tokens: int,
-        completion_tokens: int,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        *,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        cost_usd: float | None = None,
     ) -> float:
         """Record a completed API call and return the USD cost.
 
@@ -234,12 +283,30 @@ class CostTracker:
             model: Model ID, e.g. ``"llama3.1-8b"``.
             prompt_tokens: Tokens in the prompt (from API usage).
             completion_tokens: Tokens in the completion (from API usage).
+            input_tokens: Alias for ``prompt_tokens`` used by some adapters.
+            output_tokens: Alias for ``completion_tokens`` used by some adapters.
+            cost_usd: Optional precomputed USD cost override for providers that
+                do not bill by prompt/completion token price.
 
         Returns:
             USD cost for this call (0.0 for Cerebras free tier).
+
+        Raises:
+            BudgetExceededError: If daily budget is configured and exceeded.
         """
+        import time
+
+        if input_tokens is not None:
+            prompt_tokens = input_tokens
+        if output_tokens is not None:
+            completion_tokens = output_tokens
+
         input_rate, output_rate = _rate(provider, model)
-        cost = (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000
+        cost = (
+            float(cost_usd)
+            if cost_usd is not None
+            else (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000
+        )
 
         key = (provider.lower(), model)
         with self._lock:
@@ -251,14 +318,88 @@ class CostTracker:
             stats.requests += 1
             stats.total_cost_usd += cost
 
+        if self._storage is not None:
+            try:
+                self._storage.insert(
+                    provider=provider,
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost_usd=cost,
+                    timestamp=time.time(),
+                )
+            except Exception as exc:
+                logger.warning("CostStore insert failed: %s", exc)
+
         logger.debug(
             "CostTracker.record %s/%s: prompt=%d completion=%d cost=$%.6f",
             provider, model, prompt_tokens, completion_tokens, cost,
         )
+
+        self._check_budget(provider=provider, model=model, cost=cost)
         return cost
 
+    def _check_budget(self, provider: str, model: str, cost: float) -> None:
+        """Emit a warning or raise BudgetExceededError for configured budgets."""
+        budget_cfg = _load_budget()
+        for period in ("daily", "monthly"):
+            raw_budget = budget_cfg.get(period)
+            if raw_budget is None:
+                continue
+
+            try:
+                budget_usd = float(raw_budget)
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid %s budget value: %r", period, raw_budget)
+                continue
+            if budget_usd <= 0:
+                continue
+
+            spend = self._period_spend(period)
+            previous_spend = max(0.0, spend - cost)
+            ratio = spend / budget_usd
+
+            if ratio >= 1.0:
+                if cost <= 0.0:
+                    continue
+                from effgen.models.errors import BudgetExceededError
+                raise BudgetExceededError(
+                    budget_usd=budget_usd,
+                    actual_usd=spend,
+                    period=period,
+                    provider=provider,
+                    model=model,
+                )
+
+            if previous_spend < budget_usd * 0.8 <= spend:
+                warnings.warn(
+                    f"effGen {period} budget warning: ${spend:.4f} / ${budget_usd:.4f} "
+                    f"({ratio * 100:.0f}%) spent.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+
+    def _period_spend(self, period: str) -> float:
+        """Return spend for *period* using storage when available."""
+        if self._storage is not None:
+            try:
+                if period == "daily":
+                    return sum(e.cost_usd for e in self._storage.query_today())
+                if period == "monthly":
+                    query_month = getattr(self._storage, "query_month", None)
+                    if query_month is not None:
+                        return sum(e.cost_usd for e in query_month())
+                    import time
+
+                    return sum(e.cost_usd for e in self._storage.query_since(
+                        time.time() - 30 * 86400.0
+                    ))
+            except Exception:
+                logger.warning("CostStore budget query failed; falling back to memory")
+        return self.total_cost()
+
     def total_cost(self, provider: str | None = None, model: str | None = None) -> float:
-        """Return total USD cost, optionally filtered by provider and/or model.
+        """Return total USD cost accumulated in memory, optionally filtered.
 
         Args:
             provider: Filter to this provider (None = all providers).
@@ -295,7 +436,7 @@ class CostTracker:
         return {"prompt": prompt, "completion": completion, "total": prompt + completion}
 
     def summary(self) -> list[dict]:
-        """Return a list of per-(provider, model) usage summaries.
+        """Return a list of per-(provider, model) usage summaries (in-memory).
 
         Returns:
             List of dicts with keys: ``provider``, ``model``, ``requests``,
@@ -317,6 +458,10 @@ class CostTracker:
         return rows
 
     def reset_stats(self) -> None:
-        """Clear all accumulated stats (does not reset singleton)."""
+        """Clear all accumulated in-memory stats (does not reset singleton or DB)."""
         with self._lock:
             self._data.clear()
+
+
+if TYPE_CHECKING:
+    from effgen.models._cost_store import SQLiteCostStore

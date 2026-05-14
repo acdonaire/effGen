@@ -285,6 +285,41 @@ class InvalidRequestError(Exception):
         super().__init__(f"{provider} invalid request{suffix}: {body}")
 
 
+class BudgetExceededError(Exception):
+    """Raised when cumulative spend crosses the configured daily/monthly budget.
+
+    The router treats this as a retriable error and attempts failover to a
+    free-tier provider when one is available.
+
+    Attributes:
+        budget_usd:   The budget limit that was crossed.
+        actual_usd:   Current cumulative spend.
+        period:       ``"daily"`` or ``"monthly"``.
+        provider:     Provider that triggered the alert (if known).
+        model:        Model that triggered the alert (if known).
+    """
+
+    def __init__(
+        self,
+        budget_usd: float,
+        actual_usd: float,
+        period: str = "daily",
+        provider: str = "",
+        model: str = "",
+    ) -> None:
+        self.budget_usd = budget_usd
+        self.actual_usd = actual_usd
+        self.period = period
+        self.provider = provider
+        self.model = model
+        ctx = f" (provider={provider!r}, model={model!r})" if provider else ""
+        super().__init__(
+            f"{period.capitalize()} budget ${budget_usd:.4f} exceeded: "
+            f"actual=${actual_usd:.4f}{ctx}. "
+            "Router will attempt failover to a free-tier provider."
+        )
+
+
 class ToolIncompatibleError(Exception):
     """Raised when a tool cannot be used with the configured model.
 

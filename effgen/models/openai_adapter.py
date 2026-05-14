@@ -27,7 +27,12 @@ from effgen.models.base import (
     ModelType,
     TokenCount,
 )
-from effgen.models.errors import ModelAuthError, ModelNotFoundError, ModelRefusalError
+from effgen.models.errors import (
+    BudgetExceededError,
+    ModelAuthError,
+    ModelNotFoundError,
+    ModelRefusalError,
+)
 from effgen.models.latency_tracker import timed_call
 from effgen.models.openai_models import (
     OPENAI_MODELS,
@@ -280,14 +285,16 @@ class OpenAIAdapter(FunctionCallingModel):
 
         try:
             from effgen.models._cost import CostTracker
-            CostTracker.get_instance().record(
+            CostTracker.get().record(
                 provider="openai",
                 model=self.model_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
             )
+        except BudgetExceededError:
+            raise
         except Exception:
-            pass
+            logger.debug("CostTracker recording failed for OpenAI", exc_info=True)
         return cost
 
     # ------------------------------------------------------------------

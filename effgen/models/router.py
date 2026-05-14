@@ -244,13 +244,15 @@ class RouterEvent:
 def _exc_to_reason(exc: Exception) -> str:
     """Map an exception to a short human-readable failover reason string."""
     from effgen.models._rate_limit import RateLimitExceeded
-    from effgen.models.errors import ModelTimeoutError, ProviderTransientError
+    from effgen.models.errors import BudgetExceededError, ModelTimeoutError, ProviderTransientError
     if isinstance(exc, RateLimitExceeded):
         return "rate_limited"
     if isinstance(exc, ProviderTransientError):
         return f"transient_error_{exc.status_code}"
     if isinstance(exc, ModelTimeoutError):
         return "timeout"
+    if isinstance(exc, BudgetExceededError):
+        return f"budget_exceeded_{exc.period}"
     return type(exc).__name__.lower()
 
 

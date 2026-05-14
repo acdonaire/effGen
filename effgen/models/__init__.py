@@ -59,6 +59,7 @@ from effgen.models.cerebras_adapter import CerebrasAdapter
 from effgen.models.errors import (
     AllCandidatesExhaustedError,
     AmbiguousModelError,
+    BudgetExceededError,
     InvalidRequestError,
     ModelAuthError,
     ModelNotFoundError,
@@ -212,6 +213,7 @@ __all__ = [
     "ProviderTransientError",
     "AllCandidatesExhaustedError",
     "InvalidRequestError",
+    "BudgetExceededError",
 
     # Provider registry + auth
     "ProviderRegistry",

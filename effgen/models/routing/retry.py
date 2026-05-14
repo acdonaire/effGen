@@ -41,6 +41,7 @@ from typing import Any, TypeVar
 
 from effgen.models._rate_limit import RateLimitExceeded
 from effgen.models.errors import (
+    BudgetExceededError,
     InvalidRequestError,
     ModelAuthError,
     ModelRefusalError,
@@ -51,8 +52,8 @@ from effgen.models.errors import (
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
-# Exceptions that are safe to retry.
-_RETRIABLE = (RateLimitExceeded, ProviderTransientError, ModelTimeoutError)
+# Exceptions that are safe to retry (with failover to another provider).
+_RETRIABLE = (RateLimitExceeded, ProviderTransientError, ModelTimeoutError, BudgetExceededError)
 
 # Exceptions that must NEVER be retried.
 _NON_RETRIABLE = (ModelAuthError, ModelRefusalError, InvalidRequestError)

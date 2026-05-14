@@ -1,25 +1,30 @@
 {
-  "version": "0.2.0-cerebras-llama3.1-8b",
-  "timestamp": "2026-04-24T10:26:31.498941+00:00",
+  "version": "0.2.4-cerebras-llama3.1-8b",
+  "timestamp": "2026-05-14T07:57:18.128054+00:00",
   "summary": {
     "suite": "math",
-    "total": 10,
-    "passed": 9,
-    "accuracy": 0.9,
-    "avg_latency": 11.2776,
-    "total_tokens": 3194,
+    "total": 20,
+    "passed": 17,
+    "accuracy": 0.85,
+    "avg_latency": 0.2307,
+    "total_tokens": 1072,
     "avg_tool_accuracy": 0.0,
     "by_difficulty": {
       "easy": {
-        "total": 10,
-        "passed": 9,
-        "accuracy": 0.9
+        "total": 15,
+        "passed": 15,
+        "accuracy": 1.0
+      },
+      "medium": {
+        "total": 5,
+        "passed": 2,
+        "accuracy": 0.4
       }
     },
     "metadata": {
       "scoring": "contains",
       "pass_threshold": 0.5,
-      "num_cases": 10
+      "num_cases": 20
     }
   }
 }

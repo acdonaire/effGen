@@ -46,6 +46,7 @@ from effgen.models.base import (
     TokenCount,
 )
 from effgen.models.errors import (
+    BudgetExceededError,
     ModelAuthError,
     ModelNotFoundError,
     ModelUnavailableError,
@@ -584,15 +585,17 @@ class HFInferenceAdapter(BaseModel):
 
         if self._enable_cost_tracking and cost_usd:
             try:
-                CostTracker.instance().record(
+                CostTracker.get().record(
                     provider="hf_inference",
                     model=self.model_name,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cost_usd=cost_usd,
                 )
+            except BudgetExceededError:
+                raise
             except Exception:
-                pass
+                logger.debug("CostTracker recording failed for HF Inference", exc_info=True)
 
         metadata = {
             "provider": "hf_inference",
