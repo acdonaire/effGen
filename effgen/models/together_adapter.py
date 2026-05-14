@@ -18,7 +18,7 @@ import os
 import random
 import time
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -36,6 +36,9 @@ from effgen.models.together_models import (
     available_models,
     serverless_models,
 )
+
+if TYPE_CHECKING:
+    from effgen.models._rate_limit_store import SQLiteRateLimitStore
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +101,7 @@ class TogetherAdapter(BaseModel):
         timeout: int = 60,
         enable_rate_limiting: bool = True,
         enable_cost_tracking: bool = True,
+        rate_limit_storage: "SQLiteRateLimitStore | None" = None,
         **kwargs: Any,
     ) -> None:
         if model_name not in TOGETHER_MODELS:
@@ -143,6 +147,7 @@ class TogetherAdapter(BaseModel):
                 tpm=info.get("tpm", 100_000),
                 tph=info.get("tpm", 100_000) * 60,
                 tpd=10_000_000,
+                storage=rate_limit_storage,
             )
 
     # ------------------------------------------------------------------

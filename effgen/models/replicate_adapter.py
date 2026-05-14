@@ -45,7 +45,7 @@ import logging
 import os
 import time
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -62,6 +62,9 @@ from effgen.models.replicate_models import (
     REPLICATE_DEFAULT_MODEL,
     REPLICATE_MODELS,
 )
+
+if TYPE_CHECKING:
+    from effgen.models._rate_limit_store import SQLiteRateLimitStore
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +133,7 @@ class ReplicateAdapter(BaseModel):
         enable_rate_limiting: bool = True,
         enable_cost_tracking: bool = True,
         warn_unknown_model: bool = True,
+        rate_limit_storage: "SQLiteRateLimitStore | None" = None,
         **kwargs: Any,
     ) -> None:
         info = REPLICATE_MODELS.get(model_name)
@@ -170,6 +174,7 @@ class ReplicateAdapter(BaseModel):
                 tpm=1_000_000,
                 tph=10_000_000,
                 tpd=100_000_000,
+                storage=rate_limit_storage,
             )
 
     # ------------------------------------------------------------------

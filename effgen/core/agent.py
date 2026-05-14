@@ -1135,6 +1135,27 @@ Question: {task}
 
             _slog.iteration_event(iterations, "generate", tokens=iter_tokens)
 
+            if response.get("finish_reason") == "error":
+                metadata = response.get("metadata") or {}
+                error_text = str(metadata.get("error") or "generation_error")
+                meta_fail: dict[str, Any] = {
+                    "reason": "generation_error",
+                    "error": error_text,
+                }
+                if debug_trace is not None:
+                    debug_trace.total_tokens = tokens_used
+                    debug_trace.success = False
+                    meta_fail["debug_trace"] = debug_trace
+                return AgentResponse(
+                    output=error_text,
+                    success=False,
+                    mode=AgentMode.SINGLE,
+                    iterations=iterations,
+                    tool_calls=tool_calls,
+                    tokens_used=tokens_used,
+                    metadata=meta_fail,
+                )
+
             # Debug: Log the raw response
             logger.info(f"[Iteration {iterations}] Raw model output: {response['text'][:300]}...")
             logger.debug(f"[Iteration {iterations}] Full model output: {response['text']}")

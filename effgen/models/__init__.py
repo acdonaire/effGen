@@ -23,6 +23,8 @@ Example:
     >>> print(result.text)
 """
 
+from effgen.models._rate_limit import RateLimitCoordinator
+from effgen.models._rate_limit_store import SQLiteRateLimitStore
 from effgen.models.anthropic_adapter import AnthropicAdapter, StreamChunk
 from effgen.models.anthropic_cache import (
     MAX_CACHE_BREAKPOINTS,
@@ -194,6 +196,10 @@ __all__ = [
 
     "LazyModel",
     "ContinuousBatcher",
+
+    # Rate-limit coordination
+    "RateLimitCoordinator",
+    "SQLiteRateLimitStore",
 
     # Errors
     "ModelRefusalError",

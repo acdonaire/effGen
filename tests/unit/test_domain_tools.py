@@ -360,14 +360,17 @@ def test_system_info_memory_only():
 
 @needs_net
 def test_http_get_json_response():
-    out = _ok(_run(HTTPTool().execute(
-        url="https://api.github.com/repos/ctrl-gaurav/effGen",
+    result = _run(HTTPTool().execute(
+        url="https://httpbin.org/get",
         method="GET",
         headers={"User-Agent": "effGen-tests"},
-    )))
+    ))
+    if not result.success:
+        pytest.skip(f"httpbin.org unreachable: {result.error}")
+    out = result.output
     assert out["status"] == 200
     assert out["json"] is not None
-    assert out["json"].get("name", "").lower() == "effgen"
+    assert "headers" in out["json"]
 
 
 def test_http_invalid_scheme_rejected():

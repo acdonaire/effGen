@@ -91,6 +91,7 @@ from effgen.models import (
     load_model,
 )
 from effgen.models._rate_limit import RateLimitCoordinator, RateLimitExceeded  # noqa: I001
+from effgen.models._rate_limit_store import SQLiteRateLimitStore  # noqa: I001
 from effgen.models.auth import check_keys
 from effgen.models.cerebras_models import available_models as cerebras_available_models
 from effgen.models.cerebras_models import free_tier_models as cerebras_free_tier_models
@@ -262,6 +263,7 @@ __all__ = [
     "CostBasedPolicy",
     "RateLimitCoordinator",
     "RateLimitExceeded",
+    "SQLiteRateLimitStore",
     "ModelRefusalError",
     "ModelAuthError",
     "ModelTimeoutError",

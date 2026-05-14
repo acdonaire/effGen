@@ -407,6 +407,75 @@ class MyPolicy(RoutingPolicy):
         raise NoCandidateError("no candidate found")
 ```
 
+## Running multiple workers (cross-process rate-limit coordination)
+
+By default, `RateLimitCoordinator` is in-memory and scoped to a single process.
+In multi-worker deployments (Gunicorn, Celery, Ray), each worker would
+independently track its own window, allowing the combined burst to exceed the
+provider's real limit.
+
+Use `SQLiteRateLimitStore` to share rate-limit state across processes via a
+SQLite database:
+
+```python
+from effgen.models._rate_limit import RateLimitCoordinator
+from effgen.models._rate_limit_store import SQLiteRateLimitStore
+
+# All workers must point to the same DB path
+store = SQLiteRateLimitStore()  # ~/.effgen/rate_limits.sqlite
+
+coord = RateLimitCoordinator(
+    provider="groq",
+    model="llama-3.3-70b-versatile",
+    rpm=30, rph=1800, rpd=14_400,
+    tpm=6_000, tph=500_000, tpd=500_000,
+    storage=store,              # <-- enables cross-process coordination
+)
+
+# Now acquire/record as usual. acquire() reserves the request slot in SQLite
+# before the API call starts; record() reconciles actual token usage.
+async def call_api():
+    await coord.acquire(tokens_estimate=100)
+    result = await make_groq_call()
+    coord.record(actual_tokens=result.usage.total_tokens)
+    return result
+```
+
+Adapters that already use `RateLimitCoordinator` can use the same store through
+`load_model` kwargs:
+
+```python
+from effgen.models import SQLiteRateLimitStore, load_model
+
+store = SQLiteRateLimitStore()
+model = load_model(
+    "llama-3.1-8b-instant",
+    provider="groq",
+    rate_limit_storage=store,
+)
+```
+
+### How it works
+
+- Events are written to `rate_events` table with `BEGIN IMMEDIATE` transactions (WAL mode).
+- Each `acquire()` atomically reads the current cross-process window counts and reserves capacity in SQLite before deciding whether to sleep.
+- `cleanup_storage()` removes events older than 24 h + 10 % to keep the DB small.
+
+### Housekeeping
+
+Run cleanup periodically (e.g. on worker startup):
+
+```python
+deleted = coord.cleanup_storage()
+print(f"Removed {deleted} stale events")
+```
+
+### Notes
+
+- In-memory mode (no `storage=` arg) is fully preserved for back-compat.
+- SQLite WAL mode gives multi-reader / single-writer semantics without external locks.
+- For very high-throughput workers (> 1000 rpm), prefer Redis-based coordination instead.
+
 ## Back-compat note
 
 The complexity-based `ModelRouter(models=[...]).select(...)` path for local

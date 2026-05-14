@@ -14,7 +14,7 @@ import os
 import random
 import time
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -33,6 +33,9 @@ from effgen.models.cerebras_models import (
 )
 from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.latency_tracker import timed_call
+
+if TYPE_CHECKING:
+    from effgen.models._rate_limit_store import SQLiteRateLimitStore
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +99,7 @@ class CerebrasAdapter(BaseModel):
         timeout: int = 60,
         enable_rate_limiting: bool = True,
         enable_cost_tracking: bool = True,
+        rate_limit_storage: "SQLiteRateLimitStore | None" = None,
         **kwargs: Any,
     ) -> None:
         if model_name not in CEREBRAS_MODELS:
@@ -131,6 +135,7 @@ class CerebrasAdapter(BaseModel):
                 tpm=info.get("tpm", 60_000),
                 tph=info.get("tph", 1_000_000),
                 tpd=info.get("tpd", 1_000_000),
+                storage=rate_limit_storage,
             )
 
     # ------------------------------------------------------------------

@@ -17,7 +17,7 @@ import os
 import random
 import time
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -34,6 +34,9 @@ from effgen.models.fireworks_models import (
     REGISTRY_FETCH_DATE,
 )
 from effgen.models.latency_tracker import timed_call
+
+if TYPE_CHECKING:
+    from effgen.models._rate_limit_store import SQLiteRateLimitStore
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,7 @@ class FireworksAdapter(BaseModel):
         enable_rate_limiting: bool = True,
         enable_cost_tracking: bool = True,
         warn_unknown_model: bool = True,
+        rate_limit_storage: "SQLiteRateLimitStore | None" = None,
         **kwargs: Any,
     ) -> None:
         # Normalise short IDs → full path
@@ -144,6 +148,7 @@ class FireworksAdapter(BaseModel):
                 tpm=info.get("tpm", 40_000),
                 tph=info.get("tpm", 40_000) * 60,
                 tpd=10_000_000,
+                storage=rate_limit_storage,
             )
 
     # ------------------------------------------------------------------

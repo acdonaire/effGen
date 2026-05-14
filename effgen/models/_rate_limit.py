@@ -1,17 +1,30 @@
 """
 Sliding-window rate-limit coordinator for effGen model adapters.
 
-In-memory implementation.  Persistence across processes is not yet supported.
+Supports both in-memory (default, back-compat) and SQLite-backed persistence
+for cross-process rate-limit coordination.
 
 Usage::
 
     from effgen.models._rate_limit import RateLimitCoordinator
 
+    # In-memory (back-compat, single-process)
     coordinator = RateLimitCoordinator(
         provider="cerebras",
         model="llama3.1-8b",
         rpm=30, rph=900, rpd=14_400,
         tpm=60_000, tph=1_000_000, tpd=1_000_000,
+    )
+
+    # SQLite-backed (cross-process, multi-worker)
+    from effgen.models._rate_limit_store import SQLiteRateLimitStore
+    store = SQLiteRateLimitStore()   # ~/.effgen/rate_limits.sqlite
+    coordinator = RateLimitCoordinator(
+        provider="cerebras",
+        model="llama3.1-8b",
+        rpm=30, rph=900, rpd=14_400,
+        tpm=60_000, tph=1_000_000, tpd=1_000_000,
+        storage=store,
     )
 
     async def call():
@@ -28,6 +41,10 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from effgen.models._rate_limit_store import SQLiteRateLimitStore
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +134,10 @@ class RateLimitCoordinator:
     that would violate a limit is delayed with ``asyncio.sleep`` until capacity
     is available.
 
+    When a ``storage`` backend is provided (SQLiteRateLimitStore), all events
+    are persisted to SQLite, enabling cross-process coordination — multiple
+    workers sharing the same database will collectively respect the same limits.
+
     Args:
         provider: Provider name (e.g. ``"cerebras"``).
         model: Model ID (e.g. ``"llama3.1-8b"``).
@@ -126,12 +147,17 @@ class RateLimitCoordinator:
         tpm: Max tokens per minute.
         tph: Max tokens per hour.
         tpd: Max tokens per day.
+        storage: Optional SQLiteRateLimitStore for cross-process coordination.
+                 Defaults to ``None`` (in-memory, back-compat).
 
     Raises:
         RateLimitExceeded: When the *daily* budget (RPD or TPD) is fully
             consumed and the next request cannot be scheduled before the
             day window resets.
     """
+
+    # Largest window in seconds — used for housekeeping cutoff calculation.
+    _MAX_WINDOW: float = 86_400.0
 
     def __init__(
         self,
@@ -143,11 +169,13 @@ class RateLimitCoordinator:
         tpm: int,
         tph: int,
         tpd: int,
+        storage: "SQLiteRateLimitStore | None" = None,
     ) -> None:
         self.provider = provider
         self.model = model
+        self._storage = storage
 
-        # Request-count windows
+        # Request-count windows (in-memory mirrors; authoritative when no storage)
         self._req_minute = _Window(duration=60.0, limit=rpm)
         self._req_hour = _Window(duration=3_600.0, limit=rph)
         self._req_day = _Window(duration=86_400.0, limit=rpd)
@@ -166,11 +194,14 @@ class RateLimitCoordinator:
         self.total_tokens: int = 0
         self.total_throttled: int = 0
         self.total_throttle_seconds: float = 0.0
+        self._pending_sqlite_reservations: int = 0
+        self._pending_sqlite_token_event_ids: deque[int | None] = deque()
 
         logger.debug(
             "RateLimitCoordinator ready: %s/%s  rpm=%d rph=%d rpd=%d  "
-            "tpm=%d tph=%d tpd=%d",
+            "tpm=%d tph=%d tpd=%d  storage=%s",
             provider, model, rpm, rph, rpd, tpm, tph, tpd,
+            "sqlite" if storage else "memory",
         )
 
     # ------------------------------------------------------------------
@@ -199,7 +230,10 @@ class RateLimitCoordinator:
                 exhausted (the day window has no capacity).
         """
         async with self._get_lock():
-            await self._wait_for_capacity(tokens_estimate)
+            if self._storage is not None:
+                await self._wait_for_capacity_sqlite(tokens_estimate)
+            else:
+                await self._wait_for_capacity(tokens_estimate)
 
     def record(self, actual_tokens: int = 0) -> None:
         """Record a completed request.
@@ -209,15 +243,10 @@ class RateLimitCoordinator:
         Args:
             actual_tokens: Actual tokens used (from ``usage`` in the response).
         """
-        now = time.monotonic()
-        self._req_minute.add(now)
-        self._req_hour.add(now)
-        self._req_day.add(now)
-
-        if actual_tokens > 0:
-            self._tok_minute.add(actual_tokens, now)
-            self._tok_hour.add(actual_tokens, now)
-            self._tok_day.add(actual_tokens, now)
+        if self._storage is not None:
+            self._record_sqlite(actual_tokens)
+        else:
+            self._record_memory(actual_tokens)
 
         self.total_requests += 1
         self.total_tokens += actual_tokens
@@ -230,9 +259,10 @@ class RateLimitCoordinator:
     def status(self) -> dict:
         """Return a snapshot of current window usage (for debugging/logging)."""
         now = time.monotonic()
-        return {
+        data: dict = {
             "provider": self.provider,
             "model": self.model,
+            "storage": "sqlite" if self._storage else "memory",
             "req_minute_used": self._req_minute.count(now),
             "req_minute_limit": self._req_minute.limit,
             "req_hour_used": self._req_hour.count(now),
@@ -246,13 +276,96 @@ class RateLimitCoordinator:
             "total_throttled": self.total_throttled,
             "total_throttle_seconds": round(self.total_throttle_seconds, 3),
         }
+        if self._storage is not None:
+            # Also expose the cross-process counts from SQLite
+            wall_now = time.time()
+            req_min = len(self._storage.query_window(
+                self.provider, self.model, "request", wall_now - 60.0
+            ))
+            req_hour = len(self._storage.query_window(
+                self.provider, self.model, "request", wall_now - 3600.0
+            ))
+            tok_min = sum(
+                tokens for _, tokens in self._storage.query_window(
+                    self.provider, self.model, "tokens", wall_now - 60.0
+                )
+            )
+            tok_hour = sum(
+                tokens for _, tokens in self._storage.query_window(
+                    self.provider, self.model, "tokens", wall_now - 3600.0
+                )
+            )
+            data["sqlite_req_minute"] = req_min
+            data["sqlite_req_hour"] = req_hour
+            data["sqlite_tok_minute"] = tok_min
+            data["sqlite_tok_hour"] = tok_hour
+        return data
+
+    def cleanup_storage(self) -> int:
+        """Remove old events from SQLite (housekeeping).
+
+        Deletes events older than the largest window (24 h) + 10% margin.
+        No-op when using in-memory storage.
+
+        Returns:
+            Number of rows deleted (0 for in-memory mode).
+        """
+        if self._storage is None:
+            return 0
+        max_age = self._MAX_WINDOW * 1.1
+        deleted = self._storage.cleanup(max_age_seconds=max_age)
+        logger.debug("RLC housekeeping: removed %d old events", deleted)
+        return deleted
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _record_memory(self, actual_tokens: int) -> None:
+        now = time.monotonic()
+        self._req_minute.add(now)
+        self._req_hour.add(now)
+        self._req_day.add(now)
+
+        if actual_tokens > 0:
+            self._tok_minute.add(actual_tokens, now)
+            self._tok_hour.add(actual_tokens, now)
+            self._tok_day.add(actual_tokens, now)
+
+    def _record_sqlite(self, actual_tokens: int) -> None:
+        assert self._storage is not None
+
+        token_event_id: int | None = None
+        if self._pending_sqlite_reservations > 0:
+            self._pending_sqlite_reservations -= 1
+            if self._pending_sqlite_token_event_ids:
+                token_event_id = self._pending_sqlite_token_event_ids.popleft()
+        else:
+            # Defensive fallback for callers that invoke record() without a
+            # preceding acquire(). The documented path reserves in acquire().
+            now = time.time()
+            self._storage.insert_event(self.provider, self.model, "request", now, 0)
+            now_mono = time.monotonic()
+            self._req_minute.add(now_mono)
+            self._req_hour.add(now_mono)
+            self._req_day.add(now_mono)
+
+        if actual_tokens <= 0:
+            return
+
+        if token_event_id is not None:
+            self._storage.update_token_event(token_event_id, actual_tokens)
+        else:
+            now = time.time()
+            self._storage.insert_event(
+                self.provider, self.model, "tokens", now, actual_tokens
+            )
+            self._tok_minute.add(actual_tokens)
+            self._tok_hour.add(actual_tokens)
+            self._tok_day.add(actual_tokens)
+
     async def _wait_for_capacity(self, tokens_estimate: int) -> None:
-        """Compute the required sleep and block.  Called inside the lock."""
+        """In-memory path — compute required sleep and block."""
         while True:
             now = time.monotonic()
 
@@ -269,7 +382,6 @@ class RateLimitCoordinator:
                     "Resets in 24 h."
                 )
 
-            # Compute maximum wait needed across all sub-minute/hourly windows
             waits = [
                 self._req_minute.wait_seconds(now),
                 self._req_hour.wait_seconds(now),
@@ -290,7 +402,62 @@ class RateLimitCoordinator:
             )
             self.total_throttled += 1
             self.total_throttle_seconds += wait
-            # Release lock during sleep so other coroutines can check/update
+            lock = self._get_lock()
+            lock.release()
+            try:
+                await asyncio.sleep(wait)
+            finally:
+                await lock.acquire()
+
+    async def _wait_for_capacity_sqlite(self, tokens_estimate: int) -> None:
+        """SQLite-backed path — atomically reserve cross-process capacity."""
+        assert self._storage is not None
+        while True:
+            now_wall = time.time()
+            result = self._storage.reserve_capacity(
+                self.provider,
+                self.model,
+                now_wall,
+                rpm=self._req_minute.limit,
+                rph=self._req_hour.limit,
+                rpd=self._req_day.limit,
+                tpm=self._tok_minute.limit,
+                tph=self._tok_hour.limit,
+                tpd=self._tok_day.limit,
+                tokens_estimate=tokens_estimate,
+            )
+
+            if result.daily_exceeded == "request":
+                raise RateLimitExceeded(
+                    f"Daily request budget exhausted for {self.provider}/{self.model}. "
+                    "Resets in 24 h."
+                )
+            if result.daily_exceeded == "tokens":
+                raise RateLimitExceeded(
+                    f"Daily token budget exhausted for {self.provider}/{self.model}. "
+                    "Resets in 24 h."
+                )
+
+            if result.allowed:
+                now_mono = time.monotonic()
+                self._req_minute.add(now_mono)
+                self._req_hour.add(now_mono)
+                self._req_day.add(now_mono)
+                if tokens_estimate > 0:
+                    self._tok_minute.add(tokens_estimate, now_mono)
+                    self._tok_hour.add(tokens_estimate, now_mono)
+                    self._tok_day.add(tokens_estimate, now_mono)
+                self._pending_sqlite_reservations += 1
+                self._pending_sqlite_token_event_ids.append(result.token_event_id)
+                break
+
+            wait = max(result.wait_seconds, 0.001)
+            logger.debug(
+                "RLC (sqlite) throttling %s/%s for %.3f s",
+                self.provider, self.model, wait,
+            )
+            self.total_throttled += 1
+            self.total_throttle_seconds += wait
             lock = self._get_lock()
             lock.release()
             try:

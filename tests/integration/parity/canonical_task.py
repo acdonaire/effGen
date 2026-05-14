@@ -81,9 +81,7 @@ def run_canonical_task(adapter, strategy: str = "react") -> dict:
         tool_calls_count = result.tool_calls
         # Propagate agent-level errors (e.g., Replicate billing) from metadata
         if not result.success and result.output:
-            # Check if output contains a known non-answer (billing message etc.)
-            if "billing" in result.output.lower() or "insufficient credits" in result.output.lower():
-                error = f"BillingError: {result.output[:200]}"
+            error = result.output[:500]
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
 
