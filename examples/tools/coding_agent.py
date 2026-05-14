@@ -157,12 +157,12 @@ def run_all_tests(agent, model_name="unknown"):
     # Use code_executor (subprocess) so we can import from /tmp
     results.append(run_test(
         agent, "T5", "Multi-file — create and import module",
-        ("First use bash to write a file /tmp/effgen_p5_utils.py with this exact content:\n"
+        ("First use bash to write a file /tmp/effgen_codegen_utils.py with this exact content:\n"
          "def greet(name):\n"
          "    return f'Hello, {name}!'\n\n"
          "Then use the code_executor tool with language='python' to run this code:\n"
          "import sys; sys.path.insert(0, '/tmp')\n"
-         "from effgen_p5_utils import greet\n"
+         "from effgen_codegen_utils import greet\n"
          "print(greet('effgen'))"),
         expected_keywords=["hello", "effgen"],
         check_fn=lambda out, resp: resp.tool_calls >= 1,
@@ -238,8 +238,7 @@ def run_regression(agent, model_name="unknown"):
 def cleanup_generated_files():
     """Remove all generated .py files from code execution tests."""
     patterns = [
-        "/tmp/effgen_p5_*",
-        "/tmp/effgen_phase5_*",
+        "/tmp/effgen_codegen_*",
     ]
     count = 0
     for pattern in patterns:

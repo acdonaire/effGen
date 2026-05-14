@@ -19,7 +19,6 @@ from effgen.tools.builtin.gemini_native import (
     GoogleSearchTool,
 )
 
-
 # ---------------------------------------------------------------------------
 # Instantiation + metadata
 # ---------------------------------------------------------------------------
@@ -82,6 +81,7 @@ class TestGeminiToolSpecs:
 class TestConvertToolsToGenAI:
     def test_native_tool_is_converted_to_sdk_tool(self):
         from google.genai import types
+
         from effgen.models.gemini_adapter import GeminiAdapter
         result = GeminiAdapter._convert_tools_to_genai([GoogleSearchTool()])
         assert len(result) == 1
@@ -89,19 +89,18 @@ class TestConvertToolsToGenAI:
         assert result[0].google_search is not None
 
     def test_url_context_converted(self):
-        from google.genai import types
         from effgen.models.gemini_adapter import GeminiAdapter
         result = GeminiAdapter._convert_tools_to_genai([GeminiUrlContextTool()])
         assert result[0].url_context is not None
 
     def test_code_execution_converted(self):
-        from google.genai import types
         from effgen.models.gemini_adapter import GeminiAdapter
         result = GeminiAdapter._convert_tools_to_genai([GeminiCodeExecutionTool()])
         assert result[0].code_execution is not None
 
     def test_mixed_native_and_function(self):
         from google.genai import types
+
         from effgen.models.gemini_adapter import GeminiAdapter
         func_tool = {
             "type": "function",
@@ -160,8 +159,8 @@ class TestParallelToolCallParsing:
         return response
 
     def _make_adapter(self):
-        from effgen.models.gemini_adapter import GeminiAdapter
         from effgen.models.base import ModelType, TokenCount
+        from effgen.models.gemini_adapter import GeminiAdapter
         adapter = GeminiAdapter.__new__(GeminiAdapter)
         adapter._is_loaded = True
         adapter.client = MagicMock()
@@ -317,8 +316,14 @@ class TestPublicExports:
     def test_top_level_exports(self):
         from effgen import (
             GeminiCodeExecutionTool as GCET,
+        )
+        from effgen import (
             GeminiNativeTool as GNT,
+        )
+        from effgen import (
             GeminiUrlContextTool as GUCT,
+        )
+        from effgen import (
             GoogleSearchTool as GST,
         )
         assert GST is GoogleSearchTool
@@ -329,7 +334,11 @@ class TestPublicExports:
     def test_builtin_init_exports(self):
         from effgen.tools.builtin import (
             GeminiCodeExecutionTool as GCET,
+        )
+        from effgen.tools.builtin import (
             GeminiUrlContextTool as GUCT,
+        )
+        from effgen.tools.builtin import (
             GoogleSearchTool as GST,
         )
         assert GST is GoogleSearchTool

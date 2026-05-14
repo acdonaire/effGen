@@ -1,5 +1,5 @@
 """
-Phase 10 — New Domain Tools: real (non-mock) tests.
+Domain tools — real (non-mock) tests.
 
 All tests exercise the actual tool code paths end-to-end:
 - Finance / Knowledge: hit real free public APIs (frankfurter.app,
@@ -506,7 +506,7 @@ def test_notification_graceful_without_plyer():
 # registry integration
 # ---------------------------------------------------------------------------
 
-def test_registry_auto_discovers_phase10_tools():
+def test_registry_auto_discovers_domain_tools():
     from effgen.tools.registry import ToolRegistry
     reg = ToolRegistry()
     reg.discover_builtin_tools()
@@ -519,4 +519,4 @@ def test_registry_auto_discovers_phase10_tools():
         "email_draft", "slack_draft", "notification",
     }
     missing = expected - names
-    assert not missing, f"registry missing phase 10 tools: {missing}"
+    assert not missing, f"registry missing domain tools: {missing}"

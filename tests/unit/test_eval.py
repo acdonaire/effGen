@@ -1,4 +1,4 @@
-"""Unit tests for effgen.eval module (Phase 11)."""
+"""Unit tests for the effgen.eval module."""
 
 from __future__ import annotations
 

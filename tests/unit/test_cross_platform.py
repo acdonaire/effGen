@@ -172,7 +172,7 @@ class TestModelsWildcardImport:
 
     def test_all_entries_count(self):
         import effgen.models as m
-        # Should have at least 20 entries (base + engines + adapters + Phase 6)
+        # Should have at least 20 entries (base + engines + adapters + multi-model support).
         assert len(m.__all__) >= 20
 
 

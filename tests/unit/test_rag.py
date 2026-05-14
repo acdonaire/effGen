@@ -776,7 +776,7 @@ class TestRagPreset:
 
 class TestEndToEnd:
     def test_spec_acceptance_test(self, tmp_path: Path):
-        """The exact test from v0.2.0/build.md Phase 8 spec."""
+        """The exact test from the v0.2.0 build spec."""
         # Create a docs/ directory with enough material to get 5 chunks
         for i in range(6):
             (tmp_path / f"doc{i}.md").write_text(

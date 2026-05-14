@@ -1,4 +1,4 @@
-"""effGen caching subsystem (Phase 14).
+"""effGen caching subsystem.
 
 Provides prompt-prefix caching and result caching for tools and agents.
 All components are pure-Python and have no required external dependencies.

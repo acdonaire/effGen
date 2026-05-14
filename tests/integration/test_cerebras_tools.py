@@ -15,8 +15,8 @@ def _has_key() -> bool:
     return bool(os.getenv("CEREBRAS_API_KEY"))
 
 
-def _xfail_if_cerebras_backpressure(exc: Exception) -> None:
-    msg = str(exc).lower()
+def _xfail_if_cerebras_backpressure_message(message: str) -> None:
+    msg = message.lower()
     transient_markers = (
         "429",
         "rate-limit",
@@ -27,7 +27,11 @@ def _xfail_if_cerebras_backpressure(exc: Exception) -> None:
         "too many requests",
     )
     if any(marker in msg for marker in transient_markers):
-        pytest.xfail(f"Cerebras transient backpressure/rate limit: {exc}")
+        pytest.xfail(f"Cerebras transient backpressure/rate limit: {message}")
+
+
+def _xfail_if_cerebras_backpressure(exc: Exception) -> None:
+    _xfail_if_cerebras_backpressure_message(str(exc))
 
 
 @pytest.mark.integration
@@ -142,6 +146,11 @@ class TestCerebrasAgentWithTools:
             except Exception as exc:
                 _xfail_if_cerebras_backpressure(exc)
                 raise
+            finally:
+                agent.close()
+            if not response.success:
+                error = response.metadata.get("error", "") if response.metadata else ""
+                _xfail_if_cerebras_backpressure_message(f"{response.output} {error}")
             assert response.output is not None
             assert len(response.output) > 0
             # Answer should contain 225
@@ -177,6 +186,11 @@ class TestCerebrasAgentWithTools:
             except Exception as exc:
                 _xfail_if_cerebras_backpressure(exc)
                 raise
+            finally:
+                agent.close()
+            if not response.success:
+                error = response.metadata.get("error", "") if response.metadata else ""
+                _xfail_if_cerebras_backpressure_message(f"{response.output} {error}")
             assert response.output is not None
             assert len(response.output) > 0
         finally:

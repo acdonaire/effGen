@@ -1,5 +1,5 @@
 """
-Tests for Phase 9: Human-in-the-Loop & Approval Workflows.
+Tests for Human-in-the-Loop & Approval Workflows.
 
 Covers human_loop, clarification, and feedback modules.
 """

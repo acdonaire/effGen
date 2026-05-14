@@ -37,6 +37,8 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#024---2026-05-14) |
+| 🚀 | **4 May 2026** | **v0.2.3 Released**: 5 new cloud backends (Groq, Together AI, Fireworks, Replicate, HuggingFace Inference) — 9 providers total. Unified ProviderRegistry, `effgen doctor` auth check, backend parity matrix. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#023---2026-05-04) |
 | 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (4 free-tier models, streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#021---2026-04-25) |
 | 🚀 | **9 Apr 2026** | **v0.2.0 Released**: Major release — native tool calling, guardrails, multi-agent orchestration, RAG pipeline, 31 tools, eval framework, production API server, MLX Apple Silicon support, Python & TypeScript SDKs. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#020---2026-04-09) |
 | 🍎 | **8 Apr 2026** | **MLX & Apple Silicon support merged** (PR #4): Native Metal GPU acceleration via MLX & MLX-VLM backends. `pip install effgen[mlx]` |
@@ -232,6 +234,41 @@ Production API<br/>
 </table>
 
 </div>
+
+---
+
+## 🆕 ModelRouter — Smart Multi-Provider Routing (v0.2.4)
+
+Route requests across 9 cloud providers automatically — pick the cheapest, fastest, or first available:
+
+```python
+from effgen import PolicyBasedRouter, RoutingContext, CostBasedPolicy, LatencyBasedPolicy
+from effgen.models.capabilities import Capability
+
+# Build a router: try fastest first, fall back to cheapest
+router = PolicyBasedRouter(policies=[LatencyBasedPolicy(), CostBasedPolicy()])
+
+ctx = RoutingContext(
+    prompt_tokens_estimate=500,
+    user_budget_usd=0.01,       # stay within $0.01
+    latency_budget_ms=3000,     # need response in under 3s
+    required_capabilities={Capability.chat},
+)
+
+decision = router.route(ctx)
+print(decision.chosen)      # e.g., ProviderModelPair("cerebras", "llama3.1-8b")
+print(decision.eliminated)  # [(pair, reason), ...] — fully explainable
+```
+
+**Transparent failover** — `route_and_execute` retries on rate-limits, 5xx errors, or timeouts and seamlessly moves to the next-best provider.
+
+**Cost dashboard** — track every API call:
+
+```bash
+effgen cost today          # per-provider per-model table
+effgen cost week           # rolling 7-day view
+effgen cost set-budget 1.0 # set $1/day cap
+```
 
 ---
 

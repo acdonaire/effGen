@@ -585,7 +585,7 @@ class CLIInterface:
                         console=self.console
                     ) as progress:
                         progress.add_task("Thinking...", total=None)
-                        response = agent.run(args.task, mode=mode, **_phase7_run_kwargs(args))
+                        response = agent.run(args.task, mode=mode, **_checkpoint_run_kwargs(args))
                 else:
                     self.print("Thinking...")
                     response = agent.run(args.task, mode=mode)
@@ -1775,19 +1775,19 @@ Examples:
                             help='Use a preset agent configuration')
     run_parser.add_argument('--explain', action='store_true',
                             help='Show why the agent chose each tool')
-    run_parser.add_argument('--checkpoint-dir', help='Directory to write agent checkpoints (Phase 7)')
+    run_parser.add_argument('--checkpoint-dir', help='Directory to write agent checkpoints')
     run_parser.add_argument('--checkpoint-interval', type=int, default=0,
                             help='Checkpoint every N iterations (requires --checkpoint-dir)')
-    run_parser.add_argument('--session-id', help='Persistent session id (Phase 7)')
+    run_parser.add_argument('--session-id', help='Persistent session id')
 
-    # Resume command (Phase 7.1)
+    # Resume command
     resume_parser = subparsers.add_parser('resume', help='Resume an agent run from a checkpoint')
     resume_parser.add_argument('--checkpoint', required=True,
                                help='Checkpoint id, JSON path, or directory (uses latest)')
     resume_parser.add_argument('-m', '--model', help='Model to use')
     resume_parser.add_argument('--preset', choices=['math', 'research', 'coding', 'general', 'minimal'])
 
-    # Sessions commands (Phase 7.2)
+    # Sessions commands
     sessions_parser = subparsers.add_parser('sessions', help='Manage persistent sessions')
     sessions_subparsers = sessions_parser.add_subparsers(dest='session_command', help='Sessions command')
     sessions_subparsers.add_parser('list', help='List sessions')
@@ -1912,7 +1912,7 @@ Examples:
                               help='Use a preset agent configuration')
     batch_parser.add_argument('--query-field', default='query', help='Field name for queries in JSONL/CSV (default: query)')
 
-    # Eval command (Phase 11)
+    # Eval command
     eval_parser = subparsers.add_parser('eval', help='Evaluate an agent against a test suite')
     eval_parser.add_argument('--suite', required=True,
                               help='Test suite name (math, tool_use, reasoning, safety, conversation)')
@@ -1931,7 +1931,7 @@ Examples:
     eval_parser.add_argument('--difficulty', choices=['easy', 'medium', 'hard'],
                               help='Filter test cases by difficulty')
 
-    # Compare command (Phase 11)
+    # Compare command
     compare_parser = subparsers.add_parser('compare', help='Compare multiple models on a test suite')
     compare_parser.add_argument('--models', required=True,
                                  help='Comma-separated model names')
@@ -2597,8 +2597,8 @@ def _handle_compare_command(args, cli) -> int:
         return 1
 
 
-def _phase7_run_kwargs(args) -> dict:
-    """Extract Phase 7 run() kwargs from CLI args."""
+def _checkpoint_run_kwargs(args) -> dict:
+    """Extract checkpoint run() kwargs from CLI args."""
     out: dict = {}
     if getattr(args, 'checkpoint_dir', None):
         out['checkpoint_dir'] = args.checkpoint_dir

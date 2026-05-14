@@ -11,8 +11,8 @@ Run:
 from __future__ import annotations
 
 import os
-import time
 import tempfile
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,10 +20,10 @@ from dotenv import load_dotenv
 load_dotenv(Path.home() / ".effgen" / ".env", override=False)
 load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
 
-from openai import OpenAI
 from effgen.core.agent import Agent, AgentConfig
 from effgen.models.openai_adapter import OpenAIAdapter
 from effgen.tools.builtin.openai_native import OpenAIFileSearchTool
+from openai import OpenAI
 
 MODEL = "gpt-5.4-nano"
 

@@ -405,8 +405,8 @@ def run_regression(model, model_name="unknown"):
 
     # REG-P4: Code execution
     results.append(run_test("REG-P4", "Python: simple code",
-        "Use python_repl to run: print('phase6_regression_ok')",
-        ["phase6_regression_ok"], expected_tool="python_repl"))
+        "Use python_repl to run: print('regression_ok')",
+        ["regression_ok"], expected_tool="python_repl"))
 
     # REG-P5: Multi-turn memory (quick 2-turn)
     conv_agent = create_conversational_agent(model)

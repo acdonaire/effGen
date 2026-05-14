@@ -36,6 +36,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [See changelog](CHANGELOG.md#024---2026-05-14) |
 | 🚀 | **4 May 2026** | **v0.2.3 Released**: 5 new cloud backends (Groq, Together AI, Fireworks, Replicate, HuggingFace Inference) — 9 providers total. Unified ProviderRegistry, `effgen doctor` auth check, backend parity matrix. [See changelog](CHANGELOG.md#023---2026-05-04) |
 | 🚀 | **28 Apr 2026** | **v0.2.2 Released**: Gemini 3.x/2.5/2.0 registry, `thinking_budget`, Google Search grounding, Files API, Gemini native tools (GoogleSearch, UrlContext, CodeExecution). Anthropic Claude 4.7 registry, extended thinking, prompt caching (`cache_control`), streaming polish, experimental native tools. [See changelog](CHANGELOG.md#022---2026-04-28) |
 | 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (4 free-tier models, streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](CHANGELOG.md#021---2026-04-25) |
@@ -271,10 +272,71 @@ Production API<br/>
 
 ---
 
-## 🆕 What's New in v0.2.3
+## 🆕 What's New in v0.2.4
 
 <details open>
-<summary><b>Top 5 features in v0.2.3</b></summary>
+<summary><b>Top 5 features in v0.2.4 — ModelRouter & Cost Optimizer</b></summary>
+
+1. **`PolicyBasedRouter`** — composable routing engine with three built-in policies. Pick the cheapest provider within your budget, the fastest under your SLA, or simply the first available — and combine them freely.
+
+   ```python
+   from effgen import PolicyBasedRouter, RoutingContext, CostBasedPolicy, LatencyBasedPolicy
+   from effgen.models.capabilities import Capability
+
+   router = PolicyBasedRouter(policies=[LatencyBasedPolicy(), CostBasedPolicy()])
+   ctx = RoutingContext(
+       prompt_tokens_estimate=500,
+       user_budget_usd=0.01,
+       latency_budget_ms=3000,
+       required_capabilities={Capability.chat},
+   )
+   decision = router.route(ctx)
+   print(decision.chosen)      # e.g., ProviderModelPair("cerebras", "llama3.1-8b")
+   print(decision.eliminated)  # [(pair, reason), ...] — fully explainable
+   ```
+
+2. **Transparent failover** — `route_and_execute(ctx, fn)` retries on rate-limits / 5xx / timeouts and seamlessly moves to the next-best provider. Each hop fires a `RouterEvent` to registered subscribers.
+
+   ```python
+   from effgen import load_model
+
+   def call_provider(pair):
+       model = load_model(pair.model_id, provider=pair.provider)
+       return model.generate("Hello!").text
+
+   router.subscribe(
+       lambda event: print(
+           f"Failover: {event.from_provider}/{event.from_model} "
+           f"→ {event.to_provider}/{event.to_model}"
+       )
+   )
+   result = router.route_and_execute(ctx, call_provider)
+   ```
+
+3. **Cross-process SQLite rate-limit coordination** — share a single rate-limit budget across multiple workers:
+
+   ```python
+   from effgen import RateLimitCoordinator, SQLiteRateLimitStore
+
+   store = SQLiteRateLimitStore("~/.effgen/rate_limits.sqlite")
+   coordinator = RateLimitCoordinator(storage=store)  # WAL-mode, BEGIN IMMEDIATE
+   ```
+
+4. **Persistent cost tracking + `effgen cost` CLI** — every API call persists to SQLite; query spend instantly:
+
+   ```bash
+   effgen cost today          # per-provider per-model table
+   effgen cost week           # rolling 7-day view
+   effgen cost by-provider    # lifetime totals
+   effgen cost set-budget 1.0 # set $1/day cap (BudgetExceededError at 100%)
+   ```
+
+5. **Fully explainable decisions + budget guard** — `RouterDecision` records every eliminated provider and why (`"rate_limited"`, `"no_key"`, `"cost_exceeds_budget"`, `"latency_exceeds_sla"`). Configure a daily spend cap; the router automatically fails over to a free-tier provider when the budget is hit.
+
+</details>
+
+<details>
+<summary><b>Top 5 features from v0.2.3</b></summary>
 
 1. **5 new cloud backends** — `GroqAdapter`, `TogetherAdapter`, `FireworksAdapter`, `ReplicateAdapter`, `HFInferenceAdapter` — each with streaming, native tools, rate-limit coordination, and cost tracking. 9 providers total.
 
@@ -294,7 +356,7 @@ Production API<br/>
 </details>
 
 <details>
-<summary><b>Top 5 features from v0.2.2</b></summary>
+<summary><b>Top 5 features from v0.2.2 (and earlier)</b></summary>
 
 1. **Gemini 3.x/2.5/2.0 + Gemma families** — full model registry with correct context windows, output limits, and feature flags; SDK migrated to `google-genai>=1.0.0`.
 

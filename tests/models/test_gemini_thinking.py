@@ -9,7 +9,6 @@ import pytest
 from effgen.models.base import GenerationConfig
 from effgen.models.gemini_adapter import GeminiAdapter
 
-
 # ---------------------------------------------------------------------------
 # GenerationConfig field presence
 # ---------------------------------------------------------------------------

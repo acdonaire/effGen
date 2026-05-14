@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.4] - 2026-05-14
+
+### Highlights
+
+**effGen v0.2.4** introduces a production-ready **ModelRouter** with three composable routing policies (FirstAvailable, CostBased, LatencyBased), transparent provider failover with retry logic, persisted cross-process rate-limit coordination via SQLite, and a persistent cost tracker with a `effgen cost` CLI dashboard.
+
+### Added
+
+#### ModelRouter + Routing Policies
+- **`PolicyBasedRouter`** (`effgen/models/router.py`) — composable policy engine; `route(context)` returns an explainable `RouterDecision` recording which providers were eliminated and why; `route_and_execute(context, fn)` wraps any callable with transparent failover across `failover_hops` (default 3).
+- **`RoutingPolicy` ABC** — base class for all policies; implement `select(candidates, context) → RouterDecision`.
+- **`RoutingContext`** — carries `prompt_tokens_estimate`, `user_budget_usd`, `latency_budget_ms`, `required_capabilities`.
+- **`RouterDecision`** — records `chosen`, `eliminated` (with per-provider reasons), `policy_name`, and `score`. Every routing decision is fully explainable.
+- **`RouterEvent`** — emitted on failover; subscribers register via `PolicyBasedRouter.subscribe(callback)`.
+- **`FirstAvailablePolicy`** (`effgen/models/routing/first_available.py`) — returns the first provider with a valid API key that meets the required capabilities.
+- **`CostBasedPolicy`** (`effgen/models/routing/cost.py`) — estimates cost per call from pricing registry; ranks cheapest-first; free-tier providers rank ahead of equally-priced paid providers; raises `NoCandidateWithinBudgetError` when no candidate fits `user_budget_usd`.
+- **`LatencyBasedPolicy`** (`effgen/models/routing/latency.py`) — picks the fastest provider by observed p50 latency; eliminates candidates exceeding `latency_budget_ms`; warm-up probe seeds empty-history tiebreaks.
+- **`RetryPolicy`** (`effgen/models/routing/retry.py`) — configurable `max_retries`, exponential backoff with jitter; retries `RateLimitExceeded`, `ProviderTransientError`, `ModelTimeoutError`; does **not** retry `ModelAuthError`, `ModelRefusalError`, `InvalidRequestError`.
+
+#### Capability Model
+- **`Capability` enum** (`effgen/models/capabilities.py`) — `{chat, tools, streaming, vision, grounding, thinking, json_schema}`; all 9 adapters register their capability sets in `ProviderRegistry`.
+- **`ProviderRegistry.register(..., capabilities=..., pricing=...)`** — extended with capability and pricing fields; all 9 adapters updated with current published pricing (2026-05-14).
+
+#### Latency Tracker
+- **`LatencyTracker`** (`effgen/models/latency_tracker.py`) — rolling window (last 50 calls) per `(provider, model)`; records total latency and time-to-first-token (TTFT); `p50(provider, model)` returns `float | None`; all 9 adapters instrumented.
+
+#### Cross-Process Rate-Limit Coordination (SQLite)
+- **`SQLiteRateLimitStore`** (`effgen/models/_rate_limit_store.py`) — WAL-mode SQLite at `~/.effgen/rate_limits.sqlite`; `BEGIN IMMEDIATE` row-locking prevents double-spend across processes; schema: `rate_events(provider, model, kind, timestamp, tokens)`.
+- **`RateLimitCoordinator`** gains `storage=` parameter (default in-memory for back-compat); pass `SQLiteRateLimitStore` for cross-process coordination.
+- Background housekeeping removes events older than 24 h × 1.1.
+
+#### Cost Tracker Persistence + Dashboard
+- **`SQLiteCostStore`** (`effgen/models/_cost_store.py`) — WAL-mode SQLite at `~/.effgen/costs.sqlite`; schema: `cost_events(provider, model, prompt_tokens, completion_tokens, cost_usd, timestamp)`.
+- **`CostTracker`** gains `storage=` parameter (default in-memory for back-compat); every `record()` writes a row; 80% daily budget → warning; 100% → `BudgetExceededError`.
+- **`effgen cost` CLI** — `today`, `week`, `by-provider`, `set-budget`, `clear-budget` subcommands; rich table output.
+- **`effgen config set budget.daily <USD>`** — configure daily spend cap.
+
+#### New Errors
+- `AllCandidatesExhaustedError` — raised when failover exhausts all providers.
+- `BudgetExceededError` — raised when cumulative spend exceeds the configured cap; `RetryPolicy` treats this as retriable (failover to free tier).
+- `ProviderTransientError` — base class for 5xx / transient provider failures.
+- `InvalidRequestError` — bad request (4xx); not retried.
+
+### Changed
+- **`RateLimitCoordinator`** — gains `storage: RateLimitStore` parameter; default behavior (in-memory) unchanged.
+- **`CostTracker`** — gains `storage: CostStore` parameter; default behavior (in-memory) unchanged.
+- **`ProviderRegistry.register()`** — extended with `capabilities=set[Capability]` and `pricing=dict` optional fields; existing callers unaffected.
+- **All 9 adapters** — instrumented with `LatencyTracker.record()` on every `generate()` call; TTFT recorded in streaming adapters on first yielded chunk.
+- **Top-level `effgen` namespace** — new exports: `PolicyBasedRouter`, `RoutingPolicy`, `RoutingContext`, `RouterDecision`, `RouterEvent`, `ProviderModelPair`, `FirstAvailablePolicy`, `CostBasedPolicy`, `LatencyBasedPolicy`, `RetryPolicy`, `LatencyTracker`, `CostTracker`, `SQLiteCostStore`, `AllCandidatesExhaustedError`, `BudgetExceededError`, `ProviderTransientError`, `InvalidRequestError`.
+
+### Fixed
+- **Stability sweep** — all pre-existing ruff / mypy warnings resolved at the v0.2.3 baseline.
+- **Back-compat guarantee** — `load_model(...)`, `Agent(config)`, direct adapter paths all unaffected by the router layer.
+
+---
+
 ## [0.2.3] - 2026-05-04
 
 ### Highlights
@@ -39,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Provider table in README expanded** to 9 providers with `effgen[groq]` / `[together]` / `[fireworks]` / `[replicate]` / `[hf]` install instructions.
 
 ### Fixed
-- **`cli.py`** — `BatchConfig` variable reference (Phase 0 stability sweep).
+- **`cli.py`** — `BatchConfig` variable reference from the stability sweep.
 - **`aggregation.py`** — `sources` variable shadowing.
 - **`CostTracker._rate`** — Fireworks pricing path added.
 - **`GroqAdapter.supports_tool_calling()`** — was missing; added.
@@ -101,8 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Gemini adapter** migrated to `google-genai` SDK; existing `GeminiAdapter` public API unchanged
 
 ### Fixed
-- **`cli.py`** — `ToolMetadata.input_schema` missing field (Phase 0 sweep)
-- **`aggregation.py`** — `sources` variable shadowing / redefinition (Phase 0 sweep)
+- **`cli.py`** — `ToolMetadata.input_schema` missing field from the stability sweep
+- **`aggregation.py`** — `sources` variable shadowing / redefinition from the stability sweep
 - **Gemini mixed native + function-calling** — `tool_config.include_server_side_tool_invocations=True` set when mixing built-in and user-defined tools (Gemini API requirement)
 - **Anthropic `top_k`** — removed unsupported parameter that caused 400 errors
 - **Gemini model aliases** — short aliases (e.g. `gemini-3.1-flash-lite`) now resolve to canonical registry IDs (e.g. `gemini-3.1-flash-lite-preview`) at `GeminiAdapter` init, so API calls succeed when callers pass the friendly short form

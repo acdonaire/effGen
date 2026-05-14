@@ -391,7 +391,7 @@ def _test_conversational(model, model_name):
 
 
 def _test_error_recovery(model, model_name):
-    """Test error recovery — 5 key tests (T1-T5 from phase 7)."""
+    """Test error recovery — 5 key tests (T1-T5 from the error-recovery suite)."""
     from effgen.core.agent import Agent, AgentConfig
     from effgen.tools.base_tool import (
         BaseTool,
@@ -704,7 +704,7 @@ AGENTS = [
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Phase 11: Sweep single model across all agents")
+    parser = argparse.ArgumentParser(description="Sweep a single model across all example agents")
     parser.add_argument("--model", required=True, help="Model name (e.g., Qwen/Qwen2.5-3B-Instruct)")
     parser.add_argument("--output", required=True, help="Output JSON file path")
     parser.add_argument("--agents", nargs="*", default=None, help="Specific agents to test (default: all)")
@@ -714,7 +714,7 @@ def main():
     model_name = args.model
 
     print(f"\n{'='*70}")
-    print("Phase 11 Compatibility Sweep")
+    print("Model Compatibility Sweep")
     print(f"Model: {model_name}")
     print(f"GPU: CUDA_VISIBLE_DEVICES={gpu}")
     print(f"{'='*70}")

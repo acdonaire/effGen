@@ -13,7 +13,6 @@ Run:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -23,8 +22,8 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
 
 from effgen.core.agent import Agent, AgentConfig
 from effgen.models.openai_adapter import OpenAIAdapter
-from effgen.tools.builtin.openai_native import OpenAICodeInterpreterTool, OpenAIWebSearchTool
 from effgen.tools.builtin.calculator import Calculator
+from effgen.tools.builtin.openai_native import OpenAICodeInterpreterTool, OpenAIWebSearchTool
 
 MODEL = "gpt-5.4-nano"
 
@@ -137,7 +136,7 @@ def demo_incompatibility_guard():
         ))
         print("ERROR: Should have raised ToolIncompatibleError")
     except ToolIncompatibleError as e:
-        print(f"Caught ToolIncompatibleError (expected):")
+        print("Caught ToolIncompatibleError (expected):")
         print(f"  {e}")
         print("Guard works correctly — error at init, not at run time.")
     except Exception as e:

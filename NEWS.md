@@ -1,5 +1,60 @@
 # effGen Release Notes
 
+## v0.2.4 — May 14, 2026
+
+**effGen v0.2.4** makes multi-provider AI inference production-grade with a composable **ModelRouter** — a new opt-in layer that sits between your application code and the 9 cloud providers effGen already supports. Instead of hard-coding a provider, you describe what you need (cheapest call within budget, fastest that meets an SLA, prefer free tier, fall back to paid) and the router picks the right provider, records its reasoning, and transparently retries or fails over when things go wrong.
+
+### Top Highlights
+
+1. **Three composable routing policies** — mix and match to build exactly the routing logic you need:
+
+   ```python
+   from effgen import PolicyBasedRouter, RoutingContext, CostBasedPolicy, LatencyBasedPolicy
+   from effgen.models.capabilities import Capability
+
+   router = PolicyBasedRouter(
+       policies=[LatencyBasedPolicy(), CostBasedPolicy()],
+   )
+   context = RoutingContext(
+       prompt_tokens_estimate=500,
+       user_budget_usd=0.01,
+       latency_budget_ms=3000,
+       required_capabilities={Capability.chat, Capability.tools},
+   )
+   decision = router.route(context)
+   print(decision.chosen)        # e.g., ProviderModelPair("cerebras", "llama3.1-8b")
+   print(decision.eliminated)    # list of (pair, reason) — fully explainable
+   ```
+
+2. **Transparent failover** — `route_and_execute(context, fn)` automatically retries on `RateLimitExceeded`, 5xx errors, or timeouts and moves to the next-best provider. Each failover fires a `RouterEvent` to any registered subscribers so you can log or alert in real time.
+
+3. **Cross-process rate-limit coordination** — `SQLiteRateLimitStore` (WAL-mode, `BEGIN IMMEDIATE`) lets multiple workers share a single rate-limit budget at `~/.effgen/rate_limits.sqlite`. Pass it into `RateLimitCoordinator(storage=store)` — the default in-memory mode is unchanged.
+
+4. **Persistent cost tracking + `effgen cost` CLI** — every API call writes a row to `~/.effgen/costs.sqlite`. Query it instantly:
+
+   ```bash
+   effgen cost today          # per-provider per-model table
+   effgen cost week           # rolling 7-day view
+   effgen cost by-provider    # lifetime totals
+   effgen cost set-budget 1.0 # set $1/day cap
+   ```
+
+   When cumulative daily spend hits 80% of your cap, effGen emits a warning; at 100% it raises `BudgetExceededError` — which the router treats as retriable and automatically fails over to a free-tier provider.
+
+5. **Fully explainable decisions** — every `RouterDecision` carries the chosen provider, a list of eliminated candidates with per-provider reasons (`"rate_limited"`, `"no_key"`, `"cost_exceeds_budget"`, `"latency_exceeds_sla"`), the winning policy name, and a numeric score. Nothing is a black box.
+
+### Upgrading from v0.2.3
+
+No breaking API changes. All existing `load_model`, `Agent`, and direct adapter paths work without modification. The `ModelRouter` is a completely opt-in new layer.
+
+```bash
+pip install --upgrade effgen
+```
+
+`RateLimitCoordinator` and `CostTracker` both retain their existing in-memory defaults — existing code that constructs them without a `storage=` argument is unaffected.
+
+---
+
 ## v0.2.3 — May 4, 2026
 
 **effGen v0.2.3** grows the provider roster from 4 to **9 cloud inference backends** — Groq, Together AI, Fireworks, Replicate, and HuggingFace Inference join the existing OpenAI, Anthropic, Gemini, and Cerebras adapters. Every new backend ships with streaming, native tool-calling where the provider supports it, automatic rate-limit coordination, and per-call cost tracking. A new `ProviderRegistry` consolidates all providers for clean introspection and the `effgen doctor` command tells you at a glance which API keys are wired up. A backend parity matrix proves that the canonical "What is (17 × 23) + sqrt(144)?" agentic task returns the correct answer (403) across every provider, with identical `ModelAuthError` raised on bad credentials.

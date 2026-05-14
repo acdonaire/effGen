@@ -122,10 +122,10 @@ class AgentConfig:
         "long_term_persist_path": None,
         "auto_summarize": True,
     })
-    # Multi-model support (Phase 6)
+    # Multi-model support
     models: list[BaseModel | str] | None = None  # Additional models for routing
     speculative_execution: bool = False  # Run on 2 models, return first success
-    # Human-in-the-loop (Phase 9)
+    # Human-in-the-loop
     approval_callback: Callable[[str, str], bool] | None = None
     approval_mode: str = "never"  # "always", "first_time", "never", "dangerous_only"
     approval_timeout: float = 0.0  # seconds; 0 = wait forever
@@ -256,17 +256,17 @@ Question: {task}
         self.name = config.name
         self._closed = False
 
-        # Persistent session (Phase 7.2)
+        # Persistent session
         self._session_id = session_id
         self.session = None
         if session_id:
             from .session import Session as _Session
             self.session = _Session.load_or_create(session_id, agent_name=self.name)
 
-        # Background task runner (Phase 7.3) — lazy
+        # Background task runner, loaded lazily.
         self._bg_runner = None
 
-        # Last checkpoint info (Phase 7.1)
+        # Last checkpoint info
         self._last_checkpoint_id: str | None = None
 
         # Model initialization
@@ -301,7 +301,7 @@ Question: {task}
             self.model_name = None
             self.model = None
 
-        # Multi-model router (Phase 6)
+        # Multi-model router
         self._model_router = None
         self._all_models: list[BaseModel] = []
         if self.model is not None:
@@ -364,7 +364,7 @@ Question: {task}
         # Circuit breaker for tool failures
         self._circuit_breaker = CircuitBreaker()
 
-        # Human-in-the-loop approval manager (Phase 9)
+        # Human-in-the-loop approval manager
         from .human_loop import ApprovalManager, ApprovalMode
         try:
             _approval_mode = ApprovalMode(config.approval_mode)
@@ -789,7 +789,7 @@ Question: {task}
                             tags=["conversation"],
                         )
 
-                    # Persist to session (Phase 7.2)
+                    # Persist to session
                     if self.session is not None:
                         self.session.add_user_message(task)
                         self.session.add_assistant_message(response.output)
@@ -798,7 +798,7 @@ Question: {task}
                         except Exception as _e:
                             logger.warning("Failed to save session: %s", _e)
 
-                # Final checkpoint (Phase 7.1)
+                # Final checkpoint
                 ckpt_dir = _outer_ckpt_dir
                 if ckpt_dir:
                     try:
@@ -2199,7 +2199,7 @@ Question: {task}
             if gr.modified_content is not None:
                 tool_input = gr.modified_content
 
-        # Human-in-the-loop approval check (Phase 9)
+        # Human-in-the-loop approval check
         tool_obj = self.tools.get(tool_name)
         _requires_approval = getattr(
             getattr(tool_obj, '_metadata', None), 'requires_approval', False
@@ -2974,7 +2974,7 @@ Question: {task}
         """
         self.state = AgentState.load(filepath, format)
 
-    # ------------------------------------------------------------------ Phase 7
+    # ------------------------------------------------------------------ Resume
     def resume(self, checkpoint_id: str | None = None, checkpoint_dir: str = "./checkpoints", **kwargs) -> "AgentResponse":
         """
         Resume execution from a checkpoint.

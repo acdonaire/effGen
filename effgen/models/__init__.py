@@ -23,6 +23,8 @@ Example:
     >>> print(result.text)
 """
 
+from effgen.models._cost import CostTracker
+from effgen.models._cost_store import SQLiteCostStore
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models._rate_limit_store import SQLiteRateLimitStore
 from effgen.models.anthropic_adapter import AnthropicAdapter, StreamChunk
@@ -77,6 +79,7 @@ from effgen.models.groq_adapter import GroqAdapter
 from effgen.models.groq_models import GROQ_MODELS
 from effgen.models.hf_inference_adapter import HFInferenceAdapter
 from effgen.models.hf_inference_models import HF_MODELS
+from effgen.models.latency_tracker import LatencyTracker
 from effgen.models.lazy import LazyModel
 from effgen.models.model_loader import ModelLoader, load_model
 from effgen.models.openai_adapter import OpenAIAdapter
@@ -102,6 +105,7 @@ from effgen.models.router import (
 )
 from effgen.models.routing.cost import CostBasedPolicy
 from effgen.models.routing.first_available import FirstAvailablePolicy
+from effgen.models.routing.latency import LatencyBasedPolicy
 from effgen.models.routing.retry import RetryPolicy
 from effgen.models.together_adapter import TogetherAdapter
 from effgen.models.together_models import TOGETHER_MODELS
@@ -180,7 +184,13 @@ __all__ = [
     "NoCandidateError",
     "FirstAvailablePolicy",
     "CostBasedPolicy",
+    "LatencyBasedPolicy",
     "RetryPolicy",
+
+    # Latency + cost tracking (v0.2.4+)
+    "LatencyTracker",
+    "CostTracker",
+    "SQLiteCostStore",
 
     # Capabilities
     "Capability",

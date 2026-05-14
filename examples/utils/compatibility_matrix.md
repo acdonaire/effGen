@@ -47,7 +47,7 @@
 | Bug | Description | Fix |
 |-----|-------------|-----|
 | Pipeline routing test | Routing test used complexity scoring (5.2 < 7.0 threshold), causing false FAIL on all models | Changed test to use user-explicit trigger phrase ("Use sub-agents to...") which bypasses complexity threshold |
-| `error_recovery_agent.py` L865 | Called undefined `run_all_phase7_tests()` function | Fixed to `run_all_error_recovery_tests()` |
+| `error_recovery_agent.py` L865 | Called an undefined helper function | Fixed to `run_all_error_recovery_tests()` |
 
 **Verdict:** 0 framework bugs discovered during the sweep itself — only test-setup issues. All failures are model limitations.
 

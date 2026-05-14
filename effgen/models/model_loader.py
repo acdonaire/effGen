@@ -371,7 +371,7 @@ class ModelLoader:
             logger.info(f"Detected MLX-community model: {model_name}")
             return ModelType.MLX
 
-        # GGUF files (Phase 14.3) — handled by a separate engine
+        # GGUF files are handled by a separate engine.
         if model_lower.endswith(".gguf"):
             logger.info(f"Detected GGUF model file: {model_name}")
             return ModelType.TRANSFORMERS  # routed to GGUFEngine in load path

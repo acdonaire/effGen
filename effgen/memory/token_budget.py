@@ -6,7 +6,7 @@ response headroom) and provides smart truncation helpers that try to
 preserve the *most relevant* parts of the context rather than blindly
 dropping from the head.
 
-Default split (Phase 14):
+Default split:
     system   20%
     tools    30%
     history  40%

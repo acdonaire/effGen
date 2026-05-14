@@ -19,7 +19,7 @@ from .aggregation import AggregatedResult, MergeStrategy, ResultAggregator, Tool
 # Batch Execution
 from .batch import BatchConfig, BatchResult, BatchRunner
 
-# Clarification (Phase 9)
+# Clarification
 from .clarification import ClarificationDetector, ClarificationRequest
 
 # Complexity Analyzer
@@ -37,10 +37,10 @@ from .execution_tracker import (
     ExecutionTracker,
 )
 
-# Feedback (Phase 9)
+# Feedback
 from .feedback import FeedbackCollector, FeedbackEntry, FeedbackType
 
-# Human-in-the-Loop (Phase 9)
+# Human-in-the-Loop
 from .human_loop import (
     ApprovalDecision,
     ApprovalManager,

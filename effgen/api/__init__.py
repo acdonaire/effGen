@@ -1,6 +1,6 @@
 """effGen API Server v2 — Production Gateway.
 
-Phase 12 modules:
+Modules:
 - openai_compat: OpenAI-compatible /v1/chat/completions and /v1/completions
 - queue: RequestQueue with priority, fair scheduling, backpressure
 - pool: AgentPool with min/max size and auto-scaling

@@ -9,7 +9,7 @@ This framework enables SLMs to function as powerful agentic systems through:
 - Comprehensive configuration management
 """
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 __author__ = "effGen Team"
 __license__ = "Apache-2.0"
 
@@ -75,15 +75,27 @@ from effgen.models import (
     BaseModel,
     CerebrasAdapter,
     CostBasedPolicy,
+    CostTracker,
     FireworksAdapter,
+    FirstAvailablePolicy,
     GeminiAdapter,
     GenerationConfig,
     GenerationResult,
     GroqAdapter,
     HFInferenceAdapter,
+    LatencyBasedPolicy,
+    LatencyTracker,
     ModelLoader,
     OpenAIAdapter,
+    PolicyBasedRouter,
+    ProviderModelPair,
     ReplicateAdapter,
+    RetryPolicy,
+    RouterDecision,
+    RouterEvent,
+    RoutingContext,
+    RoutingPolicy,
+    SQLiteCostStore,
     StreamChunk,
     TogetherAdapter,
     TransformersEngine,
@@ -96,14 +108,18 @@ from effgen.models.auth import check_keys
 from effgen.models.cerebras_models import available_models as cerebras_available_models
 from effgen.models.cerebras_models import free_tier_models as cerebras_free_tier_models
 from effgen.models.cerebras_models import model_info as cerebras_model_info
-from effgen.models.errors import (
+from effgen.models.errors import (  # noqa: I001
+    AllCandidatesExhaustedError,
     AmbiguousModelError,
+    BudgetExceededError,
+    InvalidRequestError,
     ModelAuthError,
     ModelNotFoundError,
     ModelRefusalError,
     ModelTimeoutError,
     ModelUnavailableError,
     NoCandidateWithinBudgetError,
+    ProviderTransientError,
     ToolIncompatibleError,
 )
 from effgen.models.fireworks_models import available_models as fireworks_available_models
@@ -260,10 +276,25 @@ __all__ = [
     "ModelLoader",
     "GenerationConfig",
     "GenerationResult",
+    # Router (v0.2.4+)
+    "PolicyBasedRouter",
+    "RoutingPolicy",
+    "RoutingContext",
+    "RouterDecision",
+    "RouterEvent",
+    "ProviderModelPair",
+    "FirstAvailablePolicy",
     "CostBasedPolicy",
+    "LatencyBasedPolicy",
+    "RetryPolicy",
+    # Tracking (v0.2.4+)
+    "LatencyTracker",
+    "CostTracker",
+    "SQLiteCostStore",
     "RateLimitCoordinator",
     "RateLimitExceeded",
     "SQLiteRateLimitStore",
+    # Errors
     "ModelRefusalError",
     "ModelAuthError",
     "ModelTimeoutError",
@@ -272,6 +303,10 @@ __all__ = [
     "AmbiguousModelError",
     "NoCandidateWithinBudgetError",
     "ToolIncompatibleError",
+    "AllCandidatesExhaustedError",
+    "BudgetExceededError",
+    "ProviderTransientError",
+    "InvalidRequestError",
     "to_openai_schema",
     # Provider registry + auth
     "ProviderRegistry",
