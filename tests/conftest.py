@@ -57,6 +57,17 @@ def pytest_exception_interact(node, call, report):
 # Ensure effgen package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Load test credentials without printing or inspecting values. Project-local
+# values are useful for live integration tests; user-level values remain a
+# fallback for developer machines.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).parent.parent / ".env", override=False)
+    load_dotenv(Path.home() / ".effgen" / ".env", override=False)
+except ImportError:
+    pass
+
 # ---------------------------------------------------------------------------
 # Isolate the cost-tracker SQLite DB from the user's real ~/.effgen/costs.sqlite
 # during tests. Many unit tests record large fixture values (1M tokens etc.)

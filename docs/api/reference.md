@@ -135,7 +135,10 @@ class MyTool(BaseTool):
 | DockerTool | `from effgen.tools.builtin import DockerTool` | Docker operations (read-only) |
 | SystemInfoTool | `from effgen.tools.builtin import SystemInfoTool` | System monitoring |
 | HTTPTool | `from effgen.tools.builtin import HTTPTool` | HTTP requests |
-| ArxivTool | `from effgen.tools.builtin import ArxivTool` | arXiv paper search |
+| ArXivTool | `from effgen.tools.builtin import ArXivTool` | arXiv search, fetch, and PDF download |
+| ArxivTool | `from effgen.tools.builtin import ArxivTool` | Legacy alias for `ArXivTool` |
+| PubMedTool | `from effgen.tools.builtin import PubMedTool` | PubMed search, metadata fetch, and abstracts |
+| SemanticScholarTool | `from effgen.tools.builtin import SemanticScholarTool` | Semantic Scholar paper search, citations, and references |
 | StackOverflowTool | `from effgen.tools.builtin import StackOverflowTool` | StackOverflow search |
 | GitHubTool | `from effgen.tools.builtin import GitHubTool` | GitHub search |
 | WolframAlphaTool | `from effgen.tools.builtin import WolframAlphaTool` | Wolfram Alpha (API key) |

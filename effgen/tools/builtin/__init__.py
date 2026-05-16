@@ -44,9 +44,13 @@ __all__ = [
     "HTTPTool",
     # Knowledge
     "ArxivTool",
+    "ArXivTool",
     "StackOverflowTool",
     "GitHubTool",
     "WolframAlphaTool",
+    # Academic research
+    "PubMedTool",
+    "SemanticScholarTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -171,6 +175,15 @@ def __getattr__(name):
     elif name == "ArxivTool":
         from .knowledge import ArxivTool
         return ArxivTool
+    elif name == "ArXivTool":
+        from .arxiv import ArXivTool
+        return ArXivTool
+    elif name == "PubMedTool":
+        from .pubmed import PubMedTool
+        return PubMedTool
+    elif name == "SemanticScholarTool":
+        from .semantic_scholar import SemanticScholarTool
+        return SemanticScholarTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool

@@ -1,13 +1,13 @@
 {
-  "version": "0.2.4-cerebras-llama3.1-8b",
-  "timestamp": "2026-05-14T07:57:18.128054+00:00",
+  "version": "0.2.5-groq-gpt-oss-20b",
+  "timestamp": "2026-05-16T13:22:58.779078+00:00",
   "summary": {
     "suite": "math",
     "total": 20,
     "passed": 17,
     "accuracy": 0.85,
-    "avg_latency": 0.2307,
-    "total_tokens": 1072,
+    "avg_latency": 4.0,
+    "total_tokens": 1413,
     "avg_tool_accuracy": 0.0,
     "by_difficulty": {
       "easy": {
@@ -17,8 +17,8 @@
       },
       "medium": {
         "total": 5,
-        "passed": 2,
-        "accuracy": 0.4
+        "passed": 5,
+        "accuracy": 1.0
       }
     },
     "metadata": {

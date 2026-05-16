@@ -3,7 +3,7 @@ effGen Agent Presets — Ready-to-use agent configurations.
 
 Provides factory functions for common agent types:
 - math: Calculator + PythonREPL for mathematical tasks
-- research: WebSearch + URLFetch + Wikipedia for research tasks
+- research: WebSearch + URLFetch + Wikipedia + academic literature tools
 - coding: CodeExecutor + PythonREPL + FileOperations + BashTool for coding tasks
 - general: All available tools for general-purpose tasks
 - minimal: No tools, direct model inference only

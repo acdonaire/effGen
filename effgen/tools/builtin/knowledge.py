@@ -14,7 +14,6 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-from xml.etree import ElementTree as ET
 
 from ..base_tool import (
     BaseTool,
@@ -50,80 +49,10 @@ def _fetch_json(url: str, timeout: int = 15) -> Any:
     return json.loads(_fetch(url, timeout=timeout).decode("utf-8"))
 
 
-class ArxivTool(BaseTool):
-    """Search arXiv papers via the free Atom-feed API."""
-
-    ATOM_NS = "{http://www.w3.org/2005/Atom}"
-
-    def __init__(self):
-        super().__init__(
-            metadata=ToolMetadata(
-                name="arxiv",
-                description=(
-                    "Search arXiv.org for academic papers by query string. "
-                    "Returns title, authors, summary, and URL for each result."
-                ),
-                category=ToolCategory.INFORMATION_RETRIEVAL,
-                parameters=[
-                    ParameterSpec(
-                        name="query",
-                        type=ParameterType.STRING,
-                        description="Search query (e.g., 'small language models')",
-                        required=True,
-                        min_length=1,
-                        max_length=300,
-                    ),
-                    ParameterSpec(
-                        name="max_results",
-                        type=ParameterType.INTEGER,
-                        description="Maximum number of results",
-                        required=False,
-                        default=5,
-                        min_value=1,
-                        max_value=25,
-                    ),
-                ],
-                timeout_seconds=20,
-                tags=["knowledge", "arxiv", "papers", "free"],
-                examples=[{"query": "retrieval augmented generation", "max_results": 3}],
-            )
-        )
-
-    async def _execute(
-        self,
-        query: str,
-        max_results: int = 5,
-        **kwargs,
-    ) -> dict[str, Any]:
-        params = urlencode({
-            "search_query": f"all:{query}",
-            "start": 0,
-            "max_results": max_results,
-        })
-        url = f"http://export.arxiv.org/api/query?{params}"
-        xml_bytes = _fetch(url, accept="application/atom+xml")
-        root = ET.fromstring(xml_bytes)
-
-        papers = []
-        for entry in root.findall(f"{self.ATOM_NS}entry"):
-            title_el = entry.find(f"{self.ATOM_NS}title")
-            summary_el = entry.find(f"{self.ATOM_NS}summary")
-            id_el = entry.find(f"{self.ATOM_NS}id")
-            published_el = entry.find(f"{self.ATOM_NS}published")
-            authors = [
-                (a.find(f"{self.ATOM_NS}name").text or "").strip()
-                for a in entry.findall(f"{self.ATOM_NS}author")
-                if a.find(f"{self.ATOM_NS}name") is not None
-            ]
-            papers.append({
-                "title": (title_el.text or "").strip() if title_el is not None else "",
-                "authors": authors,
-                "summary": (summary_el.text or "").strip() if summary_el is not None else "",
-                "url": (id_el.text or "").strip() if id_el is not None else "",
-                "published": (published_el.text or "").strip() if published_el is not None else "",
-            })
-
-        return {"query": query, "count": len(papers), "results": papers}
+# `ArxivTool` was promoted to a dedicated module (`effgen.tools.builtin.arxiv`)
+# in v0.2.5 with richer operations (search / fetch / download_pdf). The legacy
+# name remains importable from this module for backwards compatibility.
+from .arxiv import ArXivTool as ArxivTool  # noqa: F401,E402
 
 
 class StackOverflowTool(BaseTool):

@@ -1,0 +1,186 @@
+name: Groq Quick Check
+
+# Lightweight push-time verification that GroqAdapter still talks to the real
+# API. Runs openai/gpt-oss-20b — chosen as the primary free-tier model after
+# the Cerebras free-tier RPM cap was tightened (regression issues #41 / #42)
+# and the math eval baseline was migrated to Groq.
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "effgen/models/groq_adapter.py"
+      - "effgen/models/groq_models.py"
+      - "effgen/models/_rate_limit.py"
+      - "effgen/models/_cost.py"
+      - "effgen/core/agent.py"
+      - "effgen/tools/builtin/calculator.py"
+      - "pyproject.toml"
+      - ".github/workflows/groq-quick.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "effgen/models/groq_adapter.py"
+      - "effgen/models/groq_models.py"
+      - "effgen/models/_rate_limit.py"
+      - "effgen/models/_cost.py"
+      - "effgen/core/agent.py"
+      - "effgen/tools/builtin/calculator.py"
+      - "pyproject.toml"
+      - ".github/workflows/groq-quick.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: groq-quick-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  groq-quick-check:
+    name: Groq Quick Check (openai/gpt-oss-20b)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-groq-quick-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-groq-quick-
+
+      - name: Install effgen with groq extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,groq]" -q
+
+      - name: Debug secret presence (no value leak)
+        env:
+          K: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -z "$K" ]; then
+            echo "MISSING: secrets.GROQ_API_KEY is empty in this job."
+            echo "  - Is the secret named exactly GROQ_API_KEY (case-sensitive)?"
+            echo "  - Is it a repository secret (Settings > Secrets and variables > Actions)?"
+            echo "  - Is this a pull_request from a fork? Forks don't get secrets."
+            exit 1
+          fi
+          echo "PRESENT, length=${#K}, first4=${K:0:4}"
+
+      - name: Generation + streaming + tool-calling smoke (openai/gpt-oss-20b)
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MODEL: "openai/gpt-oss-20b"
+        run: |
+          python - <<'PY'
+          import os, random, sys, time
+          api_key = os.getenv("GROQ_API_KEY", "")
+          model_id = os.environ["MODEL"]
+
+          if not api_key:
+              print(f"SKIPPED: GROQ_API_KEY not set for {model_id}")
+              sys.exit(0)
+
+          from effgen.models.groq_adapter import GroqAdapter
+          from effgen.models.base import GenerationConfig
+          from effgen.core.agent import Agent, AgentConfig
+          from effgen.tools.builtin.calculator import Calculator
+
+          MAX_ATTEMPTS = 5
+          BASE_DELAY = 3.0
+          MAX_DELAY = 60.0
+
+          def is_retriable(exc):
+              s = str(exc).lower()
+              return any(tag in s for tag in (
+                  "429", "rate", "too_many_requests",
+                  "timeout", "service unavailable", "503",
+              ))
+
+          def backoff(a):
+              cap = min(MAX_DELAY, BASE_DELAY * (2 ** a))
+              return random.uniform(0.5, cap)
+
+          def with_retry(label, fn):
+              last_exc = None
+              for attempt in range(MAX_ATTEMPTS):
+                  try:
+                      return fn()
+                  except Exception as exc:
+                      last_exc = exc
+                      retriable = is_retriable(exc)
+                      tag = "RETRIABLE" if retriable else "FATAL"
+                      print(f"WARN[{label}] attempt {attempt+1}/{MAX_ATTEMPTS} {tag}: {exc}")
+                      if not retriable or attempt == MAX_ATTEMPTS - 1:
+                          break
+                      delay = backoff(attempt)
+                      print(f"     sleeping {delay:.1f}s before retry…")
+                      time.sleep(delay)
+              raise RuntimeError(f"{label} failed after {MAX_ATTEMPTS} attempts: {last_exc}")
+
+          adapter = GroqAdapter(model_id)
+          adapter.load()
+
+          # ----- 1. Plain generate ----------------------------------------
+          def _gen():
+              # gpt-oss-20b emits internal reasoning tokens before the visible
+              # answer; max_tokens=8 cuts the response off before any letters
+              # are produced. 64 is comfortable headroom for a one-word reply.
+              return adapter.generate(
+                  "Reply with a single word: ALIVE",
+                  config=GenerationConfig(temperature=0.0, max_tokens=64),
+              )
+
+          out = with_retry("generate", _gen)
+          if not (out.text or "").strip():
+              print(f"FAIL[{model_id}]: generate returned empty text")
+              sys.exit(1)
+          print(f"OK[{model_id}]: generate -> {out.text!r}")
+
+          # ----- 2. Streaming ---------------------------------------------
+          def _stream():
+              chunks = list(adapter.generate_stream("Count: 1, 2, 3."))
+              text = "".join(chunks)
+              if not text:
+                  raise RuntimeError("stream returned empty text")
+              return chunks, text
+
+          chunks, text = with_retry("stream", _stream)
+          print(f"OK[{model_id}]: stream -> {len(chunks)} chunks, {len(text)} chars")
+
+          # ----- 3. Tool-calling agent (12*12=144) ------------------------
+          def _tools():
+              cfg = AgentConfig(
+                  name=f"quick-{model_id}",
+                  model=adapter,
+                  tools=[Calculator()],
+                  system_prompt="Use the calculator tool. Answer concisely.",
+                  max_iterations=5,
+                  temperature=0.1,
+              )
+              resp = Agent(cfg).run("What is 12 * 12?")
+              text = str(resp.output or "")
+              if "144" not in text:
+                  raise RuntimeError(f"'144' missing from output: {text!r}")
+              return text
+
+          try:
+              tools_out = with_retry("tools", _tools)
+              print(f"OK[{model_id}]: tool-calling -> '144' present")
+          except Exception as exc:
+              print(f"FAIL[{model_id}]: {exc}")
+              adapter.unload()
+              sys.exit(1)
+
+          adapter.unload()
+          print(f"All Groq quick checks passed for {model_id}")
+          PY

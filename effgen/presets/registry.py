@@ -49,16 +49,28 @@ _MATH_PRESET = PresetConfig(
 
 _RESEARCH_PRESET = PresetConfig(
     name="research",
-    description="Research agent with WebSearch, URLFetch, and Wikipedia tools.",
-    tool_names=["web_search", "url_fetch", "wikipedia"],
+    description=(
+        "Research agent with WebSearch, URLFetch, Wikipedia, and academic "
+        "search (arXiv, PubMed, Semantic Scholar) tools."
+    ),
+    tool_names=[
+        "web_search",
+        "url_fetch",
+        "wikipedia",
+        "arxiv",
+        "pubmed",
+        "semantic_scholar",
+    ],
     system_prompt=(
         "You are a thorough research agent. Search the web, fetch URLs, and "
-        "consult Wikipedia to gather accurate information. Cite your sources "
-        "and synthesize findings into clear answers."
+        "consult Wikipedia, arXiv, PubMed, and Semantic Scholar to gather "
+        "accurate information. Prefer academic sources for scientific or "
+        "medical questions. Cite your sources and synthesize findings into "
+        "clear answers."
     ),
     max_iterations=10,
     temperature=0.5,
-    tags=["research", "search", "information"],
+    tags=["research", "search", "information", "academic"],
 )
 
 _CODING_PRESET = PresetConfig(
@@ -168,14 +180,17 @@ def _instantiate_tools(tool_names: list[str]) -> list:
     """
     from effgen.tools.builtin import (
         AgenticSearch,
+        ArXivTool,
         BashTool,
         Calculator,
         CodeExecutor,
         DateTimeTool,
         FileOperations,
         JSONTool,
+        PubMedTool,
         PythonREPL,
         Retrieval,
+        SemanticScholarTool,
         TextProcessingTool,
         URLFetchTool,
         WebSearch,
@@ -196,6 +211,9 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "wikipedia": WikipediaTool,
         "agentic_search": AgenticSearch,
         "retrieval": Retrieval,
+        "arxiv": ArXivTool,
+        "pubmed": PubMedTool,
+        "semantic_scholar": SemanticScholarTool,
     }
 
     tools = []
