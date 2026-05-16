@@ -43,6 +43,9 @@ class TestFireworksRegistry:
 
     def test_context_positive(self):
         for mid, info in FIREWORKS_MODELS.items():
+            # Image-modality models (e.g. FLUX) don't have a token context window.
+            if info.get("modality") == "image":
+                continue
             assert info["context"] > 0, f"{mid} has context={info['context']}"
 
     def test_default_model_in_registry(self):
@@ -94,11 +97,11 @@ class TestFireworksAdapterInit:
         assert adapter.model_name == FIREWORKS_DEFAULT_MODEL
 
     def test_short_id_expansion(self):
-        adapter = FireworksAdapter("llama-v3p3-70b-instruct", enable_rate_limiting=False)
-        assert adapter.model_name == f"{_FIREWORKS_PREFIX}llama-v3p3-70b-instruct"
+        adapter = FireworksAdapter("kimi-k2p5", enable_rate_limiting=False)
+        assert adapter.model_name == f"{_FIREWORKS_PREFIX}kimi-k2p5"
 
     def test_full_id_unchanged(self):
-        full = f"{_FIREWORKS_PREFIX}llama-v3p3-70b-instruct"
+        full = f"{_FIREWORKS_PREFIX}kimi-k2p5"
         adapter = FireworksAdapter(full, enable_rate_limiting=False)
         assert adapter.model_name == full
 
@@ -120,14 +123,14 @@ class TestFireworksAdapterInit:
 
     def test_rate_limiter_created_for_known_model(self):
         adapter = FireworksAdapter(
-            f"{_FIREWORKS_PREFIX}llama-v3p3-70b-instruct",
+            f"{_FIREWORKS_PREFIX}kimi-k2p5",
             enable_rate_limiting=True,
         )
         assert adapter._rate_limiter is not None
 
     def test_rate_limiter_disabled(self):
         adapter = FireworksAdapter(
-            f"{_FIREWORKS_PREFIX}llama-v3p3-70b-instruct",
+            f"{_FIREWORKS_PREFIX}kimi-k2p5",
             enable_rate_limiting=False,
         )
         assert adapter._rate_limiter is None
@@ -138,7 +141,7 @@ class TestFireworksAdapterInit:
 # ---------------------------------------------------------------------------
 
 class TestFireworksAdapterLoadUnload:
-    def _make_adapter(self, model: str = None):
+    def _make_adapter(self, model: str | None = None):
         return FireworksAdapter(
             model or FIREWORKS_DEFAULT_MODEL,
             api_key="fw_test_key",
@@ -270,6 +273,7 @@ class TestFireworksAdapterGenerate:
 
         result = adapter.generate("Say hello")
         assert result.tokens_used == 3
+        assert result.metadata is not None
         assert result.metadata["prompt_tokens"] == 20
         assert result.metadata["completion_tokens"] == 3
 
@@ -358,7 +362,7 @@ def _make_tool_response(tool_name: str, tool_args: dict):
 
 class TestFireworksAdapterTools:
     def test_generate_with_tools_returns_tool_calls(self):
-        model = f"{_FIREWORKS_PREFIX}llama-v3p3-70b-instruct"
+        model = f"{_FIREWORKS_PREFIX}kimi-k2p5"
         adapter = _loaded_adapter(model)
         mock_resp = _make_tool_response("calculator", {"expression": "17*23"})
         adapter._client.chat.completions.create.return_value = mock_resp
@@ -376,13 +380,14 @@ class TestFireworksAdapterTools:
             },
         }]
         result = adapter.generate_with_tools("What is 17*23?", tools=tools)
+        assert result.metadata is not None
         tc = result.metadata["tool_calls"]
         assert len(tc) == 1
         assert tc[0]["function"]["name"] == "calculator"
         assert tc[0]["function"]["arguments"] == {"expression": "17*23"}
 
     def test_tools_not_passed_for_non_tool_model(self):
-        non_tool_model = f"{_FIREWORKS_PREFIX}deepseek-r1-distill-llama-8b"
+        non_tool_model = f"{_FIREWORKS_PREFIX}flux-1-dev-fp8"
         adapter = _loaded_adapter(non_tool_model)
         mock_resp = _make_mock_response("result")
         adapter._client.chat.completions.create.return_value = mock_resp
@@ -393,21 +398,16 @@ class TestFireworksAdapterTools:
         assert "tools" not in call_kwargs
 
     def test_supports_tool_calling_property(self):
-        # deepseek-v3p1 confirmed native tool support
-        tool_model = f"{_FIREWORKS_PREFIX}deepseek-v3p1"
+        # kimi-k2p5 confirmed native tool support
+        tool_model = f"{_FIREWORKS_PREFIX}kimi-k2p5"
         adapter = _loaded_adapter(tool_model)
         assert adapter.supports_tool_calling() is True
         assert adapter.supports_native_tools is True
 
-        # llama-v3p3 on Fireworks returns JSON text, not structured tool_calls
-        non_native_model = f"{_FIREWORKS_PREFIX}llama-v3p3-70b-instruct"
-        adapter2 = _loaded_adapter(non_native_model)
+        # Image-modality models don't support tools.
+        flux_model = f"{_FIREWORKS_PREFIX}flux-1-dev-fp8"
+        adapter2 = _loaded_adapter(flux_model)
         assert adapter2.supports_tool_calling() is False
-
-        # qwen3-0p6b also no tools (too small)
-        tiny_model = f"{_FIREWORKS_PREFIX}qwen3-0p6b"
-        adapter3 = _loaded_adapter(tiny_model)
-        assert adapter3.supports_tool_calling() is False
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +493,7 @@ class TestFireworksAdapterTokens:
         assert result.model_name == FIREWORKS_DEFAULT_MODEL
 
     def test_get_context_length(self):
-        model = f"{_FIREWORKS_PREFIX}llama-v3p3-70b-instruct"
+        model = f"{_FIREWORKS_PREFIX}kimi-k2p5"
         adapter = _loaded_adapter(model)
         ctx = adapter.get_context_length()
         assert ctx == FIREWORKS_MODELS[model]["context"]
@@ -514,7 +514,7 @@ class TestFireworksAdapterTokens:
 
 class TestFireworksAdapterHelpers:
     def test_pricing(self):
-        adapter = _loaded_adapter(f"{_FIREWORKS_PREFIX}llama-v3p3-70b-instruct")
+        adapter = _loaded_adapter(f"{_FIREWORKS_PREFIX}kimi-k2p5")
         p = adapter.pricing()
         assert "input_per_1m_usd" in p
         assert "output_per_1m_usd" in p
@@ -550,7 +550,7 @@ class TestFireworksRefreshModels:
         mock_response.json.return_value = {
             "models": [
                 {
-                    "name": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+                    "name": "accounts/fireworks/models/kimi-k2p5",
                     "contextLength": 131072,
                     "displayName": "Llama 3.3 70B Instruct",
                     "baseModelDetails": {"modelType": "llama"},

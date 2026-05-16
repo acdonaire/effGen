@@ -57,6 +57,23 @@ def pytest_exception_interact(node, call, report):
 # Ensure effgen package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# ---------------------------------------------------------------------------
+# Isolate the cost-tracker SQLite DB from the user's real ~/.effgen/costs.sqlite
+# during tests. Many unit tests record large fixture values (1M tokens etc.)
+# and those must not pollute the user's actual cost history.
+# ---------------------------------------------------------------------------
+_TEST_COST_DB_DIR: str | None = None
+if "EFFGEN_COST_DB" not in os.environ:
+    _TEST_COST_DB_DIR = tempfile.mkdtemp(prefix="effgen_test_costs_")
+    os.environ["EFFGEN_COST_DB"] = str(Path(_TEST_COST_DB_DIR) / "costs.sqlite")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Remove the isolated cost DB created for this pytest session."""
+    _ = (session, exitstatus)
+    if _TEST_COST_DB_DIR:
+        shutil.rmtree(_TEST_COST_DB_DIR, ignore_errors=True)
+
 from effgen.core.agent import Agent, AgentConfig
 from effgen.tools.builtin import Calculator, DateTimeTool, JSONTool, TextProcessingTool
 from tests.fixtures.mock_models import MockModel, MockStreamingModel, MockToolCallingModel

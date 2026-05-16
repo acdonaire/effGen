@@ -39,6 +39,7 @@ class TestTogetherLive:
         else:
             assert result.text, "Expected non-empty response"
             assert result.tokens_used > 0
+            assert result.metadata is not None
             assert result.metadata["provider"] == "together"
         finally:
             adapter.unload()
@@ -61,6 +62,17 @@ class TestTogetherLive:
         adapter.load()
         try:
             result = adapter.generate("Say hello in one word.")
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if "dedicated endpoint" in msg:
+                pytest.skip(f"Together dedicated endpoint not running: {exc}")
+            raise
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(k in msg for k in ("rate", "429", "timeout", "timed out", "503", "service unavailable", "quota")):
+                pytest.skip(f"Together transient: {exc}")
+            raise
+        else:
             assert result.text
             assert result.tokens_used > 0
         finally:
@@ -125,6 +137,7 @@ class TestTogetherLive:
                 "What's the weather in Paris?",
                 tools=[tool],
             )
+            assert result.metadata is not None
             tool_calls = result.metadata.get("tool_calls", [])
             assert len(tool_calls) >= 1, f"Expected at least 1 tool call, got {tool_calls}"
             assert tool_calls[0]["function"]["name"] == "get_weather"
@@ -138,6 +151,7 @@ class TestTogetherLive:
         adapter.load()
         try:
             result = adapter.generate("Hello")
+            assert result.metadata is not None
             assert result.metadata["prompt_tokens"] > 0
             assert result.metadata["completion_tokens"] > 0
             assert result.metadata["total_tokens"] > 0

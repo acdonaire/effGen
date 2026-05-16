@@ -45,6 +45,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 _DEFAULT_DB_PATH = Path.home() / ".effgen" / "costs.sqlite"
 
@@ -109,7 +110,10 @@ class SQLiteCostStore:
 
     def __init__(self, db_path: str | os.PathLike | None = None) -> None:
         if db_path is None:
-            db_path = _DEFAULT_DB_PATH
+            # Allow tests / sandboxes to redirect persistence away from the
+            # user's real ~/.effgen/costs.sqlite via EFFGEN_COST_DB.
+            env_path = os.environ.get("EFFGEN_COST_DB")
+            db_path = env_path if env_path else _DEFAULT_DB_PATH
         self._path = str(db_path)
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
@@ -126,7 +130,7 @@ class SQLiteCostStore:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA synchronous=NORMAL;")
             self._local.conn = conn
-        return self._local.conn
+        return cast(sqlite3.Connection, self._local.conn)
 
     def _init_schema(self) -> None:
         conn = self._conn()

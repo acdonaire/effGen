@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 from dotenv import load_dotenv
@@ -78,9 +79,9 @@ PARITY_PARAMS = [
         id="together/llama-3-8b-lite",
     ),
     pytest.param(
-        "fireworks", "accounts/fireworks/models/qwen3-8b",
+        "fireworks", "accounts/fireworks/models/kimi-k2p5",
         marks=pytest.mark.skipif(not _has("FIREWORKS_API_KEY"), reason="SKIPPED: FIREWORKS_API_KEY not set"),
-        id="fireworks/qwen3-8b",
+        id="fireworks/kimi-k2p5",
     ),
     pytest.param(
         "hf", "Qwen/Qwen2.5-72B-Instruct",
@@ -116,6 +117,7 @@ PARITY_PARAMS = [
 
 def _load_adapter(provider: str, model_id: str):
     """Load a live adapter for (provider, model_id)."""
+    a: Any
     if provider == "cerebras":
         from effgen.models.cerebras_adapter import CerebrasAdapter
         a = CerebrasAdapter(model_id)
@@ -134,7 +136,8 @@ def _load_adapter(provider: str, model_id: str):
         a = FireworksAdapter(
             model_id,
             max_retries=LIVE_TEST_MAX_RETRIES,
-            timeout=LIVE_TEST_TIMEOUT_SECONDS,
+            timeout=30,
+            enable_rate_limiting=False,
         )
     elif provider == "hf":
         from effgen.models.hf_inference_adapter import HFInferenceAdapter
@@ -209,9 +212,9 @@ NATIVE_PARAMS = [
         id="groq/llama-3.3-70b-versatile/native",
     ),
     pytest.param(
-        "fireworks", "accounts/fireworks/models/qwen3-8b",
+        "fireworks", "accounts/fireworks/models/kimi-k2p5",
         marks=pytest.mark.skipif(not _has("FIREWORKS_API_KEY"), reason="SKIPPED: FIREWORKS_API_KEY not set"),
-        id="fireworks/qwen3-8b/native",
+        id="fireworks/kimi-k2p5/native",
     ),
     pytest.param(
         "together", "meta-llama/Meta-Llama-3-8B-Instruct-Lite",

@@ -143,7 +143,7 @@ For the canonical parity task, these models were validated:
 | Cerebras | `llama3.1-8b` | Fast, free; deprecating 2026-05-27 |
 | Groq | `llama-3.3-70b-versatile` | Best quality/speed on free tier |
 | Together | `meta-llama/Meta-Llama-3-8B-Instruct-Lite` | Free, fast |
-| Fireworks | `accounts/fireworks/models/qwen3-8b` | Free, tool-capable |
+| Fireworks | `accounts/fireworks/models/kimi-k2p5` | Tool-capable serverless model |
 | HuggingFace | `Qwen/Qwen2.5-72B-Instruct` | Best free HF model |
 | Gemini | `gemini-2.5-flash-lite` | Fast, 20 req/day free |
 | OpenAI | `gpt-4o-mini` | Reliable, low cost |

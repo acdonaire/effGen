@@ -69,7 +69,7 @@ class FireworksAdapter(BaseModel):
 
     Args:
         model_name: Fireworks model ID.  Defaults to
-            ``"accounts/fireworks/models/llama-v3p3-70b-instruct"``.
+            ``"accounts/fireworks/models/gpt-oss-120b"``.
         api_key: Fireworks API key.  If omitted, reads ``FIREWORKS_API_KEY``
             from the environment.
         max_retries: Maximum number of SDK retry attempts on transient errors.
@@ -85,7 +85,7 @@ class FireworksAdapter(BaseModel):
 
         from effgen.models.fireworks_adapter import FireworksAdapter
 
-        adapter = FireworksAdapter("accounts/fireworks/models/llama-v3p3-70b-instruct")
+        adapter = FireworksAdapter("accounts/fireworks/models/gpt-oss-120b")
         adapter.load()
 
         result = adapter.generate("What is the capital of France?")
@@ -641,7 +641,7 @@ class FireworksAdapter(BaseModel):
 
     def get_context_length(self) -> int:
         """Return the context window size for the loaded model."""
-        return FIREWORKS_MODELS.get(self.model_name, {}).get("context", 131_072)
+        return int(FIREWORKS_MODELS.get(self.model_name, {}).get("context", 131_072))
 
     # ------------------------------------------------------------------
     # Helpers
@@ -656,11 +656,11 @@ class FireworksAdapter(BaseModel):
     @property
     def supports_native_tools(self) -> bool:
         """True if this model supports OpenAI-format function calling."""
-        return FIREWORKS_MODELS.get(self.model_name, {}).get("supports_native_tools", False)
+        return bool(FIREWORKS_MODELS.get(self.model_name, {}).get("supports_native_tools", False))
 
     def supports_tool_calling(self) -> bool:
         """Return True if the loaded model supports native tool-calling."""
-        return FIREWORKS_MODELS.get(self.model_name, {}).get("supports_native_tools", False)
+        return bool(FIREWORKS_MODELS.get(self.model_name, {}).get("supports_native_tools", False))
 
     def supports_function_calling(self) -> bool:
         """Alias for :meth:`supports_tool_calling`."""
@@ -669,14 +669,14 @@ class FireworksAdapter(BaseModel):
     @property
     def supports_streaming(self) -> bool:
         """True if this model supports streaming responses."""
-        return FIREWORKS_MODELS.get(self.model_name, {}).get("supports_streaming", True)
+        return bool(FIREWORKS_MODELS.get(self.model_name, {}).get("supports_streaming", True))
 
     def pricing(self) -> dict[str, float]:
         """Return per-request pricing info for the loaded model."""
         info = FIREWORKS_MODELS.get(self.model_name, {})
         return {
-            "input_per_1m_usd": info.get("pricing_per_1m_input", 0),
-            "output_per_1m_usd": info.get("pricing_per_1m_output", 0),
+            "input_per_1m_usd": float(info.get("pricing_per_1m_input", 0)),
+            "output_per_1m_usd": float(info.get("pricing_per_1m_output", 0)),
         }
 
 

@@ -63,6 +63,7 @@ def run_canonical_task(adapter, strategy: str = "react") -> dict:
     answer_text = ""
     tool_calls_count = 0
 
+    agent = None
     try:
         agent = Agent(
             config=AgentConfig(
@@ -84,6 +85,9 @@ def run_canonical_task(adapter, strategy: str = "react") -> dict:
             error = result.output[:500]
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
+    finally:
+        if agent is not None:
+            agent.close()
 
     latency_ms = (time.monotonic() - t0) * 1000
     answer_correct = CANONICAL_ANSWER in answer_text
