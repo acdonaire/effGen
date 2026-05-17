@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -34,6 +35,10 @@ logger = logging.getLogger(__name__)
 ARXIV_BASE = "http://export.arxiv.org/api/query"
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
 ARXIV_NS = "{http://arxiv.org/schemas/atom}"
+ARXIV_MIN_REQUEST_INTERVAL = 3.0
+
+_ARXIV_REQUEST_LOCK = asyncio.Lock()
+_ARXIV_LAST_REQUEST = 0.0
 
 
 def _user_agent() -> str:
@@ -44,7 +49,7 @@ def _user_agent() -> str:
     return f"effGen/{__version__}"
 
 
-def _http_get(url: str, accept: str = "application/atom+xml", timeout: int = 25) -> bytes:
+def _http_get(url: str, accept: str = "application/atom+xml", timeout: int = 12) -> bytes:
     req = Request(url, headers={"User-Agent": _user_agent(), "Accept": accept})
     try:
         with urlopen(req, timeout=timeout) as resp:
@@ -53,6 +58,44 @@ def _http_get(url: str, accept: str = "application/atom+xml", timeout: int = 25)
         raise ConnectionError(f"HTTP {e.code} from {url}: {e.reason}")
     except URLError as e:
         raise ConnectionError(f"Network error fetching {url}: {e.reason}")
+    except TimeoutError as e:
+        raise ConnectionError(f"Timeout fetching {url}") from e
+
+
+async def _http_get_polite(
+    url: str,
+    accept: str = "application/atom+xml",
+    *,
+    retries: int = 2,
+) -> bytes:
+    """Fetch arXiv while respecting its single-connection, 3-second API limit."""
+    global _ARXIV_LAST_REQUEST
+    backoff = 1.0
+    for attempt in range(retries + 1):
+        async with _ARXIV_REQUEST_LOCK:
+            elapsed = time.monotonic() - _ARXIV_LAST_REQUEST
+            if elapsed < ARXIV_MIN_REQUEST_INTERVAL:
+                await asyncio.sleep(ARXIV_MIN_REQUEST_INTERVAL - elapsed)
+            _ARXIV_LAST_REQUEST = time.monotonic()
+            try:
+                return await asyncio.to_thread(_http_get, url, accept)
+            except ConnectionError as exc:
+                error_text = str(exc)
+                retryable = (
+                    "HTTP 429" in error_text
+                    or "HTTP 5" in error_text
+                    or "timeout" in error_text.lower()
+                )
+                if attempt == retries or not retryable:
+                    raise
+                logger.warning(
+                    "arXiv request failed (%s); retrying in %.1fs",
+                    exc,
+                    backoff,
+                )
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, 16.0)
+    raise ConnectionError(f"arXiv request failed after {retries} retries: {url}")
 
 
 _ID_RE = re.compile(r"(?:arxiv\.org/(?:abs|pdf)/)?(\d{4}\.\d{4,5})(?:v\d+)?", re.IGNORECASE)
@@ -204,7 +247,7 @@ class ArXivTool(BaseTool):
             "max_results": max_results,
         })
         url = f"{ARXIV_BASE}?{params}"
-        raw = await asyncio.to_thread(_http_get, url, "application/atom+xml")
+        raw = await _http_get_polite(url, "application/atom+xml")
         root = ET.fromstring(raw)
         papers = [_parse_entry(e) for e in root.findall(f"{ATOM_NS}entry")]
         total_el = root.find("{http://a9.com/-/spec/opensearch/1.1/}totalResults")
@@ -221,7 +264,7 @@ class ArXivTool(BaseTool):
         aid = _normalize_arxiv_id(arxiv_id)
         params = urlencode({"id_list": aid})
         url = f"{ARXIV_BASE}?{params}"
-        raw = await asyncio.to_thread(_http_get, url, "application/atom+xml")
+        raw = await _http_get_polite(url, "application/atom+xml")
         root = ET.fromstring(raw)
         entries = root.findall(f"{ATOM_NS}entry")
         papers = [_parse_entry(e) for e in entries]
@@ -238,7 +281,7 @@ class ArXivTool(BaseTool):
     async def _download_pdf(self, arxiv_id: str, dest: str | None) -> dict[str, Any]:
         aid = _normalize_arxiv_id(arxiv_id)
         url = f"https://arxiv.org/pdf/{aid}.pdf"
-        raw = await asyncio.to_thread(_http_get, url, "application/pdf")
+        raw = await _http_get_polite(url, "application/pdf")
         out_path = dest or os.path.join(os.getcwd(), f"{aid.replace('/', '_')}.pdf")
         out_dir = os.path.dirname(os.path.abspath(out_path))
         if out_dir:

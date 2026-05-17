@@ -50,8 +50,8 @@ _MATH_PRESET = PresetConfig(
 _RESEARCH_PRESET = PresetConfig(
     name="research",
     description=(
-        "Research agent with WebSearch, URLFetch, Wikipedia, and academic "
-        "search (arXiv, PubMed, Semantic Scholar) tools."
+        "Research agent with WebSearch, URLFetch, Wikipedia, academic "
+        "search (arXiv, PubMed, Semantic Scholar), RSS feeds, and news tools."
     ),
     tool_names=[
         "web_search",
@@ -60,13 +60,15 @@ _RESEARCH_PRESET = PresetConfig(
         "arxiv",
         "pubmed",
         "semantic_scholar",
+        "rss_feed",
+        "news",
     ],
     system_prompt=(
         "You are a thorough research agent. Search the web, fetch URLs, and "
-        "consult Wikipedia, arXiv, PubMed, and Semantic Scholar to gather "
-        "accurate information. Prefer academic sources for scientific or "
-        "medical questions. Cite your sources and synthesize findings into "
-        "clear answers."
+        "consult Wikipedia, arXiv, PubMed, Semantic Scholar, RSS feeds, and news "
+        "sources to gather accurate information. Prefer academic sources for scientific or "
+        "medical questions. For current events, use news or rss_feed tools. "
+        "Cite your sources and synthesize findings into clear answers."
     ),
     max_iterations=10,
     temperature=0.5,
@@ -102,6 +104,8 @@ _GENERAL_PRESET = PresetConfig(
         "text_processing",
         "url_fetch",
         "wikipedia",
+        "rss_feed",
+        "news",
     ],
     system_prompt=(
         "You are a versatile AI assistant with access to many tools. "
@@ -187,9 +191,11 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         DateTimeTool,
         FileOperations,
         JSONTool,
+        NewsTool,
         PubMedTool,
         PythonREPL,
         Retrieval,
+        RSSFeedTool,
         SemanticScholarTool,
         TextProcessingTool,
         URLFetchTool,
@@ -214,6 +220,8 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "arxiv": ArXivTool,
         "pubmed": PubMedTool,
         "semantic_scholar": SemanticScholarTool,
+        "rss_feed": RSSFeedTool,
+        "news": NewsTool,
     }
 
     tools = []

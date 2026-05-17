@@ -33,6 +33,15 @@ def _run(coro):
 
 def _ok(result: ToolResult):
     assert isinstance(result, ToolResult)
+    if not result.success and result.error:
+        transient_markers = (
+            "HTTP 429",
+            "Too Many Requests",
+            "timed out",
+            "Timeout",
+        )
+        if any(marker in result.error for marker in transient_markers):
+            pytest.skip(f"arXiv transient error: {result.error}")
     assert result.success, f"tool failed: {result.error}"
     return result.output
 

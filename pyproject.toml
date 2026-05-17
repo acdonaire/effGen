@@ -154,6 +154,9 @@ gguf = [
 cerebras = [
     "cerebras-cloud-sdk>=1.0",
 ]
+rss = [
+    "feedparser>=6.0.11",
+]
 groq = [
     "groq>=0.15",
 ]
@@ -230,6 +233,7 @@ all = [
     "huggingface_hub>=0.26",
     "bitsandbytes>=0.46.1",
     "datasets>=2.14.0",
+    "feedparser>=6.0.11",
 ]
 
 [tool.setuptools.dynamic]

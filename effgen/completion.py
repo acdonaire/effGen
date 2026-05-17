@@ -23,8 +23,8 @@ _effgen_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     commands="run chat serve config tools models examples health create-plugin presets"
-    presets="math research coding general minimal"
-    tools="calculator python_repl web_search code_executor file_operations bash json_tool datetime_tool text_processing url_fetch wikipedia agentic_search retrieval"
+    presets="math research coding general rag minimal"
+    tools="calculator python_repl web_search code_executor file_operations bash json_tool datetime_tool text_processing url_fetch wikipedia agentic_search retrieval arxiv pubmed semantic_scholar rss_feed news"
 
     case "${prev}" in
         effgen)
@@ -93,8 +93,8 @@ _effgen() {
         'create-plugin:Generate plugin scaffold'
         'presets:List available presets'
     )
-    presets=(math research coding general minimal)
-    tools=(calculator python_repl web_search code_executor file_operations bash json_tool datetime_tool text_processing url_fetch wikipedia)
+    presets=(math research coding general rag minimal)
+    tools=(calculator python_repl web_search code_executor file_operations bash json_tool datetime_tool text_processing url_fetch wikipedia agentic_search retrieval arxiv pubmed semantic_scholar rss_feed news)
 
     _arguments -C \\
         '--version[Show version]' \\
@@ -145,9 +145,9 @@ complete -c effgen -n "__fish_use_subcommand" -a "health" -d "Check infrastructu
 complete -c effgen -n "__fish_use_subcommand" -a "create-plugin" -d "Generate plugin scaffold"
 complete -c effgen -n "__fish_use_subcommand" -a "presets" -d "List agent presets"
 
-complete -c effgen -n "__fish_seen_subcommand_from run" -l preset -xa "math research coding general minimal"
+complete -c effgen -n "__fish_seen_subcommand_from run" -l preset -xa "math research coding general rag minimal"
 complete -c effgen -n "__fish_seen_subcommand_from run" -l model -d "Model to use"
-complete -c effgen -n "__fish_seen_subcommand_from run" -l tools -xa "calculator python_repl web_search code_executor file_operations bash"
+complete -c effgen -n "__fish_seen_subcommand_from run" -l tools -xa "calculator python_repl web_search code_executor file_operations bash json_tool datetime_tool text_processing url_fetch wikipedia agentic_search retrieval arxiv pubmed semantic_scholar rss_feed news"
 complete -c effgen -n "__fish_seen_subcommand_from run" -l verbose -d "Show execution stats"
 complete -c effgen -n "__fish_seen_subcommand_from run" -l explain -d "Show tool reasoning"
 complete -c effgen -n "__fish_seen_subcommand_from run" -l stream -d "Stream output"

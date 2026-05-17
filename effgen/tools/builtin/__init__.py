@@ -51,6 +51,9 @@ __all__ = [
     # Academic research
     "PubMedTool",
     "SemanticScholarTool",
+    # RSS + News
+    "RSSFeedTool",
+    "NewsTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -184,6 +187,12 @@ def __getattr__(name):
     elif name == "SemanticScholarTool":
         from .semantic_scholar import SemanticScholarTool
         return SemanticScholarTool
+    elif name == "RSSFeedTool":
+        from .rss import RSSFeedTool
+        return RSSFeedTool
+    elif name == "NewsTool":
+        from .news import NewsTool
+        return NewsTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool
