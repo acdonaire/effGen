@@ -57,6 +57,12 @@ __all__ = [
     # YouTube
     "YouTubeTranscriptTool",
     "YouTubeMetadataTool",
+    # Social
+    "RedditTool",
+    "HackerNewsTool",
+    # Translation + Language Detection
+    "TranslateTool",
+    "LanguageDetectTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -202,6 +208,18 @@ def __getattr__(name):
     elif name == "YouTubeMetadataTool":
         from .youtube_metadata import YouTubeMetadataTool
         return YouTubeMetadataTool
+    elif name == "RedditTool":
+        from .reddit import RedditTool
+        return RedditTool
+    elif name == "HackerNewsTool":
+        from .hackernews import HackerNewsTool
+        return HackerNewsTool
+    elif name == "TranslateTool":
+        from .translate import TranslateTool
+        return TranslateTool
+    elif name == "LanguageDetectTool":
+        from .language_detect import LanguageDetectTool
+        return LanguageDetectTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool

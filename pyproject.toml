@@ -157,6 +157,10 @@ cerebras = [
 rss = [
     "feedparser>=6.0.11",
 ]
+translate = [
+    "argostranslate>=1.9.0",
+    "langdetect>=1.0.9",
+]
 youtube = [
     "youtube-transcript-api>=1.0.0",
     "yt-dlp>=2024.1.1",
@@ -240,6 +244,8 @@ all = [
     "feedparser>=6.0.11",
     "youtube-transcript-api>=1.0.0",
     "yt-dlp>=2024.1.1",
+    "argostranslate>=1.9.0",
+    "langdetect>=1.0.9",
 ]
 
 [tool.setuptools.dynamic]
@@ -465,6 +471,7 @@ ignore = [
 "examples/**/*.py" = ["E402"]
 "build_plan/**/*.py" = ["E402"]
 "scripts/**/*.py" = ["E402"]
+"validation/**/*.py" = ["E402"]
 "tests/conftest.py" = ["E402"]  # sys.path manipulation must precede effgen imports
 
 [tool.ruff.lint.isort]

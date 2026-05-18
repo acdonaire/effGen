@@ -52,7 +52,7 @@ _RESEARCH_PRESET = PresetConfig(
     description=(
         "Research agent with WebSearch, URLFetch, Wikipedia, academic "
         "search (arXiv, PubMed, Semantic Scholar), RSS feeds, news, "
-        "and YouTube transcript/metadata tools."
+        "YouTube transcript/metadata, Reddit, and Hacker News tools."
     ),
     tool_names=[
         "web_search",
@@ -65,14 +65,16 @@ _RESEARCH_PRESET = PresetConfig(
         "news",
         "youtube_transcript",
         "youtube_metadata",
+        "reddit",
+        "hackernews",
     ],
     system_prompt=(
         "You are a thorough research agent. Search the web, fetch URLs, and "
         "consult Wikipedia, arXiv, PubMed, Semantic Scholar, RSS feeds, news "
-        "sources, and YouTube videos to gather accurate information. Prefer academic "
-        "sources for scientific or medical questions. For current events, use news or "
-        "rss_feed tools. For video content, use youtube_transcript to read captions "
-        "and youtube_metadata for video details. "
+        "sources, YouTube videos, Reddit, and Hacker News to gather accurate information. "
+        "Prefer academic sources for scientific or medical questions. For current events, "
+        "use news, rss_feed, reddit, or hackernews tools. For video content, use "
+        "youtube_transcript to read captions and youtube_metadata for video details. "
         "Cite your sources and synthesize findings into clear answers."
     ),
     max_iterations=10,
@@ -111,6 +113,10 @@ _GENERAL_PRESET = PresetConfig(
         "wikipedia",
         "rss_feed",
         "news",
+        "reddit",
+        "hackernews",
+        "translate",
+        "language_detect",
     ],
     system_prompt=(
         "You are a versatile AI assistant with access to many tools. "
@@ -195,14 +201,18 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         CodeExecutor,
         DateTimeTool,
         FileOperations,
+        HackerNewsTool,
         JSONTool,
+        LanguageDetectTool,
         NewsTool,
         PubMedTool,
         PythonREPL,
+        RedditTool,
         Retrieval,
         RSSFeedTool,
         SemanticScholarTool,
         TextProcessingTool,
+        TranslateTool,
         URLFetchTool,
         WebSearch,
         WikipediaTool,
@@ -231,6 +241,10 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "news": NewsTool,
         "youtube_transcript": YouTubeTranscriptTool,
         "youtube_metadata": YouTubeMetadataTool,
+        "reddit": RedditTool,
+        "hackernews": HackerNewsTool,
+        "translate": TranslateTool,
+        "language_detect": LanguageDetectTool,
     }
 
     tools = []
