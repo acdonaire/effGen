@@ -49,6 +49,7 @@ _USAGE_LOG = logging.getLogger(__name__ + ".usage")
 logger = logging.getLogger(__name__)
 
 _REASONING_UNSUPPORTED_PARAMS = {"temperature", "top_p", "presence_penalty", "frequency_penalty"}
+_FIXED_SAMPLING_PREFIXES = ("gpt-5",)
 
 
 def _pick_default_max_output(model_id: str) -> int:
@@ -57,6 +58,11 @@ def _pick_default_max_output(model_id: str) -> int:
     Reasoning models need more room for their internal chain-of-thought.
     """
     return get_max_output(model_id)
+
+
+def _supports_sampling_params(model_id: str, is_reasoning_model: bool) -> bool:
+    """Return whether the model accepts non-default sampling parameters."""
+    return not is_reasoning_model and not model_id.startswith(_FIXED_SAMPLING_PREFIXES)
 
 
 class OpenAIAdapter(FunctionCallingModel):
@@ -110,6 +116,10 @@ class OpenAIAdapter(FunctionCallingModel):
         self.total_tokens = 0
 
         self._is_reasoning_model = supports_reasoning(model_name)
+        self._supports_sampling_params = _supports_sampling_params(
+            model_name,
+            self._is_reasoning_model,
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -150,6 +160,7 @@ class OpenAIAdapter(FunctionCallingModel):
                 "context_length": self.get_context_length(),
                 "family": OPENAI_MODELS.get(self.model_name, {}).get("family", "chat"),
                 "supports_reasoning": self._is_reasoning_model,
+                "supports_sampling_params": self._supports_sampling_params,
                 "supports_functions": True,
                 "supports_streaming": True,
             }
@@ -220,7 +231,7 @@ class OpenAIAdapter(FunctionCallingModel):
                 # max_reasoning_tokens narrows how many tokens the model can use
                 # for its internal chain-of-thought.
                 params["max_completion_tokens"] = config.max_reasoning_tokens
-        else:
+        elif self._supports_sampling_params:
             # Chat model — include standard sampling parameters.
             params["temperature"] = config.temperature
             params["top_p"] = config.top_p
@@ -232,6 +243,11 @@ class OpenAIAdapter(FunctionCallingModel):
                     f"reasoning_effort={config.reasoning_effort!r} is set but "
                     f"'{self.model_name}' is not a reasoning model — dropping silently."
                 )
+        elif config.reasoning_effort is not None:
+            logger.debug(
+                f"reasoning_effort={config.reasoning_effort!r} is set but "
+                f"'{self.model_name}' is not a reasoning model — dropping silently."
+            )
 
         # GPT-5 family and reasoning models don't accept the 'stop' parameter.
         # Drop it silently so the Agent's default stop_sequences don't break calls.
@@ -728,7 +744,7 @@ class OpenAIAdapter(FunctionCallingModel):
         }
         if previous_response_id:
             params["previous_response_id"] = previous_response_id
-        if not self._is_reasoning_model:
+        if self._supports_sampling_params:
             params["temperature"] = config.temperature
         if config.reasoning_effort is not None and self._is_reasoning_model:
             params["reasoning"] = {"effort": config.reasoning_effort}

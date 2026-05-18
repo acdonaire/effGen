@@ -216,6 +216,21 @@ class TestOpenAIAdapterReasoningPayload:
         params = adapter._build_request_params([{"role": "user", "content": "hi"}], cfg)
         assert "stop" not in params
 
+    def test_sampling_params_dropped_for_gpt5_family(self):
+        """GPT-5 chat models reject non-default sampling params."""
+        adapter = self._make_adapter("gpt-5.4-nano")
+        cfg = GenerationConfig(
+            temperature=0.0,
+            top_p=0.5,
+            presence_penalty=0.2,
+            frequency_penalty=0.2,
+        )
+        params = adapter._build_request_params([{"role": "user", "content": "hi"}], cfg)
+        assert "temperature" not in params
+        assert "top_p" not in params
+        assert "presence_penalty" not in params
+        assert "frequency_penalty" not in params
+
     def test_stop_dropped_for_reasoning_models(self):
         """Reasoning models reject 'stop' — adapter must drop it silently."""
         adapter = self._make_adapter("o3-mini")
