@@ -157,6 +157,10 @@ cerebras = [
 rss = [
     "feedparser>=6.0.11",
 ]
+youtube = [
+    "youtube-transcript-api>=1.0.0",
+    "yt-dlp>=2024.1.1",
+]
 groq = [
     "groq>=0.15",
 ]
@@ -234,6 +238,8 @@ all = [
     "bitsandbytes>=0.46.1",
     "datasets>=2.14.0",
     "feedparser>=6.0.11",
+    "youtube-transcript-api>=1.0.0",
+    "yt-dlp>=2024.1.1",
 ]
 
 [tool.setuptools.dynamic]

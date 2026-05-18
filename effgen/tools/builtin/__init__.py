@@ -54,6 +54,9 @@ __all__ = [
     # RSS + News
     "RSSFeedTool",
     "NewsTool",
+    # YouTube
+    "YouTubeTranscriptTool",
+    "YouTubeMetadataTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -193,6 +196,12 @@ def __getattr__(name):
     elif name == "NewsTool":
         from .news import NewsTool
         return NewsTool
+    elif name == "YouTubeTranscriptTool":
+        from .youtube_transcript import YouTubeTranscriptTool
+        return YouTubeTranscriptTool
+    elif name == "YouTubeMetadataTool":
+        from .youtube_metadata import YouTubeMetadataTool
+        return YouTubeMetadataTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool

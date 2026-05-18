@@ -51,7 +51,8 @@ _RESEARCH_PRESET = PresetConfig(
     name="research",
     description=(
         "Research agent with WebSearch, URLFetch, Wikipedia, academic "
-        "search (arXiv, PubMed, Semantic Scholar), RSS feeds, and news tools."
+        "search (arXiv, PubMed, Semantic Scholar), RSS feeds, news, "
+        "and YouTube transcript/metadata tools."
     ),
     tool_names=[
         "web_search",
@@ -62,12 +63,16 @@ _RESEARCH_PRESET = PresetConfig(
         "semantic_scholar",
         "rss_feed",
         "news",
+        "youtube_transcript",
+        "youtube_metadata",
     ],
     system_prompt=(
         "You are a thorough research agent. Search the web, fetch URLs, and "
-        "consult Wikipedia, arXiv, PubMed, Semantic Scholar, RSS feeds, and news "
-        "sources to gather accurate information. Prefer academic sources for scientific or "
-        "medical questions. For current events, use news or rss_feed tools. "
+        "consult Wikipedia, arXiv, PubMed, Semantic Scholar, RSS feeds, news "
+        "sources, and YouTube videos to gather accurate information. Prefer academic "
+        "sources for scientific or medical questions. For current events, use news or "
+        "rss_feed tools. For video content, use youtube_transcript to read captions "
+        "and youtube_metadata for video details. "
         "Cite your sources and synthesize findings into clear answers."
     ),
     max_iterations=10,
@@ -201,6 +206,8 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         URLFetchTool,
         WebSearch,
         WikipediaTool,
+        YouTubeMetadataTool,
+        YouTubeTranscriptTool,
     )
 
     _TOOL_MAP: dict[str, type] = {
@@ -222,6 +229,8 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "semantic_scholar": SemanticScholarTool,
         "rss_feed": RSSFeedTool,
         "news": NewsTool,
+        "youtube_transcript": YouTubeTranscriptTool,
+        "youtube_metadata": YouTubeMetadataTool,
     }
 
     tools = []
