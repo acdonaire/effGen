@@ -13,6 +13,8 @@
 | [HackerNewsTool](hackernews.md) | Fetch Hacker News stories, items, and user profiles via the Firebase API. |
 | [TranslateTool](translate.md) | Translate text between languages (LibreTranslate primary; argostranslate offline fallback). |
 | [LanguageDetectTool](language_detect.md) | Detect the language of text, fully offline (langdetect, 55+ languages). |
+| [QRGenerateTool](qr.md) | Generate QR codes locally from any text or URL (no network required). |
+| [QRReadTool](qr.md) | Decode QR codes and barcodes from image files or base64 PNG (local, needs libzbar). |
 | [OpenAI native tools](openai_native.md) | Use OpenAI-hosted web search, code interpreter, and file search. |
 | [Gemini native tools](gemini_native.md) | Use Gemini-hosted Google Search, URL context, and code execution. |
 | [Anthropic native tools](anthropic_native.md) | Use Anthropic-hosted computer-use tools. |

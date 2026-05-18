@@ -98,7 +98,7 @@ _CODING_PRESET = PresetConfig(
 
 _GENERAL_PRESET = PresetConfig(
     name="general",
-    description="General-purpose agent with all available built-in tools.",
+    description="General-purpose agent with all available built-in tools, including QR generation and reading.",
     tool_names=[
         "calculator",
         "python_repl",
@@ -117,6 +117,8 @@ _GENERAL_PRESET = PresetConfig(
         "hackernews",
         "translate",
         "language_detect",
+        "qr_generate",
+        "qr_read",
     ],
     system_prompt=(
         "You are a versatile AI assistant with access to many tools. "
@@ -207,6 +209,8 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         NewsTool,
         PubMedTool,
         PythonREPL,
+        QRGenerateTool,
+        QRReadTool,
         RedditTool,
         Retrieval,
         RSSFeedTool,
@@ -245,6 +249,8 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "hackernews": HackerNewsTool,
         "translate": TranslateTool,
         "language_detect": LanguageDetectTool,
+        "qr_generate": QRGenerateTool,
+        "qr_read": QRReadTool,
     }
 
     tools = []

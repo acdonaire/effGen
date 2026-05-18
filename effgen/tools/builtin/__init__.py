@@ -63,6 +63,9 @@ __all__ = [
     # Translation + Language Detection
     "TranslateTool",
     "LanguageDetectTool",
+    # QR Codes
+    "QRGenerateTool",
+    "QRReadTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -220,6 +223,12 @@ def __getattr__(name):
     elif name == "LanguageDetectTool":
         from .language_detect import LanguageDetectTool
         return LanguageDetectTool
+    elif name == "QRGenerateTool":
+        from .qr_generate import QRGenerateTool
+        return QRGenerateTool
+    elif name == "QRReadTool":
+        from .qr_read import QRReadTool
+        return QRReadTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool

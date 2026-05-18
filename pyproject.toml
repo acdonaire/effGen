@@ -161,6 +161,10 @@ translate = [
     "argostranslate>=1.9.0",
     "langdetect>=1.0.9",
 ]
+qr = [
+    "qrcode[pil]>=7.4",
+    "pyzbar>=0.1.9",
+]
 youtube = [
     "youtube-transcript-api>=1.0.0",
     "yt-dlp>=2024.1.1",
@@ -246,6 +250,8 @@ all = [
     "yt-dlp>=2024.1.1",
     "argostranslate>=1.9.0",
     "langdetect>=1.0.9",
+    "qrcode[pil]>=7.4",
+    "pyzbar>=0.1.9",
 ]
 
 [tool.setuptools.dynamic]

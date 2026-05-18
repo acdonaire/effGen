@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from effgen.models.base import GenerationConfig
@@ -162,3 +163,32 @@ class TestGroundingChunksExtraction:
             result = adapter.generate("Tell me something.")
         chunks = result.metadata.get("grounding_chunks", [])
         assert chunks == []
+
+    def test_grounding_metadata_without_content_parts_does_not_crash(self):
+        adapter = self._make_loaded_adapter()
+        web = SimpleNamespace(uri="https://example.com/story", title="Story")
+        chunk = SimpleNamespace(web=web)
+        gmd = SimpleNamespace(grounding_chunks=[chunk])
+        candidate = SimpleNamespace(
+            content=SimpleNamespace(parts=None),
+            finish_reason="STOP",
+            grounding_metadata=gmd,
+        )
+        response = SimpleNamespace(
+            candidates=[candidate],
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=10,
+                candidates_token_count=0,
+                total_token_count=10,
+            ),
+            safety_ratings=None,
+            text=None,
+        )
+
+        with patch.object(adapter, "_generate_with_retry", return_value=response):
+            result = adapter.generate("What happened today?")
+
+        assert result.text == ""
+        assert result.metadata["grounding_chunks"] == [
+            {"url": "https://example.com/story", "title": "Story"}
+        ]

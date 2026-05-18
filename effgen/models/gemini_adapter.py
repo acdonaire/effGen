@@ -492,7 +492,10 @@ class GeminiAdapter(FunctionCallingModel):
             thinking_text = ""
 
             if hasattr(response, "candidates") and response.candidates:
-                for part in response.candidates[0].content.parts:
+                candidate = response.candidates[0]
+                content_obj = getattr(candidate, "content", None)
+                parts = getattr(content_obj, "parts", None) or []
+                for part in parts:
                     if getattr(part, "thought", False):
                         thinking_text += getattr(part, "text", "") or ""
                     elif getattr(part, "text", None):
@@ -513,6 +516,11 @@ class GeminiAdapter(FunctionCallingModel):
                         output = getattr(cer, "output", None)
                         if isinstance(output, str) and output:
                             generated_text += output
+                if not generated_text and not tool_calls:
+                    try:
+                        generated_text = response.text or ""
+                    except Exception:
+                        pass
             else:
                 try:
                     generated_text = response.text or ""
