@@ -36,6 +36,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [See changelog](CHANGELOG.md#025---2026-05-18) |
 | 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [See changelog](CHANGELOG.md#024---2026-05-14) |
 | 🚀 | **4 May 2026** | **v0.2.3 Released**: 5 new cloud backends (Groq, Together AI, Fireworks, Replicate, HuggingFace Inference) — 9 providers total. Unified ProviderRegistry, `effgen doctor` auth check, backend parity matrix. [See changelog](CHANGELOG.md#023---2026-05-04) |
 | 🚀 | **28 Apr 2026** | **v0.2.2 Released**: Gemini 3.x/2.5/2.0 registry, `thinking_budget`, Google Search grounding, Files API, Gemini native tools (GoogleSearch, UrlContext, CodeExecution). Anthropic Claude 4.7 registry, extended thinking, prompt caching (`cache_control`), streaming polish, experimental native tools. [See changelog](CHANGELOG.md#022---2026-04-28) |
@@ -254,7 +255,7 @@ Multi-Agent<br/>
 <td align="center" width="14%">
 
 **🔧**<br/>
-31 Tools<br/>
+44+ Tools<br/>
 <sub>+ MCP/A2A/ACP</sub>
 
 </td>
@@ -272,10 +273,52 @@ Production API<br/>
 
 ---
 
-## 🆕 What's New in v0.2.4
+## 🆕 What's New in v0.2.5
 
 <details open>
-<summary><b>Top 5 features in v0.2.4 — ModelRouter & Cost Optimizer</b></summary>
+<summary><b>13 new free tools in v0.2.5 — Research, News, YouTube, Social, Translation & QR</b></summary>
+
+**effGen v0.2.5** adds 13 free, no-auth-required tools, bringing the built-in tool count above 44. All tools integrate with the `research` and `general` presets.
+
+1. **Academic Research** — `PubMedTool` (NCBI, 3 ops, built-in rate limiting), `ArXivTool` (Atom feed + PDF download), `SemanticScholarTool` (search + citations + references).
+
+   ```python
+   from effgen.tools.builtin.arxiv import ArXivTool
+   tool = ArXivTool()
+   result = tool.execute({"operation": "search", "query": "transformer attention", "max_results": 5})
+   ```
+
+2. **News & RSS** — `RSSFeedTool` (any RSS/Atom feed), `NewsTool` (BBC, Reuters, HN, NPR, etc. + optional NewsAPI.org key).
+
+   ```python
+   from effgen.tools.builtin.news import NewsTool
+   result = NewsTool().execute({"operation": "top_headlines", "category": "technology"})
+   ```
+
+3. **YouTube** — `YouTubeTranscriptTool` (captions without Google API key), `YouTubeMetadataTool` (via yt-dlp, public content only).
+
+4. **Social Media** — `RedditTool` (public JSON, no OAuth), `HackerNewsTool` (Firebase API, no auth).
+
+5. **Translation & Language Detection** — `TranslateTool` (LibreTranslate + offline argostranslate fallback), `LanguageDetectTool` (55+ languages, fully offline).
+
+   ```python
+   from effgen.tools.builtin.translate import TranslateTool
+   result = TranslateTool().execute({"operation": "translate", "text": "Hello world", "target": "fr"})
+   ```
+
+6. **QR Codes** — `QRGenerateTool` (generate locally), `QRReadTool` (decode from image, with OpenCV fallback if zbar is unavailable).
+
+   ```python
+   from effgen.tools.builtin.qr_generate import QRGenerateTool
+   result = QRGenerateTool().execute({"operation": "generate", "data": "https://effgen.org"})
+   ```
+
+See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for all 44+ tools.
+
+</details>
+
+<details>
+<summary><b>Top 5 features from v0.2.4 — ModelRouter & Cost Optimizer</b></summary>
 
 1. **`PolicyBasedRouter`** — composable routing engine with three built-in policies. Pick the cheapest provider within your budget, the fastest under your SLA, or simply the first available — and combine them freely.
 
@@ -434,7 +477,7 @@ effgen run --preset research "Tell me about quantum computing"
 
 ---
 
-## 🛠️ Built-in Tools (31)
+## 🛠️ Built-in Tools (44+)
 
 <div align="center">
 
@@ -541,6 +584,108 @@ Wikipedia<br/>
 
 </td>
 </tr>
+<tr>
+<td align="center" width="14%">
+
+**🔬**<br/>
+PubMed<br/>
+<sub>NCBI / Free</sub>
+
+</td>
+<td align="center" width="14%">
+
+**📄**<br/>
+ArXiv<br/>
+<sub>Papers + PDF</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🎓**<br/>
+SemanticScholar<br/>
+<sub>Citations</sub>
+
+</td>
+<td align="center" width="14%">
+
+**📡**<br/>
+RSSFeed<br/>
+<sub>Any Feed</sub>
+
+</td>
+<td align="center" width="14%">
+
+**📰**<br/>
+News<br/>
+<sub>BBC/Reuters/HN</sub>
+
+</td>
+<td align="center" width="14%">
+
+**▶️**<br/>
+YouTubeTranscript<br/>
+<sub>No API key</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🎬**<br/>
+YouTubeMetadata<br/>
+<sub>yt-dlp</sub>
+
+</td>
+</tr>
+<tr>
+<td align="center" width="14%">
+
+**🤖**<br/>
+Reddit<br/>
+<sub>Public JSON</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🔥**<br/>
+HackerNews<br/>
+<sub>Firebase API</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🌍**<br/>
+Translate<br/>
+<sub>LibreTranslate</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🔎**<br/>
+LanguageDetect<br/>
+<sub>Offline / 55+</sub>
+
+</td>
+<td align="center" width="14%">
+
+**📱**<br/>
+QRGenerate<br/>
+<sub>Local / No net</sub>
+
+</td>
+<td align="center" width="14%">
+
+**📷**<br/>
+QRRead<br/>
+<sub>Local Decode</sub>
+
+</td>
+<td align="center" width="14%">
+
+**…**<br/>
++more<br/>
+<sub>Finance, DevOps</sub>
+
+</td>
+</tr>
 </table>
 
 </div>
@@ -556,7 +701,7 @@ Wikipedia<br/>
 python examples/basic/chat_gui_mlx.py              # MLX Chat — streaming chat with Apple Silicon models (port 7860)
 python examples/basic/agent_viz_mlx.py             # Agent Visualizer — step-by-step reasoning + code editor (port 7860)
 python examples/basic/tool_builder_gui.py          # Tool Builder — visually create custom tools (port 7863)
-python examples/basic/tool_tester_gui.py           # Tool Tester — browse, test, inspect all 31 tools (port 7864)
+python examples/basic/tool_tester_gui.py           # Tool Tester — browse, test, inspect all 44+ tools (port 7864)
 ```
 
 ### 🍎 Apple Silicon (MLX)

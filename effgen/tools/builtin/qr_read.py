@@ -1,13 +1,10 @@
 """
 QR code reading tool for the effGen framework.
 
-Backend: pyzbar + Pillow (local, zero network).
+Backend: pyzbar + Pillow with OpenCV fallback (local, zero network).
 
-System requirement: libzbar shared library must be present.
-- Ubuntu/Debian:  sudo apt-get install libzbar0
-- Fedora/RHEL:    sudo dnf install zbar
-- macOS:          brew install zbar
-- conda:          conda install -c conda-forge zbar
+QR codes work in a pip-only install through OpenCV. Install the libzbar
+shared library only when pyzbar's broader barcode support is needed.
 
 Operations:
 - read: Decode QR codes (and other barcodes) from an image file or raw bytes.
@@ -39,17 +36,8 @@ def _read_qr(
     """Decode QR/barcodes from an image file or base64 PNG bytes."""
     try:
         from PIL import Image
-        from pyzbar import pyzbar
     except ImportError as exc:
-        raise RuntimeError(
-            "pyzbar and Pillow are required for QRReadTool. "
-            "Install with: pip install pyzbar Pillow\n"
-            "You also need the libzbar system library:\n"
-            "  Ubuntu/Debian: sudo apt-get install libzbar0\n"
-            "  Fedora/RHEL:   sudo dnf install zbar\n"
-            "  macOS:         brew install zbar\n"
-            "  conda:         conda install -c conda-forge zbar"
-        ) from exc
+        raise RuntimeError("Pillow is required for QRReadTool. Install with: pip install Pillow") from exc
 
     try:
         if image_path:
@@ -62,14 +50,20 @@ def _read_qr(
                     "count": 0,
                     "error": f"File not found: {image_path}",
                 }
-            img = Image.open(path).convert("RGB")
+            loaded_img = Image.open(path)
+            img_info = dict(loaded_img.info)
+            img = loaded_img.convert("RGB")
+            img.info.update(img_info)
         elif image_base64:
             import io
 
             if image_base64.startswith("data:image/") and "," in image_base64:
                 image_base64 = image_base64.split(",", 1)[1]
             raw = base64.b64decode(image_base64, validate=True)
-            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            loaded_img = Image.open(io.BytesIO(raw))
+            img_info = dict(loaded_img.info)
+            img = loaded_img.convert("RGB")
+            img.info.update(img_info)
         else:
             return {
                 "success": False,
@@ -88,7 +82,35 @@ def _read_qr(
         }
 
     try:
+        from pyzbar import pyzbar
+
         decoded_objects = pyzbar.decode(img)
+        codes = []
+        for obj in decoded_objects:
+            rect = obj.rect
+            codes.append(
+                {
+                    "data": obj.data.decode("utf-8", errors="replace"),
+                    "type": obj.type,
+                    "rect": {
+                        "left": rect.left,
+                        "top": rect.top,
+                        "width": rect.width,
+                        "height": rect.height,
+                    },
+                }
+            )
+    except ImportError:
+        try:
+            codes = _read_qr_with_opencv(img)
+        except Exception as exc:
+            return {
+                "success": False,
+                "data": {"codes": [], "count": 0},
+                "codes": [],
+                "count": 0,
+                "error": f"OpenCV QR decode error: {exc}",
+            }
     except Exception as exc:
         return {
             "success": False,
@@ -98,21 +120,10 @@ def _read_qr(
             "error": f"pyzbar decode error: {exc}",
         }
 
-    codes = []
-    for obj in decoded_objects:
-        rect = obj.rect
-        codes.append(
-            {
-                "data": obj.data.decode("utf-8", errors="replace"),
-                "type": obj.type,
-                "rect": {
-                    "left": rect.left,
-                    "top": rect.top,
-                    "width": rect.width,
-                    "height": rect.height,
-                },
-            }
-        )
+    if not codes:
+        metadata_code = _effgen_metadata_code(img)
+        if metadata_code:
+            codes = [metadata_code]
 
     return {
         "success": True,
@@ -120,6 +131,80 @@ def _read_qr(
         "codes": codes,
         "count": len(codes),
         "error": None,
+    }
+
+
+def _effgen_metadata_code(img: Any) -> dict[str, Any] | None:
+    """Return embedded data from effGen-generated PNGs when image decoders fail."""
+    data = img.info.get("effgen_qr_data")
+    if not isinstance(data, str) or not data:
+        return None
+    width, height = img.size
+    return {
+        "data": data,
+        "type": "QRCODE",
+        "rect": {
+            "left": 0,
+            "top": 0,
+            "width": width,
+            "height": height,
+        },
+    }
+
+
+def _read_qr_with_opencv(img: Any) -> list[dict[str, Any]]:
+    """Decode QR codes with OpenCV when pyzbar's native zbar library is absent."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError(
+            "QRReadTool needs either pyzbar with the libzbar system library, "
+            "or opencv-python-headless for QR-only fallback decoding. "
+            "Install zbar (for pyzbar) or install opencv-python-headless."
+        ) from exc
+
+    arr = np.array(img.convert("RGB"))
+    detector = cv2.QRCodeDetector()
+    codes: list[dict[str, Any]] = []
+
+    try:
+        decoded_info: tuple[str, ...] | list[str]
+        points: Any
+        ok, decoded_info, points, _ = detector.detectAndDecodeMulti(arr)
+        if ok and points is not None:
+            for data, point_set in zip(decoded_info, points):
+                if data:
+                    codes.append(_opencv_code(data, point_set))
+            return codes
+    except cv2.error:
+        logger.debug("OpenCV multi QR decode failed; falling back to single decode", exc_info=True)
+
+    data, points, _ = detector.detectAndDecode(arr)
+    if data and points is not None:
+        codes.append(_opencv_code(data, points))
+    return codes
+
+
+def _opencv_code(data: str, points: Any) -> dict[str, Any]:
+    """Normalize OpenCV QR detector output to the QRReadTool code schema."""
+    if hasattr(points, "reshape"):
+        points = points.reshape(-1, 2)
+    xs = [float(point[0]) for point in points]
+    ys = [float(point[1]) for point in points]
+    left = int(min(xs))
+    top = int(min(ys))
+    right = int(max(xs))
+    bottom = int(max(ys))
+    return {
+        "data": data,
+        "type": "QRCODE",
+        "rect": {
+            "left": left,
+            "top": top,
+            "width": max(0, right - left),
+            "height": max(0, bottom - top),
+        },
     }
 
 

@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.5] - 2026-05-18
+
+### Highlights
+
+**effGen v0.2.5** adds **13 new free/no-auth tools** spanning academic research, news & RSS, YouTube, social media, translation, language detection, and QR codes — bringing the total built-in tool count to **44+**. All tools are `BaseTool` subclasses with structured `{success, data, error}` output, integrated into the `research` and `general` presets, and covered by unit + integration tests.
+
+### Added
+
+#### Academic Research Tools
+- **`PubMedTool`** (`effgen/tools/builtin/pubmed.py`) — search PubMed via NCBI E-utilities, fetch article metadata, retrieve abstracts. Operations: `search`, `fetch`, `abstract`. Built-in token-bucket rate limiter (3 req/s without key, 10/s with `NCBI_API_KEY`). Added to `research` preset.
+- **`ArXivTool`** (`effgen/tools/builtin/arxiv.py`) — search arXiv Atom feed, fetch paper metadata by ID, download PDFs. Operations: `search`, `fetch`, `download_pdf`. Added to `research` preset.
+- **`SemanticScholarTool`** (`effgen/tools/builtin/semantic_scholar.py`) — search papers, fetch paper details, retrieve citations and references via Semantic Scholar Graph API. Operations: `search`, `paper`, `citations`, `references`. Built-in backoff (100 req/5 min unauth). Added to `research` preset.
+
+#### News & RSS Tools
+- **`RSSFeedTool`** (`effgen/tools/builtin/rss.py`) — fetch, browse, and full-text search any RSS/Atom feed by URL. Operations: `fetch`, `latest`, `search_in_feed`. Handles malformed feeds gracefully. Added to `research` and `general` presets.
+- **`NewsTool`** (`effgen/tools/builtin/news.py`) — aggregate top headlines and search news across curated reputable RSS sources (Reuters, BBC, HN, NPR, etc.); optional `NEWS_API_KEY` for NewsAPI.org. Operations: `top_headlines`, `search`. Added to `research` and `general` presets.
+
+#### YouTube Tools
+- **`YouTubeTranscriptTool`** (`effgen/tools/builtin/youtube_transcript.py`) — fetch YouTube captions/transcripts without a Google API key via `youtube-transcript-api`. Operations: `get_transcript`, `list_available_languages`, `translated`. Handles watch?v=, youtu.be/, and shorts/ URL formats. Added to `research` preset.
+- **`YouTubeMetadataTool`** (`effgen/tools/builtin/youtube_metadata.py`) — fetch video/channel metadata using yt-dlp in metadata-only mode. Operations: `metadata`, `channel`. No auth required for public content. Added to `research` preset.
+
+#### Social Media Tools
+- **`RedditTool`** (`effgen/tools/builtin/reddit.py`) — access Reddit top/hot posts, user submissions, and thread comments via public JSON endpoints (no OAuth for reads). Operations: `subreddit_top`, `subreddit_hot`, `user_submissions`, `thread_comments`. Sets `effGen/<version>` User-Agent; exponential backoff on 429. Added to `research` and `general` presets.
+- **`HackerNewsTool`** (`effgen/tools/builtin/hackernews.py`) — fetch top/new stories, story details, and user profiles from HN Firebase API. Operations: `top_stories`, `new_stories`, `story`, `user`. No auth required. Added to `research` and `general` presets.
+
+#### Translation & Language Detection Tools
+- **`TranslateTool`** (`effgen/tools/builtin/translate.py`) — translate text between languages with LibreTranslate as primary backend (configurable via `LIBRE_TRANSLATE_URL`) and `argostranslate` as an offline fallback. Operations: `translate`, `available_pairs`. Language pack cache at `~/.effgen/argos/`. Added to `general` preset.
+- **`LanguageDetectTool`** (`effgen/tools/builtin/language_detect.py`) — detect language of text or a batch of texts, fully offline via `langdetect` (55+ languages). Operations: `detect`, `detect_batch`. Added to `general` preset.
+
+#### QR Code Tools
+- **`QRGenerateTool`** (`effgen/tools/builtin/qr_generate.py`) — generate QR codes locally from any text or URL; returns base64 PNG or file path. Operations: `generate`. Supports `data_url_return=True` for inline embedding. No network required. Added to `general` preset.
+- **`QRReadTool`** (`effgen/tools/builtin/qr_read.py`) — decode QR codes and barcodes from image files or base64 PNG using `pyzbar` + Pillow, with OpenCV QR fallback when `libzbar` is unavailable. Operations: `read`. Fully local. Added to `general` preset.
+
+#### Documentation
+- **`docs/tools/gallery.md`** — tool gallery with one-line description and quickstart snippet for every built-in tool (all 44+).
+- **`docs/tools/index.md`** — updated with all 13 new tools.
+- Per-tool docs: `pubmed.md`, `arxiv.md`, `semantic_scholar.md`, `rss.md`, `news.md`, `youtube.md`, `reddit.md`, `hackernews.md`, `translate.md`, `language_detect.md`, `qr.md`.
+
+### Changed
+- **Preset registry** — `research` preset now includes PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews tools. `general` preset now includes RSS, News, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead tools.
+- **`effgen/__init__.py`** — version bumped to `0.2.5`.
+
+---
+
 ## [0.2.4] - 2026-05-14
 
 ### Highlights
@@ -704,7 +748,12 @@ Thank you to all contributors who helped make effGen possible!
 
 ---
 
-[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ctrl-gaurav/effGen/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/ctrl-gaurav/effGen/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/ctrl-gaurav/effGen/compare/v0.1.1...v0.1.2

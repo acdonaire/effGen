@@ -1,5 +1,39 @@
 # effGen Release Notes
 
+## v0.2.5 — May 18, 2026
+
+**effGen v0.2.5** is a tools-focused release that adds **13 free, no-auth-required tools** across six new categories — academic research, news aggregation, YouTube, social media, translation/language detection, and QR codes — bringing the total built-in tool count above 44. Every new tool ships with structured `{success, data, error}` output, preset integration, and a dedicated doc page.
+
+### New Tools at a Glance
+
+**Academic Research** — `PubMedTool` (NCBI E-utilities, 3 operations, built-in token-bucket rate limiter), `ArXivTool` (Atom feed search + PDF download), `SemanticScholarTool` (paper search + citations + references with polite backoff). All three are now part of the `research` preset.
+
+**News & RSS** — `RSSFeedTool` fetches and full-text-searches any RSS/Atom feed; `NewsTool` aggregates top headlines across a curated list of reputable sources (Reuters, BBC, Hacker News, NPR, Al Jazeera, and more) with an optional NewsAPI.org key for better relevance. Both are in the `research` and `general` presets.
+
+**YouTube** — `YouTubeTranscriptTool` pulls captions from public videos without a Google API key (via `youtube-transcript-api`), with URL extraction for watch?v=, youtu.be/, and shorts/ formats. `YouTubeMetadataTool` retrieves video and channel metadata via `yt-dlp` in metadata-only mode. Both added to `research`.
+
+**Social Media** — `RedditTool` reads top/hot posts, user submissions, and thread comments from Reddit's public JSON endpoints (no OAuth). `HackerNewsTool` covers top/new stories, items, and user profiles from HN's Firebase API. Both added to `research` and `general`.
+
+**Translation & Language Detection** — `TranslateTool` translates text between languages using LibreTranslate (configurable endpoint) with an offline `argostranslate` fallback; language packs are cached in `~/.effgen/argos/`. `LanguageDetectTool` detects language in text or batches, fully offline via `langdetect` (55+ languages). Both added to `general`.
+
+**QR Codes** — `QRGenerateTool` generates QR codes locally from any text or URL, returning a base64 PNG or saving to a file path. `QRReadTool` decodes QR codes and barcodes from image files or base64 PNG using `pyzbar` + Pillow, with an OpenCV QR fallback when `libzbar` is unavailable. Both added to `general`.
+
+### Tool Gallery
+
+A new `docs/tools/gallery.md` file provides a one-line description and a working quickstart snippet for every tool in the effGen ecosystem — useful for discovering what's available at a glance.
+
+### Upgrading from v0.2.4
+
+No breaking API changes. All new tools are opt-in; existing code is unaffected. Install the new tool extras:
+
+```bash
+pip install --upgrade "effgen[tools]"   # feedparser, youtube-transcript-api, yt-dlp, pyzbar, qrcode, opencv, langdetect
+# or grab everything:
+pip install --upgrade "effgen[all]"
+```
+
+---
+
 ## v0.2.4 — May 14, 2026
 
 **effGen v0.2.4** makes multi-provider AI inference production-grade with a composable **ModelRouter** — a new opt-in layer that sits between your application code and the 9 cloud providers effGen already supports. Instead of hard-coding a provider, you describe what you need (cheapest call within budget, fastest that meets an SLA, prefer free tier, fall back to paid) and the router picks the right provider, records its reasoning, and transparently retries or fails over when things go wrong.

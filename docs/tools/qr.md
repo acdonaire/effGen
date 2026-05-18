@@ -9,10 +9,12 @@ effGen ships two local QR tools that require **no network connection**:
 
 ---
 
-## System dependency — libzbar
+## Decoder backends
 
-`QRReadTool` wraps [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar), which requires the
-**zbar** shared library to be installed at the OS level.
+`QRReadTool` first tries [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar), which can decode
+QR codes and common barcodes when the **zbar** shared library is installed. If zbar is not present,
+the tool falls back to OpenCV's QR detector for QR-only decoding. This keeps `pip install "effgen[qr]"`
+usable in fresh Python environments without an OS package step.
 
 | Platform | Install command |
 |----------|----------------|
@@ -22,7 +24,8 @@ effGen ships two local QR tools that require **no network connection**:
 | conda (any OS) | `conda install -c conda-forge zbar` |
 | Windows | Download the [ZBar Windows installer](https://zbar.sourceforge.net/) |
 
-`QRGenerateTool` uses only pure-Python `qrcode` + `Pillow` and has **no system dependency**.
+Install zbar only if you need non-QR barcode formats through pyzbar. `QRGenerateTool` uses only
+pure-Python `qrcode` + `Pillow` and has **no system dependency**.
 
 ---
 
@@ -31,7 +34,7 @@ effGen ships two local QR tools that require **no network connection**:
 ```bash
 pip install "effgen[qr]"
 # or manually:
-pip install "qrcode[pil]>=7.4" "pyzbar>=0.1.9" "Pillow>=9.1.0"
+pip install "qrcode[pil]>=7.4" "pyzbar>=0.1.9" "opencv-python-headless>=4.8.0" "Pillow>=9.1.0"
 ```
 
 ---
@@ -182,7 +185,7 @@ asyncio.run(demo())
 | `image_path` does not exist | `success: false`, descriptive `error` message |
 | Invalid base64 bytes | `success: false`, descriptive `error` message |
 | Blank / no-QR image | `success: true`, `count: 0`, `codes: []` |
-| `libzbar` not installed | `RuntimeError` with install instructions |
+| `libzbar` not installed | Falls back to OpenCV QR decoding when `opencv-python-headless` is installed |
 
 ---
 

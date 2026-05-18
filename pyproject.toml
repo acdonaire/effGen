@@ -164,6 +164,7 @@ translate = [
 qr = [
     "qrcode[pil]>=7.4",
     "pyzbar>=0.1.9",
+    "opencv-python-headless>=4.8.0",
 ]
 youtube = [
     "youtube-transcript-api>=1.0.0",
@@ -252,6 +253,7 @@ all = [
     "langdetect>=1.0.9",
     "qrcode[pil]>=7.4",
     "pyzbar>=0.1.9",
+    "opencv-python-headless>=4.8.0",
 ]
 
 [tool.setuptools.dynamic]

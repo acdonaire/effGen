@@ -37,6 +37,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [See changelog](CHANGELOG.md#025---2026-05-18) |
 | 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#024---2026-05-14) |
 | 🚀 | **4 May 2026** | **v0.2.3 Released**: 5 new cloud backends (Groq, Together AI, Fireworks, Replicate, HuggingFace Inference) — 9 providers total. Unified ProviderRegistry, `effgen doctor` auth check, backend parity matrix. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#023---2026-05-04) |
 | 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (4 free-tier models, streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#021---2026-04-25) |

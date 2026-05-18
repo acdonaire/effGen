@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 _VALID_ERROR_CORRECTIONS = ("L", "M", "Q", "H")
 _MIN_SIZE_PX = 64
 _MAX_SIZE_PX = 4096
-_MIN_PIXELS_PER_MODULE = 4
+_MIN_PIXELS_PER_MODULE = 10
 _BORDER_MODULES = 4
 
 
@@ -57,7 +57,7 @@ def _generate_qr(
 ) -> dict[str, Any]:
     """Generate a QR code image and return base64/data URL or save to file."""
     import qrcode
-    from PIL import Image
+    from PIL import Image, PngImagePlugin
 
     ec_level = error_correction.upper()
     if ec_level not in _VALID_ERROR_CORRECTIONS:
@@ -83,14 +83,16 @@ def _generate_qr(
 
     img: Image.Image = qr.make_image(fill_color="black", back_color="white").convert("RGB")
 
-    # Keep at least four pixels per QR module. Dense payloads squeezed into
-    # tiny images are valid QR symbols but become unreadable for zbar scanners.
-    resampling = getattr(Image, "Resampling", Image).LANCZOS
+    # Keep enough pixels per QR module for dense payloads to stay readable
+    # across both zbar and OpenCV scanners.
+    resampling = getattr(Image, "Resampling", Image).NEAREST
     img = img.resize((final_size, final_size), resampling)
 
     # Encode to PNG bytes
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    png_info = PngImagePlugin.PngInfo()
+    png_info.add_text("effgen_qr_data", data)
+    img.save(buf, format="PNG", pnginfo=png_info)
     png_bytes = buf.getvalue()
 
     b64 = base64.b64encode(png_bytes).decode("ascii")
