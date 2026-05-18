@@ -40,7 +40,16 @@ _TRANSIENT_MARKERS = (
     "Connection",
     "403",
     "Blocked",
+    "500",
+    "502",
     "503",
+    "504",
+    "Internal Server Error",
+    "Bad Gateway",
+    "Service Unavailable",
+    "Gateway Timeout",
+    "non-json",
+    "non-JSON response",
 )
 
 
