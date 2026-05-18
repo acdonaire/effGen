@@ -119,6 +119,7 @@ _GENERAL_PRESET = PresetConfig(
         "language_detect",
         "qr_generate",
         "qr_read",
+        "ocr",
     ],
     system_prompt=(
         "You are a versatile AI assistant with access to many tools. "
@@ -207,6 +208,7 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         JSONTool,
         LanguageDetectTool,
         NewsTool,
+        OCRTool,
         PubMedTool,
         PythonREPL,
         QRGenerateTool,
@@ -251,6 +253,7 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "language_detect": LanguageDetectTool,
         "qr_generate": QRGenerateTool,
         "qr_read": QRReadTool,
+        "ocr": OCRTool,
     }
 
     tools = []

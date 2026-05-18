@@ -66,6 +66,8 @@ __all__ = [
     # QR Codes
     "QRGenerateTool",
     "QRReadTool",
+    # OCR
+    "OCRTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -229,6 +231,9 @@ def __getattr__(name):
     elif name == "QRReadTool":
         from .qr_read import QRReadTool
         return QRReadTool
+    elif name == "OCRTool":
+        from .ocr import OCRTool
+        return OCRTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool

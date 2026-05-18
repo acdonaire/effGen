@@ -16,6 +16,16 @@ def _has_key() -> bool:
     return bool(os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY"))
 
 
+def _skip_if_hf_credits_exhausted(exc: BaseException) -> None:
+    msg = str(exc).lower()
+    if (
+        "402" in msg
+        or "payment required" in msg
+        or "depleted your monthly included credits" in msg
+    ):
+        pytest.skip(f"HuggingFace Inference credits exhausted: {exc}")
+
+
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.skipif(not _has_key(), reason="SKIPPED: HF_TOKEN not set")
@@ -158,7 +168,11 @@ class TestHFInferenceLive:
         adapter = HFInferenceAdapter("meta-llama/Llama-3.3-70B-Instruct")
         adapter.load()
         try:
-            result = adapter.generate("Capital of France? One word.")
+            try:
+                result = adapter.generate("Capital of France? One word.")
+            except RuntimeError as exc:
+                _skip_if_hf_credits_exhausted(exc)
+                raise
             assert "Paris" in result.text
         finally:
             adapter.unload()

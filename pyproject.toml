@@ -166,6 +166,10 @@ qr = [
     "pyzbar>=0.1.9",
     "opencv-python-headless>=4.8.0",
 ]
+tools = [
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0.0",
+]
 youtube = [
     "youtube-transcript-api>=1.0.0",
     "yt-dlp>=2024.1.1",
@@ -254,6 +258,8 @@ all = [
     "qrcode[pil]>=7.4",
     "pyzbar>=0.1.9",
     "opencv-python-headless>=4.8.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0.0",
 ]
 
 [tool.setuptools.dynamic]
