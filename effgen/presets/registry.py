@@ -52,7 +52,8 @@ _RESEARCH_PRESET = PresetConfig(
     description=(
         "Research agent with WebSearch, URLFetch, Wikipedia, academic "
         "search (arXiv, PubMed, Semantic Scholar), RSS feeds, news, "
-        "YouTube transcript/metadata, Reddit, and Hacker News tools."
+        "YouTube transcript/metadata, Reddit, Hacker News, and document "
+        "parsing (PDF, DOCX, Excel) tools."
     ),
     tool_names=[
         "web_search",
@@ -67,6 +68,9 @@ _RESEARCH_PRESET = PresetConfig(
         "youtube_metadata",
         "reddit",
         "hackernews",
+        "pdf",
+        "docx",
+        "excel",
     ],
     system_prompt=(
         "You are a thorough research agent. Search the web, fetch URLs, and "
@@ -98,7 +102,10 @@ _CODING_PRESET = PresetConfig(
 
 _GENERAL_PRESET = PresetConfig(
     name="general",
-    description="General-purpose agent with all available built-in tools, including QR, OCR, audio transcription, and image analysis.",
+    description=(
+        "General-purpose agent with all available built-in tools, including QR, OCR, "
+        "audio transcription, image analysis, and document parsing (PDF, DOCX, Excel)."
+    ),
     tool_names=[
         "calculator",
         "python_repl",
@@ -122,6 +129,9 @@ _GENERAL_PRESET = PresetConfig(
         "ocr",
         "audio_transcribe",
         "image_info",
+        "pdf",
+        "docx",
+        "excel",
     ],
     system_prompt=(
         "You are a versatile AI assistant with access to many tools. "
@@ -207,6 +217,8 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         Calculator,
         CodeExecutor,
         DateTimeTool,
+        DOCXTool,
+        ExcelTool,
         FileOperations,
         HackerNewsTool,
         ImageCaptionTool,
@@ -215,6 +227,7 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         LanguageDetectTool,
         NewsTool,
         OCRTool,
+        PDFTool,
         PubMedTool,
         PythonREPL,
         QRGenerateTool,
@@ -263,6 +276,9 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "audio_transcribe": AudioTranscribeTool,
         "image_info": ImageInfoTool,
         "image_caption": ImageCaptionTool,
+        "pdf": PDFTool,
+        "docx": DOCXTool,
+        "excel": ExcelTool,
     }
 
     tools = []

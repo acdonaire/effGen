@@ -170,6 +170,17 @@ tools = [
     "pytesseract>=0.3.10",
     "Pillow>=10.0.0",
 ]
+documents = [
+    "pypdf>=4.0.0",
+    "pdfplumber>=0.10.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.0.0",
+    # reportlab is used by tests and validation scripts to generate
+    # round-trip PDF fixtures with known text; install it alongside the
+    # parsers so the full doc-pipeline test suite runs end-to-end.
+    "reportlab>=4.0.0",
+]
 audio = [
     "faster-whisper>=1.0.0",
     "huggingface_hub>=0.26",
@@ -265,6 +276,12 @@ all = [
     "pytesseract>=0.3.10",
     "Pillow>=10.0.0",
     "faster-whisper>=1.0.0",
+    "pypdf>=4.0.0",
+    "pdfplumber>=0.10.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.0.0",
+    "reportlab>=4.0.0",
 ]
 
 [tool.setuptools.dynamic]

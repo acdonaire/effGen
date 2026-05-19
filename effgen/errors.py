@@ -92,6 +92,23 @@ class NoVisionProviderAvailable(EffGenError):
         super().__init__(msg)
 
 
+class CorruptDocumentError(EffGenError):
+    """Raised when a document file is malformed or cannot be parsed.
+
+    Attributes:
+        doc_type: The document type that failed (e.g. 'pdf', 'docx', 'xlsx').
+        detail: Additional detail from the underlying parser.
+    """
+
+    def __init__(self, doc_type: str, detail: str = "") -> None:
+        self.doc_type = doc_type
+        self.detail = detail
+        msg = f"Cannot parse {doc_type.upper()} document - file may be corrupt or invalid."
+        if detail:
+            msg += f"\nDetail: {detail}"
+        super().__init__(msg)
+
+
 class AudioBackendUnavailable(EffGenError):
     """Raised when no audio transcription backend is available.
 

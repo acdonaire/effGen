@@ -73,6 +73,10 @@ __all__ = [
     # Image Analysis
     "ImageInfoTool",
     "ImageCaptionTool",
+    # Document Parsing
+    "PDFTool",
+    "DOCXTool",
+    "ExcelTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -248,6 +252,15 @@ def __getattr__(name):
     elif name == "ImageCaptionTool":
         from .image_caption import ImageCaptionTool
         return ImageCaptionTool
+    elif name == "PDFTool":
+        from .pdf import PDFTool
+        return PDFTool
+    elif name == "DOCXTool":
+        from .docx import DOCXTool
+        return DOCXTool
+    elif name == "ExcelTool":
+        from .excel import ExcelTool
+        return ExcelTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool
