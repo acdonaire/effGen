@@ -80,7 +80,13 @@ __all__ = [
     # Geo / Weather
     "GeocodeTool",
     "MapsTool",
-    # Communication
+    # Email (live send/read)
+    "EmailSMTPTool",
+    "EmailIMAPTool",
+    # Webhooks
+    "SlackWebhookTool",
+    "DiscordWebhookTool",
+    # Communication (draft-only, legacy)
     "EmailDraftTool",
     "SlackDraftTool",
     "NotificationTool",
@@ -270,6 +276,18 @@ def __getattr__(name):
     elif name == "MapsTool":
         from .maps import MapsTool
         return MapsTool
+    elif name == "EmailSMTPTool":
+        from .email_smtp import EmailSMTPTool
+        return EmailSMTPTool
+    elif name == "EmailIMAPTool":
+        from .email_imap import EmailIMAPTool
+        return EmailIMAPTool
+    elif name == "SlackWebhookTool":
+        from .slack_webhook import SlackWebhookTool
+        return SlackWebhookTool
+    elif name == "DiscordWebhookTool":
+        from .discord_webhook import DiscordWebhookTool
+        return DiscordWebhookTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool

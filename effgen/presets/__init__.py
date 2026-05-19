@@ -19,6 +19,7 @@ Usage:
 
 # Side-effect imports: register additional presets into PRESETS dict
 from effgen.presets import media as _media_preset  # noqa: F401
+from effgen.presets import notify as _notify_preset  # noqa: F401
 from effgen.presets.registry import PRESETS, create_agent, get_preset, list_presets
 
 __all__ = ["create_agent", "get_preset", "list_presets", "PRESETS"]

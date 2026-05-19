@@ -109,6 +109,26 @@ class CorruptDocumentError(EffGenError):
         super().__init__(msg)
 
 
+class MissingCredentialsError(EffGenError):
+    """Raised when required credentials (env vars) are absent for a tool.
+
+    Attributes:
+        tool_name: The tool that needs credentials.
+        missing_vars: List of env var names that are missing.
+    """
+
+    def __init__(self, tool_name: str, missing_vars: list[str], hint: str = "") -> None:
+        self.tool_name = tool_name
+        self.missing_vars = missing_vars
+        msg = (
+            f"{tool_name} requires credentials that are not configured: "
+            f"{', '.join(missing_vars)}."
+        )
+        if hint:
+            msg += f"\n\n{hint}"
+        super().__init__(msg)
+
+
 class AudioBackendUnavailable(EffGenError):
     """Raised when no audio transcription backend is available.
 

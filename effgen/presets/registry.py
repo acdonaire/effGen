@@ -104,7 +104,8 @@ _GENERAL_PRESET = PresetConfig(
     name="general",
     description=(
         "General-purpose agent with all available built-in tools, including QR, OCR, "
-        "audio transcription, image analysis, and document parsing (PDF, DOCX, Excel)."
+        "audio transcription, image analysis, document parsing (PDF, DOCX, Excel), "
+        "weather/geo, email (SMTP/IMAP), Slack, and Discord webhooks."
     ),
     tool_names=[
         "calculator",
@@ -135,6 +136,10 @@ _GENERAL_PRESET = PresetConfig(
         "weather",
         "geocode",
         "maps",
+        "email_smtp",
+        "email_imap",
+        "slack_webhook",
+        "discord_webhook",
     ],
     system_prompt=(
         "You are a versatile AI assistant with access to many tools. "
@@ -220,7 +225,10 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         Calculator,
         CodeExecutor,
         DateTimeTool,
+        DiscordWebhookTool,
         DOCXTool,
+        EmailIMAPTool,
+        EmailSMTPTool,
         ExcelTool,
         FileOperations,
         GeocodeTool,
@@ -241,6 +249,7 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         Retrieval,
         RSSFeedTool,
         SemanticScholarTool,
+        SlackWebhookTool,
         TextProcessingTool,
         TranslateTool,
         URLFetchTool,
@@ -288,6 +297,10 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "weather": WeatherTool,
         "geocode": GeocodeTool,
         "maps": MapsTool,
+        "email_smtp": EmailSMTPTool,
+        "email_imap": EmailIMAPTool,
+        "slack_webhook": SlackWebhookTool,
+        "discord_webhook": DiscordWebhookTool,
     }
 
     tools = []
