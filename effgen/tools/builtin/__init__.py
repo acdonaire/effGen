@@ -70,6 +70,9 @@ __all__ = [
     "OCRTool",
     # Audio Transcription
     "AudioTranscribeTool",
+    # Image Analysis
+    "ImageInfoTool",
+    "ImageCaptionTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -239,6 +242,12 @@ def __getattr__(name):
     elif name == "AudioTranscribeTool":
         from .audio_transcribe import AudioTranscribeTool
         return AudioTranscribeTool
+    elif name == "ImageInfoTool":
+        from .image_info import ImageInfoTool
+        return ImageInfoTool
+    elif name == "ImageCaptionTool":
+        from .image_caption import ImageCaptionTool
+        return ImageCaptionTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool

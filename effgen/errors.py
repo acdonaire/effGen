@@ -61,6 +61,37 @@ class OCRBackendUnavailable(EffGenError):
         super().__init__(msg)
 
 
+class NoVisionProviderAvailable(EffGenError):
+    """Raised when ImageCaptionTool cannot find a vision-capable provider.
+
+    Attributes:
+        tried_providers: List of provider names that were checked.
+    """
+
+    _DEFAULT_HINT = (
+        "Configure a vision-capable provider:\n"
+        "  OpenAI  : set OPENAI_API_KEY  (gpt-4o supports vision)\n"
+        "  Google  : set GOOGLE_API_KEY  (gemini-2.5-flash-lite supports vision)\n"
+        "  Replicate: set REPLICATE_API_TOKEN\n\n"
+        "Then pass the provider when creating ImageCaptionTool or use "
+        "the model router with Capability.vision."
+    )
+
+    def __init__(
+        self,
+        tried_providers: list[str] | None = None,
+        extra: str = "",
+    ) -> None:
+        self.tried_providers = tried_providers or []
+        msg = "No vision-capable provider is configured."
+        if self.tried_providers:
+            msg += f" Tried: {', '.join(self.tried_providers)}."
+        msg += f"\n\n{self._DEFAULT_HINT}"
+        if extra:
+            msg += f"\n\n{extra}"
+        super().__init__(msg)
+
+
 class AudioBackendUnavailable(EffGenError):
     """Raised when no audio transcription backend is available.
 

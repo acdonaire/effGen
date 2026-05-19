@@ -98,7 +98,7 @@ _CODING_PRESET = PresetConfig(
 
 _GENERAL_PRESET = PresetConfig(
     name="general",
-    description="General-purpose agent with all available built-in tools, including QR, OCR, and audio transcription.",
+    description="General-purpose agent with all available built-in tools, including QR, OCR, audio transcription, and image analysis.",
     tool_names=[
         "calculator",
         "python_repl",
@@ -121,6 +121,7 @@ _GENERAL_PRESET = PresetConfig(
         "qr_read",
         "ocr",
         "audio_transcribe",
+        "image_info",
     ],
     system_prompt=(
         "You are a versatile AI assistant with access to many tools. "
@@ -208,6 +209,8 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         DateTimeTool,
         FileOperations,
         HackerNewsTool,
+        ImageCaptionTool,
+        ImageInfoTool,
         JSONTool,
         LanguageDetectTool,
         NewsTool,
@@ -258,6 +261,8 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "qr_read": QRReadTool,
         "ocr": OCRTool,
         "audio_transcribe": AudioTranscribeTool,
+        "image_info": ImageInfoTool,
+        "image_caption": ImageCaptionTool,
     }
 
     tools = []

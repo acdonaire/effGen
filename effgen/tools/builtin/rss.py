@@ -201,6 +201,9 @@ class RSSFeedTool(BaseTool):
         if op not in ("fetch", "latest", "search_in_feed"):
             raise ValueError(f"Unknown operation: {operation!r}")
 
+        if op == "search_in_feed" and not query:
+            raise ValueError("operation='search_in_feed' requires 'query'")
+
         result = await asyncio.to_thread(_fetch_feed, url)
         if not result["success"]:
             return result
@@ -213,8 +216,6 @@ class RSSFeedTool(BaseTool):
             result["data"]["entries"] = result["entries"]
 
         elif op == "search_in_feed":
-            if not query:
-                raise ValueError("operation='search_in_feed' requires 'query'")
             q = query.lower()
             matched = [
                 e for e in entries
