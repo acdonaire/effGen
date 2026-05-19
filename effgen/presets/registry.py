@@ -132,6 +132,9 @@ _GENERAL_PRESET = PresetConfig(
         "pdf",
         "docx",
         "excel",
+        "weather",
+        "geocode",
+        "maps",
     ],
     system_prompt=(
         "You are a versatile AI assistant with access to many tools. "
@@ -220,11 +223,13 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         DOCXTool,
         ExcelTool,
         FileOperations,
+        GeocodeTool,
         HackerNewsTool,
         ImageCaptionTool,
         ImageInfoTool,
         JSONTool,
         LanguageDetectTool,
+        MapsTool,
         NewsTool,
         OCRTool,
         PDFTool,
@@ -239,6 +244,7 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         TextProcessingTool,
         TranslateTool,
         URLFetchTool,
+        WeatherTool,
         WebSearch,
         WikipediaTool,
         YouTubeMetadataTool,
@@ -279,6 +285,9 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "pdf": PDFTool,
         "docx": DOCXTool,
         "excel": ExcelTool,
+        "weather": WeatherTool,
+        "geocode": GeocodeTool,
+        "maps": MapsTool,
     }
 
     tools = []

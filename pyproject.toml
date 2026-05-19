@@ -170,6 +170,10 @@ tools = [
     "pytesseract>=0.3.10",
     "Pillow>=10.0.0",
 ]
+geo = [
+    "staticmap>=0.5.4",
+    "Pillow>=10.0.0",
+]
 documents = [
     "pypdf>=4.0.0",
     "pdfplumber>=0.10.0",
@@ -282,6 +286,7 @@ all = [
     "openpyxl>=3.1.0",
     "pandas>=2.0.0",
     "reportlab>=4.0.0",
+    "staticmap>=0.5.4",
 ]
 
 [tool.setuptools.dynamic]

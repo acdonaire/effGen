@@ -467,7 +467,10 @@ def _translated_sync(video_id: str, target_lang: str) -> dict[str, Any]:
         raise ValueError(f"Video '{video_id}' is unavailable: {exc}") from exc
     except (IpBlocked, RequestBlocked) as exc:
         try:
-            return _get_transcript_ytdlp_sync(video_id, target_lang)
+            fallback = _get_transcript_ytdlp_sync(video_id, target_lang)
+            fallback["data"]["source_language"] = fallback["data"].get("language_code")
+            fallback["data"]["target_language"] = target_lang
+            return fallback
         except Exception as fallback_exc:
             raise ConnectionError(
                 "YouTube is blocking translated transcript requests from this IP, and the "

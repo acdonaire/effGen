@@ -163,6 +163,42 @@ def test_transcript_translated_requires_target_lang():
     assert "target_lang" in _get_error(r)
 
 
+def test_translated_fallback_preserves_target_language(monkeypatch):
+    """IP-block fallback must still return translated-operation metadata."""
+    import youtube_transcript_api
+    from youtube_transcript_api._errors import IpBlocked
+
+    from effgen.tools.builtin import youtube_transcript as yt
+
+    class FakeApi:
+        def list(self, video_id):
+            raise IpBlocked(video_id)
+
+    def fake_fallback(video_id, target_lang):
+        return {
+            "success": True,
+            "data": {
+                "video_id": video_id,
+                "language": target_lang,
+                "language_code": target_lang,
+                "is_generated": False,
+                "snippet_count": 1,
+                "full_text": "bonjour",
+                "snippets": [{"text": "bonjour", "start": 0.0, "duration": 1.0}],
+                "source": "yt-dlp",
+            },
+            "error": None,
+        }
+
+    monkeypatch.setattr(youtube_transcript_api, "YouTubeTranscriptApi", lambda: FakeApi())
+    monkeypatch.setattr(yt, "_get_transcript_ytdlp_sync", fake_fallback)
+
+    result = yt._translated_sync(STABLE_VIDEO_ID, "fr")
+    assert result["success"] is True
+    assert result["data"]["target_language"] == "fr"
+    assert result["data"]["source_language"] == "fr"
+
+
 def test_transcript_invalid_url_fails():
     r = _run(YouTubeTranscriptTool().execute(operation="get_transcript", video_id="not-a-youtube-url-at-all"))
     assert _is_failure(r)

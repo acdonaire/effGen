@@ -77,6 +77,9 @@ __all__ = [
     "PDFTool",
     "DOCXTool",
     "ExcelTool",
+    # Geo / Weather
+    "GeocodeTool",
+    "MapsTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -261,6 +264,12 @@ def __getattr__(name):
     elif name == "ExcelTool":
         from .excel import ExcelTool
         return ExcelTool
+    elif name == "GeocodeTool":
+        from .geocode import GeocodeTool
+        return GeocodeTool
+    elif name == "MapsTool":
+        from .maps import MapsTool
+        return MapsTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool
