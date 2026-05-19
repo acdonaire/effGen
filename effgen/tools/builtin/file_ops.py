@@ -51,10 +51,29 @@ class FileOperations(BaseTool):
     DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
     DEFAULT_ENCODING = "utf-8"
 
-    # Allowed file extensions for different operations
+    # Allowed file extensions for different operations.
+    # Reads include common source-code and config formats so coding-domain
+    # prompts (refactor planning, code review, docstring fill) can operate on
+    # real project files without users having to widen the whitelist by hand.
+    _CODE_READ_EXTS = {
+        ".py", ".pyi", ".pyx",
+        ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
+        ".java", ".kt", ".scala", ".groovy",
+        ".go", ".rs", ".rb", ".php", ".pl", ".lua",
+        ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx", ".cs",
+        ".swift", ".m", ".mm",
+        ".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat",
+        ".sql", ".graphql", ".gql",
+        ".html", ".htm", ".css", ".scss", ".sass", ".less",
+        ".vue", ".svelte",
+        ".dockerfile", ".tf", ".tfvars", ".hcl",
+        ".ini", ".toml", ".cfg", ".conf", ".env.example", ".properties",
+        ".rst", ".tex",
+    }
+    _DATA_READ_EXTS = {".txt", ".json", ".csv", ".xml", ".yaml", ".yml", ".md", ".log"}
     ALLOWED_EXTENSIONS = {
-        "read": {".txt", ".json", ".csv", ".xml", ".yaml", ".yml", ".md", ".log"},
-        "write": {".txt", ".json", ".csv", ".xml", ".yaml", ".yml", ".md"},
+        "read": _DATA_READ_EXTS | _CODE_READ_EXTS,
+        "write": _DATA_READ_EXTS | {".py", ".js", ".ts", ".html", ".css", ".sh", ".sql"},
     }
 
     def __init__(self, allowed_directories: list[str] | None = None):

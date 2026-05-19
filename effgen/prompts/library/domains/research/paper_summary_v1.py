@@ -71,12 +71,14 @@ def _paper_summary_structured(title: str, abstract: str, authors: str = "") -> s
         f'Summarize the following academic paper{author_line}.\n\n'
         f"Title: {title}\n\n"
         f"Abstract:\n{abstract}\n\n"
-        f"Return a JSON object with exactly these four keys:\n"
+        f"Return a JSON object with exactly these four keys (and no others):\n"
         f"  abstract_summary  — 2–3 sentence plain-language summary\n"
         f"  key_findings      — list of 3–5 main contributions or results\n"
         f"  limitations       — list of 2–4 noted limitations or caveats\n"
         f"  future_work       — list of 2–3 suggested future research directions\n\n"
-        f"Output only the JSON object, no markdown fences, no extra text."
+        f"Do NOT include any additional keys (e.g. no 'methodology', 'authors', "
+        f"'conclusion', 'introduction'). Output only the JSON object — no "
+        f"markdown fences, no extra text, no commentary."
     )
 
 

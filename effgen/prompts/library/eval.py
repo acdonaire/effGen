@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -59,9 +60,17 @@ class EvalReport:
 class PromptEval:
     """Evaluation harness for LibraryPrompt instances."""
 
-    def __init__(self, goldens_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        goldens_dir: Path | None = None,
+        *,
+        live_retries: int = 1,
+        live_retry_delay: float = 65.0,
+    ) -> None:
         self.goldens_dir = goldens_dir or GOLDENS_DIR
         self.goldens_dir.mkdir(parents=True, exist_ok=True)
+        self.live_retries = max(0, live_retries)
+        self.live_retry_delay = max(0.0, live_retry_delay)
 
     # ------------------------------------------------------------------
     # Golden evaluation
@@ -127,15 +136,24 @@ class PromptEval:
                 message=f"render error: {exc}",
             )
 
-        try:
-            output = self._run_model(rendered, model)
-        except Exception as exc:
-            return EvalResult(
-                name=prompt.name,
-                passed=False,
-                kind="live",
-                message=f"model error: {exc}",
-            )
+        for attempt in range(self.live_retries + 1):
+            try:
+                output = self._run_model(rendered, model)
+                break
+            except Exception as exc:
+                if (
+                    attempt < self.live_retries
+                    and self._is_rate_limit_error(exc)
+                    and self.live_retry_delay > 0
+                ):
+                    time.sleep(self.live_retry_delay)
+                    continue
+                return EvalResult(
+                    name=prompt.name,
+                    passed=False,
+                    kind="live",
+                    message=f"model error: {exc}",
+                )
 
         if prompt.expected_shape is None:
             return EvalResult(
@@ -168,10 +186,8 @@ class PromptEval:
         return report
 
     def eval_all_live(
-        self, prompts: list[LibraryPrompt], model: str, delay: float = 2.0
+        self, prompts: list[LibraryPrompt], model: str, delay: float = 35.0
     ) -> EvalReport:
-        import time
-
         report = EvalReport()
         for i, p in enumerate(prompts):
             if i > 0 and delay > 0:
@@ -218,6 +234,17 @@ class PromptEval:
         return text
 
     @staticmethod
+    def _is_rate_limit_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            "429" in msg
+            or "rate limit" in msg
+            or "rate_limit" in msg
+            or "request_quota_exceeded" in msg
+            or "too_many_requests" in msg
+        )
+
+    @staticmethod
     def _check_shape(output: str, spec: dict[str, Any]) -> tuple[bool, str]:
         """Validate model output against an expected_shape spec."""
         kind = spec.get("type", "")
@@ -226,15 +253,23 @@ class PromptEval:
             try:
                 parsed = json.loads(output)
             except json.JSONDecodeError:
-                # Try to extract JSON block from markdown.
-                m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", output, re.DOTALL)
-                if m:
+                # Try to extract JSON block from markdown fences or bare JSON object.
+                m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", output, re.DOTALL)
+                if not m:
+                    # Fallback: find the outermost {...} block
+                    m2 = re.search(r"(\{.*\})", output, re.DOTALL)
+                    if m2:
+                        try:
+                            parsed = json.loads(m2.group(1))
+                        except json.JSONDecodeError:
+                            return False, "output is not valid JSON"
+                    else:
+                        return False, "output is not valid JSON"
+                else:
                     try:
                         parsed = json.loads(m.group(1))
                     except json.JSONDecodeError:
                         return False, "output is not valid JSON"
-                else:
-                    return False, "output is not valid JSON"
             if not isinstance(parsed, dict):
                 return False, "JSON output must be an object"
 

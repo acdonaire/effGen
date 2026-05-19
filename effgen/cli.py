@@ -1980,6 +1980,8 @@ Examples:
     prompts_eval.add_argument('--domain', help='Evaluate only this domain')
     prompts_eval.add_argument('--live', action='store_true', help='Run live model evaluation')
     prompts_eval.add_argument('--model', help='Model to use for live evaluation')
+    prompts_eval.add_argument('--delay', type=float, default=35.0,
+                              help='Seconds to wait between live model calls (default: 35)')
     prompts_eval.add_argument('--output', help='Write eval table to this file')
 
     return parser
@@ -2790,6 +2792,7 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
         domain_filter = getattr(args, 'domain', None)
         live = getattr(args, 'live', False)
         model = getattr(args, 'model', None)
+        delay = getattr(args, 'delay', 35.0)
         output_path = getattr(args, 'output', None)
 
         prompts = registry.search(domain=domain_filter)
@@ -2807,7 +2810,7 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
                 cli.print_error("--model is required for --live eval")
                 return 1
             cli.print_header(f"Running live eval with model '{model}'...")
-            live_report = evaluator.eval_all_live(prompts, model)
+            live_report = evaluator.eval_all_live(prompts, model, delay=delay)
             live_table = live_report.as_table()
             print(live_table)
             full_table += "\n=== Live Eval ===\n" + live_table
