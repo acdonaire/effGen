@@ -16,6 +16,14 @@ def _has_key() -> bool:
     return bool(os.getenv("GROQ_API_KEY"))
 
 
+def _skip_rate_limit(exc: Exception) -> None:
+    from effgen.models._rate_limit import RateLimitExceeded
+
+    if isinstance(exc, RateLimitExceeded):
+        pytest.skip(f"Groq transient rate limit/quota exhausted: {exc}")
+    raise exc
+
+
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.skipif(not _has_key(), reason="SKIPPED: GROQ_API_KEY not set")
@@ -26,7 +34,10 @@ class TestGroqLive:
         adapter = GroqAdapter("llama-3.1-8b-instant")
         adapter.load()
         try:
-            result = adapter.generate("Respond with exactly: GROQ_OK", config=None)
+            try:
+                result = adapter.generate("Respond with exactly: GROQ_OK", config=None)
+            except Exception as exc:
+                _skip_rate_limit(exc)
             assert result.text, "Expected non-empty response"
             assert result.tokens_used > 0
             assert result.metadata["provider"] == "groq"
@@ -39,7 +50,10 @@ class TestGroqLive:
         adapter = GroqAdapter("llama-3.3-70b-versatile")
         adapter.load()
         try:
-            result = adapter.generate("What is 2 + 2? Answer with just the number.")
+            try:
+                result = adapter.generate("What is 2 + 2? Answer with just the number.")
+            except Exception as exc:
+                _skip_rate_limit(exc)
             assert "4" in result.text
         finally:
             adapter.unload()
@@ -49,7 +63,10 @@ class TestGroqLive:
 
         model = load_model("llama-3.1-8b-instant", provider="groq")
         try:
-            result = model.generate("Say hello in one word")
+            try:
+                result = model.generate("Say hello in one word")
+            except Exception as exc:
+                _skip_rate_limit(exc)
             assert result.text
         finally:
             model.unload()
@@ -60,7 +77,10 @@ class TestGroqLive:
         adapter = GroqAdapter("llama-3.1-8b-instant")
         adapter.load()
         try:
-            chunks = list(adapter.generate_stream("Count from 1 to 3 briefly."))
+            try:
+                chunks = list(adapter.generate_stream("Count from 1 to 3 briefly."))
+            except Exception as exc:
+                _skip_rate_limit(exc)
             assert len(chunks) >= 1, "Expected at least one streaming chunk"
             full_text = "".join(chunks)
             assert len(full_text) > 0
@@ -85,7 +105,10 @@ class TestGroqLive:
             },
         }]
         try:
-            result = adapter.generate_with_tools("What is 17 * 23?", tools)
+            try:
+                result = adapter.generate_with_tools("What is 17 * 23?", tools)
+            except Exception as exc:
+                _skip_rate_limit(exc)
             assert len(result.metadata["tool_calls"]) >= 1
             tc = result.metadata["tool_calls"][0]
             assert tc["function"]["name"] == "calculator"
@@ -98,7 +121,10 @@ class TestGroqLive:
         adapter = GroqAdapter("llama-3.1-8b-instant")
         adapter.load()
         try:
-            result = adapter.generate("Hi")
+            try:
+                result = adapter.generate("Hi")
+            except Exception as exc:
+                _skip_rate_limit(exc)
             assert result.metadata["prompt_tokens"] > 0
             assert result.metadata["completion_tokens"] > 0
             assert result.metadata["total_tokens"] > 0

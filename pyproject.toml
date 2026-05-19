@@ -208,6 +208,9 @@ replicate = [
 hf = [
     "huggingface_hub>=0.26",
 ]
+prompts-data = [
+    "sqlglot>=20.0",
+]
 flash-attn = ["flash-attn>=2.3.0"]
 vector-db = [
     "faiss-cpu>=1.7.4",
@@ -287,6 +290,7 @@ all = [
     "pandas>=2.0.0",
     "reportlab>=4.0.0",
     "staticmap>=0.5.4",
+    "sqlglot>=20.0",
 ]
 
 [tool.setuptools.dynamic]

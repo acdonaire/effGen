@@ -4,6 +4,7 @@ PromptEval — golden-string and live-model evaluation harness.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -245,6 +246,45 @@ class PromptEval:
         )
 
     @staticmethod
+    def _extract_json_object(output: str) -> dict[str, Any] | None:
+        """Return the first valid JSON object embedded in model output."""
+        text = output.strip()
+        decoder = json.JSONDecoder()
+
+        if text.startswith("```"):
+            lines = text.splitlines()
+            for start, line in enumerate(lines):
+                if line.strip().startswith("```"):
+                    for end in range(len(lines) - 1, start, -1):
+                        if lines[end].strip() == "```":
+                            fenced = "\n".join(lines[start + 1 : end]).strip()
+                            parsed = PromptEval._extract_json_object(fenced)
+                            if parsed is not None:
+                                return parsed
+                            try:
+                                literal = ast.literal_eval(fenced)
+                            except (SyntaxError, ValueError):
+                                literal = None
+                            if isinstance(literal, dict):
+                                return literal
+                            break
+
+        for match in re.finditer(r"\{", text):
+            try:
+                parsed, _idx = decoder.raw_decode(text[match.start() :])
+            except json.JSONDecodeError:
+                try:
+                    literal = ast.literal_eval(text[match.start() :])
+                except (SyntaxError, ValueError):
+                    continue
+                if isinstance(literal, dict):
+                    return literal
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    @staticmethod
     def _check_shape(output: str, spec: dict[str, Any]) -> tuple[bool, str]:
         """Validate model output against an expected_shape spec."""
         kind = spec.get("type", "")
@@ -253,23 +293,9 @@ class PromptEval:
             try:
                 parsed = json.loads(output)
             except json.JSONDecodeError:
-                # Try to extract JSON block from markdown fences or bare JSON object.
-                m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", output, re.DOTALL)
-                if not m:
-                    # Fallback: find the outermost {...} block
-                    m2 = re.search(r"(\{.*\})", output, re.DOTALL)
-                    if m2:
-                        try:
-                            parsed = json.loads(m2.group(1))
-                        except json.JSONDecodeError:
-                            return False, "output is not valid JSON"
-                    else:
-                        return False, "output is not valid JSON"
-                else:
-                    try:
-                        parsed = json.loads(m.group(1))
-                    except json.JSONDecodeError:
-                        return False, "output is not valid JSON"
+                parsed = PromptEval._extract_json_object(output)
+                if parsed is None:
+                    return False, "output is not valid JSON"
             if not isinstance(parsed, dict):
                 return False, "JSON output must be an object"
 

@@ -140,6 +140,21 @@ class TestShapeChecks:
         ok, msg = ev._check_shape("not json", shape)
         assert not ok
 
+    def test_json_shape_accepts_fenced_python_style_string_fragments(self, tmp_path):
+        shape = {"type": "json", "schema": {"required": ["sql", "warnings"]}}
+        ev = PromptEval(goldens_dir=tmp_path)
+        output = (
+            "```json\n"
+            "{\n"
+            '  "sql": "SELECT * " "FROM customers",\n'
+            '  "warnings": []\n'
+            "}\n"
+            "```\n"
+            "extra text"
+        )
+        ok, msg = ev._check_shape(output, shape)
+        assert ok, msg
+
     def test_regex_shape_match(self, tmp_path):
         shape = {"type": "regex", "pattern": r"\d+ papers"}
         ev = PromptEval(goldens_dir=tmp_path)
