@@ -2824,6 +2824,19 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
 
 def main():
     """Main entry point for CLI."""
+    # Load .env early so all subcommands see API keys
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+        for _ep in [
+            Path.home() / ".effgen" / ".env",
+            Path(".env"),
+            Path(__file__).parent.parent / ".env",
+        ]:
+            if _ep.exists():
+                _load_dotenv(_ep, override=False)
+    except ImportError:
+        pass
+
     parser = create_parser()
     args = parser.parse_args()
 

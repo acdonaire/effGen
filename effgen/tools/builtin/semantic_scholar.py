@@ -265,7 +265,7 @@ class SemanticScholarTool(BaseTool):
             if "429" not in str(exc):
                 raise
             data = await self._paper_fallback_from_arxiv(paper_id)
-            endpoint = "paper/search/match"
+            endpoint = "arxiv_fallback"
         return {
             "paper_id": paper_id,
             "result": _format_paper(data),
@@ -284,17 +284,26 @@ class SemanticScholarTool(BaseTool):
         arxiv_result = await ArXivTool().execute(operation="fetch", arxiv_id=arxiv_id)
         if not arxiv_result.success or not arxiv_result.output:
             raise ConnectionError(f"Semantic Scholar paper lookup rate-limited for {paper_id}")
-        title = arxiv_result.output["result"].get("title")
+        paper = arxiv_result.output["result"]
+        title = paper.get("title")
         if not title:
             raise ConnectionError(f"Semantic Scholar paper lookup rate-limited for {paper_id}")
 
-        match_params = urlencode({"query": title, "fields": PAPER_FIELDS})
-        match_url = f"{S2_BASE}/paper/search/match?{match_params}"
-        match_data = await self._get(match_url, retries=2)
-        matches = match_data.get("data", []) or []
-        if not matches:
-            raise ConnectionError(f"Semantic Scholar paper lookup rate-limited for {paper_id}")
-        return matches[0]
+        return {
+            "paperId": None,
+            "externalIds": {"ArXiv": paper.get("arxiv_id") or arxiv_id},
+            "url": paper.get("url"),
+            "title": title,
+            "abstract": paper.get("summary"),
+            "venue": "arXiv",
+            "year": (paper.get("published") or "")[:4] or None,
+            "referenceCount": None,
+            "citationCount": None,
+            "influentialCitationCount": None,
+            "isOpenAccess": True,
+            "fieldsOfStudy": paper.get("categories") or [],
+            "authors": [{"name": author} for author in paper.get("authors", [])],
+        }
 
     async def _citations(self, paper_id: str, max_results: int) -> dict[str, Any]:
         params = urlencode({"limit": max_results, "fields": PAPER_FIELDS})

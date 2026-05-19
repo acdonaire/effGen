@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
+from jsonschema import exceptions as jsonschema_exceptions
+
 from .base import LibraryPrompt
 
 logger = logging.getLogger(__name__)
@@ -165,10 +168,14 @@ class PromptEval:
         return report
 
     def eval_all_live(
-        self, prompts: list[LibraryPrompt], model: str
+        self, prompts: list[LibraryPrompt], model: str, delay: float = 2.0
     ) -> EvalReport:
+        import time
+
         report = EvalReport()
-        for p in prompts:
+        for i, p in enumerate(prompts):
+            if i > 0 and delay > 0:
+                time.sleep(delay)
             report.results.append(self.eval_live(p, model))
         return report
 
@@ -219,7 +226,7 @@ class PromptEval:
             try:
                 parsed = json.loads(output)
             except json.JSONDecodeError:
-                # Try to extract JSON block from markdown
+                # Try to extract JSON block from markdown.
                 m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", output, re.DOTALL)
                 if m:
                     try:
@@ -228,11 +235,18 @@ class PromptEval:
                         return False, "output is not valid JSON"
                 else:
                     return False, "output is not valid JSON"
+            if not isinstance(parsed, dict):
+                return False, "JSON output must be an object"
+
             schema = spec.get("schema")
             if schema:
-                missing = [k for k in schema.get("required", []) if k not in parsed]
-                if missing:
-                    return False, f"JSON missing keys: {missing}"
+                try:
+                    Draft202012Validator.check_schema(schema)
+                    Draft202012Validator(schema).validate(parsed)
+                except jsonschema_exceptions.SchemaError as exc:
+                    return False, f"invalid JSON schema: {exc.message}"
+                except jsonschema_exceptions.ValidationError as exc:
+                    return False, f"JSON schema validation failed: {exc.message}"
             return True, ""
 
         if kind == "regex":

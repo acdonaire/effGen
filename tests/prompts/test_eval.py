@@ -113,6 +113,27 @@ class TestShapeChecks:
         assert not ok
         assert "answer" in msg
 
+    def test_json_shape_validates_schema_types(self, tmp_path):
+        shape = {
+            "type": "json",
+            "schema": {
+                "type": "object",
+                "properties": {"answers": {"type": "array"}},
+                "required": ["answers"],
+            },
+        }
+        ev = PromptEval(goldens_dir=tmp_path)
+        ok, msg = ev._check_shape('{"answers": "not a list"}', shape)
+        assert not ok
+        assert "schema validation failed" in msg
+
+    def test_json_shape_rejects_non_object(self, tmp_path):
+        shape = {"type": "json"}
+        ev = PromptEval(goldens_dir=tmp_path)
+        ok, msg = ev._check_shape('["answer"]', shape)
+        assert not ok
+        assert "object" in msg
+
     def test_json_shape_invalid_json(self, tmp_path):
         shape = {"type": "json"}
         ev = PromptEval(goldens_dir=tmp_path)
