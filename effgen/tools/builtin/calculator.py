@@ -8,6 +8,7 @@ expression evaluation, and unit conversions.
 from __future__ import annotations
 
 import ast
+import json
 import logging
 import math
 import operator
@@ -280,8 +281,21 @@ class Calculator(BaseTool):
         Returns:
             Numerical result
         """
+        # Handle models that pass a JSON object as the expression string
+        raw = expression.strip()
+        if raw.startswith("{"):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict) and "expression" in parsed:
+                    raw = parsed["expression"]
+            except (json.JSONDecodeError, ValueError):
+                # Truncated JSON — extract the expression value via regex
+                m = re.search(r'"expression"\s*:\s*"([^"]+)"', raw)
+                if m:
+                    raw = m.group(1)
+
         # Sanitize input - remove common natural language patterns
-        expr = expression.strip()
+        expr = raw
 
         # Remove markdown code fences (```python, ```, backticks)
         expr = re.sub(r'^```(?:python|math|markdown)?\s*', '', expr, flags=re.MULTILINE)
