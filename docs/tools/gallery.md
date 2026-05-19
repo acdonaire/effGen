@@ -491,6 +491,200 @@ See [anthropic_native.md](anthropic_native.md) for full docs.
 
 ---
 
+## OCR
+
+### OCRTool
+**Extract text from images using Tesseract (local) with OCR.space free API fallback.**
+
+```python
+from effgen.tools.builtin.ocr import OCRTool
+result = OCRTool().execute({"operation": "extract", "image_path": "/tmp/scan.png", "lang": "eng"})
+print(result["data"]["text"])
+```
+
+System dep: `sudo apt-get install tesseract-ocr` / `brew install tesseract` / `choco install tesseract`.
+See [ocr.md](ocr.md) for full docs.
+
+---
+
+## Audio Transcription
+
+### AudioTranscribeTool
+**Transcribe audio files locally via faster-whisper (CPU/GPU auto-detected); HuggingFace Inference fallback with HF_TOKEN.**
+
+```python
+from effgen.tools.builtin.audio_transcribe import AudioTranscribeTool
+result = AudioTranscribeTool().execute({"operation": "transcribe", "audio_path": "/tmp/clip.mp3", "model_size": "base"})
+print(result["data"]["text"])
+```
+
+System dep (non-WAV formats): `sudo apt-get install ffmpeg` / `brew install ffmpeg`.
+See [audio_transcribe.md](audio_transcribe.md) for full docs.
+
+---
+
+## Image Analysis
+
+### ImageInfoTool
+**Extract image metadata (size, format, mode, EXIF, histogram) and perform local resize/thumbnail operations. Zero network.**
+
+```python
+from effgen.tools.builtin.image_info import ImageInfoTool
+result = ImageInfoTool().execute({"operation": "info", "image_path": "/tmp/photo.jpg"})
+print(result["data"]["size"], result["data"]["format"], result["data"]["mode"])
+```
+
+### ImageCaptionTool
+**Generate natural-language image descriptions via the effGen vision model router (Gemini / OpenAI / MLX-VLM).**
+
+```python
+from effgen.tools.builtin.image_caption import ImageCaptionTool
+result = ImageCaptionTool().execute({"operation": "caption", "image_path": "/tmp/photo.jpg"})
+print(result["data"]["caption"])
+```
+
+See [image.md](image.md) for full docs.
+
+---
+
+## Document Parsing
+
+### PDFTool
+**Extract text, tables, and metadata from PDF files using pypdf (primary) + pdfplumber (table fallback).**
+
+```python
+from effgen.tools.builtin.pdf import PDFTool
+result = PDFTool().execute({"operation": "text", "path": "/tmp/paper.pdf"})
+print(result["data"]["text"][:500])
+# Also: metadata, tables, extract_images
+```
+
+### DOCXTool
+**Parse Word documents (.docx) — text, paragraphs, tables, and metadata via python-docx.**
+
+```python
+from effgen.tools.builtin.docx import DOCXTool
+result = DOCXTool().execute({"operation": "text", "path": "/tmp/report.docx"})
+print(result["data"]["text"])
+# Also: paragraphs, tables, metadata
+```
+
+### ExcelTool
+**Read Excel workbooks (.xlsx) — sheets, headers, and row data via openpyxl + pandas.**
+
+```python
+from effgen.tools.builtin.excel import ExcelTool
+# List sheets
+sheets = ExcelTool().execute({"operation": "sheets", "path": "/tmp/data.xlsx"})
+# Read a sheet
+result = ExcelTool().execute({"operation": "read_sheet", "path": "/tmp/data.xlsx", "sheet_name": "Sheet1"})
+print(result["data"]["rows"][:3])
+```
+
+See [documents.md](documents.md) for full docs.
+
+---
+
+## Geo / Weather
+
+### WeatherTool
+**Fetch current conditions, 7-day forecasts, or historical weather from Open-Meteo (free, no auth).**
+
+```python
+from effgen.tools.builtin.weather import WeatherTool
+result = WeatherTool().execute({"operation": "current", "lat": 37.42, "lon": -122.08})
+print(result["data"]["temperature_c"], result["data"]["weather_description"])
+# Also: forecast (days=7), historical (start_date, end_date)
+```
+
+### GeocodeTool
+**Forward/reverse geocoding via Nominatim (OpenStreetMap). Honors 1 req/s rate limit; sets effGen/<version> User-Agent.**
+
+```python
+from effgen.tools.builtin.geocode import GeocodeTool
+result = GeocodeTool().execute({"operation": "geocode", "address": "1600 Amphitheatre Pkwy, Mountain View, CA"})
+print(result["data"]["lat"], result["data"]["lon"])
+# Also: reverse (lat, lon) → address
+```
+
+### MapsTool
+**Render static PNG maps from OpenStreetMap tiles using the staticmap library.**
+
+```python
+from effgen.tools.builtin.maps import MapsTool
+result = MapsTool().execute({
+    "operation": "render",
+    "lat": 37.42, "lon": -122.08,
+    "zoom": 13,
+    "dest": "/tmp/map.png"
+})
+print(result["data"]["path"])
+# Also: bounding_box (south, west, north, east)
+```
+
+See [weather.md](weather.md), [geocode.md](geocode.md), [maps.md](maps.md) for full docs.
+
+---
+
+## Email
+
+### EmailSMTPTool
+**Send email via SMTP (stdlib smtplib, TLS on by default). Config: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM.**
+
+```python
+from effgen.tools.builtin.email_smtp import EmailSMTPTool
+result = EmailSMTPTool().execute({
+    "operation": "send",
+    "to": "alice@example.com",
+    "subject": "Hello from effGen",
+    "body": "This message was sent by an AI agent."
+})
+print(result["data"]["status"])
+```
+
+### EmailIMAPTool
+**Read email via IMAP (stdlib imaplib). Config: IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASSWORD.**
+
+```python
+from effgen.tools.builtin.email_imap import EmailIMAPTool
+result = EmailIMAPTool().execute({"operation": "fetch_recent", "folder": "INBOX", "n": 5})
+for msg in result["data"]["messages"]:
+    print(msg["subject"], msg["from"])
+# Also: list_folders, search, get
+```
+
+See [email.md](email.md) for full docs.
+
+---
+
+## Webhooks
+
+### SlackWebhookTool
+**Post messages to Slack via incoming webhook URL (no OAuth). Config: SLACK_WEBHOOK_URL. URL is redacted in logs.**
+
+```python
+from effgen.tools.builtin.slack_webhook import SlackWebhookTool
+result = SlackWebhookTool().execute({"operation": "post", "text": "Deployment complete!"})
+print(result["data"]["status"])
+```
+
+### DiscordWebhookTool
+**Post messages to Discord via webhook URL. Config: DISCORD_WEBHOOK_URL. URL is redacted in logs.**
+
+```python
+from effgen.tools.builtin.discord_webhook import DiscordWebhookTool
+result = DiscordWebhookTool().execute({
+    "operation": "post",
+    "content": "Build passed!",
+    "username": "effGen Bot"
+})
+print(result["data"]["status"])
+```
+
+See [webhooks.md](webhooks.md) for full docs.
+
+---
+
 ## Using Tools in an Agent
 
 Any tool above can be wired into an Agent for agentic use:
@@ -521,6 +715,8 @@ from effgen.presets import create_agent
 
 model = load_model("llama3.1-8b", provider="cerebras")
 
-research_agent = create_agent("research", model)  # ArXiv, PubMed, SemanticScholar, RSS, News, YouTube, Reddit, HN, Wikipedia, WebSearch
-general_agent  = create_agent("general", model)   # RSS, News, Reddit, HN, Translate, LanguageDetect, QRGenerate, QRRead, Calculator, ...
+research_agent = create_agent("research", model)  # ArXiv, PubMed, SemanticScholar, RSS, News, YouTube, Reddit, HN, Wikipedia, WebSearch, PDF, DOCX, Excel
+general_agent  = create_agent("general", model)   # All of the above + OCR, ImageInfo, Weather, Geocode, Maps, Email, Webhooks, Translate, QR, ...
+media_agent    = create_agent("media", model)     # AudioTranscribeTool + ImageCaptionTool
+notify_agent   = create_agent("notify", model)    # EmailSMTPTool + EmailIMAPTool + SlackWebhookTool + DiscordWebhookTool
 ```

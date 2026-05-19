@@ -37,7 +37,8 @@
 
 | | Date | Update |
 |:---:|:---|:---|
-| 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [See changelog](CHANGELOG.md#025---2026-05-18) |
+| 🚀 | **19 May 2026** | **v0.2.6 Released**: 14 new tools — OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook. New presets: `media`, `notify`. 58+ built-in tools total. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#026---2026-05-19) |
+| 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#025---2026-05-18) |
 | 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#024---2026-05-14) |
 | 🚀 | **4 May 2026** | **v0.2.3 Released**: 5 new cloud backends (Groq, Together AI, Fireworks, Replicate, HuggingFace Inference) — 9 providers total. Unified ProviderRegistry, `effgen doctor` auth check, backend parity matrix. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#023---2026-05-04) |
 | 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (4 free-tier models, streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#021---2026-04-25) |
@@ -220,7 +221,7 @@ Multi-Agent<br/>
 <td align="center" width="14%">
 
 **🔧**<br/>
-31 Tools<br/>
+58+ Tools<br/>
 <sub>+ MCP/A2A/ACP</sub>
 
 </td>
@@ -235,6 +236,27 @@ Production API<br/>
 </table>
 
 </div>
+
+---
+
+## 🆕 What's New in v0.2.6
+
+**effGen v0.2.6** adds **14 new built-in tools** across document, media, and communication categories — bringing the total to **58+** — plus two new presets (`media`, `notify`). No breaking API changes.
+
+1. **OCR** — `OCRTool` (Tesseract local + OCR.space fallback). Raises a clear error with per-OS install hints when no backend is available.
+2. **Audio Transcription** — `AudioTranscribeTool` (faster-whisper local; HF Inference fallback; GPU auto-detected).
+3. **Image Analysis** — `ImageInfoTool` (Pillow metadata, zero network) + `ImageCaptionTool` (router-driven vision provider).
+4. **Document Parsing** — `PDFTool` (pypdf + pdfplumber), `DOCXTool` (python-docx), `ExcelTool` (openpyxl + pandas). Added to `research` and `general` presets.
+5. **Geo / Weather** — `WeatherTool` (Open-Meteo, free), `GeocodeTool` (Nominatim/OSM, 1 req/s), `MapsTool` (staticmap PNG).
+6. **Email & Webhooks** — `EmailSMTPTool`, `EmailIMAPTool`, `SlackWebhookTool`, `DiscordWebhookTool`. All in the new `notify` preset. Webhook URLs are redacted in logs.
+
+```python
+from effgen.tools.builtin.ocr import OCRTool
+result = OCRTool().execute({"operation": "extract", "image_path": "/tmp/scan.png"})
+print(result["data"]["text"])
+```
+
+See the [full tool gallery](https://github.com/ctrl-gaurav/effGen/blob/main/docs/tools/gallery.md) for quickstart snippets for all 58+ tools.
 
 ---
 
@@ -284,11 +306,13 @@ from effgen.presets import create_agent
 model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
 
 # One-line agent creation
-math_agent = create_agent("math", model)       # Calculator + PythonREPL
-research_agent = create_agent("research", model) # WebSearch + URLFetch + Wikipedia
-coding_agent = create_agent("coding", model)     # CodeExecutor + PythonREPL + FileOps + Bash
-general_agent = create_agent("general", model)   # All 11 tools
-minimal_agent = create_agent("minimal", model)   # Direct inference, no tools
+math_agent     = create_agent("math", model)       # Calculator + PythonREPL
+research_agent = create_agent("research", model)   # WebSearch + URLFetch + Wikipedia + PubMed + ArXiv + PDF + DOCX + Excel
+coding_agent   = create_agent("coding", model)     # CodeExecutor + PythonREPL + FileOps + Bash
+general_agent  = create_agent("general", model)    # 58+ built-in tools
+minimal_agent  = create_agent("minimal", model)    # Direct inference, no tools
+media_agent    = create_agent("media", model)      # AudioTranscribe + ImageCaption
+notify_agent   = create_agent("notify", model)     # EmailSMTP + EmailIMAP + Slack + Discord
 ```
 
 ```bash
@@ -299,7 +323,7 @@ effgen run --preset research "Tell me about quantum computing"
 
 ---
 
-## 🛠️ Built-in Tools (31)
+## 🛠️ Built-in Tools (58+)
 
 <div align="center">
 
@@ -406,9 +430,113 @@ Wikipedia<br/>
 
 </td>
 </tr>
+<tr>
+<td align="center" width="14%">
+
+**📰**<br/>
+News & RSS<br/>
+<sub>NewsAPI + feeds</sub>
+
+</td>
+<td align="center" width="14%">
+
+**📚**<br/>
+PubMed/ArXiv<br/>
+<sub>Academic search</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🎬**<br/>
+YouTube<br/>
+<sub>Transcript+meta</sub>
+
+</td>
+<td align="center" width="14%">
+
+**💬**<br/>
+Reddit / HN<br/>
+<sub>Social feeds</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🌍**<br/>
+Translate<br/>
+<sub>LibreTranslate</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🔠**<br/>
+LanguageDetect<br/>
+<sub>55+ langs</sub>
+
+</td>
+<td align="center" width="14%">
+
+**▩**<br/>
+QR Gen/Read<br/>
+<sub>zbar fallback</sub>
+
+</td>
+</tr>
+<tr>
+<td align="center" width="14%">
+
+**🔍**<br/>
+OCR<br/>
+<sub>Tesseract + OCR.space</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🎙️**<br/>
+AudioTranscribe<br/>
+<sub>faster-whisper</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🖼️**<br/>
+ImageInfo+Caption<br/>
+<sub>Pillow + VLM</sub>
+
+</td>
+<td align="center" width="14%">
+
+**📄**<br/>
+PDF/DOCX/Excel<br/>
+<sub>Document parsing</sub>
+
+</td>
+<td align="center" width="14%">
+
+**🗺️**<br/>
+Geocode + Maps<br/>
+<sub>OSM/Nominatim</sub>
+
+</td>
+<td align="center" width="14%">
+
+**✉️**<br/>
+Email SMTP/IMAP<br/>
+<sub>Send + read</sub>
+
+</td>
+<td align="center" width="14%">
+
+**📣**<br/>
+Slack + Discord<br/>
+<sub>Webhooks</sub>
+
+</td>
+</tr>
 </table>
 
 </div>
+
+See the [full tool gallery](https://github.com/ctrl-gaurav/effGen/blob/main/docs/tools/gallery.md) for quickstart snippets for all 58+ tools.
 
 ---
 

@@ -7,6 +7,177 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.6] - 2026-05-19
+
+### Highlights
+
+**effGen v0.2.6** is a document, media, and communication tools release adding **14 new built-in tools** across six categories — OCR, audio transcription, image analysis, document parsing, geo/weather, and email/webhook communication — raising the total built-in tool count from 44 to **58+**. Two new presets (`media`, `notify`) are introduced. Every tool follows the established `BaseTool` pattern with structured `{success, data, error}` output, async `_execute()`, unit + integration tests, a dedicated doc page, and preset integration. No breaking API changes.
+
+### Added
+
+#### OCR Tools
+- **`OCRTool`** (`effgen/tools/builtin/ocr.py`) — extract text from images using Tesseract (local, primary) with OCR.space free API as fallback (`OCR_SPACE_API_KEY`). Raises `OCRBackendUnavailable` with per-OS install instructions when no backend is available. Operations: `extract`, `extract_regions`. Added to `general` preset.
+
+  ```python
+  from effgen.tools.builtin.ocr import OCRTool
+  result = OCRTool().execute({"operation": "extract", "image_path": "/tmp/scan.png", "lang": "eng"})
+  print(result["data"]["text"])
+  ```
+
+  **System dep install:**
+  ```bash
+  # Ubuntu/Debian
+  sudo apt-get install tesseract-ocr
+  # macOS
+  brew install tesseract
+  # Windows
+  choco install tesseract
+  ```
+
+#### Audio Transcription Tools
+- **`AudioTranscribeTool`** (`effgen/tools/builtin/audio_transcribe.py`) — transcribe audio files locally via `faster-whisper` (CPU/GPU auto-detected) with HuggingFace Inference fallback (`HF_TOKEN`). Detects GPU via `nvidia-smi`; warns when `model_size > "base"` on CPU. Operations: `transcribe`. Added to `media` preset.
+
+  ```python
+  from effgen.tools.builtin.audio_transcribe import AudioTranscribeTool
+  result = AudioTranscribeTool().execute({"operation": "transcribe", "audio_path": "/tmp/clip.mp3", "model_size": "base"})
+  print(result["data"]["text"])
+  ```
+
+  **System dep install (for non-WAV formats):**
+  ```bash
+  sudo apt-get install ffmpeg   # Ubuntu/Debian
+  brew install ffmpeg           # macOS
+  ```
+
+#### Image Analysis Tools
+- **`ImageInfoTool`** (`effgen/tools/builtin/image_info.py`) — extract image metadata (size, format, mode, EXIF, color histogram) and perform local resize/thumbnail operations using Pillow. Zero network calls. Operations: `info`, `resize`, `thumbnail`. Added to `general` preset.
+
+  ```python
+  from effgen.tools.builtin.image_info import ImageInfoTool
+  result = ImageInfoTool().execute({"operation": "info", "image_path": "/tmp/photo.jpg"})
+  print(result["data"]["size"], result["data"]["format"])
+  ```
+
+- **`ImageCaptionTool`** (`effgen/tools/builtin/image_caption.py`) — generate natural-language descriptions of images via the effGen model router (selects a vision-capable provider: Gemini, OpenAI, or MLX-VLM). Raises `NoVisionProviderAvailable` when no vision-capable provider is configured. Operations: `caption`, `describe`. Added to `media` preset.
+
+  ```python
+  from effgen.tools.builtin.image_caption import ImageCaptionTool
+  result = ImageCaptionTool().execute({"operation": "caption", "image_path": "/tmp/photo.jpg"})
+  print(result["data"]["caption"])
+  ```
+
+#### Document Parsing Tools
+- **`PDFTool`** (`effgen/tools/builtin/pdf.py`) — extract text, tables, and metadata from PDF files using `pypdf` (primary) with `pdfplumber` for structured table extraction. Operations: `text`, `metadata`, `tables`, `extract_images`. Added to `research` and `general` presets.
+
+  ```python
+  from effgen.tools.builtin.pdf import PDFTool
+  result = PDFTool().execute({"operation": "text", "path": "/tmp/paper.pdf"})
+  print(result["data"]["text"][:500])
+  ```
+
+- **`DOCXTool`** (`effgen/tools/builtin/docx.py`) — parse Word documents (`.docx`) using `python-docx`. Operations: `text`, `paragraphs`, `tables`, `metadata`. Added to `research` and `general` presets.
+
+  ```python
+  from effgen.tools.builtin.docx import DOCXTool
+  result = DOCXTool().execute({"operation": "text", "path": "/tmp/report.docx"})
+  print(result["data"]["text"])
+  ```
+
+- **`ExcelTool`** (`effgen/tools/builtin/excel.py`) — read Excel workbooks (`.xlsx`) using `openpyxl` with tabular DataFrame output via `pandas`. Operations: `sheets`, `read_sheet`, `headers`. Added to `research` and `general` presets.
+
+  ```python
+  from effgen.tools.builtin.excel import ExcelTool
+  result = ExcelTool().execute({"operation": "read_sheet", "path": "/tmp/data.xlsx", "sheet_name": "Sheet1"})
+  print(result["data"]["rows"][:3])
+  ```
+
+#### Geo / Weather Tools
+- **`WeatherTool`** (`effgen/tools/builtin/weather.py`) — fetch current conditions, forecasts, and historical weather data from Open-Meteo (free, no auth required). Integrates with `GeocodeTool` for place-name → lat/lon resolution. Operations: `current`, `forecast`, `historical`. Added to `general` preset.
+
+  ```python
+  from effgen.tools.builtin.weather import WeatherTool
+  result = WeatherTool().execute({"operation": "current", "lat": 37.42, "lon": -122.08})
+  print(result["data"]["temperature_c"], result["data"]["weather_description"])
+  ```
+
+- **`GeocodeTool`** (`effgen/tools/builtin/geocode.py`) — forward/reverse geocoding using Nominatim (OpenStreetMap). Sets `effGen/<version>` User-Agent as required; built-in 1 req/s token-bucket rate limiter. Operations: `geocode`, `reverse`. Added to `general` preset.
+
+  ```python
+  from effgen.tools.builtin.geocode import GeocodeTool
+  result = GeocodeTool().execute({"operation": "geocode", "address": "1600 Amphitheatre Pkwy, Mountain View, CA"})
+  print(result["data"]["lat"], result["data"]["lon"])
+  ```
+
+- **`MapsTool`** (`effgen/tools/builtin/maps.py`) — render static PNG maps from OpenStreetMap tiles using the `staticmap` library. Operations: `render`, `bounding_box`. Added to `general` preset.
+
+  ```python
+  from effgen.tools.builtin.maps import MapsTool
+  result = MapsTool().execute({"operation": "render", "lat": 37.42, "lon": -122.08, "zoom": 13, "dest": "/tmp/map.png"})
+  print(result["data"]["path"])
+  ```
+
+#### Email Tools
+- **`EmailSMTPTool`** (`effgen/tools/builtin/email_smtp.py`) — send email via SMTP using stdlib `smtplib`. TLS-on by default. Config: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`. Raises `MissingCredentialsError` when config is absent. Operations: `send`. Added to `notify` preset.
+
+  ```python
+  from effgen.tools.builtin.email_smtp import EmailSMTPTool
+  result = EmailSMTPTool().execute({"operation": "send", "to": "alice@example.com", "subject": "Hello", "body": "Hi there!"})
+  ```
+
+- **`EmailIMAPTool`** (`effgen/tools/builtin/email_imap.py`) — read email via IMAP using stdlib `imaplib`. Config: `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASSWORD`. Operations: `list_folders`, `fetch_recent`, `search`, `get`. Added to `notify` preset.
+
+  ```python
+  from effgen.tools.builtin.email_imap import EmailIMAPTool
+  result = EmailIMAPTool().execute({"operation": "fetch_recent", "folder": "INBOX", "n": 5})
+  for msg in result["data"]["messages"]:
+      print(msg["subject"], msg["from"])
+  ```
+
+#### Webhook Tools
+- **`SlackWebhookTool`** (`effgen/tools/builtin/slack_webhook.py`) — post messages to Slack via incoming webhook URL (no OAuth required). Config: `SLACK_WEBHOOK_URL`. URL is redacted in all logs. Operations: `post`. Added to `notify` preset.
+
+  ```python
+  from effgen.tools.builtin.slack_webhook import SlackWebhookTool
+  result = SlackWebhookTool().execute({"operation": "post", "text": "Deploy complete!"})
+  ```
+
+- **`DiscordWebhookTool`** (`effgen/tools/builtin/discord_webhook.py`) — post messages to Discord via webhook URL. Config: `DISCORD_WEBHOOK_URL`. URL is redacted in all logs. Operations: `post`. Added to `notify` preset.
+
+  ```python
+  from effgen.tools.builtin.discord_webhook import DiscordWebhookTool
+  result = DiscordWebhookTool().execute({"operation": "post", "content": "Deployment succeeded!"})
+  ```
+
+#### New Presets
+- **`media` preset** — bundles `AudioTranscribeTool` and `ImageCaptionTool` for media-processing agents.
+- **`notify` preset** — bundles `EmailSMTPTool`, `EmailIMAPTool`, `SlackWebhookTool`, and `DiscordWebhookTool` for notification/alert agents.
+
+#### Documentation
+- **`docs/tools/gallery.md`** — updated with all 14 new tools (OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook).
+- **`docs/tools/ocr.md`** — OCRTool reference with per-OS Tesseract install instructions.
+- **`docs/tools/audio_transcribe.md`** — AudioTranscribeTool reference with ffmpeg install notes.
+- **`docs/tools/image.md`** — ImageInfoTool + ImageCaptionTool reference.
+- **`docs/tools/documents.md`** — PDFTool + DOCXTool + ExcelTool reference.
+- **`docs/tools/weather.md`** — WeatherTool reference.
+- **`docs/tools/geocode.md`** — GeocodeTool reference.
+- **`docs/tools/maps.md`** — MapsTool reference.
+- **`docs/tools/email.md`** — EmailSMTPTool + EmailIMAPTool reference.
+- **`docs/tools/webhooks.md`** — SlackWebhookTool + DiscordWebhookTool reference (with security note: webhook URLs are secrets).
+
+### Changed
+- **`general` preset** — now includes OCRTool, ImageInfoTool, PDFTool, DOCXTool, ExcelTool, WeatherTool, GeocodeTool, MapsTool, EmailSMTPTool, EmailIMAPTool, SlackWebhookTool, DiscordWebhookTool in addition to existing tools.
+- **`research` preset** — now includes PDFTool, DOCXTool, ExcelTool for document parsing alongside existing academic/web tools.
+- **`effgen/__init__.py`** — version bumped to `0.2.6`.
+
+### New Errors
+- **`OCRBackendUnavailable`** — raised when neither Tesseract nor OCR.space is available; includes per-OS install instructions.
+- **`MissingSystemDependency`** — raised by audio/document tools when a required system binary (ffmpeg, tesseract) is absent.
+- **`NoVisionProviderAvailable`** — raised by `ImageCaptionTool` when no vision-capable provider is configured.
+- **`MissingCredentialsError`** — raised by email/webhook tools when required env vars are absent.
+- **`CorruptDocumentError`** — raised by PDF/DOCX/Excel tools on unreadable files.
+
+---
+
 ## [0.2.5] - 2026-05-18
 
 ### Highlights

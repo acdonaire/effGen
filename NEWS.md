@@ -1,5 +1,58 @@
 # effGen Release Notes
 
+## v0.2.6 — May 19, 2026
+
+**effGen v0.2.6** is a document, media, and communication tools release that adds **14 new built-in tools** — OCR, audio transcription, image analysis, document parsing (PDF/DOCX/Excel), geo/weather, and email/webhook — raising the total built-in tool count from 44 to **58+**. Two new presets (`media`, `notify`) join the existing roster. No breaking API changes.
+
+### New Tools at a Glance
+
+**OCR** — `OCRTool` extracts text from images using Tesseract locally, with OCR.space as a free API fallback. Raises `OCRBackendUnavailable` with per-OS install instructions when neither backend is available. Added to `general` preset.
+
+**Audio Transcription** — `AudioTranscribeTool` transcribes audio files locally via `faster-whisper` (CPU/GPU auto-detected), falling back to HuggingFace Inference when `HF_TOKEN` is set. Warns on CPU when a large model size is selected. Added to new `media` preset.
+
+**Image Analysis** — `ImageInfoTool` extracts image metadata and performs local resize/thumbnail operations entirely via Pillow (zero network). `ImageCaptionTool` uses the effGen model router to select a vision-capable provider (Gemini / OpenAI / MLX-VLM) and generate a natural-language caption or description. `ImageInfoTool` is in `general`; `ImageCaptionTool` is in `media`.
+
+**Document Parsing** — `PDFTool` (pypdf + pdfplumber), `DOCXTool` (python-docx), and `ExcelTool` (openpyxl + pandas) round-trip local documents with full text, table, and metadata extraction. All three added to both `research` and `general` presets.
+
+**Geo / Weather** — `WeatherTool` fetches current, forecast, and historical weather from Open-Meteo (free, no auth). `GeocodeTool` forward/reverse geocodes via Nominatim (OSM) with 1 req/s token-bucket rate limiting and proper User-Agent header. `MapsTool` renders static PNG maps from OSM tiles via the `staticmap` library. All three added to `general`.
+
+**Email** — `EmailSMTPTool` sends email via SMTP (stdlib `smtplib`, TLS on by default). `EmailIMAPTool` reads email via IMAP (stdlib `imaplib`). Both raise `MissingCredentialsError` when env vars are absent. Added to new `notify` preset.
+
+**Webhooks** — `SlackWebhookTool` and `DiscordWebhookTool` post messages to Slack and Discord via incoming webhook URLs (no OAuth). Webhook URLs are redacted in all logs. Both added to `notify` preset.
+
+### New Presets
+
+```python
+from effgen.presets import create_agent
+from effgen import load_model
+
+model = load_model("llama3.1-8b", provider="cerebras")
+
+# Media processing agent
+media_agent = create_agent("media", model)   # AudioTranscribeTool + ImageCaptionTool
+
+# Notification/alert agent
+notify_agent = create_agent("notify", model) # EmailSMTP + EmailIMAP + Slack + Discord
+```
+
+### Upgrading from v0.2.5
+
+No breaking API changes. All new tools are opt-in extras.
+
+```bash
+pip install --upgrade "effgen[all]"
+# or selectively:
+pip install --upgrade "effgen[documents]"   # PDFTool, DOCXTool, ExcelTool
+pip install --upgrade "effgen[audio]"       # AudioTranscribeTool
+pip install --upgrade "effgen[tools]"       # OCRTool, ImageInfoTool, and more
+```
+
+**System dependencies** (only needed for the relevant tool's primary path):
+- `OCRTool` Tesseract: `apt-get install tesseract-ocr` / `brew install tesseract`
+- `AudioTranscribeTool` ffmpeg (for non-WAV): `apt-get install ffmpeg` / `brew install ffmpeg`
+
+---
+
 ## v0.2.5 — May 18, 2026
 
 **effGen v0.2.5** is a tools-focused release that adds **13 free, no-auth-required tools** across six new categories — academic research, news aggregation, YouTube, social media, translation/language detection, and QR codes — bringing the total built-in tool count above 44. Every new tool ships with structured `{success, data, error}` output, preset integration, and a dedicated doc page.
