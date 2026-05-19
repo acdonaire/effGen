@@ -39,8 +39,13 @@ LIVE_TEST_MAX_RETRIES = 1
 TRANSIENT_PROVIDER_KEYWORDS = (
     "quota",
     "429",
+    "402",
+    "payment required",
     "resource_exhausted",
     "insufficient credits",
+    "credits exhausted",
+    "exceeded your monthly included credits",
+    "depleted your monthly included credits",
     "rate_limit",
     "rate limit",
     "timeout",

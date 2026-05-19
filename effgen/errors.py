@@ -59,3 +59,35 @@ class OCRBackendUnavailable(EffGenError):
         if extra:
             msg += f"\n\n{extra}"
         super().__init__(msg)
+
+
+class AudioBackendUnavailable(EffGenError):
+    """Raised when no audio transcription backend is available.
+
+    Attributes:
+        tried_backends: List of backend names that were checked.
+    """
+
+    _DEFAULT_INSTALL = (
+        "Install local transcription support:\n"
+        "  pip install 'effgen[audio]'\n"
+        "  Ubuntu/Debian : sudo apt install ffmpeg\n"
+        "  macOS         : brew install ffmpeg\n"
+        "  Windows       : choco install ffmpeg\n"
+        "  conda         : conda install -c conda-forge ffmpeg\n\n"
+        "Or set HF_TOKEN to use the HuggingFace Inference fallback."
+    )
+
+    def __init__(
+        self,
+        tried_backends: list[str] | None = None,
+        extra: str = "",
+    ) -> None:
+        self.tried_backends = tried_backends or []
+        msg = "No audio transcription backend is available."
+        if self.tried_backends:
+            msg += f" Tried: {', '.join(self.tried_backends)}."
+        msg += f"\n\n{self._DEFAULT_INSTALL}"
+        if extra:
+            msg += f"\n\n{extra}"
+        super().__init__(msg)

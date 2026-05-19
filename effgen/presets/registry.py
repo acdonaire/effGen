@@ -98,7 +98,7 @@ _CODING_PRESET = PresetConfig(
 
 _GENERAL_PRESET = PresetConfig(
     name="general",
-    description="General-purpose agent with all available built-in tools, including QR generation and reading.",
+    description="General-purpose agent with all available built-in tools, including QR, OCR, and audio transcription.",
     tool_names=[
         "calculator",
         "python_repl",
@@ -120,6 +120,7 @@ _GENERAL_PRESET = PresetConfig(
         "qr_generate",
         "qr_read",
         "ocr",
+        "audio_transcribe",
     ],
     system_prompt=(
         "You are a versatile AI assistant with access to many tools. "
@@ -169,6 +170,7 @@ PRESETS: dict[str, PresetConfig] = {
     "general": _GENERAL_PRESET,
     "rag": _RAG_PRESET,
     "minimal": _MINIMAL_PRESET,
+    # media preset is registered by effgen/presets/media.py on import
 }
 
 
@@ -199,6 +201,7 @@ def _instantiate_tools(tool_names: list[str]) -> list:
     from effgen.tools.builtin import (
         AgenticSearch,
         ArXivTool,
+        AudioTranscribeTool,
         BashTool,
         Calculator,
         CodeExecutor,
@@ -254,6 +257,7 @@ def _instantiate_tools(tool_names: list[str]) -> list:
         "qr_generate": QRGenerateTool,
         "qr_read": QRReadTool,
         "ocr": OCRTool,
+        "audio_transcribe": AudioTranscribeTool,
     }
 
     tools = []

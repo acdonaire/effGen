@@ -68,6 +68,8 @@ __all__ = [
     "QRReadTool",
     # OCR
     "OCRTool",
+    # Audio Transcription
+    "AudioTranscribeTool",
     # Communication
     "EmailDraftTool",
     "SlackDraftTool",
@@ -234,6 +236,9 @@ def __getattr__(name):
     elif name == "OCRTool":
         from .ocr import OCRTool
         return OCRTool
+    elif name == "AudioTranscribeTool":
+        from .audio_transcribe import AudioTranscribeTool
+        return AudioTranscribeTool
     elif name == "StackOverflowTool":
         from .knowledge import StackOverflowTool
         return StackOverflowTool

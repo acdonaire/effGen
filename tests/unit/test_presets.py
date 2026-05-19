@@ -11,13 +11,13 @@ from effgen.presets.registry import (
 )
 from tests.fixtures.mock_models import MockModel
 
-EXPECTED_PRESETS = {"math", "research", "coding", "general", "rag", "minimal"}
+EXPECTED_PRESETS = {"math", "research", "coding", "general", "rag", "minimal", "media"}
 
 
 class TestListPresets:
     """Test list_presets()."""
 
-    def test_returns_all_five(self):
+    def test_returns_all_presets(self):
         presets = list_presets()
         assert set(presets.keys()) == EXPECTED_PRESETS
 
@@ -82,7 +82,7 @@ class TestCreateAgent:
         assert agent.config.max_iterations == 99
 
     def test_create_all_presets(self):
-        """Verify all 5 presets can be created without error."""
+        """Verify all presets can be created without error."""
         model = self._mock_model()
         for name in EXPECTED_PRESETS:
             agent = create_agent(name, model)

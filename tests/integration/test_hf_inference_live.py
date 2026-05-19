@@ -21,9 +21,19 @@ def _skip_if_hf_credits_exhausted(exc: BaseException) -> None:
     if (
         "402" in msg
         or "payment required" in msg
+        or "credits exhausted" in msg
+        or "exceeded your monthly included credits" in msg
         or "depleted your monthly included credits" in msg
     ):
         pytest.skip(f"HuggingFace Inference credits exhausted: {exc}")
+
+
+def _call_or_skip_hf_quota(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        _skip_if_hf_credits_exhausted(exc)
+        raise
 
 
 @pytest.mark.integration
@@ -36,7 +46,11 @@ class TestHFInferenceLive:
         adapter = HFInferenceAdapter("Qwen/Qwen2.5-7B-Instruct")
         adapter.load()
         try:
-            result = adapter.generate("Respond with exactly: HF_OK", config=None)
+            result = _call_or_skip_hf_quota(
+                adapter.generate,
+                "Respond with exactly: HF_OK",
+                config=None,
+            )
             assert result.text, "Expected non-empty response"
             assert result.tokens_used > 0
             assert result.metadata["provider"] == "hf_inference"
@@ -51,7 +65,10 @@ class TestHFInferenceLive:
         adapter = HFInferenceAdapter("meta-llama/Llama-3.1-8B-Instruct")
         adapter.load()
         try:
-            result = adapter.generate("What is 2 + 2? Answer with just the number.")
+            result = _call_or_skip_hf_quota(
+                adapter.generate,
+                "What is 2 + 2? Answer with just the number.",
+            )
             assert "4" in result.text
         finally:
             adapter.unload()
@@ -61,7 +78,7 @@ class TestHFInferenceLive:
 
         model = load_model("Qwen/Qwen2.5-7B-Instruct", provider="hf_inference")
         try:
-            result = model.generate("Say hello in one word")
+            result = _call_or_skip_hf_quota(model.generate, "Say hello in one word")
             assert result.text
         finally:
             model.unload()
@@ -72,7 +89,9 @@ class TestHFInferenceLive:
         adapter = HFInferenceAdapter("Qwen/Qwen2.5-7B-Instruct")
         adapter.load()
         try:
-            chunks = list(adapter.generate_stream("Count 1 to 5, one per line."))
+            chunks = _call_or_skip_hf_quota(
+                lambda: list(adapter.generate_stream("Count 1 to 5, one per line."))
+            )
             assert len(chunks) >= 2, f"Expected multiple chunks, got {len(chunks)}"
             text = "".join(chunks)
             assert len(text) > 0
@@ -85,7 +104,10 @@ class TestHFInferenceLive:
         adapter = HFInferenceAdapter("Qwen/Qwen2.5-72B-Instruct")
         adapter.load()
         try:
-            result = adapter.generate("What is the capital of Germany? One word answer.")
+            result = _call_or_skip_hf_quota(
+                adapter.generate,
+                "What is the capital of Germany? One word answer.",
+            )
             assert result.text
             assert "Berlin" in result.text
         finally:
@@ -111,7 +133,8 @@ class TestHFInferenceLive:
                     },
                 },
             }
-            result = adapter.generate_with_tools(
+            result = _call_or_skip_hf_quota(
+                adapter.generate_with_tools,
                 "What is the weather in Paris?",
                 tools=[tool],
             )
