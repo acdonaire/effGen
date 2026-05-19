@@ -1963,6 +1963,25 @@ Examples:
     cost_set_budget.add_argument('amount', type=float, help='Daily budget in USD (e.g. 1.0)')
     cost_subparsers.add_parser('clear-budget', help='Remove configured budget limits')
 
+    # Prompt library subcommand
+    prompts_parser = subparsers.add_parser('prompts', help='Prompt library management')
+    prompts_subparsers = prompts_parser.add_subparsers(dest='prompts_command', help='Prompts command')
+
+    prompts_list = prompts_subparsers.add_parser('list', help='List prompt templates')
+    prompts_list.add_argument('--domain', help='Filter by domain')
+    prompts_list.add_argument('--variant', help='Filter by variant')
+    prompts_list.add_argument('--format', choices=['table', 'json', 'markdown'], default='table',
+                              dest='list_format', help='Output format')
+
+    prompts_show = prompts_subparsers.add_parser('show', help='Show prompt details')
+    prompts_show.add_argument('name', help='Prompt name')
+
+    prompts_eval = prompts_subparsers.add_parser('eval', help='Evaluate prompts')
+    prompts_eval.add_argument('--domain', help='Evaluate only this domain')
+    prompts_eval.add_argument('--live', action='store_true', help='Run live model evaluation')
+    prompts_eval.add_argument('--model', help='Model to use for live evaluation')
+    prompts_eval.add_argument('--output', help='Write eval table to this file')
+
     return parser
 
 
@@ -2669,6 +2688,140 @@ def _handle_sessions_command(args, cli) -> int:
     return 1
 
 
+def _handle_prompts_command(args, cli: "CLIInterface") -> int:
+    """Handle 'effgen prompts' subcommands."""
+    import json as _json
+
+    try:
+        from effgen.prompts.library import PromptEval, registry
+    except ImportError as exc:
+        cli.print_error(f"Prompt library not available: {exc}")
+        return 1
+
+    cmd = getattr(args, 'prompts_command', None)
+
+    # ---- list ----
+    if cmd == 'list' or cmd is None:
+        domain_filter = getattr(args, 'domain', None)
+        variant_filter = getattr(args, 'variant', None)
+        fmt = getattr(args, 'list_format', 'table')
+
+        prompts = registry.search(domain=domain_filter, variant=variant_filter)
+
+        if fmt == 'json':
+            rows = [
+                {
+                    'name': p.name,
+                    'domain': p.domain,
+                    'variant': p.variant,
+                    'description': p.description,
+                    'tags': p.tags,
+                }
+                for p in prompts
+            ]
+            print(_json.dumps(rows, indent=2))
+            return 0
+
+        if fmt == 'markdown':
+            print("| Name | Domain | Variant | Description |")
+            print("|------|--------|---------|-------------|")
+            for p in prompts:
+                print(f"| {p.name} | {p.domain} | {p.variant} | {p.description} |")
+            if not prompts:
+                print("| — | — | — | No prompts registered yet |")
+            return 0
+
+        # table (default)
+        if RICH_AVAILABLE and cli.console:
+            from rich.table import Table
+            t = Table(title="Prompt Library", show_lines=False)
+            t.add_column("Name", style="cyan")
+            t.add_column("Domain")
+            t.add_column("Variant")
+            t.add_column("Description")
+            for p in prompts:
+                t.add_row(p.name, p.domain, p.variant, p.description)
+            if not prompts:
+                t.add_row("—", "—", "—", "No prompts registered yet")
+            cli.console.print(t)
+        else:
+            if not prompts:
+                print("No prompts registered yet.")
+            else:
+                print(f"{'Name':<45} {'Domain':<12} {'Variant':<12} Description")
+                print("-" * 100)
+                for p in prompts:
+                    print(f"{p.name:<45} {p.domain:<12} {p.variant:<12} {p.description}")
+        cli.print(f"\nTotal: {len(prompts)} prompt(s)")
+        return 0
+
+    # ---- show ----
+    if cmd == 'show':
+        name = args.name
+        try:
+            p = registry.get(name)
+        except KeyError:
+            cli.print_error(f"Prompt '{name}' not found.")
+            return 1
+
+        cli.print_header(f"Prompt: {p.name}")
+        cli.print(f"  Domain:      {p.domain}")
+        cli.print(f"  Variant:     {p.variant}")
+        cli.print(f"  Description: {p.description}")
+        cli.print(f"  Tags:        {', '.join(p.tags) or '—'}")
+        cli.print("\n[bold]Input Schema:[/bold]" if RICH_AVAILABLE else "\nInput Schema:")
+        cli.print("  " + _json.dumps(p.input_schema, indent=2).replace("\n", "\n  "))
+        cli.print("\n[bold]Fixture:[/bold]" if RICH_AVAILABLE else "\nFixture:")
+        cli.print("  " + _json.dumps(p.fixture, indent=2).replace("\n", "\n  "))
+        try:
+            rendered = p.render_fixture()
+            cli.print(
+                "\n[bold]Rendered (fixture):[/bold]"
+                if RICH_AVAILABLE
+                else "\nRendered (fixture):"
+            )
+            cli.print(rendered)
+        except Exception as exc:
+            cli.print_warning(f"Could not render: {exc}")
+        return 0
+
+    # ---- eval ----
+    if cmd == 'eval':
+        domain_filter = getattr(args, 'domain', None)
+        live = getattr(args, 'live', False)
+        model = getattr(args, 'model', None)
+        output_path = getattr(args, 'output', None)
+
+        prompts = registry.search(domain=domain_filter)
+        evaluator = PromptEval()
+
+        cli.print_header("Running golden eval...")
+        golden_report = evaluator.eval_all_golden(prompts)
+        table = golden_report.as_table()
+        print(table)
+
+        full_table = "=== Golden Eval ===\n" + table
+
+        if live:
+            if not model:
+                cli.print_error("--model is required for --live eval")
+                return 1
+            cli.print_header(f"Running live eval with model '{model}'...")
+            live_report = evaluator.eval_all_live(prompts, model)
+            live_table = live_report.as_table()
+            print(live_table)
+            full_table += "\n=== Live Eval ===\n" + live_table
+
+        if output_path:
+            Path(output_path).write_text(full_table)
+            cli.print_success(f"Eval table written to {output_path}")
+
+        return 0
+
+    cli.print("Usage: effgen prompts [list|show|eval]")
+    return 1
+
+
 def main():
     """Main entry point for CLI."""
     parser = create_parser()
@@ -2732,6 +2885,8 @@ def main():
             exit_code = _handle_compare_command(args, cli)
         elif args.command == 'cost':
             exit_code = _handle_cost_command(args, cli)
+        elif args.command == 'prompts':
+            exit_code = _handle_prompts_command(args, cli)
         elif args.command == 'debug':
             from effgen.debug.inspector import run_debug_cli
             run_debug_cli(
