@@ -137,10 +137,14 @@ class PromptEval:
                 message=f"render error: {exc}",
             )
 
+        # Small models occasionally emit malformed or truncated structured
+        # output. Allow up to ``live_retries`` extra attempts on shape failures
+        # in addition to rate-limit retries.
+        last_output = ""
+        last_msg = ""
         for attempt in range(self.live_retries + 1):
             try:
                 output = self._run_model(rendered, model)
-                break
             except Exception as exc:
                 if (
                     attempt < self.live_retries
@@ -156,24 +160,36 @@ class PromptEval:
                     message=f"model error: {exc}",
                 )
 
-        if prompt.expected_shape is None:
-            return EvalResult(
-                name=prompt.name,
-                passed=True,
-                kind="live",
-                rendered=rendered,
-                model_output=output,
-                message="(no shape check defined)",
-            )
+            last_output = output
+            if prompt.expected_shape is None:
+                return EvalResult(
+                    name=prompt.name,
+                    passed=True,
+                    kind="live",
+                    rendered=rendered,
+                    model_output=output,
+                    message="(no shape check defined)",
+                )
 
-        ok, msg = self._check_shape(output, prompt.expected_shape)
+            ok, msg = self._check_shape(output, prompt.expected_shape)
+            if ok or attempt >= self.live_retries:
+                return EvalResult(
+                    name=prompt.name,
+                    passed=ok,
+                    kind="live",
+                    message=msg,
+                    rendered=rendered,
+                    model_output=output,
+                )
+            last_msg = msg
+
         return EvalResult(
             name=prompt.name,
-            passed=ok,
+            passed=False,
             kind="live",
-            message=msg,
+            message=last_msg or "live eval failed",
             rendered=rendered,
-            model_output=output,
+            model_output=last_output,
         )
 
     # ------------------------------------------------------------------
@@ -226,7 +242,24 @@ class PromptEval:
                 provider = None
 
         loaded = load_model(model, provider=provider) if provider else load_model(model)
-        result = loaded.generate(prompt_text)
+
+        # Use a generous max_tokens cap so structured-output prompts (JSON arrays,
+        # multi-section briefs) don't truncate mid-stream and fail shape validation.
+        # We honour any pre-existing config the caller set on the loaded model.
+        gen_kwargs: dict[str, Any] = {}
+        try:
+            from effgen.models.base import GenerationConfig
+
+            existing_max = None
+            existing_cfg = getattr(loaded, "config", None)
+            if existing_cfg is not None:
+                existing_max = getattr(existing_cfg, "max_tokens", None)
+            if existing_max is None:
+                gen_kwargs["config"] = GenerationConfig(max_tokens=4096)
+        except Exception:
+            pass
+
+        result = loaded.generate(prompt_text, **gen_kwargs)
         text = getattr(result, "text", None)
         if text is None and isinstance(result, dict):
             text = result.get("text") or result.get("content")
@@ -244,6 +277,49 @@ class PromptEval:
             or "request_quota_exceeded" in msg
             or "too_many_requests" in msg
         )
+
+    @staticmethod
+    def _escape_raw_controls_in_strings(text: str) -> str:
+        """Escape raw newlines/tabs/CRs that appear inside JSON string literals.
+
+        Some small models emit JSON where a string value spans multiple physical
+        lines (e.g. a multi-line SQL query). Strict JSON disallows raw control
+        characters inside strings, so ``json.loads`` rejects it. This helper
+        rewrites unescaped newline/tab/CR characters that fall inside ``"..."``
+        regions into their escaped equivalents so the result parses.
+        """
+        out: list[str] = []
+        in_str = False
+        escape = False
+        for ch in text:
+            if in_str:
+                if escape:
+                    out.append(ch)
+                    escape = False
+                    continue
+                if ch == "\\":
+                    out.append(ch)
+                    escape = True
+                    continue
+                if ch == '"':
+                    out.append(ch)
+                    in_str = False
+                    continue
+                if ch == "\n":
+                    out.append("\\n")
+                    continue
+                if ch == "\r":
+                    out.append("\\r")
+                    continue
+                if ch == "\t":
+                    out.append("\\t")
+                    continue
+                out.append(ch)
+            else:
+                out.append(ch)
+                if ch == '"':
+                    in_str = True
+        return "".join(out)
 
     @staticmethod
     def _extract_json_object(output: str) -> dict[str, Any] | None:
@@ -273,6 +349,16 @@ class PromptEval:
             try:
                 parsed, _idx = decoder.raw_decode(text[match.start() :])
             except json.JSONDecodeError:
+                # Try repairing raw control characters inside string literals.
+                repaired = PromptEval._escape_raw_controls_in_strings(
+                    text[match.start() :]
+                )
+                try:
+                    parsed, _idx = decoder.raw_decode(repaired)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
                 try:
                     literal = ast.literal_eval(text[match.start() :])
                 except (SyntaxError, ValueError):
