@@ -1,0 +1,312 @@
+"""
+Multimodal message schema for effGen.
+
+Defines the canonical content-part union used across all provider adapters.
+Each adapter is responsible for translating these parts to its own wire format.
+
+Back-compat: Message(role, "text") still works; .text joins all TextParts.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from time import time
+from typing import Any, Literal
+
+from effgen.errors import InvalidMultimodalContent
+
+# ---------------------------------------------------------------------------
+# Role
+# ---------------------------------------------------------------------------
+
+class Role(Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
+# ---------------------------------------------------------------------------
+# Content parts
+# ---------------------------------------------------------------------------
+
+_VALID_IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+_VALID_AUDIO_MIMES = {
+    "audio/flac",
+    "audio/m4a",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "audio/x-m4a",
+    "audio/x-wav",
+}
+
+
+@dataclass
+class TextPart:
+    text: str
+    type: Literal["text"] = field(default="text", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.text, str):
+            raise InvalidMultimodalContent("text", "text must be a string")
+
+
+@dataclass
+class ImagePart:
+    image: bytes
+    mime: str
+    meta: dict[str, Any] = field(default_factory=dict)
+    type: Literal["image"] = field(default="image", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.image, bytes | bytearray):
+            raise InvalidMultimodalContent("image", "image data must be bytes")
+        self.image = bytes(self.image)
+        if self.mime not in _VALID_IMAGE_MIMES:
+            raise InvalidMultimodalContent(
+                "image",
+                f"MIME type '{self.mime}' is not supported. "
+                f"Allowed: {sorted(_VALID_IMAGE_MIMES)}",
+            )
+        if not isinstance(self.meta, dict):
+            raise InvalidMultimodalContent("image", "meta must be a dict")
+
+
+@dataclass
+class AudioPart:
+    audio: bytes
+    mime: str
+    duration_s: float | None = None
+    type: Literal["audio"] = field(default="audio", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.audio, bytes | bytearray):
+            raise InvalidMultimodalContent("audio", "audio data must be bytes")
+        self.audio = bytes(self.audio)
+        if self.mime not in _VALID_AUDIO_MIMES:
+            raise InvalidMultimodalContent(
+                "audio",
+                f"MIME type '{self.mime}' is not supported. "
+                f"Allowed: {sorted(_VALID_AUDIO_MIMES)}",
+            )
+        if self.duration_s is not None and self.duration_s < 0:
+            raise InvalidMultimodalContent("audio", "duration_s must be non-negative")
+
+
+@dataclass
+class VideoPart:
+    frames: list[bytes]
+    fps: float
+    mime: str
+    type: Literal["video_frames"] = field(default="video_frames", init=False)
+
+    def __post_init__(self) -> None:
+        if self.mime not in _VALID_IMAGE_MIMES:
+            raise InvalidMultimodalContent(
+                "video_frames",
+                f"Frame MIME type '{self.mime}' is not supported. "
+                f"Allowed: {sorted(_VALID_IMAGE_MIMES)}",
+            )
+        if self.fps <= 0:
+            raise InvalidMultimodalContent("video_frames", "fps must be positive")
+        if not self.frames:
+            raise InvalidMultimodalContent("video_frames", "frames list must be non-empty")
+        normalised_frames = []
+        for index, frame in enumerate(self.frames):
+            if not isinstance(frame, bytes | bytearray):
+                raise InvalidMultimodalContent(
+                    "video_frames",
+                    f"frame[{index}] must be bytes",
+                )
+            normalised_frames.append(bytes(frame))
+        self.frames = normalised_frames
+
+
+@dataclass
+class ToolCallPart:
+    tool_call_id: str
+    name: str
+    arguments: dict[str, Any]
+    type: Literal["tool_call"] = field(default="tool_call", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tool_call_id, str) or not self.tool_call_id:
+            raise InvalidMultimodalContent("tool_call", "tool_call_id must be a non-empty string")
+        if not isinstance(self.name, str) or not self.name:
+            raise InvalidMultimodalContent("tool_call", "name must be a non-empty string")
+        if not isinstance(self.arguments, dict):
+            raise InvalidMultimodalContent("tool_call", "arguments must be a dict")
+
+
+@dataclass
+class ToolResultPart:
+    tool_call_id: str
+    result: Any
+    is_error: bool = False
+    type: Literal["tool_result"] = field(default="tool_result", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tool_call_id, str) or not self.tool_call_id:
+            raise InvalidMultimodalContent("tool_result", "tool_call_id must be a non-empty string")
+        if not isinstance(self.is_error, bool):
+            raise InvalidMultimodalContent("tool_result", "is_error must be a bool")
+
+
+ContentPart = TextPart | ImagePart | AudioPart | VideoPart | ToolCallPart | ToolResultPart
+_CONTENT_PART_TYPES = (
+    TextPart,
+    ImagePart,
+    AudioPart,
+    VideoPart,
+    ToolCallPart,
+    ToolResultPart,
+)
+
+
+# ---------------------------------------------------------------------------
+# Message
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Message:
+    """Unified multimodal message.
+
+    Back-compat: ``Message(role, "some text")`` auto-wraps the string in a
+    ``TextPart``. Use ``Message.text`` to join all TextParts back to a string.
+    """
+
+    role: Role
+    content: list[ContentPart]
+    metadata: dict[str, Any] = field(default_factory=dict)
+    timestamp: float = field(default_factory=time)
+
+    def __post_init__(self) -> None:
+        # Accept Role enum or its string value for back-compat
+        if isinstance(self.role, str):
+            try:
+                self.role = Role(self.role)
+            except ValueError as exc:
+                raise InvalidMultimodalContent(
+                    "role",
+                    f"role must be one of {[role.value for role in Role]}",
+                ) from exc
+        # Back-compat: if content was passed as a plain string, wrap it
+        if isinstance(self.content, str):
+            self.content = [TextPart(text=self.content)]
+        elif not isinstance(self.content, list):
+            raise InvalidMultimodalContent(
+                "content",
+                f"content must be str or list[ContentPart], got {type(self.content)}",
+            )
+        else:
+            for index, part in enumerate(self.content):
+                if not isinstance(part, _CONTENT_PART_TYPES):
+                    raise InvalidMultimodalContent(
+                        "content",
+                        f"content[{index}] must be a ContentPart, got {type(part).__name__}",
+                    )
+        if not isinstance(self.metadata, dict):
+            raise InvalidMultimodalContent("metadata", "metadata must be a dict")
+
+    # ------------------------------------------------------------------
+    # Convenience properties
+    # ------------------------------------------------------------------
+
+    @property
+    def text(self) -> str:
+        """Join all TextPart texts into a single string."""
+        return "".join(
+            part.text for part in self.content if isinstance(part, TextPart)
+        )
+
+    @property
+    def has_image(self) -> bool:
+        return any(isinstance(p, ImagePart) for p in self.content)
+
+    @property
+    def has_audio(self) -> bool:
+        return any(isinstance(p, AudioPart) for p in self.content)
+
+    @property
+    def has_video(self) -> bool:
+        return any(isinstance(p, VideoPart) for p in self.content)
+
+    # ------------------------------------------------------------------
+    # Class methods
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_str(cls, role: Role | str, text: str, **kwargs: Any) -> "Message":
+        """Create a text-only message from a plain string."""
+        if isinstance(role, str):
+            role = Role(role)
+        return cls(role=role, content=[TextPart(text=text)], **kwargs)
+
+    @classmethod
+    def user(cls, text: str, **kwargs: Any) -> "Message":
+        return cls.from_str(Role.USER, text, **kwargs)
+
+    @classmethod
+    def assistant(cls, text: str, **kwargs: Any) -> "Message":
+        return cls.from_str(Role.ASSISTANT, text, **kwargs)
+
+    @classmethod
+    def system(cls, text: str, **kwargs: Any) -> "Message":
+        return cls.from_str(Role.SYSTEM, text, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Serialisation
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        parts = []
+        for part in self.content:
+            if isinstance(part, TextPart):
+                parts.append({"type": "text", "text": part.text})
+            elif isinstance(part, ImagePart):
+                import base64
+                parts.append({
+                    "type": "image",
+                    "image": base64.b64encode(part.image).decode(),
+                    "mime": part.mime,
+                    "meta": part.meta,
+                })
+            elif isinstance(part, AudioPart):
+                import base64
+                parts.append({
+                    "type": "audio",
+                    "audio": base64.b64encode(part.audio).decode(),
+                    "mime": part.mime,
+                    "duration_s": part.duration_s,
+                })
+            elif isinstance(part, VideoPart):
+                import base64
+                parts.append({
+                    "type": "video_frames",
+                    "frames": [base64.b64encode(f).decode() for f in part.frames],
+                    "fps": part.fps,
+                    "mime": part.mime,
+                })
+            elif isinstance(part, ToolCallPart):
+                parts.append({
+                    "type": "tool_call",
+                    "tool_call_id": part.tool_call_id,
+                    "name": part.name,
+                    "arguments": part.arguments,
+                })
+            elif isinstance(part, ToolResultPart):
+                parts.append({
+                    "type": "tool_result",
+                    "tool_call_id": part.tool_call_id,
+                    "result": part.result,
+                    "is_error": part.is_error,
+                })
+        return {
+            "role": self.role.value,
+            "content": parts,
+            "metadata": self.metadata,
+            "timestamp": self.timestamp,
+        }

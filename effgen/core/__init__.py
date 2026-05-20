@@ -10,6 +10,22 @@ This module contains the core agent system components:
 - Task and State management
 """
 
+# ruff: noqa: I001
+
+# Multimodal message schema
+from .messages import (
+    AudioPart,
+    ContentPart,
+    ImagePart,
+    Message,
+    Role,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+    VideoPart,
+)
+from .multimodal import audio_from, image_from, video_from
+
 # Agent
 from .agent import Agent, AgentConfig, AgentMode, AgentResponse
 
@@ -98,6 +114,20 @@ from .tool_calling import (
 from .workflow import WorkflowDAG, WorkflowEdge, WorkflowNode, WorkflowResult
 
 __all__ = [
+    # Multimodal message schema
+    "Role",
+    "TextPart",
+    "ImagePart",
+    "AudioPart",
+    "VideoPart",
+    "ToolCallPart",
+    "ToolResultPart",
+    "ContentPart",
+    "Message",
+    "image_from",
+    "audio_from",
+    "video_from",
+
     # Agent
     "Agent",
     "AgentConfig",

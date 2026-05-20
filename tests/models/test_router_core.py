@@ -431,6 +431,6 @@ def test_all_9_providers_have_capabilities():
 
 
 def test_capability_enum_values():
-    expected = {"chat", "tools", "streaming", "vision", "grounding", "thinking", "json_schema"}
+    expected = {"chat", "tools", "streaming", "vision", "audio_input", "video_input", "grounding", "thinking", "json_schema"}
     actual = {c.value for c in Capability}
     assert actual == expected

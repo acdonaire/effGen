@@ -129,6 +129,45 @@ class MissingCredentialsError(EffGenError):
         super().__init__(msg)
 
 
+class CapabilityNotSupportedError(EffGenError):
+    """Raised when an adapter cannot handle a requested capability (e.g. vision, audio).
+
+    Attributes:
+        capability: The Capability enum value that is not supported.
+        provider: Name of the provider/adapter that raised this.
+        hint: Optional guidance on which provider to use instead.
+    """
+
+    def __init__(self, capability: object, provider: str = "", hint: str = "") -> None:
+        capability_name = getattr(capability, "value", str(capability))
+        self.capability = capability_name
+        self.provider = provider
+        msg = f"Capability '{capability_name}' is not supported"
+        if provider:
+            msg += f" by provider '{provider}'"
+        msg += "."
+        if hint:
+            msg += f"\n\n{hint}"
+        super().__init__(msg)
+
+
+class InvalidMultimodalContent(EffGenError):
+    """Raised when multimodal content (image, audio, video) fails validation.
+
+    Attributes:
+        part_type: The part type that failed (e.g. 'image', 'audio', 'video_frames').
+        reason: Description of the validation failure.
+    """
+
+    def __init__(self, part_type: str, reason: str = "") -> None:
+        self.part_type = part_type
+        self.reason = reason
+        msg = f"Invalid {part_type} content"
+        if reason:
+            msg += f": {reason}"
+        super().__init__(msg)
+
+
 class AudioBackendUnavailable(EffGenError):
     """Raised when no audio transcription backend is available.
 

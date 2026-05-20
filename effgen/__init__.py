@@ -9,6 +9,8 @@ This framework enables SLMs to function as powerful agentic systems through:
 - Comprehensive configuration management
 """
 
+# ruff: noqa: I001
+
 __version__ = "0.2.7"
 __author__ = "effGen Team"
 __license__ = "Apache-2.0"
@@ -17,6 +19,21 @@ __license__ = "Apache-2.0"
 # Configuration imports
 from effgen.config import Config, ConfigLoader, ConfigValidator
 from effgen.core.agent import Agent, AgentConfig
+
+# Multimodal message schema
+from effgen.core.messages import (
+    AudioPart,
+    ContentPart,
+    ImagePart,
+    Message as MultimodalMessage,
+    Role,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+    VideoPart,
+)
+from effgen.core.multimodal import audio_from, image_from, video_from
+from effgen.errors import CapabilityNotSupportedError, InvalidMultimodalContent
 from effgen.core.aggregation import ResultAggregator
 
 # Batch & Aggregation imports
@@ -249,6 +266,22 @@ from effgen.execution import (
 )
 
 __all__ = [
+    # Multimodal message schema
+    "Role",
+    "TextPart",
+    "ImagePart",
+    "AudioPart",
+    "VideoPart",
+    "ToolCallPart",
+    "ToolResultPart",
+    "ContentPart",
+    "MultimodalMessage",
+    "image_from",
+    "audio_from",
+    "video_from",
+    "CapabilityNotSupportedError",
+    "InvalidMultimodalContent",
+
     # Core
     "Agent",
     "AgentConfig",

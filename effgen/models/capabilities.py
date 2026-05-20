@@ -30,6 +30,8 @@ class Capability(Enum):
     tools = "tools"
     streaming = "streaming"
     vision = "vision"
+    audio_input = "audio_input"
+    video_input = "video_input"
     grounding = "grounding"
     thinking = "thinking"
     json_schema = "json_schema"
