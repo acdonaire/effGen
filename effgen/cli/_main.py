@@ -1984,6 +1984,20 @@ Examples:
                               help='Seconds to wait between live model calls (default: 35)')
     prompts_eval.add_argument('--output', help='Write eval table to this file')
 
+    # Playground subcommands
+    prompts_subparsers.add_parser('playground', help='Launch interactive prompt playground REPL')
+
+    prompts_render = prompts_subparsers.add_parser('render', help='Non-interactive: render a prompt to stdout')
+    prompts_render.add_argument('prompt_name', metavar='name', help='Prompt name (e.g. research.literature_review.v1)')
+    prompts_render.add_argument('--input', dest='input_file', metavar='FILE',
+                                help='JSON file with input variables (merged over fixture defaults)')
+
+    prompts_run = prompts_subparsers.add_parser('run', help='Non-interactive: render + run through a model')
+    prompts_run.add_argument('prompt_name', metavar='name', help='Prompt name')
+    prompts_run.add_argument('--input', dest='input_file', metavar='FILE',
+                             help='JSON file with input variables')
+    prompts_run.add_argument('--model', required=True, help='Model identifier to run against')
+
     return parser
 
 
@@ -2821,7 +2835,42 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
 
         return 0
 
-    cli.print("Usage: effgen prompts [list|show|eval]")
+    # ---- playground ----
+    if cmd == 'playground':
+        from effgen.cli.playground import PlaygroundREPL
+        repl = PlaygroundREPL()
+        return repl.run()
+
+    # ---- render (non-interactive) ----
+    if cmd == 'render':
+        from effgen.cli.playground import cmd_render
+        name = getattr(args, 'prompt_name', None)
+        input_file = getattr(args, 'input_file', None)
+        inputs: dict = {}
+        if input_file:
+            try:
+                inputs = _json.loads(Path(input_file).read_text())
+            except Exception as exc:
+                cli.print_error(f"Could not read input file: {exc}")
+                return 1
+        return cmd_render(name, inputs)
+
+    # ---- run (non-interactive) ----
+    if cmd == 'run':
+        from effgen.cli.playground import cmd_run
+        name = getattr(args, 'prompt_name', None)
+        input_file = getattr(args, 'input_file', None)
+        model = getattr(args, 'model', None)
+        inputs = {}
+        if input_file:
+            try:
+                inputs = _json.loads(Path(input_file).read_text())
+            except Exception as exc:
+                cli.print_error(f"Could not read input file: {exc}")
+                return 1
+        return cmd_run(name, inputs, model)
+
+    cli.print("Usage: effgen prompts [list|show|eval|playground|render|run]")
     return 1
 
 
