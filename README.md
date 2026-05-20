@@ -18,6 +18,7 @@
 <a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/dm/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=orange" alt="Monthly Downloads"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/fork"><img src="https://img.shields.io/github/forks/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=blue" alt="Forks"/></a>
+<a href="docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-31_templates_across_7_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
 
 <!-- Quick Links -->
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
@@ -36,6 +37,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [See changelog](CHANGELOG.md#027---2026-05-20) |
 | 🚀 | **19 May 2026** | **v0.2.6 Released**: 14 new tools — OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook. New presets: `media`, `notify`. 58+ built-in tools total. [See changelog](CHANGELOG.md#026---2026-05-19) |
 | 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [See changelog](CHANGELOG.md#025---2026-05-18) |
 | 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [See changelog](CHANGELOG.md#024---2026-05-14) |
@@ -257,7 +259,7 @@ Multi-Agent<br/>
 
 **🔧**<br/>
 58+ Tools<br/>
-<sub>+ MCP/A2A/ACP</sub>
+<sub>+ 31 prompt templates</sub>
 
 </td>
 <td align="center" width="14%">
@@ -274,9 +276,58 @@ Production API<br/>
 
 ---
 
-## 🆕 What's New in v0.2.6
+## 🆕 What's New in v0.2.7
 
 <details open>
+<summary><b>31 prompt templates in v0.2.7 — Prompt Library, Eval Harness & Interactive Playground</b></summary>
+
+**effGen v0.2.7** adds a curated, domain-organized **Prompt Library** with 31 reusable templates across 7 domains, paired with a golden evaluation harness and an interactive playground CLI. See the [full gallery](docs/prompts/gallery.md).
+
+**Research** — literature review (zero-shot + CoT), paper summary, citation extraction, methodology critique.
+
+**Coding** — code review, bug diagnosis, refactoring plan, test generation, docstring fill.
+
+**Data / SQL** — NL-to-SQL with warnings, SQL explain, SQL optimize, data profile, ETL plan.
+
+**Legal** — contract summary, clause classify, research brief. All templates include mandatory legal disclaimer.
+
+**Medical** — symptom triage, drug interaction, medical literature synthesis. All templates include mandatory medical disclaimer.
+
+**Creative** — story continuation (zero-shot + few-shot), poetry forms, character bio, world building.
+
+**Business** — meeting summary, email draft (formal/casual), OKR generation, SWOT analysis, elevator pitch.
+
+```bash
+# Discover and browse
+effgen prompts list
+effgen prompts list --domain research
+effgen prompts list --format markdown
+
+# Inspect and evaluate
+effgen prompts show research.literature_review.v1.cot
+effgen prompts eval
+effgen prompts eval --domain coding --live --model llama3.1-8b
+
+# Interactive playground
+effgen prompts playground
+```
+
+```python
+from effgen.prompts.library import registry
+
+p = registry.get("data.sql_from_nl.v1")
+sql_prompt = p.template(
+    schema_ddl="CREATE TABLE orders (id INT, customer TEXT, total FLOAT, created_at DATE)",
+    question="Total revenue per customer this month",
+    dialect="postgresql",
+)
+```
+
+See [docs/prompts/gallery.md](docs/prompts/gallery.md) for the full template catalog and [docs/prompts/library.md](docs/prompts/library.md) for the framework overview.
+
+</details>
+
+<details>
 <summary><b>14 new tools in v0.2.6 — OCR, Audio, Images, Documents, Geo/Weather & Communications</b></summary>
 
 **effGen v0.2.6** adds 14 new built-in tools across document, media, and communication categories, bringing the total to **58+**. Two new presets (`media`, `notify`) are also introduced.
@@ -727,6 +778,43 @@ QRRead<br/>
 </table>
 
 </div>
+
+---
+
+## 📝 Prompt Library (New in v0.2.7)
+
+effGen ships a curated catalog of **31 reusable prompt templates** across 7 domains, each with a golden evaluation test and CLI access. Browse the [full gallery](docs/prompts/gallery.md).
+
+| Domain | Templates | Variants |
+|--------|-----------|----------|
+| Research | 5 | zero-shot, CoT, structured, tool-augmented |
+| Coding | 5 | zero-shot, CoT, structured, few-shot, tool-augmented |
+| Data / SQL | 5 | zero-shot, CoT, structured, few-shot, tool-augmented |
+| Legal | 3 | zero-shot, structured, tool-augmented |
+| Medical | 3 | structured, tool-augmented |
+| Creative | 5 | zero-shot, CoT, structured, few-shot |
+| Business | 5 | zero-shot, CoT, structured, few-shot |
+
+```bash
+effgen prompts list                          # browse all 31 templates
+effgen prompts show research.paper_summary.v1  # inspect a template
+effgen prompts eval                          # run golden eval (no model needed)
+effgen prompts playground                    # interactive REPL
+```
+
+```python
+from effgen.prompts.library import registry
+
+# Get and render a template
+p = registry.get("coding.code_review.v1")
+prompt = p.template(code="def add(a, b): return a + b", language="python")
+
+# Search templates
+cot_prompts = registry.search(variant="cot")
+sql_prompts = registry.search(domain="data")
+```
+
+> Legal and medical templates enforce a mandatory non-advice disclaimer in every rendered output, verified by unit tests.
 
 ---
 

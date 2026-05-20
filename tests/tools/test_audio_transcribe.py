@@ -29,7 +29,7 @@ _HF_TOKEN_SET = bool(
 )
 
 # Path to the fixture audio (gTTS-generated speech)
-_FIXTURE_DIR = Path(__file__).resolve().parents[2] / "build_plan" / "v0.2.6" / "validation" / "fixtures"
+_FIXTURE_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "audio"
 _SAMPLE_AUDIO = _FIXTURE_DIR / "sample_audio.mp3"
 _FIXTURE_AVAILABLE = _SAMPLE_AUDIO.exists()
 

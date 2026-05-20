@@ -1,5 +1,76 @@
 # effGen Release Notes
 
+## v0.2.7 — May 20, 2026
+
+**effGen v0.2.7** ships the **Prompt Library** — a curated, domain-organized catalog of **31 reusable prompt templates** covering research, coding, data/SQL, legal, medical, creative writing, and business. Every template is a Python callable that renders deterministically for fixed inputs, ships with a fixture and golden evaluation test, and is accessible through a rich CLI and an interactive playground.
+
+### What's new at a glance
+
+**31 templates across 7 domains.** Research (literature review, paper summary, citation extraction, methodology critique), Coding (code review, bug diagnosis, refactoring plan, test generation, docstring fill), Data (NL-to-SQL, SQL explain, SQL optimize, data profile, ETL plan), Legal (contract summary, clause classify, research brief), Medical (symptom triage, drug interaction, medical literature), Creative (story continuation ×2, poetry forms, character bio, world building), and Business (meeting summary, email draft, OKR generation, SWOT analysis, elevator pitch).
+
+**Golden + live eval harness.** `effgen prompts eval` renders every template with its fixture and compares against a stored golden. Add `--live --model <name>` to run prompts through a real model and validate output shape — including `sqlglot.parse()` for SQL templates and `ast.parse()` for generated Python.
+
+**Interactive playground.** `effgen prompts playground` opens a REPL where you can select any template, set its inputs, render a preview, run it against a model, and save the session to JSON. Non-interactive `effgen prompts render` and `effgen prompts run` modes are also available for scripts.
+
+**Legal and medical safety.** Every legal and medical template renders the required non-advice disclaimer verbatim in the system prompt — enforced by unit tests, not convention.
+
+**Auto-generated gallery.** `docs/prompts/gallery.md` lists all 31 templates with their variant and one-line description. Regenerate it any time with `effgen prompts list --format markdown`.
+
+### CLI quick-start
+
+```bash
+# Discover templates
+effgen prompts list
+effgen prompts list --domain research --variant cot
+effgen prompts list --format markdown
+
+# Inspect a template
+effgen prompts show research.literature_review.v1.cot
+
+# Run golden evaluations (no model needed)
+effgen prompts eval
+
+# Run live evaluations (requires API key)
+effgen prompts eval --domain coding --live --model llama3.1-8b
+
+# Interactive playground
+effgen prompts playground
+
+# Non-interactive render
+effgen prompts render data.sql_from_nl.v1 --input '{"schema_ddl": "CREATE TABLE orders (id INT, total FLOAT)", "question": "Total orders this month", "dialect": "sqlite"}'
+```
+
+### Python API quick-start
+
+```python
+from effgen.prompts.library import registry
+
+# Browse all templates
+for p in registry.all():
+    print(p.name, p.variant, p.domain)
+
+# Get and render a specific template
+p = registry.get("research.literature_review.v1.cot")
+prompt_text = p.template(
+    topic="diffusion models",
+    years_range="2022-2025",
+    max_papers=10
+)
+
+# Search by domain and variant
+sql_prompts = registry.search(domain="data", variant="structured")
+```
+
+### Upgrading from v0.2.6
+
+No breaking API changes. All prompt library classes are opt-in additions.
+
+```bash
+pip install --upgrade effgen
+```
+
+---
+
 ## v0.2.6 — May 19, 2026
 
 **effGen v0.2.6** is a document, media, and communication tools release that adds **14 new built-in tools** — OCR, audio transcription, image analysis, document parsing (PDF/DOCX/Excel), geo/weather, and email/webhook — raising the total built-in tool count from 44 to **58+**. Two new presets (`media`, `notify`) join the existing roster. No breaking API changes.

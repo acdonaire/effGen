@@ -1,8 +1,7 @@
 """
 Unit tests for OpenAI adapter reasoning_effort plumbing and model registry.
 
-These tests are all unit-level (no real API calls).  Live integration is in
-build_plan/v0.2.1/validation/p4_openai_all.py.
+These tests are all unit-level (no real API calls).
 """
 
 from __future__ import annotations

@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.7] - 2026-05-20
+
+### Highlights
+
+**effGen v0.2.7** is the **Prompt Library** release — a curated, domain-organized catalog of **31 reusable prompt templates** across 7 domains, paired with a golden evaluation harness, a rich CLI, and an interactive playground. No breaking API changes.
+
+### Added
+
+#### Prompt Library (`effgen/prompts/library/`)
+
+- **`LibraryPrompt` dataclass** (`base.py`) — structured prompt definition with `name`, `domain`, `variant`, `description`, `template` (callable), `input_schema` (JSON Schema), `fixture`, `expected_shape`, and `tags`. Fully validated on registration.
+- **`PromptRegistry` singleton** (`registry.py`) — auto-discovers all domain packages under `effgen/prompts/library/domains/` at startup; `register`, `get`, `search`, `all`, `domains`, `__len__`.
+- **`PromptEval` harness** (`eval.py`) — `eval_golden` (renders with fixture, compares against `.txt` golden, writes on first run); `eval_live` (renders + runs via model, checks `expected_shape`); `eval_all_golden` with pass/fail table.
+- **CLI** — `effgen prompts list [--domain X] [--variant Y] [--format table|json|markdown]`, `effgen prompts show <name>`, `effgen prompts eval [--domain X] [--live --model M]`.
+
+#### Research Domain (`effgen/prompts/library/domains/research/`)
+
+- **`research.literature_review.v1.zero_shot`** — zero-shot literature review; inputs: `topic`, `years_range`, `max_papers`.
+- **`research.literature_review.v1.cot`** — chain-of-thought literature review with step-by-step reasoning.
+- **`research.paper_summary.v1`** — structured output: `{abstract_summary, key_findings, limitations, future_work}`.
+- **`research.citation_extract.v1`** — tool-augmented; instructs agent to retrieve live ArXiv/PubMed metadata.
+- **`research.methodology_critique.v1`** — CoT critique covering design, sampling, measurement, analysis, generalizability.
+
+#### Coding Domain (`effgen/prompts/library/domains/coding/`)
+
+- **`coding.code_review.v1`** — structured output: `{issues: [{severity, location, suggestion}]}`.
+- **`coding.bug_diagnose.v1`** — CoT diagnosis; inputs: `code`, `error_message`, `repro_steps`.
+- **`coding.refactor_plan.v1`** — tool-augmented; reads the source file then produces a structured plan with risk assessment.
+- **`coding.test_generate.v1`** — few-shot; two exemplar pytest suites; live eval asserts `ast.parse()` passes on generated Python.
+- **`coding.docstring_fill.v1`** — zero-shot; adds Google/NumPy/Sphinx-style docstrings to undocumented functions.
+
+#### Data Domain (`effgen/prompts/library/domains/data/`)
+
+- **`data.sql_from_nl.v1`** — structured output: `{sql, warnings[]}`; inputs: `schema_ddl`, `question`, `dialect`; live eval validates via `sqlglot.parse()`.
+- **`data.sql_explain.v1`** — zero-shot; explains SQL in plain English for developer or business audience.
+- **`data.sql_optimize.v1`** — CoT; identifies anti-patterns, explains execution impact, produces rewritten query and index hints.
+- **`data.data_profile.v1`** — tool-augmented; takes ExcelTool/CSV column stats, produces structured data-quality report.
+- **`data.etl_plan.v1`** — few-shot; two exemplar ETL designs covering Extract → Transform → Load → Validate → Cleanup.
+
+#### Legal Domain (`effgen/prompts/library/domains/legal/`)
+
+> All legal prompts include the verbatim disclaimer: *"This output is for informational purposes only and does not constitute legal advice. Consult a qualified attorney for guidance specific to your situation."*
+
+- **`legal.contract_summarize.v1`** — structured output: `{parties, term, obligations, termination, risks}`.
+- **`legal.clause_classify.v1`** — zero-shot clause classification with characteristic flags.
+- **`legal.legal_research_brief.v1`** — tool-augmented; produces structured research brief grounded in pre-retrieved sources.
+
+#### Medical Domain (`effgen/prompts/library/domains/medical/`)
+
+> All medical prompts include the verbatim disclaimer: *"This output is for informational purposes only and does not constitute medical advice. Always consult a qualified healthcare professional."*
+
+- **`medical.symptom_triage.v1`** — structured output with mandatory `disclaimer` field and `see_doctor_if` list.
+- **`medical.drug_interaction_query.v1`** — structured output with severity levels and recommendations.
+- **`medical.medical_literature.v1`** — tool-augmented; synthesizes retrieved PubMed abstracts into a clinical evidence brief.
+
+#### Creative Domain (`effgen/prompts/library/domains/creative/`)
+
+- **`creative.story_continuation.v1.zero_shot`** — zero-shot story continuation maintaining genre and tone.
+- **`creative.story_continuation.v1.few_shot`** — few-shot with craft exemplars from multiple genres.
+- **`creative.poetry_forms.v1`** — few-shot with exemplars for haiku, sonnet, and free verse; inputs: `theme`, `form`, `mood`.
+- **`creative.character_bio.v1`** — structured output: `{name, age, background, personality_traits, goals, flaws, relationships}`.
+- **`creative.world_building.v1`** — CoT; develops geography, politics, magic/tech, culture, and story hooks step by step.
+
+#### Business Domain (`effgen/prompts/library/domains/business/`)
+
+- **`business.meeting_summary.v1`** — structured output: `{decisions, action_items[{owner, item, due}], risks}`; inputs: `transcript`, `meeting_title`, `attendees`.
+- **`business.email_draft.v1`** — few-shot; two tone exemplars (formal, casual); inputs: `purpose`, `recipient`, `key_points`, `tone`.
+- **`business.okr_generate.v1`** — CoT; produces aligned objectives and measurable key results from mission and strategic priorities.
+- **`business.swot_analysis.v1`** — structured output: `{strengths, weaknesses, opportunities, threats, strategic_insights}`; perspective-aware.
+- **`business.elevator_pitch.v1`** — zero-shot; strict ≤150-word constraint; live eval asserts word count.
+
+#### Playground CLI (`effgen prompts playground`)
+
+- **Interactive REPL** — `select`, `set`, `render`, `run`, `save`, `list`, `show`, `help`, `quit` commands.
+- **Non-interactive mode** — `effgen prompts render <name> [--input input.json]` and `effgen prompts run <name> [--input input.json] [--model M]`.
+- **Session persistence** — sessions saved to `~/.effgen/playground/<timestamp>.json`; `effgen prompts playground --load <session>` reloads.
+- **Hot-reload** — template edits are picked up without REPL restart (importlib-based re-import).
+
+#### Gallery Doc
+
+- **`docs/prompts/gallery.md`** — auto-generated from registry; one row per template with name, domain, variant, and description. Regenerate with `effgen prompts list --format markdown`.
+
+### Tests
+
+- `tests/prompts/test_registry.py` — discovery, search, validation.
+- `tests/prompts/test_eval.py` — golden and live eval harness.
+- `tests/prompts/test_research.py`, `test_coding.py`, `test_data.py`, `test_legal.py`, `test_medical.py`, `test_creative.py`, `test_business.py` — domain golden + live checks.
+- `tests/prompts/test_playground.py` — scripted non-interactive walk-through.
+
+### Documentation
+
+- `docs/prompts/library.md` — framework overview, key classes, CLI reference, adding-new-domain guide.
+- `docs/prompts/research.md`, `coding.md`, `data.md`, `legal.md`, `medical.md`, `creative.md`, `business.md`, `playground.md` — per-domain guides.
+
+---
+
 ## [0.2.6] - 2026-05-19
 
 ### Highlights
@@ -571,8 +667,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 - 487+ unit tests passing (up from 157 in v0.1.3)
-- Real GPU integration tests across all phases (A40 GPUs)
-- Fresh conda environment validation after every phase
+- Real GPU integration tests (A40 GPUs)
+- Fresh isolated environment validation for each feature set
 - Nightly CI with eval regression detection and automated GitHub issue creation
 
 ---
@@ -631,7 +727,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BUG-011:** PythonREPL `_execute()` re-evaluates last `ast.Call` expression causing double `print()` output (python_repl.py)
 
 ### Internal
-- Test-driven development across 12 phases with real GPU inference
+- Test-driven development with real GPU inference across 12 development iterations
 - 19 framework bugs discovered and fixed through systematic agent testing
 - Compatibility testing across 11 model families (0.5B to 8B parameters)
 - Verification sweep: 116 unit tests pass, all integration tests pass
@@ -919,7 +1015,9 @@ Thank you to all contributors who helped make effGen possible!
 
 ---
 
-[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.6...v0.2.7
+[0.2.6]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.2...v0.2.3

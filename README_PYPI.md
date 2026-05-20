@@ -22,6 +22,7 @@
 <a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/dm/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=orange" alt="Monthly Downloads"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/fork"><img src="https://img.shields.io/github/forks/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=blue" alt="Forks"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-31_templates_across_7_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
 
 <!-- Quick Links -->
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
@@ -37,6 +38,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#027---2026-05-20) |
 | 🚀 | **19 May 2026** | **v0.2.6 Released**: 14 new tools — OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook. New presets: `media`, `notify`. 58+ built-in tools total. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#026---2026-05-19) |
 | 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#025---2026-05-18) |
 | 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#024---2026-05-14) |
@@ -236,6 +238,54 @@ Production API<br/>
 </table>
 
 </div>
+
+---
+
+## 🆕 What's New in v0.2.7
+
+**effGen v0.2.7** ships the **Prompt Library** — a curated, domain-organized catalog of **31 reusable prompt templates** across 7 domains, paired with a golden evaluation harness and an interactive playground CLI. No breaking API changes.
+
+**Research** — literature review (zero-shot + CoT), paper summary, citation extraction, methodology critique.
+
+**Coding** — code review, bug diagnosis, refactoring plan, test generation, docstring fill.
+
+**Data / SQL** — NL-to-SQL with JSON output + `sqlglot` validation, SQL explain, SQL optimize, data profile, ETL plan.
+
+**Legal** — contract summary, clause classify, research brief. Every template enforces a mandatory legal disclaimer verbatim.
+
+**Medical** — symptom triage, drug interaction, medical literature synthesis. Every template enforces a mandatory medical disclaimer verbatim.
+
+**Creative** — story continuation (×2), poetry forms, character bio, world building.
+
+**Business** — meeting summary, email draft (formal/casual), OKR generation, SWOT analysis, elevator pitch (≤150 words, word-count-verified).
+
+```bash
+# Discover templates
+effgen prompts list
+effgen prompts list --domain research --format markdown
+
+# Evaluate (no model needed — golden test)
+effgen prompts eval
+
+# Live eval (runs through a real model)
+effgen prompts eval --domain coding --live --model llama3.1-8b
+
+# Interactive playground
+effgen prompts playground
+```
+
+```python
+from effgen.prompts.library import registry
+
+p = registry.get("data.sql_from_nl.v1")
+sql_prompt = p.template(
+    schema_ddl="CREATE TABLE orders (id INT, total FLOAT, created_at DATE)",
+    question="Total revenue this month",
+    dialect="sqlite",
+)
+```
+
+See the [full prompt gallery](https://github.com/ctrl-gaurav/effGen/blob/main/docs/prompts/gallery.md) for all 31 templates.
 
 ---
 
