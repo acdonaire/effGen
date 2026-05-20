@@ -167,14 +167,29 @@ class ToolMetadata:
         Returns:
             Dict: JSON Schema representation
         """
+        # Map effGen ParameterType.value → JSON Schema type.
+        # Note: "any" is not a valid JSON Schema type — we drop the
+        # "type" key entirely and let OpenAI/Anthropic accept any value.
+        # "float" is not valid either — JSON Schema uses "number".
+        _TYPE_MAP = {
+            "string": "string",
+            "integer": "integer",
+            "float": "number",
+            "boolean": "boolean",
+            "array": "array",
+            "object": "object",
+        }
+
         properties = {}
         required = []
 
         for param in self.parameters:
-            prop = {
-                "type": param.type.value,
-                "description": param.description,
-            }
+            json_type = _TYPE_MAP.get(param.type.value)
+            prop: dict[str, Any] = {"description": param.description}
+            if json_type is not None:
+                prop["type"] = json_type
+            # ParameterType.ANY → omit type; some strict-schema providers
+            # require an array of allowed types or schema-by-example.
 
             if param.enum:
                 prop["enum"] = param.enum
@@ -189,7 +204,9 @@ class ToolMetadata:
             if param.max_length is not None:
                 prop["maxLength"] = param.max_length
             if param.items_type:
-                prop["items"] = {"type": param.items_type.value}
+                items_json_type = _TYPE_MAP.get(param.items_type.value)
+                if items_json_type is not None:
+                    prop["items"] = {"type": items_json_type}
 
             properties[param.name] = prop
 

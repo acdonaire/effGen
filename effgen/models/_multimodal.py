@@ -28,6 +28,15 @@ def has_audio_input(prompt: Any) -> bool:
     return False
 
 
+def has_video_input(prompt: Any) -> bool:
+    """Return True when *prompt* contains at least one VideoPart."""
+    if isinstance(prompt, Message):
+        return prompt.has_video
+    if isinstance(prompt, list):
+        return any(isinstance(item, Message) and item.has_video for item in prompt)
+    return False
+
+
 def require_vision_support(
     prompt: Any,
     *,
@@ -73,4 +82,33 @@ def require_audio_support(
         Capability.audio_input,
         provider=provider,
         hint=f"Provider '{provider}' / model '{model_name}' does not support audio input. {detail}",
+    )
+
+
+def require_video_support(
+    prompt: Any,
+    *,
+    provider: str,
+    model_name: str,
+    supports_video: bool | Callable[[str], bool],
+    hint: str = "",
+) -> None:
+    """Raise CapabilityNotSupportedError if video input targets a non-video model.
+
+    Note: most providers handle VideoPart via frame-sampling fallback (vision
+    capability required).  Only call this when the provider truly cannot handle
+    video in any form (e.g. no vision support at all).
+    """
+    if not has_video_input(prompt):
+        return
+
+    supported = supports_video(model_name) if callable(supports_video) else supports_video
+    if supported:
+        return
+
+    detail = hint or f"Select a video-capable {provider} model or enable vision for frame-sampling fallback."
+    raise CapabilityNotSupportedError(
+        Capability.video_input,
+        provider=provider,
+        hint=f"Provider '{provider}' / model '{model_name}' does not support video input. {detail}",
     )

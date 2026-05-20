@@ -387,6 +387,38 @@ class CLIInterface:
             # Create agent and run task
             self.print_header("Running Agent")
 
+            # Filter provider-specific native tools that are incompatible with
+            # the selected model so the agent doesn't reject them at startup.
+            _is_anthropic_model = (
+                model_id.startswith("claude") or "anthropic" in model_id.lower()
+            )
+            _is_openai_model = (
+                model_id.startswith("gpt-") or model_id.startswith("o1") or
+                model_id.startswith("o3") or model_id.startswith("o4") or
+                "openai" in model_id.lower()
+            )
+            _filtered_tools: list = []
+            for _t in selected_tools:
+                _tname = getattr(getattr(_t, "name", None), "__str__", lambda: "")() or str(getattr(_t, "name", ""))
+                _cls_name = type(_t).__name__
+                _is_anthropic_native = "AnthropicNative" in _cls_name or "anthropic" in _tname.lower()
+                _is_openai_native = "OpenAINative" in _cls_name
+                # Skip Anthropic native tools unless model is Anthropic
+                if _is_anthropic_native and not _is_anthropic_model:
+                    self.print_warning(f"Skipping Anthropic native tool '{_tname}' (requires claude model)")
+                    continue
+                # Skip OpenAI native tools (web_search_preview etc.) unless model is OpenAI
+                if _is_openai_native and not _is_openai_model:
+                    self.print_warning(f"Skipping OpenAI native tool '{_tname}' (requires gpt/o1/o3 model)")
+                    continue
+                _filtered_tools.append(_t)
+            if len(_filtered_tools) < len(selected_tools):
+                skipped = len(selected_tools) - len(_filtered_tools)
+                self.print_warning(
+                    f"Filtered out {skipped} provider-specific tool(s) incompatible with '{model_id}'"
+                )
+            selected_tools = _filtered_tools
+
             agent_config = AgentConfig(
                 name="interactive-agent",
                 model=model_id,
@@ -527,15 +559,41 @@ class CLIInterface:
                             self.print_error(f"Tool not found: {tool_name}")
                             return 1
                 else:
-                    # Load all builtin tools by default
+                    # Load a default set of provider-neutral builtin tools.
+                    # Anthropic-native tools require an AnthropicAdapter; skip them
+                    # automatically when the selected model is not a claude model.
+                    _default_safe_tools = [
+                        "web_search", "calculator", "weather", "datetime", "text_processor",
+                    ]
+                    _model_for_filter = args.model or "Qwen/Qwen2.5-3B-Instruct"
+                    _is_claude = _model_for_filter.startswith("claude") or "anthropic" in _model_for_filter.lower()
                     self.tool_registry.discover_builtin_tools()
-                    tool_names = self.tool_registry.list_tools()
-                    for name in tool_names[:5]:  # Limit to first 5 tools
-                        try:
-                            tool = asyncio.run(self.tool_registry.get_tool(name))
-                            tools.append(tool)
-                        except Exception as e:
-                            logging.debug(f"Failed to load tool {name}: {e}")
+                    all_tool_names = self.tool_registry.list_tools()
+                    for name in all_tool_names:
+                        # Always skip Anthropic native tools unless claude model
+                        if not _is_claude and name in ("anthropic_bash", "anthropic_text_editor", "anthropic_computer"):
+                            logging.debug(f"Skipping Anthropic native tool '{name}' for non-claude model")
+                            continue
+                        if name in _default_safe_tools:
+                            try:
+                                tool = asyncio.run(self.tool_registry.get_tool(name))
+                                tools.append(tool)
+                            except Exception as e:
+                                logging.debug(f"Failed to load tool {name}: {e}")
+                    if not tools:
+                        # Fallback: take the first 5 non-Anthropic-native tools
+                        count = 0
+                        for name in all_tool_names:
+                            if not _is_claude and name in ("anthropic_bash", "anthropic_text_editor", "anthropic_computer"):
+                                continue
+                            try:
+                                tool = asyncio.run(self.tool_registry.get_tool(name))
+                                tools.append(tool)
+                                count += 1
+                                if count >= 5:
+                                    break
+                            except Exception as e:
+                                logging.debug(f"Failed to load tool {name}: {e}")
 
                 # Create agent configuration
                 agent_config = AgentConfig(

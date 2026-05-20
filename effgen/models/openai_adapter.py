@@ -20,7 +20,11 @@ import os
 from collections.abc import Iterator
 from typing import Any
 
-from effgen.models._multimodal import require_audio_support, require_vision_support
+from effgen.models._multimodal import (
+    require_audio_support,
+    require_video_support,
+    require_vision_support,
+)
 from effgen.models.base import (
     FunctionCallingModel,
     GenerationConfig,
@@ -523,6 +527,14 @@ class OpenAIAdapter(FunctionCallingModel):
             supports_audio=True,
             hint="Audio is transcribed via Whisper before chat completion.",
         )
+        # Video is handled via frame-sampling + vision; requires a vision-capable model.
+        require_video_support(
+            prompt,
+            provider="openai",
+            model_name=self.model_name,
+            supports_video=supports_vision(self.model_name),
+            hint="Use 'gpt-4o-mini' or 'gpt-4o' for video inputs (frames sent as images).",
+        )
 
         # Transparent routing: if tools are passed (e.g. from the Agent), use
         # generate_with_tools so native function-calling works end-to-end.
@@ -609,6 +621,13 @@ class OpenAIAdapter(FunctionCallingModel):
             model_name=self.model_name,
             supports_audio=True,
             hint="Audio is transcribed via Whisper before chat completion.",
+        )
+        require_video_support(
+            prompt,
+            provider="openai",
+            model_name=self.model_name,
+            supports_video=supports_vision(self.model_name),
+            hint="Use 'gpt-4o-mini' or 'gpt-4o' for video inputs (frames sent as images).",
         )
 
         messages = self._create_messages(prompt)
@@ -1231,8 +1250,8 @@ def _register() -> None:
             env_keys=["OPENAI_API_KEY"],
             capabilities={
                 Capability.chat, Capability.streaming, Capability.tools,
-                Capability.vision, Capability.audio_input, Capability.json_schema,
-                Capability.thinking,
+                Capability.vision, Capability.audio_input, Capability.video_input,
+                Capability.json_schema, Capability.thinking,
             },
             # No free tier; pay-per-token. Provider default = cheapest current text model.
             # gpt-5-nano: $0.05/$0.40; gpt-4o-mini: $0.15/$0.60; gpt-4.1: $2.00/$8.00 per 1M.
