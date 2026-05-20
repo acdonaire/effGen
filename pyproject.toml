@@ -189,6 +189,7 @@ documents = [
 audio = [
     "faster-whisper>=1.0.0",
     "huggingface_hub>=0.26",
+    "pydub>=0.25.1",
 ]
 youtube = [
     "youtube-transcript-api>=1.0.0",
@@ -285,6 +286,7 @@ all = [
     "pytesseract>=0.3.10",
     "Pillow>=10.0.0",
     "faster-whisper>=1.0.0",
+    "pydub>=0.25.1",
     "pypdf>=4.0.0",
     "pdfplumber>=0.10.0",
     "python-docx>=1.1.0",

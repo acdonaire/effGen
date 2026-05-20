@@ -35,10 +35,13 @@ _VALID_IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _VALID_AUDIO_MIMES = {
     "audio/flac",
     "audio/m4a",
+    "audio/mp4",
     "audio/mp3",
     "audio/mpeg",
+    "audio/mpga",
     "audio/ogg",
     "audio/wav",
+    "audio/webm",
     "audio/x-m4a",
     "audio/x-wav",
 }

@@ -74,6 +74,10 @@ def _detect_audio_mime(data: bytes) -> str:
         return "audio/wav"
     if data[:4] == b"OggS":
         return "audio/ogg"
+    if data[:4] == b"\x1a\x45\xdf\xa3":
+        return "audio/webm"
+    if len(data) > 12 and data[4:8] == b"ftyp":
+        return "audio/mp4"
     return "audio/wav"
 
 

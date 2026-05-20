@@ -19,7 +19,7 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
-from effgen.models._multimodal import require_vision_support
+from effgen.models._multimodal import require_audio_support, require_vision_support
 from effgen.models.base import (
     FunctionCallingModel,
     GenerationConfig,
@@ -514,6 +514,13 @@ class GeminiAdapter(FunctionCallingModel):
             supports_vision=GEMINI_MODELS.get(self.model_name, {}).get("supports_vision", False),
             hint="Use a Gemini model with supports_vision=True for image inputs.",
         )
+        require_audio_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_audio=GEMINI_MODELS.get(self.model_name, {}).get("supports_audio", False),
+            hint="Use a Gemini Flash/Pro model with supports_audio=True for audio inputs.",
+        )
         content = self._prepare_content(prompt)
 
         # Prepend uploaded files to the content so the model sees them.
@@ -702,6 +709,13 @@ class GeminiAdapter(FunctionCallingModel):
             supports_vision=GEMINI_MODELS.get(self.model_name, {}).get("supports_vision", False),
             hint="Use a Gemini model with supports_vision=True for image inputs.",
         )
+        require_audio_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_audio=GEMINI_MODELS.get(self.model_name, {}).get("supports_audio", False),
+            hint="Use a Gemini Flash/Pro model with supports_audio=True for audio inputs.",
+        )
         content = self._prepare_content(prompt)
 
         raw_tools: list | None = None
@@ -838,8 +852,8 @@ def _register() -> None:
             env_keys=["GOOGLE_API_KEY"],
             capabilities={
                 Capability.chat, Capability.streaming, Capability.tools,
-                Capability.vision, Capability.grounding, Capability.thinking,
-                Capability.json_schema,
+                Capability.vision, Capability.audio_input, Capability.grounding,
+                Capability.thinking, Capability.json_schema,
             },
             # Provider default = paid gemini-2.5-flash-lite. Gemini has a free
             # quota for Flash/Flash-Lite, but it has rate-limit and data-use

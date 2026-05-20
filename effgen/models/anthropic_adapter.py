@@ -19,7 +19,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from effgen.models._multimodal import require_vision_support
+from effgen.models._multimodal import require_audio_support, require_vision_support
 from effgen.models.anthropic_cache import validate_breakpoint_count
 from effgen.models.anthropic_models import (
     get_context_length,
@@ -419,6 +419,13 @@ class AnthropicAdapter(FunctionCallingModel):
             supports_vision=get_model_info(self.model_name).get("supports_vision", False),
             hint="Use a Claude model with supports_vision=True for image inputs.",
         )
+        require_audio_support(
+            prompt,
+            provider="anthropic",
+            model_name=self.model_name,
+            supports_audio=False,
+            hint="Anthropic Claude does not currently support audio input.",
+        )
 
         try:
             request = self._build_request(prompt, config, system_prompt, None, kwargs)
@@ -506,6 +513,13 @@ class AnthropicAdapter(FunctionCallingModel):
             supports_vision=get_model_info(self.model_name).get("supports_vision", False),
             hint="Use a Claude model with supports_vision=True for image inputs.",
         )
+        require_audio_support(
+            prompt,
+            provider="anthropic",
+            model_name=self.model_name,
+            supports_audio=False,
+            hint="Anthropic Claude does not currently support audio input.",
+        )
 
         try:
             with timed_call("anthropic", self.model_name) as _stream_timer:
@@ -575,6 +589,13 @@ class AnthropicAdapter(FunctionCallingModel):
             model_name=self.model_name,
             supports_vision=get_model_info(self.model_name).get("supports_vision", False),
             hint="Use a Claude model with supports_vision=True for image inputs.",
+        )
+        require_audio_support(
+            prompt,
+            provider="anthropic",
+            model_name=self.model_name,
+            supports_audio=False,
+            hint="Anthropic Claude does not currently support audio input.",
         )
 
         try:
