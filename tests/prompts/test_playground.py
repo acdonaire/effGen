@@ -128,6 +128,19 @@ class TestNonInteractive:
         captured = capsys.readouterr()
         assert "quantum computing" in captured.out
 
+    def test_cmd_render_base_name_resolves_default_variant(self, capsys):
+        from effgen.cli.playground import cmd_render
+
+        rc = cmd_render(
+            "research.literature_review.v1",
+            {"topic": "small language models", "years_range": "2023-2026", "max_papers": 3},
+        )
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "small" in captured.out
+        assert "language" in captured.out
+        assert "models" in captured.out
+
     def test_cmd_render_business_prompt(self, capsys):
         from effgen.cli.playground import cmd_render
 
@@ -263,6 +276,13 @@ class TestPlaygroundREPL:
         child.expect("Selected", timeout=self.TIMEOUT)
         child.sendline("render")
         child.expect("literature review", timeout=self.TIMEOUT)
+        child.sendline("exit")
+        child.expect(pexpect.EOF, timeout=self.TIMEOUT)
+
+    def test_select_base_name_resolves_default_variant(self):
+        child = self._spawn()
+        child.sendline("select research.literature_review.v1")
+        child.expect("Selected: research.literature_review.v1.zero_shot", timeout=self.TIMEOUT)
         child.sendline("exit")
         child.expect(pexpect.EOF, timeout=self.TIMEOUT)
 

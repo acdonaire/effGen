@@ -34,6 +34,20 @@ def _run(coro):
 
 def _ok(result: ToolResult):
     assert isinstance(result, ToolResult)
+    if not result.success and result.error:
+        lowered = result.error.lower()
+        if (
+            "429" in lowered
+            or "http 500" in lowered
+            or "http 502" in lowered
+            or "http 503" in lowered
+            or "http 504" in lowered
+            or "internal server error" in lowered
+            or "too many requests" in lowered
+            or "rate-limited" in lowered
+            or "rate limit" in lowered
+        ):
+            pytest.skip(f"Semantic Scholar transient upstream error: {result.error}")
     assert result.success, f"tool failed: {result.error}"
     return result.output
 

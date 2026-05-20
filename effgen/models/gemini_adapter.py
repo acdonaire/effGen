@@ -611,9 +611,12 @@ class GeminiAdapter(FunctionCallingModel):
         except Exception as exc:
             logger.error("Gemini API call failed: %s", exc)
             msg = str(exc)
-            if "401" in msg or "api_key_invalid" in msg.lower() or "api key not valid" in msg.lower() or "INVALID_ARGUMENT" in msg:
+            lowered = msg.lower()
+            if "429" in msg or "resource_exhausted" in lowered or "quota" in lowered:
+                raise RuntimeError(f"Generation failed: {exc}") from exc
+            if "401" in msg or "api_key_invalid" in lowered or "api key not valid" in lowered or "INVALID_ARGUMENT" in msg:
                 raise ModelAuthError("gemini", self.model_name, msg) from exc
-            if "404" in msg or "model not found" in msg.lower():
+            if "404" in msg or "model not found" in lowered:
                 raise ModelNotFoundError("gemini", self.model_name, msg) from exc
             raise RuntimeError(f"Generation failed: {exc}") from exc
 

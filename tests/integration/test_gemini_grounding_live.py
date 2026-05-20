@@ -44,7 +44,7 @@ def _grounding_generate(prompt: str, grounding: bool, max_tokens: int = 512):
                     prompt,
                     config=GenerationConfig(grounding=grounding, max_tokens=max_tokens),
                 )
-        except RuntimeError as exc:
+        except Exception as exc:
             if "quota" in str(exc).lower() or "429" in str(exc):
                 last_exc = exc
                 continue

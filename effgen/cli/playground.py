@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from effgen.prompts.library.base import LibraryPrompt
 from effgen.prompts.library.registry import registry
 from effgen.prompts.library.session import PlaygroundSession
 
@@ -91,6 +92,31 @@ def _print_ok(msg: str) -> None:
         _console.print(f"[green]{msg}[/green]")
     else:
         print(msg)
+
+
+def _resolve_prompt(name: str) -> tuple[LibraryPrompt, str]:
+    """Resolve exact prompt names and base names with a clear default variant."""
+    try:
+        return registry.get(name), name
+    except KeyError as exc:
+        candidates = [p for p in registry.all() if p.name.startswith(f"{name}.")]
+        if not candidates:
+            raise
+
+        zero_shot = [p for p in candidates if p.variant == "zero_shot"]
+        if len(zero_shot) == 1:
+            prompt = zero_shot[0]
+            return prompt, prompt.name
+        if len(candidates) == 1:
+            prompt = candidates[0]
+            return prompt, prompt.name
+
+        options = ", ".join(p.name for p in sorted(candidates, key=lambda p: p.name))
+        raise KeyError(f"Prompt '{name}' is ambiguous; use one of: {options}") from exc
+
+
+def _key_error_message(exc: KeyError) -> str:
+    return str(exc.args[0]) if exc.args else str(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -176,9 +202,9 @@ def _run_prompt(rendered: str, model: str) -> str:
 def cmd_render(name: str, inputs: dict[str, Any]) -> int:
     """Non-interactive render: print rendered prompt to stdout."""
     try:
-        p = registry.get(name)
-    except KeyError:
-        _print_err(f"Prompt '{name}' not found in registry")
+        p, _resolved_name = _resolve_prompt(name)
+    except KeyError as exc:
+        _print_err(_key_error_message(exc))
         return 1
     try:
         merged = {**p.fixture, **inputs}
@@ -193,9 +219,9 @@ def cmd_render(name: str, inputs: dict[str, Any]) -> int:
 def cmd_run(name: str, inputs: dict[str, Any], model: str) -> int:
     """Non-interactive run: render + call model + print output."""
     try:
-        p = registry.get(name)
-    except KeyError:
-        _print_err(f"Prompt '{name}' not found in registry")
+        p, _resolved_name = _resolve_prompt(name)
+    except KeyError as exc:
+        _print_err(_key_error_message(exc))
         return 1
     try:
         merged = {**p.fixture, **inputs}
@@ -319,13 +345,13 @@ class PlaygroundREPL:
             _print_err("Usage: select <prompt-name>")
             return
         try:
-            p = registry.get(name)
-        except KeyError:
-            _print_err(f"Prompt '{name}' not found. Try 'list' to see available prompts.")
+            p, resolved_name = _resolve_prompt(name)
+        except KeyError as exc:
+            _print_err(f"{_key_error_message(exc)}. Try 'list' to see available prompts.")
             return
-        self.session.prompt_name = name
+        self.session.prompt_name = resolved_name
         self.session.variables = dict(p.fixture)  # seed with fixture defaults
-        _print_ok(f"Selected: {name}")
+        _print_ok(f"Selected: {resolved_name}")
         _print(f"  Domain: {p.domain}  Variant: {p.variant}")
         _print(f"  Pre-loaded fixture inputs: {list(p.fixture.keys())}")
 
@@ -457,9 +483,9 @@ class PlaygroundREPL:
             _print_err("Usage: show <prompt-name>")
             return
         try:
-            p = registry.get(name)
-        except KeyError:
-            _print_err(f"Prompt '{name}' not found")
+            p, _resolved_name = _resolve_prompt(name)
+        except KeyError as exc:
+            _print_err(_key_error_message(exc))
             return
         _print(f"\nName:        {p.name}")
         _print(f"Domain:      {p.domain}")

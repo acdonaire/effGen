@@ -214,4 +214,4 @@ effgen prompts list --domain creative
 effgen prompts list --domain business
 ```
 
-See the full gallery in `docs/prompts/gallery.md` (generated in Phase 8).
+See the full gallery in `docs/prompts/gallery.md` when it is generated for the release.

@@ -43,6 +43,20 @@ PAPER_FIELDS = (
 )
 
 
+def _is_transient_error(message: str) -> bool:
+    lowered = message.lower()
+    return (
+        "429" in lowered
+        or "too many requests" in lowered
+        or "rate limit" in lowered
+        or "http 500" in lowered
+        or "http 502" in lowered
+        or "http 503" in lowered
+        or "http 504" in lowered
+        or "internal server error" in lowered
+    )
+
+
 def _user_agent() -> str:
     try:
         from effgen import __version__
@@ -237,10 +251,10 @@ class SemanticScholarTool(BaseTool):
             data = await self._get(url, retries=0)
             endpoint = "paper/search"
         except ConnectionError as exc:
-            if "429" not in str(exc):
+            if not _is_transient_error(str(exc)):
                 raise
             logger.warning(
-                "Semantic Scholar paper/search is rate-limited; falling back to paper/search/match"
+                "Semantic Scholar paper/search transiently failed; falling back to paper/search/match"
             )
             match_url = f"{S2_BASE}/paper/search/match?{params}"
             data = await self._get(match_url, retries=2)
