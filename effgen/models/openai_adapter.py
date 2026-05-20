@@ -20,6 +20,7 @@ import os
 from collections.abc import Iterator
 from typing import Any
 
+from effgen.models._multimodal import require_vision_support
 from effgen.models.base import (
     FunctionCallingModel,
     GenerationConfig,
@@ -41,6 +42,7 @@ from effgen.models.openai_models import (
     get_max_output,
     get_pricing,
     supports_reasoning,
+    supports_vision,
 )
 
 # Always show token/cost breakdown at INFO level
@@ -176,6 +178,18 @@ class OpenAIAdapter(FunctionCallingModel):
 
     def _create_messages(self, prompt: str | list) -> list[dict[str, Any]]:
         """Convert *prompt* to OpenAI messages list."""
+        # Handle effGen Message objects
+        try:
+            from effgen.core.messages import Message
+
+            if isinstance(prompt, Message):
+                return [self._message_to_openai(prompt)]
+
+            if isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
+                return [self._message_to_openai(m) for m in prompt]
+        except ImportError:
+            pass
+
         if isinstance(prompt, str):
             return [{"role": "user", "content": prompt}]
 
@@ -193,6 +207,53 @@ class OpenAIAdapter(FunctionCallingModel):
             else:
                 content_parts.append({"type": "text", "text": str(item)})
         return [{"role": "user", "content": content_parts}]
+
+    def _message_to_openai(self, message: Any) -> dict[str, Any]:
+        """Convert an effGen Message to an OpenAI message dict."""
+        import base64
+
+        from effgen.core.messages import (
+            ImagePart,
+            TextPart,
+            ToolCallPart,
+            ToolResultPart,
+            VideoPart,
+        )
+        from effgen.multimodal.image_pre import prepare as _preprocess_image
+
+        role = message.role.value
+        if role == "tool":
+            role = "tool"
+
+        content_parts: list[dict[str, Any]] = []
+        for part in message.content:
+            if isinstance(part, TextPart):
+                content_parts.append({"type": "text", "text": part.text})
+            elif isinstance(part, ImagePart):
+                processed = _preprocess_image(part, "openai", self.model_name)
+                b64 = base64.b64encode(processed.image).decode()
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{processed.mime};base64,{b64}"},
+                })
+            elif isinstance(part, VideoPart):
+                # Send as a series of image frames
+                for frame in part.frames:
+                    b64 = base64.b64encode(frame).decode()
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{part.mime};base64,{b64}"},
+                    })
+            elif isinstance(part, ToolCallPart):
+                pass  # tool calls go in a different field
+            elif isinstance(part, ToolResultPart):
+                pass
+
+        # If content has a single text part, simplify to string
+        if len(content_parts) == 1 and content_parts[0].get("type") == "text":
+            return {"role": role, "content": content_parts[0]["text"]}
+
+        return {"role": role, "content": content_parts}
 
     def _validate_reasoning_effort(self, effort: str | None) -> None:
         """Raise ValueError for invalid *effort* values."""
@@ -331,9 +392,18 @@ class OpenAIAdapter(FunctionCallingModel):
         """
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
-        self.validate_prompt(prompt)
+        if isinstance(prompt, str):
+            self.validate_prompt(prompt)
         if config is None:
             config = GenerationConfig()
+
+        require_vision_support(
+            prompt,
+            provider="openai",
+            model_name=self.model_name,
+            supports_vision=supports_vision,
+            hint="Use 'gpt-4o-mini' or 'gpt-4o' for image inputs.",
+        )
 
         # Transparent routing: if tools are passed (e.g. from the Agent), use
         # generate_with_tools so native function-calling works end-to-end.
@@ -402,9 +472,18 @@ class OpenAIAdapter(FunctionCallingModel):
         """Stream completions for *prompt*, yielding text chunks."""
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
-        self.validate_prompt(prompt)
+        if isinstance(prompt, str):
+            self.validate_prompt(prompt)
         if config is None:
             config = GenerationConfig()
+
+        require_vision_support(
+            prompt,
+            provider="openai",
+            model_name=self.model_name,
+            supports_vision=supports_vision,
+            hint="Use 'gpt-4o-mini' or 'gpt-4o' for image inputs.",
+        )
 
         messages = self._create_messages(prompt)
         request_params = self._build_request_params(messages, config, stream=True)
@@ -608,14 +687,26 @@ class OpenAIAdapter(FunctionCallingModel):
         """
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
-        self.validate_prompt(prompt)
+        if isinstance(prompt, str):
+            self.validate_prompt(prompt)
         if config is None:
             config = GenerationConfig()
+
+        require_vision_support(
+            prompt,
+            provider="openai",
+            model_name=self.model_name,
+            supports_vision=supports_vision,
+            hint="Use 'gpt-4o-mini' or 'gpt-4o' for image inputs.",
+        )
 
         if messages is None:
             messages = self._create_messages(prompt)
         else:
-            messages = list(messages) + [{"role": "user", "content": prompt}]
+            if isinstance(prompt, str):
+                messages = list(messages) + [{"role": "user", "content": prompt}]
+            else:
+                messages = list(messages) + self._create_messages(prompt)
 
         request_params = self._build_request_params(messages, config)
         request_params["tools"] = tools

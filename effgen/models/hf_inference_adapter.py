@@ -38,6 +38,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from effgen.models._cost import CostTracker
+from effgen.models._multimodal import require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models.base import (
     BaseModel,
@@ -351,6 +352,39 @@ class HFInferenceAdapter(BaseModel):
     # Message builder
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _effgen_message_to_dict(message: Any) -> dict[str, Any]:
+        """Convert an effGen Message to a HF/OpenAI-compatible dict."""
+        import base64
+
+        from effgen.core.messages import ImagePart, TextPart, VideoPart
+        from effgen.multimodal.image_pre import prepare as _preprocess_image
+
+        role = message.role.value
+        content_parts: list[dict[str, Any]] = []
+
+        for part in message.content:
+            if isinstance(part, TextPart):
+                content_parts.append({"type": "text", "text": part.text})
+            elif isinstance(part, ImagePart):
+                processed = _preprocess_image(part, "hf_inference", "")
+                b64 = base64.b64encode(processed.image).decode()
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{processed.mime};base64,{b64}"},
+                })
+            elif isinstance(part, VideoPart):
+                for frame in part.frames:
+                    b64 = base64.b64encode(frame).decode()
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{part.mime};base64,{b64}"},
+                    })
+
+        if len(content_parts) == 1 and content_parts[0].get("type") == "text":
+            return {"role": role, "content": content_parts[0]["text"]}
+        return {"role": role, "content": content_parts}
+
     def _build_messages(
         self,
         prompt: str,
@@ -359,6 +393,17 @@ class HFInferenceAdapter(BaseModel):
     ) -> list[dict[str, Any]]:
         if messages is not None:
             return messages
+
+        # Handle effGen Message objects
+        try:
+            from effgen.core.messages import Message
+            if isinstance(prompt, Message):
+                return [self._effgen_message_to_dict(prompt)]
+            if isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
+                return [self._effgen_message_to_dict(m) for m in prompt]
+        except ImportError:
+            pass
+
         return [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
@@ -397,6 +442,14 @@ class HFInferenceAdapter(BaseModel):
 
         if config is None:
             config = GenerationConfig()
+
+        require_vision_support(
+            prompt,
+            provider="hf_inference",
+            model_name=self.model_name,
+            supports_vision=self._info.get("supports_vision", False),
+            hint="Use an HF Inference model whose input_modalities include image.",
+        )
 
         if self._rate_limiter is not None:
             try:
@@ -655,6 +708,14 @@ class HFInferenceAdapter(BaseModel):
 
         if config is None:
             config = GenerationConfig()
+
+        require_vision_support(
+            prompt,
+            provider="hf_inference",
+            model_name=self.model_name,
+            supports_vision=self._info.get("supports_vision", False),
+            hint="Use an HF Inference model whose input_modalities include image.",
+        )
 
         system_prompt = kwargs.pop("system_prompt", "You are a helpful assistant.")
         messages_arg = kwargs.pop("messages", None)

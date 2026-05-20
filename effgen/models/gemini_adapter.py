@@ -19,6 +19,7 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
+from effgen.models._multimodal import require_vision_support
 from effgen.models.base import (
     FunctionCallingModel,
     GenerationConfig,
@@ -411,6 +412,27 @@ class GeminiAdapter(FunctionCallingModel):
     def _prepare_content(
         self, prompt: str | list[str | dict[str, Any]]
     ) -> str | list:
+        # Handle Message objects (multimodal input via effGen unified schema)
+        try:
+            from effgen.core.messages import Message
+            from effgen.multimodal.image_pre import prepare as _preprocess_image
+
+            if isinstance(prompt, Message):
+                return self._message_to_genai_parts(prompt, _preprocess_image)
+            if isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
+                # Multi-turn: flatten all messages into a contents list
+                from google.genai import types as _gt  # type: ignore[import]
+                contents = []
+                for msg in prompt:
+                    role = "user" if msg.role.value in ("user", "system") else "model"
+                    contents.append(_gt.Content(
+                        role=role,
+                        parts=self._message_to_genai_parts(msg, _preprocess_image),
+                    ))
+                return contents
+        except ImportError:
+            pass
+
         if isinstance(prompt, str):
             return prompt
         parts: list[Any] = []
@@ -422,6 +444,39 @@ class GeminiAdapter(FunctionCallingModel):
                 parts.append(PIL.Image.open(item["image"]))
             else:
                 parts.append(item)
+        return parts
+
+    def _message_to_genai_parts(self, message: Any, preprocess_fn: Any) -> list[Any]:
+        """Convert an effGen Message to a list of google.genai Part objects."""
+        from google.genai import types as _gt  # type: ignore[import]
+
+        from effgen.core.messages import AudioPart, ImagePart, TextPart, VideoPart
+
+        parts: list[Any] = []
+        for part in message.content:
+            if isinstance(part, TextPart):
+                parts.append(_gt.Part.from_text(text=part.text))
+            elif isinstance(part, ImagePart):
+                processed = preprocess_fn(part, "gemini", self.model_name)
+                parts.append(_gt.Part.from_bytes(
+                    data=processed.image,
+                    mime_type=processed.mime,
+                ))
+            elif isinstance(part, AudioPart):
+                parts.append(_gt.Part.from_bytes(
+                    data=part.audio,
+                    mime_type=part.mime,
+                ))
+            elif isinstance(part, VideoPart):
+                # Send video frames as a sequence of image parts
+                for frame in part.frames:
+                    parts.append(_gt.Part.from_bytes(
+                        data=frame,
+                        mime_type=part.mime,
+                    ))
+            else:
+                # Tool call / tool result — skip for Gemini (handled separately)
+                pass
         return parts
 
     # ------------------------------------------------------------------
@@ -452,6 +507,13 @@ class GeminiAdapter(FunctionCallingModel):
             self.validate_prompt(prompt)
 
         gen_config = self._build_config(config)
+        require_vision_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_vision=GEMINI_MODELS.get(self.model_name, {}).get("supports_vision", False),
+            hint="Use a Gemini model with supports_vision=True for image inputs.",
+        )
         content = self._prepare_content(prompt)
 
         # Prepend uploaded files to the content so the model sees them.
@@ -633,6 +695,13 @@ class GeminiAdapter(FunctionCallingModel):
             self.validate_prompt(prompt)
 
         gen_config = self._build_config(config)
+        require_vision_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_vision=GEMINI_MODELS.get(self.model_name, {}).get("supports_vision", False),
+            hint="Use a Gemini model with supports_vision=True for image inputs.",
+        )
         content = self._prepare_content(prompt)
 
         raw_tools: list | None = None

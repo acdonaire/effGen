@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from effgen.models._multimodal import require_vision_support
 from effgen.models.anthropic_cache import validate_breakpoint_count
 from effgen.models.anthropic_models import (
     get_context_length,
@@ -175,8 +176,58 @@ class AnthropicAdapter(FunctionCallingModel):
     # ── Request building ───────────────────────────────────────────────────
 
     @staticmethod
+    def _effgen_message_to_anthropic(message: Any) -> dict:
+        """Convert an effGen Message to an Anthropic message dict."""
+        import base64
+
+        from effgen.core.messages import ImagePart, TextPart, VideoPart
+        from effgen.multimodal.image_pre import prepare as _preprocess_image
+
+        role = message.role.value
+        content_parts: list[dict] = []
+
+        for part in message.content:
+            if isinstance(part, TextPart):
+                content_parts.append({"type": "text", "text": part.text})
+            elif isinstance(part, ImagePart):
+                processed = _preprocess_image(part, "anthropic", "")
+                b64 = base64.b64encode(processed.image).decode()
+                content_parts.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": processed.mime,
+                        "data": b64,
+                    },
+                })
+            elif isinstance(part, VideoPart):
+                # Anthropic does not support native video — send frames as images
+                for frame in part.frames:
+                    b64 = base64.b64encode(frame).decode()
+                    content_parts.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": part.mime,
+                            "data": b64,
+                        },
+                    })
+
+        if len(content_parts) == 1 and content_parts[0].get("type") == "text":
+            return {"role": role, "content": content_parts[0]["text"]}
+        return {"role": role, "content": content_parts}
+
+    @staticmethod
     def _build_content(prompt: str | list) -> str | list[dict]:
         """Build Anthropic content from a prompt (text or multimodal list)."""
+        # Handle effGen Message object
+        try:
+            from effgen.core.messages import Message
+            if isinstance(prompt, Message):
+                return AnthropicAdapter._effgen_message_to_anthropic(prompt)["content"]
+        except ImportError:
+            pass
+
         if isinstance(prompt, str):
             return prompt
 
@@ -215,7 +266,15 @@ class AnthropicAdapter(FunctionCallingModel):
         ``cache_control``, this method validates that the total breakpoint
         count across system + messages + tools does not exceed 4.
         """
-        messages = [{"role": "user", "content": self._build_content(prompt)}]
+        # Handle effGen Message list (multi-turn)
+        try:
+            from effgen.core.messages import Message
+            if isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
+                messages = [self._effgen_message_to_anthropic(m) for m in prompt]
+            else:
+                messages = [{"role": "user", "content": self._build_content(prompt)}]
+        except ImportError:
+            messages = [{"role": "user", "content": self._build_content(prompt)}]
         request: dict[str, Any] = {
             "model": self.model_name,
             "max_tokens": config.max_tokens or 4096,
@@ -347,10 +406,19 @@ class AnthropicAdapter(FunctionCallingModel):
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
 
-        self.validate_prompt(prompt)
+        if isinstance(prompt, str | list):
+            self.validate_prompt(prompt)
 
         if config is None:
             config = GenerationConfig()
+
+        require_vision_support(
+            prompt,
+            provider="anthropic",
+            model_name=self.model_name,
+            supports_vision=get_model_info(self.model_name).get("supports_vision", False),
+            hint="Use a Claude model with supports_vision=True for image inputs.",
+        )
 
         try:
             request = self._build_request(prompt, config, system_prompt, None, kwargs)
@@ -425,10 +493,19 @@ class AnthropicAdapter(FunctionCallingModel):
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
 
-        self.validate_prompt(prompt)
+        if isinstance(prompt, str | list):
+            self.validate_prompt(prompt)
 
         if config is None:
             config = GenerationConfig()
+
+        require_vision_support(
+            prompt,
+            provider="anthropic",
+            model_name=self.model_name,
+            supports_vision=get_model_info(self.model_name).get("supports_vision", False),
+            hint="Use a Claude model with supports_vision=True for image inputs.",
+        )
 
         try:
             with timed_call("anthropic", self.model_name) as _stream_timer:
@@ -484,12 +561,21 @@ class AnthropicAdapter(FunctionCallingModel):
         if not self._is_loaded:
             raise RuntimeError("Client not initialized. Call load() first.")
 
-        self.validate_prompt(prompt)
+        if isinstance(prompt, str | list):
+            self.validate_prompt(prompt)
 
         if config is None:
             config = GenerationConfig()
 
         import json as _json
+
+        require_vision_support(
+            prompt,
+            provider="anthropic",
+            model_name=self.model_name,
+            supports_vision=get_model_info(self.model_name).get("supports_vision", False),
+            hint="Use a Claude model with supports_vision=True for image inputs.",
+        )
 
         try:
             request = self._build_request(prompt, config, system_prompt, None, kwargs)

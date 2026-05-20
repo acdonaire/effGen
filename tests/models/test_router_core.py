@@ -403,6 +403,7 @@ def test_all_9_providers_have_capabilities():
             Capability.chat,
             Capability.streaming,
             Capability.tools,
+            Capability.vision,
             Capability.json_schema,
         },
         "hf": {Capability.chat, Capability.streaming},
@@ -419,6 +420,7 @@ def test_all_9_providers_have_capabilities():
             Capability.chat,
             Capability.streaming,
             Capability.tools,
+            Capability.vision,
             Capability.json_schema,
         },
     }

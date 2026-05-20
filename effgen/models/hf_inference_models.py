@@ -98,6 +98,7 @@ def _normalise_entry(raw: dict[str, Any]) -> dict[str, Any]:
     if not context:
         context = 8_192
 
+    input_mods = list(arch.get("input_modalities") or ["text"])
     return {
         "display_name": raw.get("id", ""),
         "family": _family_of(raw.get("id", "")),
@@ -106,7 +107,9 @@ def _normalise_entry(raw: dict[str, Any]) -> dict[str, Any]:
         "max_output": min(context, 16_384),
         "supports_native_tools": supports_native_tools,
         "supports_structured_output": supports_structured,
-        "input_modalities": list(arch.get("input_modalities") or ["text"]),
+        "supports_vision": "image" in input_mods,
+        "supports_audio": "audio" in input_mods,
+        "input_modalities": input_mods,
         "output_modalities": list(arch.get("output_modalities") or ["text"]),
         "requires_endpoint": False,
         "use_text_generation": False,

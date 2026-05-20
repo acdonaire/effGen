@@ -21,6 +21,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from effgen.models._cost import CostTracker
+from effgen.models._multimodal import require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models.base import (
     BaseModel,
@@ -234,8 +235,17 @@ class TogetherAdapter(BaseModel):
         if config is None:
             config = GenerationConfig()
 
+        require_vision_support(
+            prompt,
+            provider="together",
+            model_name=self.model_name,
+            supports_vision=TOGETHER_MODELS.get(self.model_name, {}).get("supports_vision", False),
+            hint="Use a Together model with supports_vision=True for image inputs.",
+        )
+
         try:
-            est_tokens = self.count_tokens(prompt).count + (config.max_tokens or 500)
+            prompt_text = prompt if isinstance(prompt, str) else str(getattr(prompt, "text", prompt))
+            est_tokens = self.count_tokens(prompt_text).count + (config.max_tokens or 500)
         except Exception:
             est_tokens = 500
 
@@ -271,8 +281,17 @@ class TogetherAdapter(BaseModel):
         if config is None:
             config = GenerationConfig()
 
+        require_vision_support(
+            prompt,
+            provider="together",
+            model_name=self.model_name,
+            supports_vision=TOGETHER_MODELS.get(self.model_name, {}).get("supports_vision", False),
+            hint="Use a Together model with supports_vision=True for image inputs.",
+        )
+
         try:
-            est_tokens = self.count_tokens(prompt).count + (config.max_tokens or 500)
+            prompt_text = prompt if isinstance(prompt, str) else str(getattr(prompt, "text", prompt))
+            est_tokens = self.count_tokens(prompt_text).count + (config.max_tokens or 500)
         except Exception:
             est_tokens = 500
 
@@ -287,6 +306,39 @@ class TogetherAdapter(BaseModel):
 
         return result
 
+    @staticmethod
+    def _message_to_together(message: Any) -> dict[str, Any]:
+        """Convert an effGen Message to a Together/OpenAI-compatible dict."""
+        import base64
+
+        from effgen.core.messages import ImagePart, TextPart, VideoPart
+        from effgen.multimodal.image_pre import prepare as _preprocess_image
+
+        role = message.role.value
+        content_parts: list[dict[str, Any]] = []
+
+        for part in message.content:
+            if isinstance(part, TextPart):
+                content_parts.append({"type": "text", "text": part.text})
+            elif isinstance(part, ImagePart):
+                processed = _preprocess_image(part, "together", "")
+                b64 = base64.b64encode(processed.image).decode()
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{processed.mime};base64,{b64}"},
+                })
+            elif isinstance(part, VideoPart):
+                for frame in part.frames:
+                    b64 = base64.b64encode(frame).decode()
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{part.mime};base64,{b64}"},
+                    })
+
+        if len(content_parts) == 1 and content_parts[0].get("type") == "text":
+            return {"role": role, "content": content_parts[0]["text"]}
+        return {"role": role, "content": content_parts}
+
     def _do_generate(
         self,
         prompt: str,
@@ -297,7 +349,16 @@ class TogetherAdapter(BaseModel):
     ) -> GenerationResult:
         """Internal: make the SDK call and return a GenerationResult."""
         if messages is None:
-            messages = [{"role": "user", "content": prompt}]
+            try:
+                from effgen.core.messages import Message
+                if isinstance(prompt, Message):
+                    messages = [self._message_to_together(prompt)]
+                elif isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
+                    messages = [self._message_to_together(m) for m in prompt]
+                else:
+                    messages = [{"role": "user", "content": prompt}]
+            except ImportError:
+                messages = [{"role": "user", "content": prompt}]
 
         request_params: dict[str, Any] = {
             "model": self.model_name,
@@ -514,7 +575,25 @@ class TogetherAdapter(BaseModel):
         if config is None:
             config = GenerationConfig()
 
-        messages = [{"role": "user", "content": prompt}]
+        require_vision_support(
+            prompt,
+            provider="together",
+            model_name=self.model_name,
+            supports_vision=TOGETHER_MODELS.get(self.model_name, {}).get("supports_vision", False),
+            hint="Use a Together model with supports_vision=True for image inputs.",
+        )
+
+        try:
+            from effgen.core.messages import Message
+
+            if isinstance(prompt, Message):
+                messages = [self._message_to_together(prompt)]
+            elif isinstance(prompt, list) and prompt and isinstance(prompt[0], Message):
+                messages = [self._message_to_together(m) for m in prompt]
+            else:
+                messages = [{"role": "user", "content": prompt}]
+        except ImportError:
+            messages = [{"role": "user", "content": prompt}]
         request_params: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
@@ -729,7 +808,7 @@ def _register() -> None:
             TogetherAdapter,
             TOGETHER_MODELS,
             env_keys=["TOGETHER_API_KEY"],
-            capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema},
+            capabilities={Capability.chat, Capability.streaming, Capability.tools, Capability.json_schema, Capability.vision},
             # $1 free credits on signup; pay-per-token after. Provider default = cheapest LLM.
             # LFM2 24B A2B: $0.03/$0.12; gpt-oss-20B: $0.05/$0.20; Llama 3.3 70B: $0.88/$0.88 per 1M.
             # Pricing verified: https://together.ai/pricing (2026-05-11)

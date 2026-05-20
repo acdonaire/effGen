@@ -55,6 +55,7 @@ GROQ_MODELS: dict[str, dict] = {
         "max_output": 8_192,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "supports_vision": True,
         "rpm": 30,
         "rpd": 1_000,
         "tpm": 30_000,

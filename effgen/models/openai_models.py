@@ -514,6 +514,23 @@ def get_max_output(model_id: str) -> int:
     return 16_384
 
 
+_VISION_MODEL_PREFIXES = (
+    "gpt-4o", "gpt-4.1", "gpt-5", "o1", "o3", "o4",
+)
+_NON_VISION_SUFFIXES = ("-audio",)
+
+
+def supports_vision(model_id: str) -> bool:
+    """Return True if *model_id* is known to accept image inputs.
+
+    GPT-4o and GPT-4.1 families accept images.  Reasoning models (o1/o3/o4)
+    accept images on supported variants.  GPT-3.5 and text-only variants do not.
+    """
+    if any(model_id.endswith(s) for s in _NON_VISION_SUFFIXES):
+        return False
+    return any(model_id.startswith(p) or p in model_id for p in _VISION_MODEL_PREFIXES)
+
+
 def get_pricing(model_id: str) -> tuple[float | None, float | None, float | None]:
     """Return (input_price_per_1m, cached_input_price_per_1m, output_price_per_1m)."""
     info = OPENAI_MODELS.get(model_id, {})
