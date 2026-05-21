@@ -99,7 +99,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - `docs/prompts/library.md` — framework overview, key classes, CLI reference, adding-new-domain guide.
-- `docs/prompts/research.md`, `coding.md`, `data.md`, `legal.md`, `medical.md`, `creative.md`, `business.md`, `playground.md` — per-domain guides.
+- `docs/prompts/research.md`, `coding.md`, `data.md`, `legal.md`, `creative.md`, `business.md`, `playground.md` — per-domain guides.
+
+### Fixed
+
+- **`examples/basic/calculator_agent.py`** — tear down the math agent in a `finally` block (`agent.close()` before `model.unload()`) so demo and interactive runs exit cleanly without the "Agent was garbage-collected without calling close()" warning; avoids leaving agent resources open when CUDA generation fails mid-run.
 
 ---
 
