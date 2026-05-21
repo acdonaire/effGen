@@ -7,6 +7,147 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.8] - 2026-05-21
+
+### Highlights
+
+**effGen v0.2.8** is the **Multimodal Input** release — image, audio, and video are now first-class citizens across 6 cloud providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). A unified `Message` content schema, provider-specific adapters, automatic preprocessing (resize, downsample, frame-sampling), capability-gating errors, a new `multimodal` preset, `MultimodalDescribeTool`, a local MLX-VLM adapter (Apple Silicon), and 5 cookbook walkthroughs ship in this release. No breaking API changes.
+
+### Added
+
+#### Core — Unified Message Schema (`effgen/core/messages.py`)
+
+- **Structured `ContentPart` union** — `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `ToolCallPart`, `ToolResultPart` form the typed `ContentPart` union. `Message.content` is always `List[ContentPart]`.
+- **Backwards-compatible constructor** — `Message(role, "text string")` auto-wraps in `TextPart`; `Message.text` property joins all text parts; `Message.from_str(text)` classmethod.
+- **Validation on construction** — `ImagePart` validates MIME ∈ {image/png, image/jpeg, image/gif, image/webp}; `AudioPart` validates MIME ∈ {audio/mp3, audio/wav, audio/flac, audio/ogg, audio/m4a}; `VideoPart.frames` must be non-empty. Raises `InvalidMultimodalContent` on failure.
+
+#### Core — Multimodal Helpers (`effgen/core/multimodal.py`)
+
+- **`image_from(source) → ImagePart`** — accepts `bytes`, local path, URL, `PIL.Image`, `np.ndarray`. MIME sniffed automatically.
+- **`audio_from(source) → AudioPart`** — accepts `bytes`, local path, URL. Duration extracted from metadata when available.
+- **`video_from(source, fps=1) → VideoPart`** — accepts `bytes`, local path, URL; samples keyframes at `fps` via ffmpeg; raises `MissingSystemDependency` with install hints if ffmpeg is absent.
+
+#### Multimodal Preprocessing
+
+- **`effgen/multimodal/image_pre.py`** — `prepare(part, provider, model) → ImagePart`. Applies per-provider constraints (max bytes, max pixel dims, supported MIMEs); PIL Lanczos downscale when needed; records preprocessing steps in `part.meta["preprocessing"]` for observability.
+- **`effgen/multimodal/audio_pre.py`** — Downsamples to 16 kHz mono if provider requires; chunks audio longer than provider max duration into sequential requests and concatenates results. Uses `pydub`.
+- **`effgen/multimodal/video_pre.py`** — `VideoSource(path_or_url).sample_frames(fps, max_frames) → List[ImagePart]`; `VideoSource.extract_audio() → AudioPart | None`. Raises `MissingSystemDependency("ffmpeg", ...)` when ffmpeg is absent.
+
+#### Provider Adapters — Image Input
+
+- **Gemini** — native `inline_data` image parts (base64 + mime_type); all Gemini 2.x/3.x vision models.
+- **OpenAI** — `content: [{type: "image_url"}]` format for gpt-4o family; base64 data-URL encoding.
+- **Anthropic** — base64 media blocks in content list (code-only; live tests skipped — no key in dev env).
+- **Groq** — Llama 4 / Llama 3.2 vision model support via image_url content blocks.
+- **Together** — vision-capable Together models via image_url content blocks.
+- **HuggingFace Inference** — BLIP / LLaVA family via multimodal inference payload.
+- **Capability gating** — every adapter raises `CapabilityNotSupportedError(Capability.vision)` when the selected model doesn't support images; no silent text downcast.
+
+#### Provider Adapters — Audio Input
+
+- **Gemini** — native `Part.from_bytes(audio_bytes, mime_type)` inline audio; full conversation with audio context.
+- **OpenAI** — Whisper via `/audio/transcriptions` (`transcribe_audio()` method) + gpt-4o audio in chat completions.
+- **HuggingFace Inference** — `automatic_speech_recognition` task endpoint.
+- **Anthropic** — raises `CapabilityNotSupportedError(Capability.audio_input)` (no audio support).
+
+#### Provider Adapters — Video Input
+
+- **Gemini** — native video inline data for Gemini 2.x/3.x; video MIME passed directly.
+- **All others** — `VideoPart` converted to sequence of `ImagePart`s (frame sampling) + optional `AudioPart` (from audio track); sent as multi-image message.
+
+#### New Preset: `multimodal` (`effgen/presets/multimodal.py`)
+
+- **Primary model** — Gemini Flash-Lite (vision + audio + video).
+- **Fallback** — OpenAI gpt-4o-mini (vision), HF BLIP (vision-only).
+- **Tools** — `ImageInfoTool`, `ImageCaptionTool`, `OCRTool`, `AudioTranscribeTool`, `PDFTool`, `WeatherTool`, `MultimodalDescribeTool`.
+- **`MultimodalDescribeTool`** — auto-selects between `ImageCaption`, `OCR`, and `AudioTranscribe` based on the input part type; returns structured description.
+- **`create_agent("multimodal", model=...)`** — factory wires the preset end-to-end.
+
+#### Local MLX-VLM Adapter (`effgen/models/mlx_vlm_engine.py`)
+
+- Thin wrapper around the `mlx-vlm` library for Apple Silicon vision-language inference.
+- Raises `MissingSystemDependency` on non-Apple-Silicon / missing `mlx-vlm`. Live tests skipped on Linux; fully unit-tested with fakes.
+
+#### Cookbook (`docs/cookbook/`)
+
+- **`multimodal_01_image_qa.md`** — image Q&A walk-through with Gemini and OpenAI.
+- **`multimodal_02_audio_transcribe_reason.md`** — audio → transcript → sentiment analysis.
+- **`multimodal_03_video_summarize.md`** — video → keyframes → narrative summary.
+- **`multimodal_04_ocr_plus_llm.md`** — OCR text extraction then structured extraction via `contract_summarize_v1` prompt.
+- **`multimodal_05_bullet_chart_read.md`** — read a bar chart from an image and answer comparison questions.
+- **`docs/cookbook/README.md`** — index of all cookbook walkthroughs with quick-start links.
+
+#### Documentation
+
+- **`docs/multimodal/overview.md`** — unified Message schema, ContentPart types, capability gating, provider support matrix, preprocessing pipeline, and quick-start examples.
+- **`docs/multimodal/images.md`** — per-provider image input guide.
+- **`docs/multimodal/audio.md`** — per-provider audio input guide.
+- **`docs/multimodal/video.md`** — video frame-sampling and native video path guide.
+
+### Tests Added
+
+| File | Coverage |
+|------|----------|
+| `tests/core/test_message_schema.py` | ContentPart construction, validation, back-compat |
+| `tests/core/test_multimodal_helpers.py` | `image_from`, `audio_from`, `video_from` on all source types |
+| `tests/core/test_image_input.py` | Adapter translation per provider (fakes) |
+| `tests/core/test_audio_input.py` | Audio adapter translation per provider (fakes) |
+| `tests/core/test_video_input.py` | VideoPart → ImagePart fallback; Gemini native path (fakes) |
+| `tests/multimodal/test_image_pre.py` | Resize, MIME, size constraints |
+| `tests/multimodal/test_audio_pre.py` | Chunking, downsample |
+| `tests/multimodal/test_video_pre.py` | ffmpeg missing → clean error; frame sampling rates |
+| `tests/presets/test_multimodal.py` | Preset construction, tool wiring, MultimodalDescribeTool |
+| `tests/models/test_mlx_vlm.py` | MLX-VLM adapter unit tests (28 tests) |
+| `tests/cookbook/test_cookbook_runs.py` | Cookbook snippet extraction, `pytest.mark.live` gating |
+
+### Validation Results
+
+| Check | Result |
+|-------|--------|
+| `effgen.__version__` | **0.2.8** |
+| Image input — live | Gemini ✓, OpenAI ✓, Groq ✓ (≥3 providers) |
+| Audio input — live | Gemini ✓, OpenAI Whisper ✓ |
+| Video input — live | Gemini native ✓, OpenAI frame-sampling ✓ |
+| Multimodal preset — live | image ✓, audio ✓, video ✓ (all 3 modalities) |
+| Cookbook live runs | 7/8 pass (1 skipped — ffmpeg not installed in test env) |
+| `CapabilityNotSupportedError` | Raised cleanly on vision-incapable provider/model |
+| `MissingSystemDependency("ffmpeg")` | Raised with install hints when ffmpeg absent |
+| Wheel build | `effgen-0.2.8-py3-none-any.whl` built cleanly |
+| Wheel smoke | `python -c "import effgen; assert effgen.__version__ == '0.2.8'"` ✓ |
+| Regression suite | All prior tests pass (p=2489+, f=0) |
+
+### Upgrading from v0.2.7
+
+No breaking API changes. The old `Message(role, content: str)` constructor still works.
+
+```bash
+pip install --upgrade effgen
+```
+
+#### Quick Start
+
+```python
+from effgen import image_from, audio_from
+from effgen.core.messages import Message, Role
+from effgen.presets import create_agent
+from effgen import load_model
+
+model = load_model("gemini-2.0-flash", provider="gemini")
+agent = create_agent("multimodal", model)
+
+# Image Q&A
+img = image_from("https://example.com/photo.jpg")
+msg = Message(role=Role.USER, content=[img, "Describe this image."])
+result = agent.run_message(msg)
+
+# Audio
+aud = audio_from("/tmp/recording.mp3")
+msg = Message(role=Role.USER, content=[aud, "Transcribe and give the sentiment."])
+result = agent.run_message(msg)
+```
+
+---
+
 ## [0.2.7] - 2026-05-20
 
 ### Highlights

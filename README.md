@@ -19,6 +19,8 @@
 <a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/fork"><img src="https://img.shields.io/github/forks/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=blue" alt="Forks"/></a>
 <a href="docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-31_templates_across_7_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
+<a href="docs/multimodal/overview.md"><img src="https://img.shields.io/badge/🖼️_Multimodal-image_%2F_audio_%2F_video-FF6B35?style=for-the-badge" alt="Multimodal"/></a>
+<a href="docs/cookbook/README.md"><img src="https://img.shields.io/badge/📖_Cookbook-5_multimodal_walkthroughs-4CAF50?style=for-the-badge" alt="Cookbook"/></a>
 
 <!-- Quick Links -->
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
@@ -37,6 +39,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🖼️ | **21 May 2026** | **v0.2.8 Released**: First-class multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [See changelog](CHANGELOG.md#028---2026-05-21) |
 | 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [See changelog](CHANGELOG.md#027---2026-05-20) |
 | 🚀 | **19 May 2026** | **v0.2.6 Released**: 14 new tools — OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook. New presets: `media`, `notify`. 58+ built-in tools total. [See changelog](CHANGELOG.md#026---2026-05-19) |
 | 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [See changelog](CHANGELOG.md#025---2026-05-18) |
@@ -257,9 +260,9 @@ Multi-Agent<br/>
 </td>
 <td align="center" width="14%">
 
-**🔧**<br/>
-58+ Tools<br/>
-<sub>+ 31 prompt templates</sub>
+**🖼️**<br/>
+Multimodal<br/>
+<sub>image/audio/video</sub>
 
 </td>
 <td align="center" width="14%">
@@ -276,9 +279,59 @@ Production API<br/>
 
 ---
 
-## 🆕 What's New in v0.2.7
+## 🆕 What's New in v0.2.8
 
 <details open>
+<summary><b>First-class multimodal in v0.2.8 — image, audio & video across 6 providers</b></summary>
+
+**effGen v0.2.8** makes multimodal input a first-class citizen. Send images, audio clips, and short video to any vision-capable provider through a unified `Message` schema — the adapter handles the translation, not your code.
+
+**Image input** — Gemini, OpenAI gpt-4o, Groq, Anthropic (code-only), Together, HF. Automatic resize/MIME validation via `image_pre.py`. Raises `CapabilityNotSupportedError` cleanly when the provider doesn't support vision.
+
+**Audio input** — Gemini native inline audio, OpenAI Whisper transcription + gpt-4o audio, HF Inference ASR. Auto-downsamples to 16 kHz mono; chunks files over provider max duration. Anthropic raises `CapabilityNotSupportedError`.
+
+**Video input** — Gemini native video for providers that accept raw video; frame-sampling fallback (ffmpeg) for all others. `MissingSystemDependency` with install hints when ffmpeg is absent.
+
+**Unified message schema** — `TextPart`, `ImagePart`, `AudioPart`, `VideoPart` form a typed `ContentPart` union. `Message.content` is always a `List[ContentPart]`; backwards-compatible string constructor still works.
+
+**`multimodal` preset** — `create_agent("multimodal", model)` wires Gemini Flash-Lite (primary) + OpenAI gpt-4o-mini (fallback) with `ImageInfo`, `ImageCaption`, `OCR`, `AudioTranscribe`, `MultimodalDescribeTool`, and the full tool suite.
+
+**5 cookbook walkthroughs** — image Q&A, audio transcribe + reason, video summarize, OCR + LLM structured extraction, chart reading from an image. All in `docs/cookbook/`.
+
+```python
+from effgen import image_from, audio_from, video_from
+from effgen.core.messages import Message, Role
+from effgen.presets import create_agent
+from effgen import load_model
+
+model = load_model("gemini-2.0-flash", provider="gemini")
+agent = create_agent("multimodal", model)
+
+# Image question
+img = image_from("https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/240px-PNG_transparency_demonstration_1.png")
+msg = Message(role=Role.USER, content=[img, "What is in this image?"])
+result = agent.run_message(msg)
+print(result.output)
+
+# Audio transcription
+aud = audio_from("/tmp/clip.mp3")
+msg = Message(role=Role.USER, content=[aud, "Transcribe and summarize."])
+result = agent.run_message(msg)
+```
+
+```bash
+# Multimodal preset
+effgen run --preset multimodal "Describe this image" --image /tmp/photo.jpg
+
+# Check capability
+python -c "from effgen.models.capabilities import Capability; print(Capability.vision)"
+```
+
+See [docs/multimodal/overview.md](docs/multimodal/overview.md) for the full architecture and [docs/cookbook/README.md](docs/cookbook/README.md) for the cookbook index.
+
+</details>
+
+<details>
 <summary><b>31 prompt templates in v0.2.7 — Prompt Library, Eval Harness & Interactive Playground</b></summary>
 
 **effGen v0.2.7** adds a curated, domain-organized **Prompt Library** with 31 reusable templates across 7 domains, paired with a golden evaluation harness and an interactive playground CLI. See the [full gallery](docs/prompts/gallery.md).
