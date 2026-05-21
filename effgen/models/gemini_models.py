@@ -352,6 +352,7 @@ GEMINI_MODELS: dict[str, dict] = {
 # Google's API also accepts these names directly.
 GEMINI_MODEL_ALIASES: dict[str, str] = {
     "gemini-3.1-flash-lite": "gemini-3.1-flash-lite-preview",
+    "gemini-3-flash-lite": "gemini-3.1-flash-lite-preview",
     "gemini-3-flash": "gemini-3-flash-preview",
     "gemini-3-pro": "gemini-3-pro-preview",
     "gemini-3.1-pro": "gemini-3.1-pro-preview",

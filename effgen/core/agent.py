@@ -638,6 +638,9 @@ Question: {task}
             output_model: Pydantic BaseModel class — when provided, output is
                 validated and the parsed instance is stored in
                 ``response.metadata["parsed"]``.
+            inputs: Optional list of multimodal content parts created by
+                ``image_from``, ``audio_from``, or ``video_from``. When present,
+                the agent sends a structured Message directly to the model.
             **kwargs: Additional arguments (debug=True for DebugTrace)
 
         Returns:
@@ -995,6 +998,12 @@ Question: {task}
         _ckpt_interval_arg = kwargs.pop("checkpoint_interval", 0) or 0
         _ckpt_dir_arg = kwargs.pop("checkpoint_dir", None)
         _resume_scratchpad_arg = kwargs.pop("_resume_scratchpad", None)
+
+        # Structured multimodal inputs must reach adapters as Message parts.
+        # The ReAct prompt is text-only, so use direct inference for these calls
+        # even when the preset includes tools.
+        if kwargs.get("inputs") is not None:
+            return self._run_direct_inference(task, context, **kwargs)
 
         # If no tools available, use direct inference instead of ReAct
         if not self.tools:
@@ -1633,7 +1642,7 @@ Question: {task}
         finally:
             self._current_depth -= 1
 
-    def _generate(self, prompt: str, **kwargs) -> dict[str, Any]:
+    def _generate(self, prompt: Any, **kwargs) -> dict[str, Any]:
         """
         Generate response from model with retry logic for empty responses.
 
@@ -1648,7 +1657,8 @@ Question: {task}
         and returns the first successful result.
 
         Args:
-            prompt: Input prompt
+            prompt: Input prompt. May be a plain string or a structured
+                multimodal Message/list of Messages accepted by API adapters.
             **kwargs: Generation parameters (temperature, max_tokens, etc.)
 
         Returns:
@@ -1674,7 +1684,7 @@ Question: {task}
         active_model = self.model
         if self._model_router is not None:
             try:
-                task_hint = kwargs.pop("_task_hint", prompt[:500])
+                task_hint = kwargs.pop("_task_hint", self._prompt_to_task_hint(prompt))
                 tools_list = list(self.tools.values()) if self.tools else None
                 decision = self._model_router.select(task_hint, tools_list)
                 active_model = decision.model
@@ -2824,19 +2834,23 @@ Question: {task}
         Returns:
             AgentResponse
         """
-        # Include conversation history from short-term memory for multi-turn context
-        conversation_history = self._format_conversation_history()
-        if conversation_history:
-            prompt = (
-                f"{conversation_history}\n\n"
-                f"Based on the conversation above, answer this question directly and concisely:\n\n"
-                f"{task}\n\nAnswer:"
-            )
+        inputs = kwargs.pop("inputs", None)
+        if inputs is not None:
+            prompt = self._build_multimodal_prompt(task, inputs)
         else:
-            prompt = f"Answer this question directly and concisely:\n\n{task}\n\nAnswer:"
+            # Include conversation history from short-term memory for multi-turn context
+            conversation_history = self._format_conversation_history()
+            if conversation_history:
+                prompt = (
+                    f"{conversation_history}\n\n"
+                    f"Based on the conversation above, answer this question directly and concisely:\n\n"
+                    f"{task}\n\nAnswer:"
+                )
+            else:
+                prompt = f"Answer this question directly and concisely:\n\n{task}\n\nAnswer:"
 
         try:
-            response = self._generate(prompt, **kwargs)
+            response = self._generate(prompt, _task_hint=task, **kwargs)
             answer = response["text"].strip()
             tokens_used = response.get("tokens_used", 0)
 
@@ -2846,7 +2860,8 @@ Question: {task}
                 mode=AgentMode.SINGLE,
                 iterations=1,
                 tool_calls=0,
-                tokens_used=tokens_used
+                tokens_used=tokens_used,
+                metadata={"multimodal_inputs": inputs is not None},
             )
 
         except Exception as e:
@@ -2860,6 +2875,47 @@ Question: {task}
                 tokens_used=0,
                 metadata={"error": str(e)}
             )
+
+    def _build_multimodal_prompt(self, task: str, inputs: Any) -> list[Any]:
+        """Build structured Messages for adapter-native multimodal input."""
+        from effgen.core.messages import ContentPart, Message, Role, TextPart
+
+        if isinstance(inputs, tuple):
+            inputs = list(inputs)
+        elif not isinstance(inputs, list):
+            inputs = [inputs]
+
+        content: list[ContentPart] = [TextPart(text=task)]
+        for index, part in enumerate(inputs):
+            if not hasattr(part, "type"):
+                raise TypeError(
+                    "Agent.run(inputs=[...]) expects effGen multimodal parts "
+                    f"(image_from/audio_from/video_from); item {index} is {type(part).__name__}"
+                )
+            content.append(part)
+
+        messages: list[Message] = []
+        if self.config.system_prompt:
+            messages.append(Message(role=Role.SYSTEM, content=[TextPart(text=self.config.system_prompt)]))
+        messages.append(Message(role=Role.USER, content=content))
+        return messages
+
+    @staticmethod
+    def _prompt_to_task_hint(prompt: Any) -> str:
+        if isinstance(prompt, str):
+            return prompt[:500]
+        try:
+            from effgen.core.messages import Message
+
+            if isinstance(prompt, Message):
+                return prompt.text[:500]
+            if isinstance(prompt, list):
+                text = "\n".join(p.text for p in prompt if isinstance(p, Message))
+                if text:
+                    return text[:500]
+        except Exception:
+            pass
+        return str(prompt)[:500]
 
     def _get_tools_description(self, verbose: bool | None = None) -> str:
         """
