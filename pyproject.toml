@@ -420,6 +420,8 @@ markers = [
     "gpu: marks tests that require GPU",
     "api: marks tests that require API keys",
     "docker: marks tests that require Docker",
+    "live: marks tests that make live API calls (deselect with '-m \"not live\"')",
+    "cookbook: marks cookbook snippet tests",
 ]
 asyncio_mode = "auto"
 timeout = 120
