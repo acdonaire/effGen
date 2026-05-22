@@ -48,11 +48,13 @@ from effgen.models.openai_models import (
     supports_reasoning,
     supports_vision,
 )
+from effgen.observability import get_logger as _get_obs_logger
 
 # Always show token/cost breakdown at INFO level
 _USAGE_LOG = logging.getLogger(__name__ + ".usage")
 
 logger = logging.getLogger(__name__)
+_obs_log = _get_obs_logger(__name__)
 
 _REASONING_UNSUPPORTED_PARAMS = {"temperature", "top_p", "presence_penalty", "frequency_penalty"}
 _FIXED_SAMPLING_PREFIXES = ("gpt-5",)
@@ -585,6 +587,16 @@ class OpenAIAdapter(FunctionCallingModel):
             "cost": cost,
             "total_cost": self.total_cost,
         }
+
+        _obs_log.model_event(
+            "call.done",
+            provider="openai",
+            model=self.model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cached_tokens=cached_tokens,
+            cost_usd=cost,
+        )
 
         return GenerationResult(
             text=generated_text,

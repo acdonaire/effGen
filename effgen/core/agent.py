@@ -32,6 +32,7 @@ from ..memory.long_term import (
 from ..memory.short_term import MessageRole, ShortTermMemory
 from ..models.base import BaseModel, GenerationConfig
 from ..models.model_loader import ModelLoader
+from ..observability import get_logger as _get_obs_logger
 from ..prompts.agent_system_prompt import AgentSystemPromptBuilder
 from ..prompts.tool_prompt_generator import ToolPromptGenerator
 from ..tools.base_tool import BaseTool, ToolCategory
@@ -62,6 +63,8 @@ from .tool_calling import (
 
 logger = logging.getLogger(__name__)
 _slog = get_structured_logger(__name__)
+# Canonical structured observability logger — emits redacted JSON lines with OTel context
+_obs_log = _get_obs_logger(__name__)
 
 
 class AgentMode(Enum):
@@ -694,6 +697,7 @@ Question: {task}
         with trace_agent_run(self.name, task, run_id=run_id) as _span, \
              LogRunContext(run_id=run_id, agent_name=self.name):
             _slog.agent_event(self.name, "task_start", task=task[:200], mode=mode.value, run_id=run_id)
+            _obs_log.agent_event("run.started", agent=self.name, task=task[:200], mode=mode.value, run_id=run_id)
 
             try:
                 # Pass debug flag through kwargs
@@ -773,6 +777,15 @@ Question: {task}
                     tool_calls=response.tool_calls,
                     success=response.success,
                 )
+                _obs_log.agent_event(
+                    "run.completed",
+                    agent=self.name,
+                    run_id=run_id,
+                    latency_ms=round(response.execution_time * 1000, 1),
+                    tokens=response.tokens_used,
+                    tool_calls=response.tool_calls,
+                    success=response.success,
+                )
 
                 # Store conversation in short-term memory for context retention
                 if response.success and response.output:
@@ -835,6 +848,7 @@ Question: {task}
                 prom_metrics.errors.inc(labels=labels)
                 set_span_error(e)
                 _slog.agent_event(self.name, "task_failed", level=logging.ERROR, error=str(e))
+                _obs_log.agent_event("run.failed", level=logging.ERROR, agent=self.name, run_id=run_id, error=str(e))
 
                 return AgentResponse(
                     output=f"Error: {str(e)}",
@@ -1143,6 +1157,7 @@ Question: {task}
                 tokens_used += iter_tokens
 
             _slog.iteration_event(iterations, "generate", tokens=iter_tokens)
+            _obs_log.event("agent.iteration.generate", iteration=iterations, tokens=iter_tokens, model=getattr(self, "model_name", "unknown"))
 
             if response.get("finish_reason") == "error":
                 metadata = response.get("metadata") or {}
@@ -1370,6 +1385,7 @@ Question: {task}
                     prom_metrics.tool_calls.inc(labels=tool_labels)
                     prom_metrics.tool_execution_time.observe(tool_elapsed, labels=tool_labels)
                     _slog.tool_event(action, "executed", latency=tool_elapsed)
+                    _obs_log.tool_event("executed", tool=action, latency_ms=round(tool_elapsed * 1000, 1))
 
                     # Add observation to scratchpad
                     scratchpad += f"\nAction: {action}"

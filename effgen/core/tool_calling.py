@@ -19,7 +19,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from effgen.observability import get_logger as _get_obs_logger
+
 logger = logging.getLogger(__name__)
+_obs_log = _get_obs_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

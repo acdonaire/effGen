@@ -32,8 +32,10 @@ from effgen.models.capabilities import (
     ModelCapability,
     estimate_capability,
 )
+from effgen.observability import get_logger as _get_obs_logger
 
 logger = logging.getLogger(__name__)
+_obs_log = _get_obs_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -346,13 +348,30 @@ class PolicyBasedRouter:
         last_error: NoCandidateError | None = None
         for policy in self._policies:
             try:
-                return policy.select(candidates, context)
+                decision = policy.select(candidates, context)
+                _obs_log.router_event(
+                    "decision",
+                    policy=policy.name,
+                    selected_provider=decision.chosen.provider,
+                    selected_model=decision.chosen.model_id,
+                    candidates_considered=len(candidates),
+                )
+                return decision
             except NoCandidateError as exc:
                 last_error = exc
                 logger.debug("Policy %r found no candidate: %s", policy.name, exc)
         try:
-            return self._fallback.select(candidates, context)
+            decision = self._fallback.select(candidates, context)
+            _obs_log.router_event(
+                "decision",
+                policy="fallback",
+                selected_provider=decision.chosen.provider,
+                selected_model=decision.chosen.model_id,
+                candidates_considered=len(candidates),
+            )
+            return decision
         except NoCandidateError:
+            _obs_log.router_event("no_candidate", candidates_considered=len(candidates))
             raise last_error or NoCandidateError("No provider available for the given context")
 
     def route_and_execute(

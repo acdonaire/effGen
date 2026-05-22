@@ -33,11 +33,13 @@ from effgen.models.cerebras_models import (
 )
 from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.latency_tracker import timed_call
+from effgen.observability import get_logger as _get_obs_logger
 
 if TYPE_CHECKING:
     from effgen.models._rate_limit_store import SQLiteRateLimitStore
 
 logger = logging.getLogger(__name__)
+_obs_log = _get_obs_logger(__name__)
 
 _CEREBRAS_MODEL_TYPE_VALUE = "cerebras"
 
@@ -439,6 +441,15 @@ class CerebrasAdapter(BaseModel):
         logger.info(
             "Cerebras generated %d tokens (prompt=%d, completion=%d, cost=$%.6f)",
             total_tokens, prompt_tokens, completion_tokens, cost,
+        )
+        _obs_log.model_event(
+            "call.done",
+            provider="cerebras",
+            model=self.model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            cost_usd=cost,
         )
 
         return GenerationResult(
