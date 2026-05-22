@@ -281,8 +281,14 @@ class TestHFAdapterImageTranslation:
     def test_effgen_message_to_dict_produces_image_url(self):
         from effgen.models.hf_inference_adapter import HFInferenceAdapter
 
+        adapter = HFInferenceAdapter.__new__(HFInferenceAdapter)
+        adapter.model_name = "test-model"
+        adapter._is_loaded = False
+        adapter._client = None
+        adapter._info = {}
+        adapter._rate_limiter = None
         msg = _image_message()
-        result = HFInferenceAdapter._effgen_message_to_dict(msg)
+        result = adapter._effgen_message_to_dict(msg)
 
         parts = result["content"]
         assert isinstance(parts, list)

@@ -73,6 +73,8 @@ __all__ = [
     # Image Analysis
     "ImageInfoTool",
     "ImageCaptionTool",
+    # Multimodal
+    "MultimodalDescribeTool",
     # Document Parsing
     "PDFTool",
     "DOCXTool",
@@ -261,6 +263,9 @@ def __getattr__(name):
     elif name == "ImageCaptionTool":
         from .image_caption import ImageCaptionTool
         return ImageCaptionTool
+    elif name == "MultimodalDescribeTool":
+        from .multimodal_describe import MultimodalDescribeTool
+        return MultimodalDescribeTool
     elif name == "PDFTool":
         from .pdf import PDFTool
         return PDFTool

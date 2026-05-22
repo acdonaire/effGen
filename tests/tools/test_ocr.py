@@ -223,8 +223,20 @@ class TestOCRToolUnit:
 _TESSERACT_AVAILABLE = False
 try:
     import subprocess
-    result = subprocess.run(["tesseract", "--version"], capture_output=True, timeout=5)
-    _TESSERACT_AVAILABLE = result.returncode == 0
+    version_result = subprocess.run(
+        ["tesseract", "--version"], capture_output=True, timeout=5
+    )
+    if version_result.returncode == 0:
+        langs_result = subprocess.run(
+            ["tesseract", "--list-langs"],
+            capture_output=True,
+            timeout=5,
+            text=True,
+        )
+        langs_text = (langs_result.stdout or "") + (langs_result.stderr or "")
+        _TESSERACT_AVAILABLE = (
+            langs_result.returncode == 0 and "eng" in langs_text.split()
+        )
 except Exception:
     pass
 

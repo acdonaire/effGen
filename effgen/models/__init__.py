@@ -123,6 +123,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from effgen.models.mlx_vlm import RECOMMENDED_MODELS as MLX_VLM_MODELS
+    from effgen.models.mlx_vlm import MLXVLMAdapter
+except ImportError:
+    pass
+
 __all__ = [
     # Base classes
     "BaseModel",
@@ -140,6 +146,8 @@ __all__ = [
     "TransformersEngine",
     "MLXEngine",
     "MLXVLMEngine",
+    "MLXVLMAdapter",
+    "MLX_VLM_MODELS",
 
     # API adapters
     "OpenAIAdapter",

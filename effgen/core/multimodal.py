@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from PIL import Image as PILImage
 
 from effgen.core.messages import AudioPart, ImagePart, VideoPart
-from effgen.errors import InvalidMultimodalContent, MissingSystemDependency
+from effgen.errors import InvalidMultimodalContent
 
 # ---------------------------------------------------------------------------
 # Public type aliases
@@ -74,6 +74,10 @@ def _detect_audio_mime(data: bytes) -> str:
         return "audio/wav"
     if data[:4] == b"OggS":
         return "audio/ogg"
+    if data[:4] == b"\x1a\x45\xdf\xa3":
+        return "audio/webm"
+    if len(data) > 12 and data[4:8] == b"ftyp":
+        return "audio/mp4"
     return "audio/wav"
 
 
@@ -229,7 +233,12 @@ def audio_from(source: AudioSource, mime: str | None = None) -> AudioPart:
 # video_from
 # ---------------------------------------------------------------------------
 
-def video_from(source: VideoSource, fps: float = 1.0, mime: str = "image/jpeg") -> VideoPart:
+def video_from(
+    source: VideoSource,
+    fps: float = 1.0,
+    mime: str = "image/jpeg",
+    max_frames: int = 16,
+) -> VideoPart:
     """Create a VideoPart by sampling keyframes from a video file.
 
     Requires ffmpeg to be installed on the system PATH.
@@ -238,83 +247,24 @@ def video_from(source: VideoSource, fps: float = 1.0, mime: str = "image/jpeg") 
         source: Path, URL, or raw bytes of the video.
         fps: Frames per second to sample (default 1).
         mime: MIME type for each extracted frame (default image/jpeg).
+        max_frames: Hard cap on extracted frames (default 16).
 
     Returns:
         VideoPart containing sampled frame bytes.
     """
-    import shutil
-    import subprocess
-    import tempfile
-
     if fps <= 0:
         raise InvalidMultimodalContent("video_frames", "fps must be positive")
+    if max_frames < 1:
+        raise InvalidMultimodalContent("video_frames", "max_frames must be at least 1")
 
-    if shutil.which("ffmpeg") is None:
-        raise MissingSystemDependency(
-            "ffmpeg",
-            "Install ffmpeg to use video_from():\n"
-            "  Ubuntu/Debian : sudo apt install ffmpeg\n"
-            "  macOS         : brew install ffmpeg\n"
-            "  conda         : conda install -c conda-forge ffmpeg\n"
-            "  Windows       : choco install ffmpeg"
-        )
+    from effgen.multimodal.video_pre import VideoSource as _VideoSource
 
-    # Resolve source to a local file path
-    with tempfile.TemporaryDirectory() as tmpdir:
-        if isinstance(source, bytes | bytearray):
-            video_path = os.path.join(tmpdir, "input.mp4")
-            with open(video_path, "wb") as f:
-                f.write(bytes(source))
-        elif isinstance(source, str | Path):
-            src = str(source)
-            if src.startswith("http://") or src.startswith("https://"):
-                video_path = os.path.join(tmpdir, "input.mp4")
-                with open(video_path, "wb") as f:
-                    f.write(_fetch_url(src))
-            else:
-                video_path = str(Path(source).resolve())
-        else:
-            raise InvalidMultimodalContent(
-                "video_frames",
-                f"Cannot convert source of type {type(source).__name__} to VideoPart."
-            )
+    if isinstance(source, str) and source.startswith(("http://", "https://")):
+        source = _fetch_url(source)
 
-        frames_dir = os.path.join(tmpdir, "frames")
-        os.makedirs(frames_dir, exist_ok=True)
-
-        ext = "jpg" if "jpeg" in mime else mime.split("/")[-1]
-        frame_pattern = os.path.join(frames_dir, f"frame_%04d.{ext}")
-
-        result = subprocess.run(  # noqa: S603
-            [
-                "ffmpeg", "-i", video_path,
-                "-vf", f"fps={fps}",
-                "-q:v", "2",
-                frame_pattern,
-                "-y",
-            ],
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode != 0:
-            raise InvalidMultimodalContent(
-                "video_frames",
-                f"ffmpeg failed to extract frames: {result.stderr[-400:]}"
-            )
-
-        frame_files = sorted(
-            f for f in os.listdir(frames_dir) if f.startswith("frame_")
-        )
-        if not frame_files:
-            raise InvalidMultimodalContent(
-                "video_frames",
-                "ffmpeg produced no frames — video may be empty or corrupt."
-            )
-
-        frames = []
-        for filename in frame_files:
-            with open(os.path.join(frames_dir, filename), "rb") as frame_file:
-                frames.append(frame_file.read())
-
-    return VideoPart(frames=frames, fps=fps, mime=mime)
+    vs = _VideoSource(source)
+    try:
+        frames = vs.sample_frames(fps=fps, max_frames=max_frames)
+        return VideoPart(frames=[frame.image for frame in frames], fps=fps, mime=mime)
+    finally:
+        vs.cleanup()

@@ -11,6 +11,21 @@ import pytest
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "medical"
 GOLDENS_DIR = Path(__file__).parent / "goldens"
 
+_TRANSIENT_LIVE_MARKERS = (
+    "429",
+    "high traffic",
+    "queue_exceeded",
+    "rate limit",
+    "request_quota_exceeded",
+    "too_many_requests",
+)
+
+
+def _skip_transient_live_error(message: str) -> None:
+    lowered = message.lower()
+    if any(marker in lowered for marker in _TRANSIENT_LIVE_MARKERS):
+        pytest.skip(f"Transient live provider pressure: {message}")
+
 
 # ---------------------------------------------------------------------------
 # Fixture files
@@ -366,6 +381,8 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(symptom_triage_v1, model="llama3.1-8b")
+        if not result.passed:
+            _skip_transient_live_error(result.message)
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -387,6 +404,8 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(drug_interaction_query_v1, model="llama3.1-8b")
+        if not result.passed:
+            _skip_transient_live_error(result.message)
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -407,6 +426,8 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(medical_literature_v1, model="llama3.1-8b")
+        if not result.passed:
+            _skip_transient_live_error(result.message)
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"

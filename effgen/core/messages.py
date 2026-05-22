@@ -35,10 +35,13 @@ _VALID_IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _VALID_AUDIO_MIMES = {
     "audio/flac",
     "audio/m4a",
+    "audio/mp4",
     "audio/mp3",
     "audio/mpeg",
+    "audio/mpga",
     "audio/ogg",
     "audio/wav",
+    "audio/webm",
     "audio/x-m4a",
     "audio/x-wav",
 }
@@ -101,6 +104,7 @@ class VideoPart:
     frames: list[bytes]
     fps: float
     mime: str
+    meta: dict[str, Any] = field(default_factory=dict)
     type: Literal["video_frames"] = field(default="video_frames", init=False)
 
     def __post_init__(self) -> None:
@@ -114,6 +118,8 @@ class VideoPart:
             raise InvalidMultimodalContent("video_frames", "fps must be positive")
         if not self.frames:
             raise InvalidMultimodalContent("video_frames", "frames list must be non-empty")
+        if not isinstance(self.meta, dict):
+            raise InvalidMultimodalContent("video_frames", "meta must be a dict")
         normalised_frames = []
         for index, frame in enumerate(self.frames):
             if not isinstance(frame, bytes | bytearray):
@@ -289,6 +295,7 @@ class Message:
                     "frames": [base64.b64encode(f).decode() for f in part.frames],
                     "fps": part.fps,
                     "mime": part.mime,
+                    "meta": part.meta,
                 })
             elif isinstance(part, ToolCallPart):
                 parts.append({

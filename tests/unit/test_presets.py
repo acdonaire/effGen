@@ -20,6 +20,7 @@ EXPECTED_PRESETS = {
     "minimal",
     "media",
     "notify",
+    "multimodal",
 }
 
 

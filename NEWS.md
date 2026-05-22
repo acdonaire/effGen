@@ -1,5 +1,76 @@
 # effGen Release Notes
 
+## v0.2.8 — May 21, 2026
+
+**effGen v0.2.8** ships first-class **multimodal input** — send images, audio, and video to any capable provider through a single, unified `Message` schema. Six providers (Gemini, OpenAI, Groq, Anthropic, Together, HuggingFace) gain structured multimodal routing with automatic preprocessing, capability-gated error surfaces, a new `multimodal` preset, and five end-to-end cookbook walkthroughs. No breaking API changes.
+
+### What's new at a glance
+
+**Unified `Message` schema.** `Message.content` is now a typed `List[ContentPart]` — a union of `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `ToolCallPart`, and `ToolResultPart`. The old string constructor still works: `Message(role, "hello")` auto-wraps in a `TextPart`. Validation fires on construction, not at send time.
+
+**Three `_from` helpers.** `image_from(source)`, `audio_from(source)`, and `video_from(source, fps=1)` accept `bytes`, a local path, a URL, a `PIL.Image`, or an `np.ndarray` — whichever is convenient. MIME type is inferred automatically.
+
+**Preprocessing is explicit and loggable.** `image_pre.prepare()` enforces per-provider pixel/byte limits and Lanczos-downscales when needed, logging every action to `part.meta["preprocessing"]`. `audio_pre` downsamples to 16 kHz and chunks long clips. `video_pre` samples keyframes via ffmpeg (raising `MissingSystemDependency` with OS-specific install hints when absent).
+
+**Image input across 6 providers.** Gemini, OpenAI gpt-4o, Groq Llama 4 / Llama 3.2-vision, Anthropic (code only), Together, and HF BLIP/LLaVA all accept `ImagePart`. Every adapter raises `CapabilityNotSupportedError` cleanly when the selected model doesn't support vision — no silent text fallback.
+
+**Audio input across 3 providers.** Gemini native audio, OpenAI Whisper (`/audio/transcriptions`) + gpt-4o audio, and HF ASR. Anthropic raises `CapabilityNotSupportedError(Capability.audio_input)`.
+
+**Video input — native + frame-sampling.** Gemini 2.x/3.x accepts raw video natively. All other adapters decompose a `VideoPart` into a sequence of `ImagePart`s (frame sampling) plus an optional `AudioPart` from the audio track.
+
+**`multimodal` preset.** `create_agent("multimodal", model)` wires Gemini Flash-Lite as primary (vision + audio + video) with OpenAI gpt-4o-mini as vision fallback. The preset ships with `ImageInfoTool`, `ImageCaptionTool`, `OCRTool`, `AudioTranscribeTool`, `PDFTool`, `WeatherTool`, and the new `MultimodalDescribeTool` — which automatically chooses the right tool based on the input part type.
+
+**MLX-VLM adapter.** `effgen/models/mlx_vlm_engine.py` wraps `mlx-vlm` for Apple Silicon vision-language inference. Raises `MissingSystemDependency` on non-Apple hardware or missing library. Live tests skipped on Linux; 28 unit tests with fakes pass.
+
+**5 cookbook walkthroughs.** Image Q&A, audio transcribe + reason, video summarize, OCR + LLM structured extraction, chart reading from an image. Each is a runnable Python snippet with prose. See `docs/cookbook/README.md`.
+
+### CLI quick-start
+
+```bash
+# Image Q&A via multimodal preset
+effgen run --preset multimodal "What is in this image?" --image /tmp/photo.jpg
+
+# Check which providers support vision
+python -c "
+from effgen.models.capabilities import Capability
+from effgen import list_models
+print([m for m in list_models('gemini') if Capability.vision in m.get('capabilities', [])][:3])
+"
+```
+
+### Python API quick-start
+
+```python
+from effgen import image_from, audio_from, video_from, load_model
+from effgen.core.messages import Message, Role
+from effgen.presets import create_agent
+
+model = load_model("gemini-2.0-flash", provider="gemini")
+agent = create_agent("multimodal", model)
+
+# Image
+img = image_from("https://example.com/photo.jpg")
+result = agent.run_message(Message(role=Role.USER, content=[img, "Describe this."]))
+
+# Audio
+aud = audio_from("/tmp/interview.mp3")
+result = agent.run_message(Message(role=Role.USER, content=[aud, "Summarize in one line."]))
+
+# Video (requires ffmpeg for frame-sampling fallback)
+vid = video_from("/tmp/clip.mp4", fps=1)
+result = agent.run_message(Message(role=Role.USER, content=[vid, "What happens in the first 5 seconds?"]))
+```
+
+### Upgrading from v0.2.7
+
+No breaking API changes. The old string-based `Message` constructor is unchanged.
+
+```bash
+pip install --upgrade effgen
+```
+
+---
+
 ## v0.2.7 — May 20, 2026
 
 **effGen v0.2.7** ships the **Prompt Library** — a curated, domain-organized catalog of **31 reusable prompt templates** covering research, coding, data/SQL, legal, medical, creative writing, and business. Every template is a Python callable that renders deterministically for fixed inputs, ships with a fixture and golden evaluation test, and is accessible through a rich CLI and an interactive playground.

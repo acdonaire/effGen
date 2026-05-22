@@ -39,16 +39,31 @@ def _user_agent() -> str:
     return f"effGen/{__version__}"
 
 
-def _fetch_json(url: str, timeout: int = 15) -> Any:
-    """Fetch JSON data from a URL using urllib."""
+def _fetch_json(url: str, timeout: int = 15, max_retries: int = 4) -> Any:
+    """Fetch JSON data from a URL using urllib with exponential backoff for 429/503."""
+    import time as _time
     req = Request(url, headers={"User-Agent": _user_agent(), "Accept": "application/json"})
-    try:
-        with urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except HTTPError as e:
-        raise ConnectionError(f"HTTP {e.code} error from {url}: {e.reason}")
-    except URLError as e:
-        raise ConnectionError(f"Network error fetching {url}: {e.reason}")
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except HTTPError as e:
+            if e.code in (429, 503, 502) and attempt < max_retries - 1:
+                # Exponential backoff: 1s, 2s, 4s, 8s …
+                delay = 2 ** attempt
+                logger.warning(
+                    "HTTP %d from %s (attempt %d/%d), retrying in %ds",
+                    e.code, url, attempt + 1, max_retries, delay,
+                )
+                _time.sleep(delay)
+                last_exc = ConnectionError(f"HTTP {e.code} error from {url}: {e.reason}")
+                continue
+            raise ConnectionError(f"HTTP {e.code} error from {url}: {e.reason}") from e
+        except URLError as e:
+            raise ConnectionError(f"Network error fetching {url}: {e.reason}") from e
+    assert last_exc is not None
+    raise last_exc
 
 
 class StockPriceTool(BaseTool):

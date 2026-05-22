@@ -124,7 +124,8 @@ class ModelLoader:
     ]
 
     GEMINI_MODELS = [
-        "gemini-pro", "gemini-ultra", "gemini-flash", "gemini-1.5"
+        "gemini-pro", "gemini-ultra", "gemini-flash", "gemini-1.5",
+        "gemini-2", "gemini-3",
     ]
 
     def __init__(

@@ -368,6 +368,8 @@ def test_http_get_json_response():
     if not result.success:
         pytest.skip(f"httpbin.org unreachable: {result.error}")
     out = result.output
+    if out.get("status", 0) >= 500:
+        pytest.skip(f"httpbin.org returned upstream {out['status']}")
     assert out["status"] == 200
     assert out["json"] is not None
     assert "headers" in out["json"]

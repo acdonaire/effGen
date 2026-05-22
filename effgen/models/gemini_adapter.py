@@ -19,7 +19,11 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
-from effgen.models._multimodal import require_vision_support
+from effgen.models._multimodal import (
+    require_audio_support,
+    require_video_support,
+    require_vision_support,
+)
 from effgen.models.base import (
     FunctionCallingModel,
     GenerationConfig,
@@ -447,10 +451,21 @@ class GeminiAdapter(FunctionCallingModel):
         return parts
 
     def _message_to_genai_parts(self, message: Any, preprocess_fn: Any) -> list[Any]:
-        """Convert an effGen Message to a list of google.genai Part objects."""
+        """Convert an effGen Message to a list of google.genai Part objects.
+
+        VideoPart handling:
+          - If the model supports native video (supports_video=True in registry)
+            and the VideoPart has a ``meta["video_path"]`` or ``meta["video_url"]``
+            key, the video is uploaded via the Files API and referenced by URI.
+          - Otherwise the frames are sent as sequential JPEG image parts (frame-
+            sampling fallback that works on all Gemini vision models).
+        """
         from google.genai import types as _gt  # type: ignore[import]
 
         from effgen.core.messages import AudioPart, ImagePart, TextPart, VideoPart
+
+        model_info = GEMINI_MODELS.get(self.model_name, {})
+        supports_native_video = bool(model_info.get("supports_video", False))
 
         parts: list[Any] = []
         for part in message.content:
@@ -468,7 +483,52 @@ class GeminiAdapter(FunctionCallingModel):
                     mime_type=part.mime,
                 ))
             elif isinstance(part, VideoPart):
-                # Send video frames as a sequence of image parts
+                # Try native video via Files API when both the model and the
+                # VideoPart supply a file reference.
+                video_path = part.meta.get("video_path")
+                video_url = part.meta.get("video_url")
+                video_mime = part.meta.get("video_mime", "video/mp4")
+
+                if supports_native_video and (video_path or video_url):
+                    try:
+                        from effgen.models.gemini_files import upload_file as _upload
+                        if video_path:
+                            fref = _upload(video_path, api_key=self.api_key, mime_type=video_mime)
+                        else:
+                            # Download URL to a temp file then upload
+                            import os
+                            import tempfile
+                            import urllib.request
+                            suffix = ".mp4" if "mp4" in video_mime else ".webm"
+                            tmp_path = ""
+                            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+                                with urllib.request.urlopen(video_url, timeout=60) as resp:
+                                    tf.write(resp.read())
+                                tmp_path = tf.name
+                            try:
+                                fref = _upload(tmp_path, api_key=self.api_key, mime_type=video_mime)
+                            finally:
+                                if tmp_path:
+                                    try:
+                                        os.unlink(tmp_path)
+                                    except OSError:
+                                        pass
+
+                        parts.append(_gt.Part.from_uri(
+                            file_uri=fref.uri,
+                            mime_type=fref.mime_type,
+                        ))
+                        logger.info(
+                            "gemini_adapter: uploaded video via Files API → %s", fref.uri
+                        )
+                        continue
+                    except Exception as exc:
+                        logger.warning(
+                            "gemini_adapter: native video upload failed (%s); "
+                            "falling back to frame-sampling", exc,
+                        )
+
+                # Frame-sampling fallback: send each JPEG frame as an image part
                 for frame in part.frames:
                     parts.append(_gt.Part.from_bytes(
                         data=frame,
@@ -507,12 +567,28 @@ class GeminiAdapter(FunctionCallingModel):
             self.validate_prompt(prompt)
 
         gen_config = self._build_config(config)
+        _model_info = GEMINI_MODELS.get(self.model_name, {})
         require_vision_support(
             prompt,
             provider="gemini",
             model_name=self.model_name,
-            supports_vision=GEMINI_MODELS.get(self.model_name, {}).get("supports_vision", False),
+            supports_vision=_model_info.get("supports_vision", False),
             hint="Use a Gemini model with supports_vision=True for image inputs.",
+        )
+        require_audio_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_audio=_model_info.get("supports_audio", False),
+            hint="Use a Gemini Flash/Pro model with supports_audio=True for audio inputs.",
+        )
+        # Video requires vision (for frame-sampling) or native video support.
+        require_video_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_video=_model_info.get("supports_vision", False) or _model_info.get("supports_video", False),
+            hint="Use a Gemini vision model for video inputs (frame-sampling fallback is used).",
         )
         content = self._prepare_content(prompt)
 
@@ -695,12 +771,27 @@ class GeminiAdapter(FunctionCallingModel):
             self.validate_prompt(prompt)
 
         gen_config = self._build_config(config)
+        _model_info_s = GEMINI_MODELS.get(self.model_name, {})
         require_vision_support(
             prompt,
             provider="gemini",
             model_name=self.model_name,
-            supports_vision=GEMINI_MODELS.get(self.model_name, {}).get("supports_vision", False),
+            supports_vision=_model_info_s.get("supports_vision", False),
             hint="Use a Gemini model with supports_vision=True for image inputs.",
+        )
+        require_audio_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_audio=_model_info_s.get("supports_audio", False),
+            hint="Use a Gemini Flash/Pro model with supports_audio=True for audio inputs.",
+        )
+        require_video_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_video=_model_info_s.get("supports_vision", False) or _model_info_s.get("supports_video", False),
+            hint="Use a Gemini vision model for video inputs (frame-sampling fallback is used).",
         )
         content = self._prepare_content(prompt)
 
@@ -838,8 +929,8 @@ def _register() -> None:
             env_keys=["GOOGLE_API_KEY"],
             capabilities={
                 Capability.chat, Capability.streaming, Capability.tools,
-                Capability.vision, Capability.grounding, Capability.thinking,
-                Capability.json_schema,
+                Capability.vision, Capability.audio_input, Capability.video_input,
+                Capability.grounding, Capability.thinking, Capability.json_schema,
             },
             # Provider default = paid gemini-2.5-flash-lite. Gemini has a free
             # quota for Flash/Flash-Lite, but it has rate-limit and data-use
