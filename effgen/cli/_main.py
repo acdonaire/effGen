@@ -1212,15 +1212,43 @@ class CLIInterface:
                 return {"status": "healthy", "version": __version__}
 
             @app.get("/metrics", dependencies=[Depends(verify_api_key)])
-            async def metrics():
-                """Prometheus-style metrics endpoint."""
+            async def metrics_endpoint():
+                """Prometheus text-format metrics endpoint (histograms + counters)."""
+                from effgen.observability.metrics import export_metrics as _export_obs
+                try:
+                    obs_text = _export_obs()
+                except Exception:  # pragma: no cover
+                    obs_text = ""
+                # Also emit legacy per-request counters from in-process dict
                 avg_time = (_metrics["total_time"] / _metrics["requests"]
                             if _metrics["requests"] > 0 else 0)
-                return {
-                    "requests_total": _metrics["requests"],
-                    "errors_total": _metrics["errors"],
-                    "avg_response_time_seconds": round(avg_time, 4),
-                }
+                legacy_text = (
+                    "# HELP effgen_server_requests_total Total HTTP requests handled\n"
+                    "# TYPE effgen_server_requests_total counter\n"
+                    f"effgen_server_requests_total {_metrics['requests']}\n"
+                    "# HELP effgen_server_errors_total Total HTTP errors\n"
+                    "# TYPE effgen_server_errors_total counter\n"
+                    f"effgen_server_errors_total {_metrics['errors']}\n"
+                    "# HELP effgen_server_avg_response_seconds Average response latency\n"
+                    "# TYPE effgen_server_avg_response_seconds gauge\n"
+                    f"effgen_server_avg_response_seconds {round(avg_time, 6)}\n"
+                )
+                body = obs_text + "\n" + legacy_text
+                from fastapi.responses import PlainTextResponse
+                return PlainTextResponse(
+                    content=body,
+                    media_type="text/plain; version=0.0.4; charset=utf-8",
+                )
+
+            @app.get("/slo", dependencies=[Depends(verify_api_key)])
+            async def slo_endpoint():
+                """SLO burn-rate status for all registered SLOs."""
+                try:
+                    from effgen.observability.slo import get_tracker as _get_tracker
+                    tracker = _get_tracker()
+                    return {"slos": tracker.all_statuses()}
+                except Exception as exc:  # pragma: no cover
+                    return {"slos": [], "error": str(exc)}
 
             @app.get("/tools")
             async def list_tools_endpoint():
@@ -1249,7 +1277,8 @@ class CLIInterface:
                         "POST /run": "Run a task with an agent",
                         "WS /ws": "WebSocket streaming",
                         "GET /health": "Health check",
-                        "GET /metrics": "Server metrics",
+                        "GET /metrics": "Prometheus text-format metrics",
+                        "GET /slo": "SLO burn-rate status",
                         "GET /tools": "List available tools",
                         "GET /docs": "OpenAPI documentation"
                     }
