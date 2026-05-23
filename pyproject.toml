@@ -123,6 +123,7 @@ dev = [
     "flake8>=6.1.0",
     "mypy>=1.7.0",
     "bitsandbytes>=0.46.1",
+    "hypothesis>=6.100.0",
 ]
 vllm = ["vllm>=0.2.7"]
 mlx = [
@@ -247,6 +248,7 @@ all = [
     "pytest-timeout>=2.2.0",
     "pytest-forked>=1.6.0",
     "pexpect>=4.9.0",
+    "hypothesis>=6.100.0",
     "vllm>=0.2.7",
     "faiss-cpu>=1.7.4",
     "chromadb>=0.4.18",

@@ -16,6 +16,23 @@ from enum import Enum
 from typing import Any
 
 
+def _redact_error(text: str) -> str:
+    """Scrub secrets from a tool error message before it is surfaced.
+
+    Tool inputs (and the exceptions raised while processing them) can contain
+    API keys, bearer tokens, or webhook URLs. A ``ToolResult.error`` flows into
+    logs, traces, and the model's context, so it must be redacted on every
+    path. Falls back to the raw text only if the redactor cannot be imported —
+    redaction must never itself break tool execution.
+    """
+    try:
+        from effgen.observability.redact import get_redactor
+
+        return get_redactor().scrub(text)
+    except Exception:  # noqa: BLE001 - redaction is best-effort, never fatal
+        return text
+
+
 class ToolCategory(Enum):
     """Categories for organizing tools."""
     INFORMATION_RETRIEVAL = "information_retrieval"
@@ -443,7 +460,7 @@ class BaseTool(ABC):
                 return ToolResult(
                     success=False,
                     output=None,
-                    error=f"Parameter validation failed: {error}",
+                    error=_redact_error(f"Parameter validation failed: {error}"),
                     execution_time=time.time() - start_time
                 )
 
@@ -471,7 +488,7 @@ class BaseTool(ABC):
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"Tool execution failed: {str(e)}",
+                error=_redact_error(f"Tool execution failed: {str(e)}"),
                 execution_time=execution_time,
                 metadata={
                     "tool_name": self.name,
