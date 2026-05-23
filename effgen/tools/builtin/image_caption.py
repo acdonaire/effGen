@@ -57,14 +57,27 @@ _PROVIDER_DEFAULT_VISION_MODEL = dict(reversed(_VISION_PROVIDER_PREFERENCE))
 
 
 def _ensure_provider_registry() -> None:
-    """Import provider adapters so they self-register with ProviderRegistry."""
-    for module_name in (
-        "effgen.models.gemini_adapter",
-        "effgen.models.openai_adapter",
-        "effgen.models.replicate_adapter",
+    """Ensure vision provider adapters are registered with ProviderRegistry.
+
+    Importing an adapter module triggers its module-level ``_register()`` the
+    first time, but a prior ``ProviderRegistry.reset()`` leaves the registry
+    empty while the module stays in ``sys.modules`` — so a plain re-import is a
+    no-op and would not restore the provider. We therefore re-invoke each
+    module's idempotent ``_register()`` whenever its provider is missing.
+    """
+    from effgen.models.registry import ProviderRegistry
+
+    for module_name, provider_name in (
+        ("effgen.models.gemini_adapter", "gemini"),
+        ("effgen.models.openai_adapter", "openai"),
+        ("effgen.models.replicate_adapter", "replicate"),
     ):
         try:
-            __import__(module_name)
+            module = __import__(module_name, fromlist=["_register"])
+            if provider_name not in ProviderRegistry.list_providers():
+                register = getattr(module, "_register", None)
+                if callable(register):
+                    register()
         except Exception as exc:
             logger.debug("Could not import %s for vision routing: %s", module_name, exc)
 

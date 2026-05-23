@@ -37,10 +37,17 @@ OVERLAP_MODELS = {
 
 @pytest.fixture(autouse=True)
 def reset_registry():
-    """Reset the singleton before each test to avoid cross-test pollution."""
+    """Reset the singleton before each test to avoid cross-test pollution.
+
+    On teardown we restore the real adapters rather than leaving the registry
+    empty: a bare ``reset()`` would otherwise wipe every provider for tests that
+    run later in the session (the adapter modules are already imported, so they
+    would not self-register again), e.g. the live vision routing tests.
+    """
     ProviderRegistry.reset()
     yield
     ProviderRegistry.reset()
+    _force_register_all()
 
 
 # ---------------------------------------------------------------------------
