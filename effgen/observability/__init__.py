@@ -49,6 +49,12 @@ Sub-modules
 - effgen.observability.spans   -- Span attribute constants
 """
 
+from .alerting import (
+    Alert,
+    AlertSeverity,
+    AlertWebhook,
+    validate_alert_rules_yaml,
+)
 from .logs import (
     EffGenLogger,
     StructuredFormatter,
@@ -127,6 +133,11 @@ def get_logger(name: str) -> "EffGenLogger":
 
 
 __all__ = [
+    # Alerting
+    "Alert",
+    "AlertSeverity",
+    "AlertWebhook",
+    "validate_alert_rules_yaml",
     # Primary entry point
     "get_logger",
     # Configuration
@@ -141,7 +152,7 @@ __all__ = [
     # Run context helpers (used by agent loop)
     "set_run_context",
     "clear_run_context",
-    # Metrics (Phase 2)
+    # Metrics
     "model_call_latency",
     "tool_call_latency",
     "agent_iteration_latency",
@@ -154,11 +165,11 @@ __all__ = [
     "reset_metrics",
     "LabeledHistogram",
     "LabeledCounter",
-    # SLO (Phase 2)
+    # SLO
     "SLO",
     "SLOTracker",
     "get_slo_tracker",
-    # Tracing (Phase 3)
+    # Tracing
     "setup_tracing",
     "shutdown_tracing",
     "reset_tracing",
@@ -176,7 +187,7 @@ __all__ = [
     "record_retry_attempt",
     "set_span_error",
     "set_span_attribute",
-    # Span attribute constants (Phase 3)
+    # Span attribute constants
     "SpanName",
     "AgentAttrs",
     "ModelAttrs",

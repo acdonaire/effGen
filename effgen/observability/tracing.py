@@ -1,5 +1,5 @@
 """
-OpenTelemetry tracing for effGen — Phase 3.
+OpenTelemetry tracing for effGen.
 
 Samplers
 --------

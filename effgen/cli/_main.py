@@ -2085,6 +2085,10 @@ Examples:
                              help='JSON file with input variables')
     prompts_run.add_argument('--model', required=True, help='Model identifier to run against')
 
+    # Load test command
+    from effgen.cli.loadtest import add_loadtest_subparser  # noqa: PLC0415
+    add_loadtest_subparser(subparsers)
+
     return parser
 
 
@@ -3039,6 +3043,13 @@ def main():
             exit_code = _handle_cost_command(args, cli)
         elif args.command == 'prompts':
             exit_code = _handle_prompts_command(args, cli)
+        elif args.command == 'loadtest':
+            func = getattr(args, 'func', None)
+            if func:
+                exit_code = func(args)
+            else:
+                from effgen.cli.loadtest import run_loadtest_command
+                exit_code = run_loadtest_command(args)
         elif args.command == 'debug':
             from effgen.debug.inspector import run_debug_cli
             run_debug_cli(
