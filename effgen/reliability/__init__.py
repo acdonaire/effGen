@@ -6,6 +6,7 @@ Provides production-grade reliability patterns:
 - :class:`~effgen.reliability.retry.Retry` / :func:`~effgen.reliability.retry.retryable` — jittered exponential backoff
 - :class:`~effgen.reliability.circuit.CircuitBreaker` — closed → open → half-open state machine
 - :class:`~effgen.reliability.bulkhead.Bulkhead` — concurrency cap + bounded queue
+- :class:`~effgen.reliability.chaos.Chaos` — deterministic fault injection for testing
 
 Quick start
 -----------
@@ -19,6 +20,10 @@ Quick start
         Bulkhead,
         with_timeout,
         is_transient_error,
+        Chaos,
+        Http5xx,
+        Http429,
+        NetworkTimeout,
     )
 
     # Retry decorator
@@ -40,11 +45,34 @@ Quick start
     bh = Bulkhead("cerebras", max_concurrency=10, queue_size=50)
     with bh.acquire():
         result = call_model()
+
+    # Chaos harness
+    chaos = Chaos(seed=42)
+    chaos.add_rule("primary", Http5xx, every_nth=3)
+    chaos.maybe_inject("primary")  # raises ChaosHttp5xxError on 3rd call
 """
 
 from __future__ import annotations
 
 from .bulkhead import Bulkhead, BulkheadFull
+from .chaos import (
+    AllProvidersFailed,
+    Chaos,
+    ChaosHttp5xxError,
+    ChaosHttp429Error,
+    ChaosMalformedJSONError,
+    ChaosMiddleware,
+    ChaosNetworkTimeout,
+    ChaosPartialResponseError,
+    ChaosRule,
+    FaultBase,
+    Http5xx,
+    Http429,
+    MalformedJSON,
+    NetworkTimeout,
+    PartialResponse,
+    SlowResponse,
+)
 from .circuit import CircuitBreaker, CircuitBreakerOpen, CircuitState
 from .config import ReliabilityConfig, TimeoutConfig
 from .retry import Retry, RetryExhausted, is_transient_error, retryable
@@ -71,4 +99,21 @@ __all__ = [
     # bulkhead
     "Bulkhead",
     "BulkheadFull",
+    # chaos
+    "Chaos",
+    "ChaosRule",
+    "ChaosMiddleware",
+    "FaultBase",
+    "NetworkTimeout",
+    "Http5xx",
+    "Http429",
+    "SlowResponse",
+    "PartialResponse",
+    "MalformedJSON",
+    "ChaosNetworkTimeout",
+    "ChaosHttp5xxError",
+    "ChaosHttp429Error",
+    "ChaosPartialResponseError",
+    "ChaosMalformedJSONError",
+    "AllProvidersFailed",
 ]

@@ -323,6 +323,67 @@ class ProviderRegistry:
             }
         return result
 
+    @classmethod
+    def with_chaos(cls, chaos: Any) -> "ChaosMiddlewareRegistry":
+        """Return a :class:`ChaosMiddlewareRegistry` that wraps this registry
+        with the given *chaos* instance.
+
+        Usage::
+
+            from effgen.reliability.chaos import Chaos, Http5xx
+            from effgen.models.registry import ProviderRegistry
+
+            chaos = Chaos(seed=42)
+            chaos.add_rule("primary", Http5xx, every_nth=3)
+            registry = ProviderRegistry.with_chaos(chaos)
+            # registry.call("primary", adapter.generate, prompt="Hello")
+
+        Args:
+            chaos: A :class:`~effgen.reliability.chaos.Chaos` instance with
+                   rules already configured.
+
+        Returns:
+            A :class:`ChaosMiddlewareRegistry` that intercepts provider calls.
+        """
+        return ChaosMiddlewareRegistry(chaos=chaos)
+
+
+class ChaosMiddlewareRegistry:
+    """Thin registry wrapper that injects chaos faults before every provider call.
+
+    Construct via :meth:`ProviderRegistry.with_chaos`.
+
+    Args:
+        chaos: The :class:`~effgen.reliability.chaos.Chaos` instance.
+    """
+
+    def __init__(self, chaos: Any) -> None:
+        self._chaos = chaos
+
+    def call(self, provider: str, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Run chaos injection then forward *fn* if no fault fires.
+
+        Args:
+            provider: Provider name (used for rule matching).
+            fn:       The real adapter callable.
+            *args:    Positional args forwarded to *fn*.
+            **kwargs: Keyword args forwarded to *fn*.
+        """
+        self._chaos.maybe_inject(provider)
+        return fn(*args, **kwargs)
+
+    async def async_call(
+        self, provider: str, fn: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Async version of :meth:`call`."""
+        await self._chaos.async_maybe_inject(provider)
+        return await fn(*args, **kwargs)
+
+    @property
+    def chaos(self) -> Any:
+        """The underlying :class:`~effgen.reliability.chaos.Chaos` instance."""
+        return self._chaos
+
 
 # ---------------------------------------------------------------------------
 # Module-level convenience functions
