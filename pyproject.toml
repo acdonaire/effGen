@@ -422,6 +422,8 @@ markers = [
     "docker: marks tests that require Docker",
     "live: marks tests that make live API calls (deselect with '-m \"not live\"')",
     "cookbook: marks cookbook snippet tests",
+    "reliability: marks reliability-primitive tests (timeouts, retry, circuit, bulkhead)",
+    "fuzz: marks fuzz-harness tests (hypothesis-driven)",
 ]
 asyncio_mode = "auto"
 timeout = 120

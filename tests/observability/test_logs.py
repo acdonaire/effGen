@@ -417,17 +417,31 @@ class TestConfigureLogging:
         original = _logs_module._logging_configured
         _logs_module._logging_configured = False
 
-        buf = io.StringIO()
-        configure_logging(level="DEBUG", json=True, stream=buf)
+        # Snapshot effgen logger state so we can restore it.  configure_logging()
+        # mutates handlers + propagate; without restoring we leak state into
+        # subsequent tests that rely on log propagation (e.g. caplog tests).
+        effgen_log = logging.getLogger("effgen")
+        prev_handlers = list(effgen_log.handlers)
+        prev_propagate = effgen_log.propagate
+        prev_level = effgen_log.level
 
-        # Now emit a log via the effgen root
-        test_log = logging.getLogger("effgen._test_configure")
-        test_log.debug("ping")
+        try:
+            buf = io.StringIO()
+            configure_logging(level="DEBUG", json=True, stream=buf)
 
-        raw = buf.getvalue().strip()
-        if raw:
-            d = json.loads(raw)
-            assert "event" in d or "msg" in d
+            # Now emit a log via the effgen root
+            test_log = logging.getLogger("effgen._test_configure")
+            test_log.debug("ping")
 
-        # Restore flag
-        _logs_module._logging_configured = original
+            raw = buf.getvalue().strip()
+            if raw:
+                d = json.loads(raw)
+                assert "event" in d or "msg" in d
+        finally:
+            # Restore effgen logger state
+            effgen_log.handlers.clear()
+            for h in prev_handlers:
+                effgen_log.addHandler(h)
+            effgen_log.propagate = prev_propagate
+            effgen_log.setLevel(prev_level)
+            _logs_module._logging_configured = original

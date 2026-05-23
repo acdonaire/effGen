@@ -30,6 +30,8 @@ from effgen.models.errors import AmbiguousModelError
 
 if TYPE_CHECKING:
     from effgen.models.capabilities import Capability
+    from effgen.reliability.bulkhead import Bulkhead
+    from effgen.reliability.circuit import CircuitBreaker
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +222,106 @@ class ProviderRegistry:
         """Clear the registry (useful for testing)."""
         cls._providers.clear()
         cls._model_index.clear()
+
+    # ------------------------------------------------------------------
+    # Reliability middleware — circuit breakers + bulkheads per provider
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def get_circuit_breaker(
+        cls,
+        provider: str,
+        *,
+        failure_threshold: int = 5,
+        recovery_timeout: float = 30.0,
+        half_open_probes: int = 1,
+    ) -> "CircuitBreaker":
+        """Return (or lazily create) the :class:`~effgen.reliability.circuit.CircuitBreaker`
+        for *provider*.
+
+        Circuit breakers are kept on the registry record so they survive across
+        call sites.  Parameters are only applied on first creation.
+
+        Args:
+            provider:          Registered provider name (e.g. ``"openai"``).
+            failure_threshold: Consecutive failures before OPEN.
+            recovery_timeout:  Seconds OPEN before HALF_OPEN.
+            half_open_probes:  Successes needed in HALF_OPEN before CLOSED.
+
+        Returns:
+            The :class:`~effgen.reliability.circuit.CircuitBreaker` instance.
+
+        Raises:
+            KeyError: If *provider* is not registered.
+        """
+        from effgen.reliability.circuit import CircuitBreaker as _CB
+
+        if provider not in cls._providers:
+            raise KeyError(f"Provider {provider!r} is not registered.")
+        rec = cls._providers[provider]
+        if "_circuit_breaker" not in rec:
+            rec["_circuit_breaker"] = _CB(
+                name=provider,
+                failure_threshold=failure_threshold,
+                recovery_timeout=recovery_timeout,
+                half_open_probes=half_open_probes,
+            )
+        return rec["_circuit_breaker"]
+
+    @classmethod
+    def get_bulkhead(
+        cls,
+        provider: str,
+        *,
+        max_concurrency: int = 20,
+        queue_size: int = 100,
+        queue_timeout: float = 5.0,
+    ) -> "Bulkhead":
+        """Return (or lazily create) the :class:`~effgen.reliability.bulkhead.Bulkhead`
+        for *provider*.
+
+        Args:
+            provider:        Registered provider name.
+            max_concurrency: Maximum simultaneous active calls.
+            queue_size:      Maximum calls that may wait for a permit.
+            queue_timeout:   Seconds to wait before :class:`~effgen.reliability.bulkhead.BulkheadFull`.
+
+        Returns:
+            The :class:`~effgen.reliability.bulkhead.Bulkhead` instance.
+
+        Raises:
+            KeyError: If *provider* is not registered.
+        """
+        from effgen.reliability.bulkhead import Bulkhead as _BH
+
+        if provider not in cls._providers:
+            raise KeyError(f"Provider {provider!r} is not registered.")
+        rec = cls._providers[provider]
+        if "_bulkhead" not in rec:
+            rec["_bulkhead"] = _BH(
+                name=provider,
+                max_concurrency=max_concurrency,
+                queue_size=queue_size,
+                queue_timeout=queue_timeout,
+            )
+        return rec["_bulkhead"]
+
+    @classmethod
+    def reliability_stats(cls) -> dict[str, Any]:
+        """Return circuit-breaker and bulkhead stats for all providers.
+
+        Returns a dict keyed by provider name, each with ``circuit_breaker``
+        and ``bulkhead`` sub-dicts (or ``None`` if not yet created).
+        """
+        result: dict[str, Any] = {}
+        for name, rec in cls._providers.items():
+            cb = rec.get("_circuit_breaker")
+            bh = rec.get("_bulkhead")
+            result[name] = {
+                "circuit_breaker": cb.stats() if cb is not None else None,
+                "bulkhead": bh.stats() if bh is not None else None,
+            }
+        return result
 
 
 # ---------------------------------------------------------------------------
