@@ -1,5 +1,84 @@
 # effGen Release Notes
 
+## v0.2.9 — May 23, 2026
+
+**effGen v0.2.9** ships the **Observability & Reliability** layer — everything you need to run effGen agents confidently in production. Structured JSON logs with automatic secret redaction, OpenTelemetry traces with configurable sampling, Prometheus histograms, SLO burn-rate tracking, circuit breakers, bulkheads, jittered retries, a deterministic chaos harness, a Hypothesis-based fuzz suite, a load-testing CLI (`effgen loadtest`), and six Alertmanager-compatible alert rules. All telemetry is async/non-blocking — a failed export never fails inference.
+
+### What's new at a glance
+
+**Structured logging with secret redaction.** `get_logger(__name__)` emits JSON lines with `{ts, level, module, event, attributes, trace_id, span_id}`. A built-in `Redactor` catches OpenAI, Anthropic, Cerebras, Google, HuggingFace, Groq, Bearer token, Slack, and Discord webhook patterns at the encoder — secrets can't slip through any log path.
+
+**Prometheus histograms.** Four new metrics with full label dimensions: `effgen_model_call_latency_seconds{provider,model,outcome}`, `effgen_tool_call_latency_seconds{tool,outcome}`, `effgen_agent_iteration_latency_seconds{preset}`, and `effgen_tokens_total{provider,model,kind}`. The existing `/metrics` endpoint now emits histogram buckets in valid Prometheus text format.
+
+**SLO tracking.** `SLOTracker` maintains a rolling window per SLO (name, target%, window duration). `burn_rate(name)` returns the current error-budget consumption rate. Results are exposed at the `/slo` FastAPI endpoint.
+
+**Configurable tracing samplers.** Choose `AlwaysOn`, `AlwaysOff`, `ParentBased(TraceIdRatio(p))`, or `ParentBased(RateLimited(per_second))` via `ObservabilityConfig`. A canonical span-attribute spec (`effgen/observability/spans.py`) is the single source of truth for all attribute names — no more scattered string literals.
+
+**Reliability primitives.** Four building blocks now wrap every adapter call:
+- **Timeouts** — `ReliabilityConfig.default_timeouts` with `{model_call: 60, tool_call: 30, http: 20}`. Explicit timeouts on every adapter httpx client; audit guard raises if any are missing.
+- **Retries** — `@retryable(Retry(...))` with jittered exponential backoff. Handles 5xx, 429 + Retry-After, transient network errors. Emits OTel `effgen.retry.attempt` events.
+- **Circuit breaker** — `CircuitBreaker` (CLOSED → OPEN → HALF_OPEN) per provider via `CircuitBreakerRegistry`. Isolates a misbehaving provider automatically.
+- **Bulkhead** — `Bulkhead(max_concurrency, queue_size, queue_timeout)` per provider via `BulkheadRegistry`. Prevents one provider from starving others.
+
+**Deterministic chaos harness.** `Chaos(seed)` injects `NetworkTimeout`, `Http5xx`, `Http429`, `SlowResponse`, `PartialResponse`, or `MalformedJSON` faults into the provider middleware. Four canonical scenarios (fallback on 5xx, Retry-After honoured, timeout fires cleanly, AllProvidersFailed no silent empty string) each pass across 10 seeds — 273 tests, all deterministic.
+
+**Fuzz suite.** Hypothesis-based fuzz tests cover all 66 `BaseTool` subclasses (500 examples each), random `ContentPart` message sequences, and the router's provider-availability logic. No unhandled exceptions, no secret leaks across 164 test/500-example combinations.
+
+**Load-testing CLI.** `effgen loadtest --concurrency 10 --duration 30 --scenario fixed` runs a mock or live load test and writes a JSON report with throughput, p50/p95/p99 latency, and error rate.
+
+**Alerting.** `docs/observability/alert_rules.yaml` contains six Alertmanager-compatible rules (error rate, p95 latency, cost burn, SLO fast-burn, SLO slow-burn, circuit-breaker open). `AlertWebhook(url).fire(alert)` posts to Slack or Discord; never raises even if delivery fails.
+
+### CLI quick-start
+
+```bash
+# Run a load test against the mock model
+effgen loadtest --concurrency 10 --duration 30
+
+# Run against Cerebras live
+effgen loadtest --provider cerebras --model llama3.1-8b --concurrency 5 --duration 15
+
+# Check SLOs
+curl http://localhost:8000/slo
+
+# Check Prometheus metrics
+curl http://localhost:8000/metrics | grep effgen_model_call_latency
+```
+
+### Python API quick-start
+
+```python
+from effgen.observability import get_logger
+from effgen.reliability.retry import Retry, retryable
+from effgen.reliability.circuit import CircuitBreaker
+
+log = get_logger(__name__)
+log.event("demo.started")
+
+breaker = CircuitBreaker("my_provider", failure_threshold=5, recovery_timeout=30)
+
+@retryable(Retry(max_attempts=3, base_delay=1.0, jitter=True))
+def call_api():
+    if not breaker.is_call_permitted():
+        raise RuntimeError("circuit open for my_provider")
+    try:
+        result = ...  # your adapter call here
+        breaker.on_success()
+        return result
+    except Exception as exc:
+        breaker.on_failure(exc)
+        raise
+```
+
+### Upgrading from v0.2.8
+
+No breaking API changes. All new modules are additive; existing code is unaffected.
+
+```bash
+pip install --upgrade effgen
+```
+
+---
+
 ## v0.2.8 — May 21, 2026
 
 **effGen v0.2.8** ships first-class **multimodal input** — send images, audio, and video to any capable provider through a single, unified `Message` schema. Six providers (Gemini, OpenAI, Groq, Anthropic, Together, HuggingFace) gain structured multimodal routing with automatic preprocessing, capability-gated error surfaces, a new `multimodal` preset, and five end-to-end cookbook walkthroughs. No breaking API changes.

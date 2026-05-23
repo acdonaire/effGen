@@ -25,6 +25,9 @@
 <a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-31_templates_across_7_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/multimodal/overview.md"><img src="https://img.shields.io/badge/🖼️_Multimodal-image_%2F_audio_%2F_video-FF6B35?style=for-the-badge" alt="Multimodal"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/cookbook/README.md"><img src="https://img.shields.io/badge/📖_Cookbook-5_multimodal_walkthroughs-4CAF50?style=for-the-badge" alt="Cookbook"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/observability/overview.md"><img src="https://img.shields.io/badge/📊_Prometheus_Metrics-histograms_%2B_SLOs-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" alt="Prometheus Metrics"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/observability/tracing.md"><img src="https://img.shields.io/badge/🔭_OTel_Traces-samplers_%2B_span_spec-00B4CE?style=for-the-badge&logo=opentelemetry&logoColor=white" alt="OTel Traces"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/observability/alerting.md"><img src="https://img.shields.io/badge/🔔_SLOs_%26_Alerting-Alertmanager_rules-F5A623?style=for-the-badge" alt="SLOs"/></a>
 
 <!-- Quick Links -->
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
@@ -40,6 +43,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#029---2026-05-23) |
 | 🖼️ | **21 May 2026** | **v0.2.8 Released**: First-class multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#028---2026-05-21) |
 | 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#027---2026-05-20) |
 | 🚀 | **19 May 2026** | **v0.2.6 Released**: 14 new tools — OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook. New presets: `media`, `notify`. 58+ built-in tools total. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#026---2026-05-19) |
@@ -237,10 +241,63 @@ Production API<br/>
 <sub>OpenAI-compat</sub>
 
 </td>
+<td align="center" width="14%">
+
+**📊**<br/>
+Observability<br/>
+<sub>metrics/traces/SLOs</sub>
+
+</td>
 </tr>
 </table>
 
 </div>
+
+---
+
+## 🆕 What's New in v0.2.9
+
+**effGen v0.2.9** ships the full **Observability & Reliability** stack — everything you need to run effGen agents confidently in production. All telemetry is async/non-blocking; a failed export never fails inference. No breaking API changes.
+
+**Structured JSON logging + secret redaction.** `get_logger(__name__)` emits `{ts, level, module, event, attributes, trace_id, span_id}`. Built-in `Redactor` strips OpenAI, Anthropic, Cerebras, Google, HF, Groq, Bearer token, Slack webhook, and Discord webhook secrets at the encoder — no secret can appear in any log file.
+
+**Prometheus histograms.** `effgen_model_call_latency_seconds{provider,model,outcome}`, `effgen_tool_call_latency_seconds{tool,outcome}`, `effgen_agent_iteration_latency_seconds{preset}`, and `effgen_tokens_total{provider,model,kind}` expose histogram buckets at `/metrics`.
+
+**SLO tracking.** `SLOTracker` keeps a rolling-window error budget. `burn_rate(name)` returns the current ratio against target. Exposed at `/slo`.
+
+**Configurable OTel samplers.** `AlwaysOn`, `AlwaysOff`, `TraceIdRatio(p)`, or `RateLimited(per_second)`. Canonical span-attribute spec in `effgen/observability/spans.py`.
+
+**Reliability primitives.** Timeouts (`model_call=60s`, `tool_call=30s`, `http=20s`), jittered `@retryable` with OTel events, per-provider `CircuitBreaker` (CLOSED→OPEN→HALF_OPEN), and `Bulkhead` concurrency limits.
+
+**Chaos harness.** Deterministic fault injection (`NetworkTimeout`, `Http5xx`, `Http429`, `SlowResponse`, `PartialResponse`, `MalformedJSON`) with 4 canonical scenarios × 10 seeds — 273 tests, all deterministic.
+
+**Fuzz suite.** Hypothesis runs 500 examples against all 66 `BaseTool` subclasses, random `ContentPart` sequences, and the router. No unhandled exceptions, no secret leaks.
+
+**`effgen loadtest` CLI.** Run mock or live load tests; get throughput, p50/p95/p99, and error rate as JSON.
+
+**Alertmanager rules.** 6 alert rules (`HighErrorRate`, `HighP95Latency`, `CostBurnHigh`, `SLOFastBurn`, `SLOSlowBurn`, `CircuitBreakerOpen`) in `docs/observability/alert_rules.yaml`. `AlertWebhook(url).fire(alert)` posts to Slack/Discord; never raises on delivery failure.
+
+```bash
+# Load test
+effgen loadtest --concurrency 10 --duration 30
+
+# Check metrics and SLOs
+curl http://localhost:8000/metrics | grep effgen_model_call_latency
+curl http://localhost:8000/slo
+```
+
+```python
+from effgen.observability import get_logger
+from effgen.reliability.retry import Retry, retryable
+
+log = get_logger(__name__)
+log.event("demo.started")
+
+@retryable(Retry(max_attempts=3, base_delay=1.0, jitter=True))
+def call_api(): ...
+```
+
+See [docs/observability/overview.md](https://github.com/ctrl-gaurav/effGen/blob/main/docs/observability/overview.md) for setup.
 
 ---
 

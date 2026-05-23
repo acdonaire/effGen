@@ -21,6 +21,9 @@
 <a href="docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-31_templates_across_7_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
 <a href="docs/multimodal/overview.md"><img src="https://img.shields.io/badge/🖼️_Multimodal-image_%2F_audio_%2F_video-FF6B35?style=for-the-badge" alt="Multimodal"/></a>
 <a href="docs/cookbook/README.md"><img src="https://img.shields.io/badge/📖_Cookbook-5_multimodal_walkthroughs-4CAF50?style=for-the-badge" alt="Cookbook"/></a>
+<a href="docs/observability/overview.md"><img src="https://img.shields.io/badge/📊_Prometheus_Metrics-histograms_%2B_SLOs-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" alt="Prometheus Metrics"/></a>
+<a href="docs/observability/tracing.md"><img src="https://img.shields.io/badge/🔭_OTel_Traces-samplers_%2B_span_spec-00B4CE?style=for-the-badge&logo=opentelemetry&logoColor=white" alt="OTel Traces"/></a>
+<a href="docs/observability/alerting.md"><img src="https://img.shields.io/badge/🔔_SLOs_%26_Alerting-Alertmanager_rules-F5A623?style=for-the-badge" alt="SLOs"/></a>
 
 <!-- Quick Links -->
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
@@ -39,6 +42,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [See changelog](CHANGELOG.md#029---2026-05-23) |
 | 🖼️ | **21 May 2026** | **v0.2.8 Released**: First-class multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [See changelog](CHANGELOG.md#028---2026-05-21) |
 | 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [See changelog](CHANGELOG.md#027---2026-05-20) |
 | 🚀 | **19 May 2026** | **v0.2.6 Released**: 14 new tools — OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook. New presets: `media`, `notify`. 58+ built-in tools total. [See changelog](CHANGELOG.md#026---2026-05-19) |
@@ -272,12 +276,69 @@ Production API<br/>
 <sub>OpenAI-compat</sub>
 
 </td>
+<td align="center" width="14%">
+
+**📊**<br/>
+Observability<br/>
+<sub>metrics/traces/SLOs</sub>
+
+</td>
 </tr>
 </table>
 
 </div>
 
 ---
+
+## 🆕 What's New in v0.2.9
+
+<details open>
+<summary><b>Observability & Reliability — production-ready telemetry in v0.2.9</b></summary>
+
+**effGen v0.2.9** ships the full observability and reliability stack. All telemetry is async/non-blocking — a failed export never fails inference.
+
+**Structured JSON logging with secret redaction.** Every log line is a JSON object: `{ts, level, module, event, attributes, trace_id, span_id}`. The built-in `Redactor` strips OpenAI, Anthropic, Cerebras, Google, HF, Groq, Bearer, Slack, and Discord webhook patterns at the encoder — no secret ever appears in a log file.
+
+```python
+from effgen.observability import get_logger
+log = get_logger(__name__)
+log.event("model.call.started", provider="cerebras", model="llama3.1-8b", cached_tokens=0)
+# → {"ts": "2026-05-23T...", "level": "INFO", "event": "model.call.started", ...}
+```
+
+**Prometheus histograms + SLO tracking.** `effgen_model_call_latency_seconds`, `effgen_tool_call_latency_seconds`, `effgen_agent_iteration_latency_seconds`, and `effgen_tokens_total` now expose histogram buckets at `/metrics`. `SLOTracker` maintains a rolling-window error budget and `burn_rate()` at `/slo`.
+
+**Configurable OTel samplers + canonical span spec.** Choose `AlwaysOn`, `AlwaysOff`, `TraceIdRatio(p)`, or `RateLimited(per_second)` in config. `effgen/observability/spans.py` is the single source of truth for every span attribute name — no more scattered string literals across adapters.
+
+**Reliability primitives.** Four layers now protect every adapter call:
+
+| Primitive | Class | What it does |
+|-----------|-------|-------------|
+| Timeouts | `ReliabilityConfig` | `model_call=60s`, `tool_call=30s`, `http=20s` — explicit on every httpx client |
+| Retries | `@retryable(Retry(...))` | Jittered exponential backoff for 5xx / 429 / network errors; emits OTel events |
+| Circuit breaker | `CircuitBreaker` | CLOSED → OPEN → HALF_OPEN per provider; isolates misbehaving backends |
+| Bulkhead | `Bulkhead` | Per-provider concurrency + queue limit; prevents provider starvation |
+
+**Deterministic chaos harness.** Inject `NetworkTimeout`, `Http5xx`, `Http429`, `SlowResponse`, `PartialResponse`, or `MalformedJSON` faults with `Chaos(seed)`. Four canonical scenarios — fallback on 5xx, Retry-After honoured, timeout fires cleanly, AllProvidersFailed — all pass deterministically across 10 seeds.
+
+**Fuzz suite.** Hypothesis runs 500 examples against all 66 `BaseTool` subclasses, random `ContentPart` message sequences, and the router's provider-availability logic. No unhandled exceptions, no secret leaks.
+
+**Load-testing CLI + Alertmanager rules.**
+
+```bash
+# Run a 30-second load test (JSON report prints to stdout by default)
+effgen loadtest --concurrency 10 --duration 30 --scenario fixed
+
+# Or write the report to a file with --output
+effgen loadtest --concurrency 10 --duration 30 --output report.json
+
+# Integrate with Alertmanager
+cp docs/observability/alert_rules.yaml /etc/prometheus/rules/effgen.yaml
+```
+
+See [docs/observability/overview.md](docs/observability/overview.md) for full setup, [docs/observability/metrics.md](docs/observability/metrics.md) for all metric definitions, and [docs/observability/alerting.md](docs/observability/alerting.md) for Alertmanager integration.
+
+</details>
 
 ## 🆕 What's New in v0.2.8
 

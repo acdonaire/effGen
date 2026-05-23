@@ -7,6 +7,184 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.9] - 2026-05-23
+
+### Highlights
+
+**effGen v0.2.9** is the **Observability & Reliability** release — turning effGen into something you can operate in production. Structured JSON logs with secret redaction, OpenTelemetry tracing with configurable samplers, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, timeout propagation, a deterministic chaos harness, a Hypothesis fuzz suite, a load-testing harness with CLI, and Alertmanager-compatible alert rules ship in this release. No breaking API changes; every telemetry path is async/non-blocking.
+
+### Added
+
+#### Observability — Structured Logging (`effgen/observability/logs.py`)
+
+- **`StructuredFormatter`** — emits JSON lines `{ts, level, module, event, attributes, trace_id, span_id}` with OTel span-context integration. Every log line is structured; no ad-hoc `print()` in critical paths.
+- **`get_logger(__name__)` helper** — `log.event("model.call.started", model=..., cached_tokens=128)` API; module-level structured logger with trace-context injection.
+- **Migration pass** — agent loop, model adapters, router, and tool call sites migrated from ad-hoc `print`/`logger.info` to the structured logger.
+
+#### Observability — Secret Redaction (`effgen/observability/redact.py`)
+
+- **`Redactor`** — built-in patterns for OpenAI (`sk-`), Anthropic (`sk-ant-`), Cerebras (`csk-`), Google (`AIza`), HuggingFace (`hf_`), Groq (`gsk_`), Bearer tokens, Slack webhook URLs, Discord webhook URLs. Replaces with `<REDACTED:openai_key>` etc. User-extensible via `Redactor.add_pattern(name, regex)`.
+- **Applied at the log encoder** — every path is covered; secrets never appear in log output.
+
+#### Observability — Metrics: Histograms + SLO (`effgen/observability/metrics.py`, `effgen/observability/slo.py`)
+
+- **`effgen_model_call_latency_seconds{provider,model,outcome}`** — Histogram (buckets 50 ms–60 s).
+- **`effgen_tool_call_latency_seconds{tool,outcome}`** — Histogram.
+- **`effgen_agent_iteration_latency_seconds{preset}`** — Histogram.
+- **`effgen_tokens_total{provider,model,kind}`** — Counter (kind ∈ input, output, cached).
+- **`SLO(name, target_pct, window_seconds, query)`** and **`SLOTracker`** — rolling-window error-budget tracking. `burn_rate(name)` returns the ratio against target. `/slo` endpoint on the FastAPI server.
+
+#### Observability — Tracing: Sampling + Span Spec (`effgen/observability/tracing.py`, `effgen/observability/spans.py`)
+
+- **Samplers** — `AlwaysOn`, `AlwaysOff`, `ParentBased(TraceIdRatio(p))`, `ParentBased(RateLimited(per_second))` configurable via `ObservabilityConfig.tracing.sampler`. No implicit `head=1.0` in production.
+- **Canonical span-attribute spec** (`effgen/observability/spans.py`) — single source of truth for every attribute name: `effgen.agent.*`, `effgen.model.*`, `effgen.tool.*`, `effgen.router.*`, `effgen.retry.*`.
+- **Span emission** — all adapters, tools, and router decisions emit correct spans with declared attributes; multimodal `effgen.model.parts_count` where relevant.
+
+#### Reliability — Timeouts (`effgen/reliability/timeouts.py`)
+
+- **`ReliabilityConfig.default_timeouts`** — `{model_call: 60, tool_call: 30, http: 20}`. Propagated into adapter `httpx` clients + tool executions.
+- **`with_timeout`, `async_timeout`, `apply_timeout`** wrappers; `audit_no_none_timeouts()` guard. Every adapter missing an explicit timeout fails the timeout audit test.
+
+#### Reliability — Retries (`effgen/reliability/retry.py`)
+
+- **`Retry(max_attempts, base_delay, max_delay, jitter, retryable)`** — configurable policy.
+- **`@retryable(Retry(...))`** decorator with jittered exponential backoff.
+- Emits `effgen.retry.attempt` OTel span event per retry attempt.
+- Default policy: transient network / 5xx / 429 after Retry-After header.
+
+#### Reliability — Circuit Breaker (`effgen/reliability/circuit.py`)
+
+- **`CircuitBreaker(name, failure_threshold, recovery_timeout, half_open_probes)`** — three-state (CLOSED → OPEN → HALF_OPEN) per-provider breaker.
+- **`CircuitBreakerRegistry`** — one breaker per provider, wired into `ProviderRegistry`.
+
+#### Reliability — Bulkhead (`effgen/reliability/bulkhead.py`)
+
+- **`Bulkhead(name, max_concurrency, queue_size, queue_timeout)`** — semaphore-based concurrency limiter with bounded queue, sync + async variants.
+- **`BulkheadRegistry`** — one bulkhead per provider so one misbehaving provider can't starve the others.
+
+#### Chaos Harness (`effgen/reliability/chaos.py`)
+
+- **`Chaos(seed)`** — deterministic fault injection with reproducible outcomes across seeds.
+- **Fault types**: `NetworkTimeout`, `Http5xx`, `Http429(retry_after)`, `SlowResponse(ms)`, `PartialResponse`, `MalformedJSON`.
+- **`registry.with_chaos(Chaos(...))`** — attaches as middleware to `ProviderRegistry`.
+- **4 canonical scenarios** validated: A (5xx fallback), B (429 + Retry-After), C (SlowResponse timeout), D (AllProvidersFailed — no silent empty string).
+
+#### Load-Testing Harness (`effgen/tools/loadgen.py`, `effgen/cli/loadtest.py`)
+
+- **`effgen loadtest`** CLI — concurrency, duration, scenario (fixed/synthetic/multi_tool).
+- Reports throughput, p50/p95/p99 latency, error rate to stdout (JSON) or file.
+- Runs against local mock model by default; `--provider` switches to live inference.
+- Live smoke: 30 s, c=10, mock model → ~69 k req, 0% error, p95 ≈ 4.3 ms.
+
+#### Alerting (`effgen/observability/alerting.py`, `docs/observability/alert_rules.yaml`)
+
+- **6 Alertmanager-compatible rules**: `HighErrorRate` (>5% for 10 min), `HighP95Latency` (>10 s for 5 min), `CostBurnHigh` (>$10/day), `SLOFastBurn` (>14.4× error budget), `SLOSlowBurn`, `CircuitBreakerOpen`.
+- **`AlertWebhook(url).fire(alert)`** — posts to Slack/Discord via Phase v0.2.6 webhook tools; generic `httpx` fallback; non-raising (fire never throws).
+- Webhook URL redacted in logs.
+
+#### Documentation (`docs/observability/`)
+
+- `overview.md` — architecture, quickstart, configuration reference.
+- `metrics.md` — all metrics with label dimensions and bucket definitions.
+- `tracing.md` — sampler selection guide, span attribute spec.
+- `alerting.md` — Alertmanager integration, webhook configuration.
+- `loadtest.md` — load-testing harness guide with examples.
+
+### Tests Added
+
+| File | Coverage |
+|------|----------|
+| `tests/observability/test_logs.py` | JSON shape, trace_id propagation, 26 tests |
+| `tests/observability/test_redact.py` | Every pattern on known fixtures, 37 tests |
+| `tests/observability/test_metrics.py` | Histograms, counters, Prometheus text format |
+| `tests/observability/test_slo.py` | Rolling-window math, burn-rate formula |
+| `tests/observability/test_tracing.py` | In-memory span exporter, 3-tool agent span tree |
+| `tests/reliability/test_timeouts.py` | Timeout wrappers, adapter audit (0 `timeout=None` violations) |
+| `tests/reliability/test_retry.py` | Jitter, backoff, Retry-After, OTel event emission |
+| `tests/reliability/test_circuit.py` | CLOSED→OPEN→HALF_OPEN state machine |
+| `tests/reliability/test_bulkhead.py` | Concurrency limits, queue overflow, sync + async |
+| `tests/reliability/test_chaos.py` | 4 scenarios × 10 seeds, 273 tests — all deterministic |
+| `tests/fuzz/test_tool_fuzz.py` | All 66 BaseTool subclasses × 500 examples, no secret leaks |
+| `tests/fuzz/test_message_fuzz.py` | Random ContentPart sequences, no unhandled exceptions |
+| `tests/fuzz/test_router_fuzz.py` | Random availability + capabilities → valid decision or NoEligibleProvider |
+| `tests/tools/test_loadgen.py` | Loadgen library + CLI, 47 tests |
+| `tests/observability/test_alerting.py` | Alert rules, AlertWebhook, 34 tests |
+
+### Validation Results
+
+| Check | Result |
+|-------|--------|
+| `effgen.__version__` | **0.2.9** |
+| Every log line in `agent.run()` | JSON + no raw secrets ✓ |
+| `/metrics` scrape | Prometheus-valid histograms ✓ |
+| SLO burn-rate math | Spot-checked against rolling-window fixtures ✓ |
+| Span tree (Calculator+WebSearch, 3-tool) | All declared attributes present ✓ |
+| Timeout audit | 0 `timeout=None` violations in source ✓ |
+| Breaker CLOSED→OPEN→HALF_OPEN | Verified across synthetic faults ✓ |
+| Bulkhead concurrency limit | Verified sync + async ✓ |
+| Chaos Scenario A–D × 10 seeds | 273/273 pass, deterministic ✓ |
+| Fuzz × 500 examples per test | 164/164 pass, no unhandled exceptions ✓ |
+| Load harness mock smoke (c=10, 30 s) | ~69 k req, 0% error, p95 ≈ 4.3 ms ✓ |
+| Alert rules YAML | Syntactically valid, 6 rules ✓ |
+| Regression suite | All prior tests pass (p=1300+, f=0) ✓ |
+| Wheel build | `effgen-0.2.9-py3-none-any.whl` built cleanly ✓ |
+| Wheel smoke | `python -c "import effgen; assert effgen.__version__ == '0.2.9'"` ✓ |
+
+### Upgrading from v0.2.8
+
+No breaking API changes. All observability and reliability features are additive.
+
+```bash
+pip install --upgrade effgen
+```
+
+#### Observability Quick Start
+
+```python
+from effgen.observability import get_logger
+from effgen.observability import record_model_call, export_metrics
+from effgen.observability.slo import SLOTracker, SLO
+
+log = get_logger(__name__)
+log.event("agent.started", preset="general", model="llama3.1-8b")
+
+# Histograms auto-record on agent/model/tool calls; you can also record directly:
+record_model_call(provider="cerebras", model="llama3.1-8b", outcome="ok", latency=0.42)
+print(export_metrics())  # Prometheus text format
+
+tracker = SLOTracker()
+tracker.register(SLO("model_success", target_pct=99.0, window_seconds=3600))
+tracker.record("model_success", ok=True)
+print(tracker.burn_rate("model_success"))  # e.g. 0.0 when all calls succeed
+```
+
+#### Reliability Quick Start
+
+```python
+from effgen.reliability.retry import Retry, retryable
+from effgen.reliability.circuit import CircuitBreaker
+from effgen.reliability.bulkhead import Bulkhead
+
+@retryable(Retry(max_attempts=3, base_delay=0.5, jitter=True))
+def call_model(prompt):
+    ...
+
+breaker = CircuitBreaker("cerebras", failure_threshold=5, recovery_timeout=30)
+if breaker.is_call_permitted():
+    try:
+        result = call_model("hello")
+        breaker.on_success()
+    except Exception as exc:
+        breaker.on_failure(exc)
+        raise
+
+bulkhead = Bulkhead("cerebras", max_concurrency=10, queue_size=50)
+with bulkhead.acquire():
+    call_model("hello")
+```
+
+---
+
 ## [0.2.8] - 2026-05-21
 
 ### Highlights
