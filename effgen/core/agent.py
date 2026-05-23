@@ -33,6 +33,15 @@ from ..memory.short_term import MessageRole, ShortTermMemory
 from ..models.base import BaseModel, GenerationConfig
 from ..models.model_loader import ModelLoader
 from ..observability import get_logger as _get_obs_logger
+from ..observability.spans import AgentAttrs, ModelAttrs, ToolAttrs
+from ..observability.tracing import (
+    set_span_attribute,
+    set_span_error,
+    start_agent_iteration,
+    start_agent_run,
+    start_model_call,
+    start_tool_call,
+)
 from ..prompts.agent_system_prompt import AgentSystemPromptBuilder
 from ..prompts.tool_prompt_generator import ToolPromptGenerator
 from ..tools.base_tool import BaseTool, ToolCategory
@@ -43,14 +52,6 @@ from ..utils.structured_logging import (
     LogRunContext,
     generate_run_id,
     get_structured_logger,
-)
-from ..utils.tracing import (
-    set_span_attribute,
-    set_span_error,
-    trace_agent_iterate,
-    trace_agent_run,
-    trace_model_generate,
-    trace_tool_execute,
 )
 from .execution_tracker import EventType, ExecutionEvent, ExecutionTracker
 from .router import RoutingDecision, RoutingStrategy, SubAgentRouter
@@ -65,6 +66,54 @@ logger = logging.getLogger(__name__)
 _slog = get_structured_logger(__name__)
 # Canonical structured observability logger — emits redacted JSON lines with OTel context
 _obs_log = _get_obs_logger(__name__)
+
+
+_PROVIDER_BY_CLASS_PREFIX: dict[str, str] = {
+    "OpenAI": "openai",
+    "Cerebras": "cerebras",
+    "Gemini": "google",
+    "Anthropic": "anthropic",
+    "Groq": "groq",
+    "Together": "together",
+    "Fireworks": "fireworks",
+    "HFInference": "hf_inference",
+    "Replicate": "replicate",
+    "MLXVLM": "mlx_vlm",
+}
+
+
+def _infer_provider_from_model(model: Any, model_name: str | None = None) -> str:
+    """
+    Best-effort provider inference from a model instance.
+
+    Order of preference:
+    1. ``model.provider`` / ``model.provider_name`` attribute if present.
+    2. Class-name prefix mapping (``OpenAIAdapter`` → ``openai``).
+    3. Heuristic mapping from the model identifier string.
+    4. ``"unknown"``.
+    """
+    if model is None:
+        return "unknown"
+    for attr in ("provider", "provider_name"):
+        val = getattr(model, attr, None)
+        if isinstance(val, str) and val:
+            return val
+    cls_name = type(model).__name__
+    for prefix, provider in _PROVIDER_BY_CLASS_PREFIX.items():
+        if cls_name.startswith(prefix):
+            return provider
+    m = (model_name or "").lower()
+    if m.startswith(("gpt-", "o1", "o3", "o4", "text-")):
+        return "openai"
+    if m.startswith(("gemini", "models/gemini")):
+        return "google"
+    if m.startswith(("claude", "anthropic")):
+        return "anthropic"
+    if "llama" in m or "qwen" in m or m.startswith("cerebras"):
+        return "cerebras"
+    if m.startswith(("mixtral", "mistral")):
+        return "groq"
+    return "unknown"
 
 
 class AgentMode(Enum):
@@ -694,7 +743,7 @@ Question: {task}
         ))
 
         # Wrap entire run in tracing span + structured log context
-        with trace_agent_run(self.name, task, run_id=run_id) as _span, \
+        with start_agent_run(preset=self.name, task=task, run_id=run_id) as _span, \
              LogRunContext(run_id=run_id, agent_name=self.name):
             _slog.agent_event(self.name, "task_start", task=task[:200], mode=mode.value, run_id=run_id)
             _obs_log.agent_event("run.started", agent=self.name, task=task[:200], mode=mode.value, run_id=run_id)
@@ -764,7 +813,8 @@ Question: {task}
                     prom_metrics.token_usage.observe(response.tokens_used, labels=labels)
                     prom_metrics.tokens_used.inc(response.tokens_used, labels=labels)
 
-                # Tracing span attributes
+                # Tracing span attributes (using span constants)
+                set_span_attribute(AgentAttrs.RUN_ID, run_id or "")
                 set_span_attribute("effgen.tokens_used", response.tokens_used)
                 set_span_attribute("effgen.tool_calls", response.tool_calls)
                 set_span_attribute("effgen.success", response.success)
@@ -1149,10 +1199,24 @@ Question: {task}
             ))
 
             # Generate response inside tracing span
-            with trace_agent_iterate(self.name, iterations):
+            with start_agent_iteration(preset=self.name, iteration=iterations):
                 model_name = getattr(self, "model_name", None) or "unknown"
-                with trace_model_generate(model_name):
+                provider = _infer_provider_from_model(self.model, model_name)
+                with start_model_call(provider=provider, model=model_name) as _mspan:
                     response = self._generate(prompt, **gen_kwargs)
+                    # Annotate span with token counts from response
+                    _meta = response.get("metadata") or {}
+                    _in_tok = _meta.get("prompt_tokens", 0) or 0
+                    _out_tok = response.get("tokens_used", 0) or 0
+                    _cached = _meta.get("cached_input_tokens", 0) or 0
+                    try:
+                        _mspan.set_attribute(ModelAttrs.INPUT_TOKENS, int(_in_tok))
+                        _mspan.set_attribute(ModelAttrs.OUTPUT_TOKENS, int(_out_tok))
+                        if _cached:
+                            _mspan.set_attribute(ModelAttrs.CACHED_TOKENS, int(_cached))
+                        _mspan.set_attribute(ModelAttrs.OUTCOME, "ok" if response.get("finish_reason") != "error" else "error")
+                    except Exception:
+                        pass
                 iter_tokens = response.get("tokens_used", 0)
                 tokens_used += iter_tokens
 
@@ -1203,7 +1267,12 @@ Question: {task}
                         except (json.JSONDecodeError, TypeError):
                             _targs = {"__raw_input__": _targs}
                     if _tname in self.tools:
-                        _obs = self._execute_tool(_tname, json.dumps(_targs))
+                        with start_tool_call(tool_name=_tname, tool_input=str(_targs)[:500]) as _btspan:
+                            _obs = self._execute_tool(_tname, json.dumps(_targs))
+                            try:
+                                _btspan.set_attribute(ToolAttrs.STATUS, "ok")
+                            except Exception:
+                                pass
                         tool_calls += 1
                         batch_observations.append(f"[{_tname}({_targs})] → {_obs}")
                         scratchpad += f"\nAction: {_tname}\nAction Input: {json.dumps(_targs)}\nObservation: {_obs}"
@@ -1374,8 +1443,12 @@ Question: {task}
                 else:
                     # Execute tool inside tracing span
                     tool_start = time.time()
-                    with trace_tool_execute(action, action_input):
+                    with start_tool_call(tool_name=action, tool_input=str(action_input)) as _tspan:
                         tool_result = self._execute_tool(action, action_input)
+                        try:
+                            _tspan.set_attribute(ToolAttrs.STATUS, "ok")
+                        except Exception:
+                            pass
                     tool_elapsed = time.time() - tool_start
                     tool_calls += 1
                     cur_observation = tool_result

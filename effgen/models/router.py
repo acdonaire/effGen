@@ -33,6 +33,8 @@ from effgen.models.capabilities import (
     estimate_capability,
 )
 from effgen.observability import get_logger as _get_obs_logger
+from effgen.observability.spans import RouterAttrs
+from effgen.observability.tracing import start_router_decision
 
 logger = logging.getLogger(__name__)
 _obs_log = _get_obs_logger(__name__)
@@ -346,33 +348,60 @@ class PolicyBasedRouter:
         if blocklist:
             candidates = [c for c in candidates if c not in blocklist]
         last_error: NoCandidateError | None = None
-        for policy in self._policies:
+
+        # Determine the policy name for the span (first non-fallback policy or "fallback")
+        _policy_names = [p.name for p in self._policies] or ["fallback"]
+        _candidate_pairs: list[tuple[str, str]] = [(c.provider, c.model_id) for c in candidates]
+
+        with start_router_decision(
+            policy=_policy_names[0],
+            candidates=_candidate_pairs,
+        ) as _rspan:
             try:
-                decision = policy.select(candidates, context)
+                _rspan.set_attribute(RouterAttrs.POLICY, _policy_names[0])
+                _rspan.set_attribute(RouterAttrs.ELIMINATED_COUNT, 0)
+            except Exception:
+                pass
+
+            for policy in self._policies:
+                try:
+                    decision = policy.select(candidates, context)
+                    _obs_log.router_event(
+                        "decision",
+                        policy=policy.name,
+                        selected_provider=decision.chosen.provider,
+                        selected_model=decision.chosen.model_id,
+                        candidates_considered=len(candidates),
+                    )
+                    try:
+                        _rspan.set_attribute(RouterAttrs.POLICY, policy.name)
+                        _rspan.set_attribute(RouterAttrs.SELECTED_PROVIDER, decision.chosen.provider)
+                        _rspan.set_attribute(RouterAttrs.ELIMINATED_COUNT, len(decision.eliminated))
+                    except Exception:
+                        pass
+                    return decision
+                except NoCandidateError as exc:
+                    last_error = exc
+                    logger.debug("Policy %r found no candidate: %s", policy.name, exc)
+            try:
+                decision = self._fallback.select(candidates, context)
                 _obs_log.router_event(
                     "decision",
-                    policy=policy.name,
+                    policy="fallback",
                     selected_provider=decision.chosen.provider,
                     selected_model=decision.chosen.model_id,
                     candidates_considered=len(candidates),
                 )
+                try:
+                    _rspan.set_attribute(RouterAttrs.POLICY, "fallback")
+                    _rspan.set_attribute(RouterAttrs.SELECTED_PROVIDER, decision.chosen.provider)
+                    _rspan.set_attribute(RouterAttrs.ELIMINATED_COUNT, len(decision.eliminated))
+                except Exception:
+                    pass
                 return decision
-            except NoCandidateError as exc:
-                last_error = exc
-                logger.debug("Policy %r found no candidate: %s", policy.name, exc)
-        try:
-            decision = self._fallback.select(candidates, context)
-            _obs_log.router_event(
-                "decision",
-                policy="fallback",
-                selected_provider=decision.chosen.provider,
-                selected_model=decision.chosen.model_id,
-                candidates_considered=len(candidates),
-            )
-            return decision
-        except NoCandidateError:
-            _obs_log.router_event("no_candidate", candidates_considered=len(candidates))
-            raise last_error or NoCandidateError("No provider available for the given context")
+            except NoCandidateError:
+                _obs_log.router_event("no_candidate", candidates_considered=len(candidates))
+                raise last_error or NoCandidateError("No provider available for the given context")
 
     def route_and_execute(
         self,

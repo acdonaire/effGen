@@ -34,6 +34,8 @@ from effgen.models.cerebras_models import (
 from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.latency_tracker import timed_call
 from effgen.observability import get_logger as _get_obs_logger
+from effgen.observability.spans import ModelAttrs
+from effgen.observability.tracing import set_span_attribute as _set_span_attr
 
 if TYPE_CHECKING:
     from effgen.models._rate_limit_store import SQLiteRateLimitStore
@@ -451,6 +453,13 @@ class CerebrasAdapter(BaseModel):
             total_tokens=total_tokens,
             cost_usd=cost,
         )
+        # Emit span attributes on the current active span
+        _set_span_attr(ModelAttrs.PROVIDER, "cerebras")
+        _set_span_attr(ModelAttrs.NAME, self.model_name)
+        _set_span_attr(ModelAttrs.INPUT_TOKENS, prompt_tokens)
+        _set_span_attr(ModelAttrs.OUTPUT_TOKENS, completion_tokens)
+        _set_span_attr(ModelAttrs.COST_USD, float(cost))
+        _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
         return GenerationResult(
             text=text,

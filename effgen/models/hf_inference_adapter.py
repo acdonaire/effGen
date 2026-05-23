@@ -59,6 +59,8 @@ from effgen.models.hf_inference_models import (
     suggest_alternatives,
 )
 from effgen.models.latency_tracker import timed_call
+from effgen.observability.spans import ModelAttrs
+from effgen.observability.tracing import set_span_attribute as _set_span_attr
 
 if TYPE_CHECKING:
     from effgen.models._rate_limit_store import SQLiteRateLimitStore
@@ -748,6 +750,13 @@ class HFInferenceAdapter(BaseModel):
                 "total_tokens": total_tokens,
             },
         }
+
+        _set_span_attr(ModelAttrs.PROVIDER, "hf_inference")
+        _set_span_attr(ModelAttrs.NAME, self.model_name)
+        _set_span_attr(ModelAttrs.INPUT_TOKENS, input_tokens)
+        _set_span_attr(ModelAttrs.OUTPUT_TOKENS, output_tokens)
+        _set_span_attr(ModelAttrs.COST_USD, float(cost_usd or 0.0))
+        _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
         return GenerationResult(
             text=text,

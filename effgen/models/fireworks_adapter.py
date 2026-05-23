@@ -34,6 +34,8 @@ from effgen.models.fireworks_models import (
     REGISTRY_FETCH_DATE,
 )
 from effgen.models.latency_tracker import timed_call
+from effgen.observability.spans import ModelAttrs
+from effgen.observability.tracing import set_span_attribute as _set_span_attr
 
 if TYPE_CHECKING:
     from effgen.models._rate_limit_store import SQLiteRateLimitStore
@@ -447,6 +449,12 @@ class FireworksAdapter(BaseModel):
             "Fireworks generated %d tokens (prompt=%d, completion=%d, cost=$%.6f)",
             total_tokens, prompt_tokens, completion_tokens, cost,
         )
+        _set_span_attr(ModelAttrs.PROVIDER, "fireworks")
+        _set_span_attr(ModelAttrs.NAME, self.model_name)
+        _set_span_attr(ModelAttrs.INPUT_TOKENS, prompt_tokens)
+        _set_span_attr(ModelAttrs.OUTPUT_TOKENS, completion_tokens)
+        _set_span_attr(ModelAttrs.COST_USD, float(cost))
+        _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
         return GenerationResult(
             text=text,

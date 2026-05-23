@@ -49,6 +49,8 @@ from effgen.models.openai_models import (
     supports_vision,
 )
 from effgen.observability import get_logger as _get_obs_logger
+from effgen.observability.spans import ModelAttrs
+from effgen.observability.tracing import set_span_attribute as _set_span_attr
 
 # Always show token/cost breakdown at INFO level
 _USAGE_LOG = logging.getLogger(__name__ + ".usage")
@@ -597,6 +599,15 @@ class OpenAIAdapter(FunctionCallingModel):
             cached_tokens=cached_tokens,
             cost_usd=cost,
         )
+        # Emit span attributes on the current active span (set by agent loop or adapter tests)
+        _set_span_attr(ModelAttrs.PROVIDER, "openai")
+        _set_span_attr(ModelAttrs.NAME, self.model_name)
+        _set_span_attr(ModelAttrs.INPUT_TOKENS, prompt_tokens)
+        _set_span_attr(ModelAttrs.OUTPUT_TOKENS, completion_tokens)
+        if cached_tokens:
+            _set_span_attr(ModelAttrs.CACHED_TOKENS, cached_tokens)
+        _set_span_attr(ModelAttrs.COST_USD, float(cost))
+        _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
         return GenerationResult(
             text=generated_text,

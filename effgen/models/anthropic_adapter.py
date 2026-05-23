@@ -36,6 +36,8 @@ from effgen.models.base import (
 )
 from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.latency_tracker import timed_call
+from effgen.observability.spans import ModelAttrs
+from effgen.observability.tracing import set_span_attribute as _set_span_attr
 
 logger = logging.getLogger(__name__)
 
@@ -460,6 +462,16 @@ class AnthropicAdapter(FunctionCallingModel):
                 metadata["thinking"] = thinking
             if redacted:
                 metadata["redacted_thinking"] = redacted
+
+            # Emit span attributes on the current active span
+            _set_span_attr(ModelAttrs.PROVIDER, "anthropic")
+            _set_span_attr(ModelAttrs.NAME, self.model_name)
+            _set_span_attr(ModelAttrs.INPUT_TOKENS, prompt_tokens)
+            _set_span_attr(ModelAttrs.OUTPUT_TOKENS, completion_tokens)
+            if cached_input:
+                _set_span_attr(ModelAttrs.CACHED_TOKENS, cached_input)
+            _set_span_attr(ModelAttrs.COST_USD, float(cost))
+            _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
             return GenerationResult(
                 text=text,

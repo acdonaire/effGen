@@ -1,5 +1,5 @@
 """
-effGen Observability -- structured logging, secret redaction, metrics, and SLOs.
+effGen Observability -- structured logging, secret redaction, metrics, SLOs, and tracing.
 
 Quick start
 -----------
@@ -29,12 +29,24 @@ Quick start
     tracker.record("model_call_success", ok=True)
     print(tracker.burn_rate("model_call_success"))
 
+    # Tracing (OTel samplers + spans):
+    from effgen.observability import (
+        setup_tracing, ParentBasedSampler, TraceIdRatioSampler,
+        start_agent_run, start_model_call, start_tool_call,
+    )
+    setup_tracing(sampler=ParentBasedSampler(TraceIdRatioSampler(0.1)))
+    with start_agent_run(preset="my_agent", task="hello") as span:
+        with start_model_call(provider="cerebras", model="llama3.1-8b") as mspan:
+            ...
+
 Sub-modules
 -----------
 - effgen.observability.logs    -- StructuredFormatter and EffGenLogger
 - effgen.observability.redact  -- Redactor and get_redactor
 - effgen.observability.metrics -- Prometheus histograms + counters
 - effgen.observability.slo     -- SLO and SLOTracker
+- effgen.observability.tracing -- OTel samplers + span context managers
+- effgen.observability.spans   -- Span attribute constants
 """
 
 from .logs import (
@@ -64,6 +76,33 @@ from .metrics import (
 from .redact import Redactor, get_redactor
 from .slo import SLO, SLOTracker
 from .slo import get_tracker as get_slo_tracker
+from .spans import (
+    AgentAttrs,
+    ModelAttrs,
+    RetryAttrs,
+    RouterAttrs,
+    SpanName,
+    ToolAttrs,
+)
+from .tracing import (
+    AlwaysOffSampler,
+    AlwaysOnSampler,
+    ParentBasedSampler,
+    RateLimitedSampler,
+    TraceIdRatioSampler,
+    get_tracer,
+    record_retry_attempt,
+    reset_tracing,
+    set_span_attribute,
+    set_span_error,
+    setup_tracing,
+    shutdown_tracing,
+    start_agent_iteration,
+    start_agent_run,
+    start_model_call,
+    start_router_decision,
+    start_tool_call,
+)
 
 
 def get_logger(name: str) -> "EffGenLogger":
@@ -119,4 +158,29 @@ __all__ = [
     "SLO",
     "SLOTracker",
     "get_slo_tracker",
+    # Tracing (Phase 3)
+    "setup_tracing",
+    "shutdown_tracing",
+    "reset_tracing",
+    "get_tracer",
+    "AlwaysOnSampler",
+    "AlwaysOffSampler",
+    "TraceIdRatioSampler",
+    "RateLimitedSampler",
+    "ParentBasedSampler",
+    "start_agent_run",
+    "start_agent_iteration",
+    "start_model_call",
+    "start_tool_call",
+    "start_router_decision",
+    "record_retry_attempt",
+    "set_span_error",
+    "set_span_attribute",
+    # Span attribute constants (Phase 3)
+    "SpanName",
+    "AgentAttrs",
+    "ModelAttrs",
+    "ToolAttrs",
+    "RouterAttrs",
+    "RetryAttrs",
 ]

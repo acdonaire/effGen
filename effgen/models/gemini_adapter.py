@@ -38,6 +38,8 @@ from effgen.models.gemini_models import (
     GEMINI_MODELS,
 )
 from effgen.models.latency_tracker import timed_call
+from effgen.observability.spans import ModelAttrs
+from effgen.observability.tracing import set_span_attribute as _set_span_attr
 
 logger = logging.getLogger(__name__)
 
@@ -735,6 +737,16 @@ class GeminiAdapter(FunctionCallingModel):
             }
             if thinking_text:
                 metadata["thinking"] = thinking_text
+
+            # Emit span attributes on the current active span
+            _set_span_attr(ModelAttrs.PROVIDER, "google")
+            _set_span_attr(ModelAttrs.NAME, self.model_name)
+            _set_span_attr(ModelAttrs.INPUT_TOKENS, prompt_tokens)
+            _set_span_attr(ModelAttrs.OUTPUT_TOKENS, completion_tokens)
+            _set_span_attr(ModelAttrs.COST_USD, float(cost))
+            _set_span_attr(ModelAttrs.OUTCOME, "ok")
+            if thoughts_tokens:
+                _set_span_attr(ModelAttrs.THINKING_BUDGET, thoughts_tokens)
 
             return GenerationResult(
                 text=generated_text,
