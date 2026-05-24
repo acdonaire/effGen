@@ -119,6 +119,238 @@ class TransformersEngine(BatchModel):
         self.model = None
         self.tokenizer = None
         self.device = None
+        # Set after a CUDA device-side assert; reloads weights on GPU 0 only.
+        self._pin_device_map_for_cuda = False
+        self._retrying_after_cuda_assert = False
+
+    @staticmethod
+    def _is_cuda_device_side_assert(exc: BaseException) -> bool:
+        """True when CUDA sampling/forward failed with a device-side assert."""
+        msg = str(exc).lower()
+        return (
+            "device-side assert" in msg
+            or "cudaerrorassert" in msg
+            or "probability tensor contains" in msg
+        )
+
+    def _effective_device_map(self) -> str | dict[str, int]:
+        """Device map for from_pretrained; pin to GPU 0 only after a CUDA assert."""
+        if self.device == "cuda" and self._pin_device_map_for_cuda:
+            return {"": 0}
+        return self.device_map
+
+    def _assemble_model_kwargs(
+        self, quantization_config: BitsAndBytesConfig | None
+    ) -> dict[str, Any]:
+        """Build kwargs dict for AutoModelForCausalLM.from_pretrained."""
+        model_kwargs: dict[str, Any] = {
+            "pretrained_model_name_or_path": self.model_name,
+            "trust_remote_code": self.trust_remote_code,
+            "low_cpu_mem_usage": self.low_cpu_mem_usage,
+        }
+
+        if quantization_config is not None:
+            model_kwargs["quantization_config"] = quantization_config
+        else:
+            import transformers
+            if hasattr(transformers, 'VERSION') or int(transformers.__version__.split('.')[0]) >= 5:
+                model_kwargs["dtype"] = self.torch_dtype
+            else:
+                model_kwargs["torch_dtype"] = self.torch_dtype
+
+        if self.device == "cuda":
+            model_kwargs["device_map"] = self._effective_device_map()
+            if self.max_memory:
+                model_kwargs["max_memory"] = self.max_memory
+            if self.offload_folder:
+                model_kwargs["offload_folder"] = self.offload_folder
+
+        if self.use_flash_attention:
+            model_kwargs["attn_implementation"] = "flash_attention_2"
+
+        model_kwargs.update(self.additional_kwargs)
+        return model_kwargs
+
+    def _from_pretrained_with_flash_fallback(self, model_kwargs: dict[str, Any]) -> None:
+        """Load self.model, falling back to standard attention if Flash Attention fails."""
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', message='.*FlashAttention.*')
+                warnings.filterwarnings('ignore', message='.*flash_attn.*')
+                self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
+        except Exception as e:
+            if self.use_flash_attention and "flash" in str(e).lower():
+                logger.info("Flash Attention not available, using standard attention")
+                model_kwargs.pop("attn_implementation", None)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', message='.*FlashAttention.*')
+                    warnings.filterwarnings('ignore', message='.*flash_attn.*')
+                    self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
+            else:
+                raise
+
+    def _load_model_weights(
+        self, quantization_config: BitsAndBytesConfig | None = None
+    ) -> None:
+        """Load or reload causal LM weights (tokenizer must already be loaded)."""
+        if quantization_config is None and self.quantization_bits is not None:
+            quantization_config = self._create_quantization_config()
+
+        model_kwargs = self._assemble_model_kwargs(quantization_config)
+        self._from_pretrained_with_flash_fallback(model_kwargs)
+
+        if "device_map" not in model_kwargs and self.device != "cpu":
+            self.model = self.model.to(self.device)
+
+        self.model.eval()
+
+    def _drop_model_weights(self) -> None:
+        """Free model weights and CUDA cache without unloading the tokenizer."""
+        if self.model is not None:
+            try:
+                from accelerate.hooks import remove_hook_from_module
+                remove_hook_from_module(self.model, recurse=True)
+            except Exception:
+                pass
+            del self.model
+            self.model = None
+
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+    def _last_logits_look_valid(self, logits: torch.Tensor) -> bool:
+        """Heuristic: invalid logits from device_map='auto' precede CUDA sampling asserts."""
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            return False
+        return float(logits.max()) > 10.0
+
+    def _probe_auto_device_map_logits(self) -> bool:
+        """
+        Return True if a short forward pass produces plausible logits.
+
+        device_map='auto' can shard across GPUs and yield broken logits; sampling
+        then triggers a CUDA device-side assert. Probing avoids poisoning CUDA.
+        """
+        if self.model is None or self.tokenizer is None:
+            return True
+
+        probe_prompt = self.tokenizer.apply_chat_template(
+            [{"role": "user", "content": "hi"}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        probe_inputs = self.tokenizer(
+            probe_prompt, return_tensors="pt", truncation=True, max_length=64
+        )
+        if self.device != "cpu":
+            probe_inputs = {
+                k: v.to(self.model.device) for k, v in probe_inputs.items()
+            }
+
+        with torch.no_grad():
+            probe_out = self.model(
+                input_ids=probe_inputs["input_ids"],
+                attention_mask=probe_inputs.get("attention_mask"),
+            )
+        last_logits = probe_out.logits[:, -1, :]
+        return self._last_logits_look_valid(last_logits)
+
+    def _apply_cuda_device_map_pin_fallback(self, *, reason: str) -> None:
+        """Reload weights on GPU 0 (device_map={'': 0})."""
+        if self._pin_device_map_for_cuda:
+            return
+
+        self._pin_device_map_for_cuda = True
+        logger.warning("%s Reloading on GPU 0 (device_map={'': 0}).", reason)
+        self._drop_model_weights()
+        try:
+            self._load_model_weights()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to reload model after pinning to GPU 0: {exc}"
+            ) from exc
+        if self.model is None:
+            raise RuntimeError("Model reload after GPU pin produced no model.")
+        if getattr(self, "_metadata", None):
+            self._metadata["num_parameters"] = self.model.num_parameters()
+
+    def _ensure_device_map_viable_before_sampling(self) -> None:
+        """
+        Pin to GPU 0 when device_map='auto' would cause a CUDA device-side assert.
+
+        A CUDA assert poisons the GPU context, so recovery must happen before
+        sampling (detected via a forward-pass probe), not after.
+        """
+        if (
+            self._pin_device_map_for_cuda
+            or self.device != "cuda"
+            or self.device_map != "auto"
+        ):
+            return
+
+        try:
+            logits_ok = self._probe_auto_device_map_logits()
+        except Exception as exc:
+            if self._is_cuda_device_side_assert(exc):
+                logits_ok = False
+            else:
+                logger.warning("device_map probe failed (%s); continuing.", exc)
+                return
+
+        if logits_ok:
+            return
+
+        self._apply_cuda_device_map_pin_fallback(
+            reason=(
+                f"device_map='auto' produced invalid logits on this system "
+                f"(would cause a CUDA device-side assert during sampling)."
+            ),
+        )
+
+    def _maybe_retry_after_cuda_assert(self, exc: BaseException, operation):
+        """
+        Retry generation after detecting a CUDA device-side assert.
+
+        If the GPU context is already poisoned, reload is not possible in-process;
+        callers must restart the Python process.
+        """
+        if self._retrying_after_cuda_assert or not self._is_cuda_device_side_assert(exc):
+            raise exc
+
+        if self._pin_device_map_for_cuda:
+            raise RuntimeError(
+                "CUDA device-side assert during generation. The GPU context is no "
+                "longer usable in this process — restart Python, or load with "
+                "device_map={'': 0} / CUDA_VISIBLE_DEVICES=0."
+            ) from exc
+
+        self._retrying_after_cuda_assert = True
+        try:
+            self._apply_cuda_device_map_pin_fallback(
+                reason=(
+                    f"CUDA device-side assert during generation with "
+                    f"device_map={self.device_map!r}."
+                ),
+            )
+            return operation()
+        except Exception as retry_exc:
+            if self._is_cuda_device_side_assert(retry_exc) or self.model is None:
+                raise RuntimeError(
+                    "CUDA device-side assert during generation. Restart the Python "
+                    "process, or set CUDA_VISIBLE_DEVICES=0 before loading."
+                ) from exc
+            raise
+        finally:
+            self._retrying_after_cuda_assert = False
 
     def load(self) -> None:
         """
@@ -170,69 +402,7 @@ class TransformersEngine(BatchModel):
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-            # Build model loading arguments
-            model_kwargs = {
-                "pretrained_model_name_or_path": self.model_name,
-                "trust_remote_code": self.trust_remote_code,
-                "low_cpu_mem_usage": self.low_cpu_mem_usage,
-            }
-
-            # Add quantization config if using quantization
-            if quantization_config is not None:
-                model_kwargs["quantization_config"] = quantization_config
-                # Don't set dtype when quantizing
-            else:
-                # transformers v5+ uses 'dtype', v4.x uses 'torch_dtype'
-                import transformers
-                if hasattr(transformers, 'VERSION') or int(transformers.__version__.split('.')[0]) >= 5:
-                    model_kwargs["dtype"] = self.torch_dtype
-                else:
-                    model_kwargs["torch_dtype"] = self.torch_dtype
-
-            # Add device map for multi-GPU or CPU offloading
-            if self.device == "cuda":
-                model_kwargs["device_map"] = self.device_map
-
-                if self.max_memory:
-                    model_kwargs["max_memory"] = self.max_memory
-
-                if self.offload_folder:
-                    model_kwargs["offload_folder"] = self.offload_folder
-
-            # Add Flash Attention 2 if requested
-            if self.use_flash_attention:
-                model_kwargs["attn_implementation"] = "flash_attention_2"
-
-            # Add additional kwargs
-            model_kwargs.update(self.additional_kwargs)
-
-            # Load model
-            try:
-                # Suppress Flash Attention warnings from transformers
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore', message='.*FlashAttention.*')
-                    warnings.filterwarnings('ignore', message='.*flash_attn.*')
-                    self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
-            except Exception as e:
-                # Fallback without Flash Attention if it fails
-                if self.use_flash_attention and "flash" in str(e).lower():
-                    logger.info("Flash Attention not available, using standard attention")
-                    model_kwargs.pop("attn_implementation", None)
-                    import warnings
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings('ignore', message='.*FlashAttention.*')
-                        warnings.filterwarnings('ignore', message='.*flash_attn.*')
-                        self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
-                else:
-                    raise
-
-            # Move to device if not using device_map
-            if "device_map" not in model_kwargs and self.device != "cpu":
-                self.model = self.model.to(self.device)
-
-            # Set model to eval mode
-            self.model.eval()
+            self._load_model_weights(quantization_config)
 
             # Store metadata
             self._context_length = self._get_max_length()
@@ -248,6 +418,7 @@ class TransformersEngine(BatchModel):
 
             self._is_loaded = True
             logger.info(f"Model '{self.model_name}' loaded successfully with Transformers")
+            self._ensure_device_map_viable_before_sampling()
 
         except Exception as e:
             logger.error(f"Failed to load model with Transformers: {e}")
@@ -446,17 +617,25 @@ class TransformersEngine(BatchModel):
                 max_length=self._context_length
             )
 
-            # Move inputs to device
-            if self.device != "cpu":
-                inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+            self._ensure_device_map_viable_before_sampling()
 
-            # Generate with sanitized kwargs
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    generation_config=generation_config,
-                    **sanitized_kwargs
-                )
+            def _run_generate():
+                if self.model is None:
+                    raise RuntimeError("Model is not loaded.")
+                gen_inputs = inputs
+                if self.device != "cpu":
+                    gen_inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+                with torch.no_grad():
+                    return self.model.generate(
+                        **gen_inputs,
+                        generation_config=generation_config,
+                        **sanitized_kwargs,
+                    )
+
+            try:
+                outputs = _run_generate()
+            except Exception as e:
+                outputs = self._maybe_retry_after_cuda_assert(e, _run_generate)
 
             # Decode output
             # When native tool calling is active, preserve tool-call tokens
@@ -541,6 +720,8 @@ class TransformersEngine(BatchModel):
         generation_config, stop_sequences = self._create_generation_config(config)
 
         try:
+            self._ensure_device_map_viable_before_sampling()
+
             # Tokenize input
             inputs = self.tokenizer(
                 prompt,
@@ -622,7 +803,28 @@ class TransformersEngine(BatchModel):
             if thread.is_alive():
                 raise RuntimeError("Streaming generation thread did not exit cleanly")
             if gen_exception:
-                raise gen_exception[0]
+                exc = gen_exception[0]
+                if self._is_cuda_device_side_assert(exc) and not self._retrying_after_cuda_assert:
+                    self._retrying_after_cuda_assert = True
+                    try:
+                        self._apply_cuda_device_map_pin_fallback(
+                            reason=(
+                                f"CUDA device-side assert during streaming with "
+                                f"device_map={self.device_map!r}."
+                            ),
+                        )
+                        yield from self.generate_stream(prompt, config, **kwargs)
+                        return
+                    except Exception as retry_exc:
+                        if self._is_cuda_device_side_assert(retry_exc) or self.model is None:
+                            raise RuntimeError(
+                                "CUDA device-side assert during streaming. Restart the "
+                                "Python process, or set CUDA_VISIBLE_DEVICES=0 before loading."
+                            ) from exc
+                        raise
+                    finally:
+                        self._retrying_after_cuda_assert = False
+                raise exc
 
         except Exception as e:
             logger.error(f"Streaming generation failed: {e}")
@@ -659,6 +861,8 @@ class TransformersEngine(BatchModel):
         generation_config, stop_sequences = self._create_generation_config(config)
 
         try:
+            self._ensure_device_map_viable_before_sampling()
+
             # Tokenize all inputs
             inputs = self.tokenizer(
                 prompts,
@@ -668,17 +872,21 @@ class TransformersEngine(BatchModel):
                 max_length=self._context_length
             )
 
-            # Move inputs to device
-            if self.device != "cpu":
-                inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+            def _run_batch_generate():
+                gen_inputs = inputs
+                if self.device != "cpu":
+                    gen_inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+                with torch.no_grad():
+                    return self.model.generate(
+                        **gen_inputs,
+                        generation_config=generation_config,
+                        **kwargs,
+                    )
 
-            # Generate
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    generation_config=generation_config,
-                    **kwargs
-                )
+            try:
+                outputs = _run_batch_generate()
+            except Exception as e:
+                outputs = self._maybe_retry_after_cuda_assert(e, _run_batch_generate)
 
             # Decode outputs
             results = []
@@ -818,11 +1026,16 @@ class TransformersEngine(BatchModel):
                 torch.cuda.synchronize()
             except Exception:
                 pass
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
             try:
                 torch.cuda.ipc_collect()
             except Exception:
                 pass
 
         self._is_loaded = False
+        self._pin_device_map_for_cuda = False
+        self._retrying_after_cuda_assert = False
         logger.info(f"Model '{self.model_name}' unloaded successfully")

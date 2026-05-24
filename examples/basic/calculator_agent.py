@@ -124,14 +124,15 @@ def main():
     agent = create_agent("math", model)
     print(f"Math agent created with tools: {list(agent.tools.keys())}")
 
-    if args.interactive:
-        interactive_mode(agent)
-    else:
-        demo_calculator(agent)
-
-    # Cleanup
-    model.unload()
-    print("\nDone.")
+    try:
+        if args.interactive:
+            interactive_mode(agent)
+        else:
+            demo_calculator(agent)
+    finally:
+        agent.close()
+        model.unload()
+        print("\nDone.")
 
 
 if __name__ == "__main__":
