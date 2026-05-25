@@ -219,3 +219,7 @@ build_plan/
 
 # Generated config directory (created by install.sh)
 config/
+# Supply-chain integrity snapshot (generated at runtime by EFFGEN_VERIFY_HASHES=1).
+# Actual path is ~/.effgen/supply_chain/installed_hashes.json; this guard is
+# belt-and-suspenders in case the snapshot ever falls back into the tree.
+effgen/security/installed_hashes.json

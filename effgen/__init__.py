@@ -265,6 +265,14 @@ from effgen.execution import (
     ValidationSeverity,
 )
 
+# Security / supply-chain exports
+from effgen.security import (
+    HashDriftWarning,
+    VerificationResult,
+    verify_installed_hashes,
+    verify_on_startup,
+)
+
 __all__ = [
     # Multimodal message schema
     "Role",
@@ -471,4 +479,16 @@ __all__ = [
     "ValidationResult",
     "ValidationSeverity",
     "SandboxConfig",
+
+    # Security
+    "HashDriftWarning",
+    "VerificationResult",
+    "verify_installed_hashes",
+    "verify_on_startup",
 ]
+
+# Supply-chain integrity check — runs only when EFFGEN_VERIFY_HASHES=1.
+# Invoked at the end of package init so it executes once on `import effgen`
+# without interrupting the import block; it only reads installed metadata and
+# never initialises model adapters or makes network calls.
+verify_on_startup()
