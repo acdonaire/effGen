@@ -4,12 +4,33 @@
 
 ```bash
 pip install effgen                    # base install (all core features)
-pip install effgen[all]                # everything except flash-attn
 pip install effgen[dev]                # dev tools (pytest, ruff, mypy, pytest-forked)
 pip install effgen[rag]                # sentence-transformers + faiss-cpu
 pip install effgen[vector-db]          # faiss + chromadb + qdrant
 pip install effgen[vllm]               # vLLM backend (NVIDIA GPUs)
 pip install effgen[mlx]                # MLX backend (Apple Silicon)
+```
+
+### Installing the `[all]` extra
+
+`[all]` pulls vLLM plus every provider SDK and the full Google client stack.
+Under the `protobuf>=5.29.5` security floor this dependency graph is too deep
+for pip to resolve on its own (`resolution-too-deep`). Install it with the
+committed constraints lock, which pins a single consistent, CVE-safe solution:
+
+```bash
+# from a clone of the repo:
+pip install -e ".[all]" -c requirements-all-lock.txt
+
+# or against the published package:
+pip install "effgen[all]" -c https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/requirements-all-lock.txt
+```
+
+Regenerate the lock after changing dependencies (requires
+[uv](https://github.com/astral-sh/uv)):
+
+```bash
+uv pip compile pyproject.toml --extra all --output-file requirements-all-lock.txt
 ```
 
 > **Why isn't `flash-attn` in `[all]`?**
@@ -25,7 +46,7 @@ pip install effgen[mlx]                # MLX backend (Apple Silicon)
 **Step 1 — install effgen first (gets torch and everything else):**
 
 ```bash
-pip install effgen[all]
+pip install -e ".[all]" -c requirements-all-lock.txt
 ```
 
 **Step 2 — install flash-attn with build isolation disabled:**

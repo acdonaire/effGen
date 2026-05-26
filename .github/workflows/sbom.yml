@@ -25,19 +25,24 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install effgen + SBOM tooling
+      - name: Install SBOM tooling
+        # NOTE: we deliberately do NOT `pip install -e ".[all]"` here. The full
+        # extras graph (torch/vllm + the google-* trio + every provider SDK,
+        # under the protobuf>=5.29.5 CVE pin) exceeds pip's resolver depth and
+        # triggers `resolution-too-deep` on the runner. The SBOM is built from
+        # requirements.txt instead, which needs no environment install and is
+        # immune to dependency-resolution blow-ups.
         run: |
           pip install --upgrade pip
-          pip install -e ".[all]"
           pip install cyclonedx-bom
 
       - name: Generate CycloneDX SBOM (JSON)
         run: |
-          cyclonedx-py environment \
+          cyclonedx-py requirements requirements.txt \
+            --pyproject pyproject.toml \
             --of json \
             --sv 1.5 \
-            -o sbom.cdx.json \
-            --pyproject pyproject.toml
+            -o sbom.cdx.json
           echo "SBOM generated: $(wc -l < sbom.cdx.json) lines"
 
       - name: Validate SBOM schema

@@ -4,18 +4,25 @@ Secure code execution sandbox tool.
 This module provides a sandboxed code execution environment supporting
 multiple languages (Python, JavaScript, Bash) with Docker isolation,
 resource limits, and comprehensive security measures.
+
+Sandbox dispatch:
+  - DockerSandbox (default when Docker daemon is available):
+      --read-only --network=none --cap-drop=ALL --pids-limit=100 --memory=256m
+  - SubprocessSandbox (fallback): ulimit + unshare --net on Linux
+  - Backend configurable via EFFGEN_SANDBOX_BACKEND=docker|subprocess
+  - Timeout configurable via EFFGEN_SANDBOX_TIMEOUT=<seconds>
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import shutil
-import tempfile
-import time
-from pathlib import Path
 from typing import Any
 
+from ...security.sandbox import (
+    SandboxBase,
+    SandboxConfig,
+    get_sandbox,
+)
 from ..base_tool import (
     BaseTool,
     ParameterSpec,
@@ -38,34 +45,38 @@ class CodeExecutor(BaseTool):
 
     Features:
     - Multi-language support (Python, JavaScript, Bash)
-    - Docker-based isolation
+    - Docker-based isolation (primary)
+    - Subprocess fallback with ulimit + unshare
     - Resource limits (CPU, memory, time)
-    - Network isolation options
-    - File system access control
+    - Network isolation (default: off)
     - Output capture (stdout, stderr, return values)
     - Comprehensive error handling
 
     Security:
-    - Isolated execution environment
+    - Isolated execution via DockerSandbox when Docker is available
     - Configurable resource limits
-    - Package whitelisting
-    - Network restrictions
+    - Network restricted by default
     - Timeout mechanisms
     - Automatic cleanup
+
+    Configuration (env vars):
+    - EFFGEN_SANDBOX_BACKEND: docker | subprocess | auto (default: auto)
+    - EFFGEN_SANDBOX_TIMEOUT: seconds (default: 10)
+    - EFFGEN_SANDBOX_MEMORY: memory limit (default: 256m)
+    - EFFGEN_SANDBOX_IMAGE: custom Docker image (default: effgen/sandbox:python-3.11)
     """
 
     SUPPORTED_LANGUAGES = ["python", "javascript", "bash", "sh"]
 
-    # Default resource limits (standardized across execution tools)
-    DEFAULT_TIMEOUT = 30           # seconds
+    # Default resource limits
+    DEFAULT_TIMEOUT = 30           # seconds (tool-level; sandbox timeout is shorter)
     DEFAULT_MEMORY_LIMIT = "256m"  # 256 MB
-    DEFAULT_CPU_QUOTA = 100000     # 100% of one CPU
     DEFAULT_MAX_OUTPUT = 102400    # 100 KB
 
-    # Docker images for different languages
+    # Docker images for different languages (used by DockerSandbox fallback)
     DOCKER_IMAGES = {
         "python": "python:3.11-slim",
-        "javascript": "node:18-slim",
+        "javascript": "node:20-slim",
         "bash": "bash:5",
         "sh": "bash:5",
     }
@@ -75,7 +86,11 @@ class CodeExecutor(BaseTool):
         super().__init__(
             metadata=ToolMetadata(
                 name="code_executor",
-                description="Execute code in a secure sandboxed environment with support for Python, JavaScript, and Bash",
+                description=(
+                    "Execute code in a secure sandboxed environment with support "
+                    "for Python, JavaScript, and Bash. Uses Docker isolation when "
+                    "available; falls back to subprocess with ulimit restrictions."
+                ),
                 category=ToolCategory.CODE_EXECUTION,
                 parameters=[
                     ParameterSpec(
@@ -106,25 +121,25 @@ class CodeExecutor(BaseTool):
                         type=ParameterType.STRING,
                         description="Memory limit (e.g., '512m', '1g')",
                         required=False,
-                        default="512m",
+                        default="256m",
                     ),
                     ParameterSpec(
                         name="network_enabled",
                         type=ParameterType.BOOLEAN,
-                        description="Whether to allow network access",
+                        description="Whether to allow network access (default: False)",
                         required=False,
                         default=False,
                     ),
                     ParameterSpec(
                         name="files",
                         type=ParameterType.OBJECT,
-                        description="Additional files to mount (filename: content)",
+                        description="Additional files to make available (filename: content)",
                         required=False,
                     ),
                     ParameterSpec(
                         name="env_vars",
                         type=ParameterType.OBJECT,
-                        description="Environment variables to set",
+                        description="Environment variables to set (not supported in Docker mode)",
                         required=False,
                     ),
                 ],
@@ -136,49 +151,51 @@ class CodeExecutor(BaseTool):
                         "exit_code": {"type": "integer"},
                         "execution_time": {"type": "number"},
                         "timed_out": {"type": "boolean"},
+                        "sandbox_backend": {"type": "string"},
                     },
                 },
                 timeout_seconds=300,
-                tags=["code", "execution", "sandbox", "docker"],
+                tags=["code", "execution", "sandbox", "docker", "security"],
                 examples=[
                     {
                         "code": "print('Hello, World!')",
                         "language": "python",
-                        "output": {"stdout": "Hello, World!\n", "exit_code": 0},
+                        "output": {
+                            "stdout": "Hello, World!\n",
+                            "exit_code": 0,
+                            "sandbox_backend": "docker",
+                        },
                     },
                     {
                         "code": "console.log('Hello from Node.js')",
                         "language": "javascript",
-                        "output": {"stdout": "Hello from Node.js\n", "exit_code": 0},
+                        "output": {
+                            "stdout": "Hello from Node.js\n",
+                            "exit_code": 0,
+                            "sandbox_backend": "docker",
+                        },
                     },
                 ],
             )
         )
-        self._docker_available = False
-        self._use_fallback = False
+        self._sandbox: SandboxBase | None = None
+        self._sandbox_config: SandboxConfig = SandboxConfig.from_env()
 
     async def initialize(self) -> None:
-        """Initialize the executor and check Docker availability."""
+        """Initialize the executor and resolve the sandbox backend."""
         await super().initialize()
-
-        # Check if Docker is available
         try:
-            result = await asyncio.create_subprocess_exec(
-                "docker",
-                "version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            self._sandbox = await get_sandbox(self._sandbox_config)
+            logger.info(
+                "CodeExecutor initialized with sandbox backend: %s",
+                self._sandbox.name,
             )
-            await result.communicate()
-            self._docker_available = result.returncode == 0
-        except FileNotFoundError:
-            self._docker_available = False
-
-        if not self._docker_available:
-            logger.warning(
-                "Docker not available. Code execution will use fallback mode with limited isolation."
-            )
-            self._use_fallback = True
+        except Exception as exc:
+            logger.error("Failed to initialize sandbox: %s", exc)
+            # Hard fail — we must not execute unsandboxed code silently
+            raise RuntimeError(
+                f"CodeExecutor could not initialize a sandbox backend: {exc}"
+            ) from exc
 
     async def _execute(
         self,
@@ -189,255 +206,62 @@ class CodeExecutor(BaseTool):
         network_enabled: bool = False,
         files: dict[str, str] | None = None,
         env_vars: dict[str, str] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """
-        Execute code in a sandboxed environment.
+        Execute code in the configured sandbox.
 
         Args:
-            code: The code to execute
-            language: Programming language
-            timeout: Execution timeout in seconds
-            memory_limit: Memory limit
-            network_enabled: Whether to allow network access
-            files: Additional files to mount
-            env_vars: Environment variables
+            code: Source code to execute.
+            language: One of "python", "javascript", "bash", "sh".
+            timeout: Wall-clock timeout in seconds (overrides sandbox default).
+            memory_limit: Memory cap (e.g. "256m").
+            network_enabled: Allow outbound network (default False).
+            files: Extra files to write alongside the code (DockerSandbox: ignored).
+            env_vars: Extra env vars (SubprocessSandbox only).
 
         Returns:
-            Dict containing stdout, stderr, exit_code, execution_time, timed_out
+            Dict with stdout, stderr, exit_code, execution_time, timed_out,
+            sandbox_backend.
         """
-        if self._use_fallback:
-            return await self._execute_fallback(
-                code, language, timeout, env_vars
+        if language not in self.SUPPORTED_LANGUAGES:
+            raise CodeExecutionError(
+                f"Unsupported language: {language!r}. "
+                f"Supported: {self.SUPPORTED_LANGUAGES}"
             )
 
-        return await self._execute_docker(
-            code, language, timeout, memory_limit, network_enabled, files, env_vars
+        # Lazily initialize if not yet done (e.g. tool used without explicit init)
+        if self._sandbox is None:
+            await self.initialize()
+
+        # Build a per-call config (override from call params)
+        call_config = SandboxConfig(
+            backend=self._sandbox_config.backend,
+            timeout=timeout,
+            memory_limit=memory_limit,
+            docker_image=self._sandbox_config.docker_image,
+            docker_fallback_image=self._sandbox_config.docker_fallback_image,
+            network_enabled=network_enabled,
         )
 
-    async def _execute_docker(
-        self,
-        code: str,
-        language: str,
-        timeout: int,
-        memory_limit: str,
-        network_enabled: bool,
-        files: dict[str, str] | None,
-        env_vars: dict[str, str] | None,
-    ) -> dict[str, Any]:
-        """Execute code using Docker."""
-        start_time = time.time()
-        temp_dir = None
-
         try:
-            # Create temporary directory for code
-            temp_dir = Path(tempfile.mkdtemp())
-
-            # Write code to file
-            code_file = self._get_code_filename(language)
-            code_path = temp_dir / code_file
-            code_path.write_text(code, encoding="utf-8")
-
-            # Write additional files if provided
-            if files:
-                for filename, content in files.items():
-                    file_path = temp_dir / filename
-                    file_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_path.write_text(content, encoding="utf-8")
-
-            # Build Docker command
-            docker_cmd = self._build_docker_command(
-                language,
-                temp_dir,
-                code_file,
-                memory_limit,
-                network_enabled,
-                env_vars,
+            result = await self._sandbox.run(
+                code=code,
+                language=language,
+                config=call_config,
             )
+        except Exception as exc:
+            logger.error("Sandbox execution error: %s", exc)
+            raise CodeExecutionError(f"Execution failed: {exc}") from exc
 
-            # Execute with timeout
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *docker_cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
+        if result.error:
+            raise CodeExecutionError(f"Sandbox error: {result.error}")
 
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout
-                )
-
-                exit_code = process.returncode
-                timed_out = False
-
-            except asyncio.TimeoutError:
-                # Kill the container
-                try:
-                    process.kill()
-                    await process.wait()
-                except Exception as e:
-                    logger.debug(f"Error killing timed-out process: {e}")
-
-                stdout = b""
-                stderr = b"Execution timed out"
-                exit_code = -1
-                timed_out = True
-
-            execution_time = time.time() - start_time
-
-            return {
-                "stdout": stdout.decode("utf-8", errors="replace"),
-                "stderr": stderr.decode("utf-8", errors="replace"),
-                "exit_code": exit_code,
-                "execution_time": execution_time,
-                "timed_out": timed_out,
-            }
-
-        except Exception as e:
-            logger.error(f"Code execution failed: {e}")
-            raise CodeExecutionError(f"Execution failed: {str(e)}")
-
-        finally:
-            # Clean up temporary directory
-            if temp_dir and temp_dir.exists():
-                try:
-                    shutil.rmtree(temp_dir)
-                except Exception as e:
-                    logger.warning(f"Failed to clean up temp directory: {e}")
-
-    async def _execute_fallback(
-        self,
-        code: str,
-        language: str,
-        timeout: int,
-        env_vars: dict[str, str] | None,
-    ) -> dict[str, Any]:
-        """
-        Execute code using subprocess fallback (less secure).
-
-        Only used when Docker is not available.
-        """
-        start_time = time.time()
-
-        # Get command for language
-        cmd = self._get_fallback_command(language, code)
-
-        # Set up environment
-        import os
-        env = dict(os.environ)
-        if env_vars:
-            env.update(env_vars)
-
-        try:
-            process = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout
-                )
-                exit_code = process.returncode
-                timed_out = False
-
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                stdout = b""
-                stderr = b"Execution timed out"
-                exit_code = -1
-                timed_out = True
-
-            execution_time = time.time() - start_time
-
-            return {
-                "stdout": stdout.decode("utf-8", errors="replace"),
-                "stderr": stderr.decode("utf-8", errors="replace"),
-                "exit_code": exit_code,
-                "execution_time": execution_time,
-                "timed_out": timed_out,
-            }
-
-        except Exception as e:
-            logger.error(f"Fallback execution failed: {e}")
-            raise CodeExecutionError(f"Execution failed: {str(e)}")
-
-    def _build_docker_command(
-        self,
-        language: str,
-        work_dir: Path,
-        code_file: str,
-        memory_limit: str,
-        network_enabled: bool,
-        env_vars: dict[str, str] | None,
-    ) -> list[str]:
-        """Build Docker command for code execution."""
-        cmd = [
-            "docker",
-            "run",
-            "--rm",  # Remove container after execution
-            "-v",
-            f"{work_dir}:/workspace",  # Mount workspace
-            "-w",
-            "/workspace",  # Set working directory
-            "--memory",
-            memory_limit,  # Memory limit
-            "--cpus",
-            "1",  # CPU limit
-            "--pids-limit",
-            "100",  # Process limit
-        ]
-
-        # Network settings
-        if not network_enabled:
-            cmd.extend(["--network", "none"])
-
-        # Environment variables
-        if env_vars:
-            for key, value in env_vars.items():
-                cmd.extend(["-e", f"{key}={value}"])
-
-        # Add image
-        cmd.append(self.DOCKER_IMAGES[language])
-
-        # Add execution command
-        exec_cmd = self._get_execution_command(language, code_file)
-        cmd.extend(exec_cmd)
-
-        return cmd
-
-    def _get_execution_command(self, language: str, code_file: str) -> list[str]:
-        """Get the command to execute code in the container."""
-        commands = {
-            "python": ["python", code_file],
-            "javascript": ["node", code_file],
-            "bash": ["bash", code_file],
-            "sh": ["sh", code_file],
+        return {
+            "stdout": result.stdout[: self.DEFAULT_MAX_OUTPUT],
+            "stderr": result.stderr[: self.DEFAULT_MAX_OUTPUT],
+            "exit_code": result.exit_code,
+            "execution_time": result.execution_time,
+            "timed_out": result.timed_out,
+            "sandbox_backend": result.backend_used,
         }
-        return commands[language]
-
-    def _get_code_filename(self, language: str) -> str:
-        """Get appropriate filename for the code."""
-        extensions = {
-            "python": "script.py",
-            "javascript": "script.js",
-            "bash": "script.sh",
-            "sh": "script.sh",
-        }
-        return extensions[language]
-
-    def _get_fallback_command(self, language: str, code: str) -> str:
-        """Get command for fallback execution."""
-        # Escape code for shell
-        escaped_code = code.replace("'", "'\\''")
-
-        commands = {
-            "python": f"python3 -c '{escaped_code}'",
-            "javascript": f"node -e '{escaped_code}'",
-            "bash": f"bash -c '{escaped_code}'",
-            "sh": f"sh -c '{escaped_code}'",
-        }
-        return commands.get(language, f"bash -c '{escaped_code}'")
