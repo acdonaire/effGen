@@ -198,6 +198,14 @@ server = [
     # Prometheus metrics exposed at /metrics (scraped by the K8s HPA)
     "prometheus-client>=0.20.0",
 ]
+lambda = [
+    # Mangum: ASGI adapter for AWS Lambda + API Gateway
+    "mangum>=0.17.0",
+    # The Lambda handler runs the full FastAPI server app, so it needs the
+    # server extra (OIDC/JWT auth + Prometheus metrics). Self-referencing keeps
+    # this in lock-step with the `server` extra instead of duplicating + drifting.
+    "effgen[server]",
+]
 tools = [
     "pytesseract>=0.3.10",
     "Pillow>=10.0.0",
@@ -335,6 +343,8 @@ all = [
     "reportlab>=4.0.0",
     "staticmap>=0.5.4",
     "sqlglot>=20.0",
+    # Lambda deployment adapter
+    "mangum>=0.17.0",
 ]
 
 [tool.setuptools.dynamic]
