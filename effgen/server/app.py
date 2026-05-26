@@ -188,12 +188,40 @@ def _build_default_runner() -> Any:
         from effgen.core.agent import Agent, AgentConfig
 
         resolved_tools = _resolve_tools(tools)
-        config = AgentConfig(name="api", model=model, tools=resolved_tools)
+        config = AgentConfig(
+            name="api",
+            model=_normalize_model_id(model),
+            tools=resolved_tools,
+            require_model=True,
+        )
         agent = Agent(config)
         response = agent.run(prompt)
         return getattr(response, "output", str(response))
 
     return _runner
+
+
+def _normalize_model_id(model: str) -> str:
+    """Normalize an OpenAI-style ``provider/model`` id for effGen's loader.
+
+    OpenAI-compatible clients send ``"cerebras/llama3.1-8b"`` (slash), but
+    effGen's ``ModelLoader`` routes API providers via the ``"provider:model"``
+    (colon) prefix. Without this, a slash id falls through to the local
+    Transformers path and fails with "not a valid model identifier". Rewrite
+    the *provider* separator to a colon only when the prefix is a known
+    provider, leaving bare ids and HF ``org/repo`` ids untouched.
+    """
+    if not isinstance(model, str) or "/" not in model:
+        return model
+    prefix, _, rest = model.partition("/")
+    try:
+        from effgen.models.registry import ProviderRegistry
+
+        if prefix in ProviderRegistry.list_providers():
+            return f"{prefix}:{rest}"
+    except Exception:  # noqa: BLE001 - registry optional; fall back to original
+        pass
+    return model
 
 
 def _resolve_tools(tools: Any) -> list[Any]:

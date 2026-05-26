@@ -209,3 +209,42 @@ def test_dev_mode_allows_unauth_with_warning(_keypair, tmp_path, monkeypatch):
         r = c.get("/whoami")
     assert r.status_code == 200
     assert r.json()["sub"] == "dev-user"
+
+
+# ---------------------------------------------------------------------------
+# Default runner: OpenAI-style model-id normalization (deterministic, no API)
+# ---------------------------------------------------------------------------
+
+
+class TestModelIdNormalization:
+    """The default runner must route OpenAI-style ``provider/model`` ids to the
+    right effGen adapter (colon syntax), not the local Transformers path.
+    """
+
+    def test_known_provider_slash_becomes_colon(self) -> None:
+        from effgen.server.app import _normalize_model_id
+
+        assert _normalize_model_id("cerebras/llama3.1-8b") == "cerebras:llama3.1-8b"
+        assert _normalize_model_id("openai/gpt-4o-mini") == "openai:gpt-4o-mini"
+
+    def test_bare_model_id_untouched(self) -> None:
+        from effgen.server.app import _normalize_model_id
+
+        assert _normalize_model_id("llama3.1-8b") == "llama3.1-8b"
+
+    def test_colon_form_untouched(self) -> None:
+        from effgen.server.app import _normalize_model_id
+
+        assert _normalize_model_id("cerebras:llama3.1-8b") == "cerebras:llama3.1-8b"
+
+    def test_unknown_prefix_left_as_hf_repo(self) -> None:
+        # Looks like an HF org/repo (not a known provider) → must be left alone.
+        from effgen.server.app import _normalize_model_id
+
+        assert _normalize_model_id("meta-llama/Llama-3.1-8B") == "meta-llama/Llama-3.1-8B"
+
+    def test_non_string_passthrough(self) -> None:
+        from effgen.server.app import _normalize_model_id
+
+        sentinel = object()
+        assert _normalize_model_id(sentinel) is sentinel  # type: ignore[arg-type]
