@@ -226,7 +226,7 @@ faiss-cpu==1.14.2
     # via effgen (pyproject.toml)
 fake-useragent==2.2.0
     # via ddgs
-fastapi==0.136.3
+fastapi==0.136.1
     # via
     #   effgen (pyproject.toml)
     #   vllm

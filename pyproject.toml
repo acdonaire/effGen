@@ -112,7 +112,9 @@ dependencies = [
     # (host-header injection — transitively pulled by fastapi)
     "starlette>=1.0.1",
     # API Server
-    "fastapi>=0.109.0",
+    # 0.136.3 is excluded: that release was flagged malicious (MAL-2026-4750)
+    # and injects an undocumented 'fastar' dependency.
+    "fastapi>=0.109.0,!=0.136.3",
     "uvicorn>=0.27.0",
 ]
 
