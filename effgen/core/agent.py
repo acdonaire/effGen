@@ -116,6 +116,22 @@ def _infer_provider_from_model(model: Any, model_name: str | None = None) -> str
     return "unknown"
 
 
+def _safe_int_or_none(value: Any) -> int | None:
+    """Convert numeric dashboard metadata values without raising."""
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float_or_none(value: Any) -> float | None:
+    """Convert numeric dashboard metadata values without raising."""
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 class AgentMode(Enum):
     """Agent execution modes."""
     SINGLE = "single"  # Single agent execution
@@ -836,6 +852,7 @@ Question: {task}
                     tool_calls=response.tool_calls,
                     success=response.success,
                 )
+                self._record_dashboard_run(response)
 
                 # Store conversation in short-term memory for context retention
                 if response.success and response.output:
@@ -899,17 +916,45 @@ Question: {task}
                 set_span_error(e)
                 _slog.agent_event(self.name, "task_failed", level=logging.ERROR, error=str(e))
                 _obs_log.agent_event("run.failed", level=logging.ERROR, agent=self.name, run_id=run_id, error=str(e))
-
-                return AgentResponse(
+                response = AgentResponse(
                     output=f"Error: {str(e)}",
                     success=False,
                     execution_time=time.time() - start_time,
                     execution_trace=self.execution_tracker.get_trace(),
                     metadata={"error": str(e), "run_id": run_id}
                 )
+                self._record_dashboard_run(response, error=str(e))
+                return response
 
             finally:
                 prom_metrics.active_agents.dec(labels=labels)
+
+    def _record_dashboard_run(
+        self,
+        response: AgentResponse,
+        *,
+        error: str | None = None,
+    ) -> None:
+        """Best-effort process-local run log used by the dashboard."""
+        try:
+            from effgen.observability.run_log import record_run
+
+            metadata = response.metadata or {}
+            cost = metadata.get("cost_usd", metadata.get("cost"))
+            output_tokens = metadata.get("output_tokens", metadata.get("completion_tokens"))
+            if output_tokens is None and response.tokens_used:
+                output_tokens = response.tokens_used
+            input_tokens = metadata.get("input_tokens", metadata.get("prompt_tokens"))
+            record_run(
+                model=str(getattr(self, "model_name", None) or "unknown"),
+                input_tokens=_safe_int_or_none(input_tokens),
+                output_tokens=_safe_int_or_none(output_tokens),
+                duration_s=response.execution_time,
+                cost_usd=_safe_float_or_none(cost),
+                error=error if error is not None else (None if response.success else response.output[:200]),
+            )
+        except Exception:  # noqa: BLE001 - dashboard logging must not break runs
+            pass
 
     def run_batch(
         self,

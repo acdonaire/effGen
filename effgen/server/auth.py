@@ -270,6 +270,16 @@ _PUBLIC_PATHS: frozenset[str] = frozenset({
     "/healthz",
     "/ready",
     "/livez",
+    # Local dashboard - served for local developer use; no sensitive data in the
+    # dashboard UI itself. The API endpoints it reads (/metrics, /dashboard/data.json)
+    # are also public-by-default so the SPA works without token injection.
+    "/dashboard",
+    "/dashboard/",
+    "/dashboard/data.json",
+    "/dashboard/spans",
+    "/dashboard/app.js",
+    "/dashboard/style.css",
+    "/dashboard/index.html",
 })
 
 
@@ -379,7 +389,10 @@ class AuthMiddleware:
 
         path: str = scope.get("path", "/")
 
-        if path in self.public_paths or _is_dev_mode():
+        # Also exempt /dashboard and /dashboard/* static assets, but not
+        # lookalike paths such as /dashboardevil.
+        _is_dashboard = path == "/dashboard" or path.startswith("/dashboard/")
+        if path in self.public_paths or _is_dashboard or _is_dev_mode():
             if _is_dev_mode():
                 scope.setdefault("state", {})["user"] = TokenPayload(
                     sub="dev-user",

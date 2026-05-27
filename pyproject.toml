@@ -198,6 +198,12 @@ server = [
     # Prometheus metrics exposed at /metrics (scraped by the K8s HPA)
     "prometheus-client>=0.20.0",
 ]
+jupyter = [
+    # IPython kernel + display for Jupyter magics
+    "ipython>=8.0.0",
+    "ipykernel>=6.0.0",
+    "jupyter-console>=6.6.0",
+]
 lambda = [
     # Mangum: ASGI adapter for AWS Lambda + API Gateway
     "mangum>=0.17.0",
@@ -345,6 +351,10 @@ all = [
     "sqlglot>=20.0",
     # Lambda deployment adapter
     "mangum>=0.17.0",
+    # Jupyter magics
+    "ipython>=8.0.0",
+    "ipykernel>=6.0.0",
+    "jupyter-console>=6.6.0",
 ]
 
 [tool.setuptools.dynamic]
@@ -362,6 +372,9 @@ effgen = [
     "config/*.yaml",
     "config/*.json",
     "py.typed",
+    "dashboard/static/*.html",
+    "dashboard/static/*.js",
+    "dashboard/static/*.css",
 ]
 
 # Black - Code Formatter

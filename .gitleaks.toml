@@ -161,9 +161,16 @@ paths = [
     '''(^|\/)\.envrc$''',
     # Test fixtures — fake keys are planted intentionally for scanner tests
     '''(^|\/)tests\/''',
-    # Compiled bytecode
+    # Compiled bytecode and tool caches (local build artifacts, never committed —
+    # but the working-tree `dir` scan sees them, e.g. pytest stores test node ids
+    # like "...api_key=ABCDEFG12345..." under .pytest_cache).
     '''__pycache__\/''',
     '''\.pyc$''',
+    '''(^|\/)\.pytest_cache\/''',
+    '''(^|\/)\.ruff_cache\/''',
+    '''(^|\/)\.mypy_cache\/''',
+    # Compiled VSCode extension output (gitignored; produced by `npm run compile`).
+    '''tools\/vscode-effgen\/out\/''',
     # Vendored third-party dependencies (never our secrets; some were committed
     # to git history before being .gitignore'd, so the history scan must skip them).
     '''(^|\/)node_modules\/''',

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -130,7 +131,14 @@ def create_app(
             from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
             from starlette.responses import Response
 
-            return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+            payload = generate_latest().decode("utf-8", errors="replace")
+            try:
+                from effgen.observability.metrics import export_metrics
+
+                payload += "\n" + export_metrics()
+            except Exception:  # noqa: BLE001
+                pass
+            return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
         except ImportError:
             return JSONResponse({"detail": "prometheus_client not installed"}, status_code=503)
 
@@ -172,6 +180,9 @@ def create_app(
     # Import and mount the OpenAI-compatible + embeddings routers, with RBAC
     # and per-principal cost-cap enforcement layered on top.
     _mount_existing_routers(app, runner=runner)
+
+    # Mount the local dashboard (static SPA + data.json + SSE spans).
+    _mount_dashboard(app)
 
     return app
 
@@ -400,3 +411,293 @@ def _mount_existing_routers(app: Any, *, runner: Any = None) -> None:
         logger.info("Mounted embeddings router")
     except Exception as exc:  # noqa: BLE001
         logger.debug("Embeddings router not mounted: %s", exc)
+
+
+def _mount_dashboard(app: Any) -> None:
+    """Mount the local dashboard SPA at /dashboard.
+
+    Serves:
+    - ``GET /dashboard``           — the SPA index.html
+    - ``GET /dashboard/data.json`` — live metrics + run data as JSON
+    - ``GET /dashboard/spans``     — SSE stream of recent span events
+    - ``GET /dashboard/{path}``    — other static assets (JS, CSS)
+    """
+    try:
+        from pathlib import Path as _Path
+
+        from fastapi import APIRouter
+        from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+
+        router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+        static_dir = _Path(__file__).parent.parent / "dashboard" / "static"
+
+        # ---- /dashboard → index.html ----------------------------------------
+        @router.get("", include_in_schema=False)
+        @router.get("/", include_in_schema=False)
+        async def dashboard_index() -> Any:
+            """Serve the dashboard SPA."""
+            index = static_dir / "index.html"
+            if index.exists():
+                return FileResponse(str(index), media_type="text/html")
+            return JSONResponse({"detail": "dashboard not found"}, status_code=404)
+
+        # ---- /dashboard/data.json -------------------------------------------
+        @router.get("/data.json", include_in_schema=False)
+        async def dashboard_data() -> Any:
+            """Live metrics + recent runs as JSON consumed by the SPA."""
+            return JSONResponse(_build_dashboard_data())
+
+        # ---- /dashboard/spans (SSE) ----------------------------------------
+        @router.get("/spans", include_in_schema=False)
+        async def dashboard_spans(request: _FastAPIRequest) -> Any:  # type: ignore[valid-type]
+            """Server-sent events stream of recent trace spans.
+
+            Emits all currently-buffered spans, then heartbeats while the
+            client stays connected. The loop terminates as soon as the client
+            disconnects (so it never leaks a worker thread) and is also bounded
+            by ``EFFGEN_DASHBOARD_SSE_MAX_SECONDS`` (default 3600s) as a
+            backstop — the SPA simply reconnects via ``EventSource``.
+            """
+            import asyncio
+            import json as _json
+            import time as _time
+
+            max_seconds = float(os.getenv("EFFGEN_DASHBOARD_SSE_MAX_SECONDS", "3600"))
+            heartbeat_s = float(os.getenv("EFFGEN_DASHBOARD_SSE_HEARTBEAT_SECONDS", "5"))
+
+            async def _generate():  # type: ignore[return]
+                # Stream any buffered spans first.
+                for span in _get_recent_spans():
+                    yield f"data: {_json.dumps(span)}\n\n"
+                # Heartbeat until the client disconnects or the cap is hit.
+                deadline = _time.monotonic() + max_seconds
+                while _time.monotonic() < deadline:
+                    if await request.is_disconnected():
+                        break
+                    await asyncio.sleep(heartbeat_s)
+                    yield ": heartbeat\n\n"
+
+            return StreamingResponse(
+                _generate(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        # ---- /dashboard/{file} (static assets) ------------------------------
+        @router.get("/{asset_path:path}", include_in_schema=False)
+        async def dashboard_static(asset_path: str) -> Any:
+            """Serve static assets (app.js, style.css, …)."""
+            asset = static_dir / asset_path
+            if asset.exists() and asset.is_file():
+                return FileResponse(str(asset))
+            return JSONResponse({"detail": "not found"}, status_code=404)
+
+        app.include_router(router)
+        logger.info("Mounted dashboard at /dashboard")
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Dashboard not mounted: %s", exc)
+
+
+def _build_dashboard_data() -> dict[str, Any]:
+    """Assemble the JSON payload served at /dashboard/data.json."""
+    import time
+
+    raw_metrics, samples = _collect_dashboard_metrics()
+
+    # --- Derive summary metrics from raw ---
+    model_call_count = _sum_samples(samples, "effgen_model_call_latency_seconds_count")
+    model_call_errors = _sum_samples(
+        samples,
+        "effgen_model_call_latency_seconds_count",
+        lambda labels: labels.get("outcome") not in (None, "", "ok"),
+    )
+    legacy_requests = _sum_samples(samples, "effgen_requests_total")
+    legacy_errors = _sum_samples(samples, "effgen_errors_total")
+
+    total_requests = model_call_count or legacy_requests
+    total_errors = model_call_errors or legacy_errors
+
+    latency_sum = _sum_samples(samples, "effgen_model_call_latency_seconds_sum")
+    latency_count = model_call_count
+    if not latency_count:
+        latency_sum = _sum_samples(samples, "effgen_response_latency_seconds_sum")
+        latency_count = _sum_samples(samples, "effgen_response_latency_seconds_count")
+    avg_latency_s = (latency_sum / latency_count) if latency_count else None
+
+    # Token / cost estimates
+    model_tokens = _sum_samples(samples, "effgen_tokens_total")
+    legacy_tokens = _sum_samples(samples, "effgen_tokens_used_total")
+    total_tokens = model_tokens or legacy_tokens
+    # $0.01 per request as rough estimate (matches budget middleware default)
+    PER_CALL_COST = 0.01
+    daily_cost_usd = total_requests * PER_CALL_COST
+
+    # --- SLO burn rates (simplified: burn = current_rate / target_rate) ---
+    LATENCY_THRESHOLD = 2.0  # seconds — p99 target
+    ERROR_RATE_TARGET = 0.01  # 1% errors allowed
+    error_rate = (total_errors / total_requests) if total_requests > 0 else 0.0
+    availability = 1.0 - error_rate
+
+    slo: dict[str, float] = {
+        "p99_latency_burn": (avg_latency_s / LATENCY_THRESHOLD) if avg_latency_s else 0.0,
+        "error_rate_burn": error_rate / ERROR_RATE_TARGET if ERROR_RATE_TARGET > 0 else 0.0,
+        "availability": availability,
+    }
+
+    # --- Recent agent runs (from in-memory ring buffer if available) ---
+    recent_runs = _get_recent_runs()
+
+    # --- Recent spans ---
+    recent_spans = _get_recent_spans()
+
+    return {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "metrics": {
+            "total_requests": int(total_requests),
+            "total_errors": int(total_errors),
+            "avg_latency_s": round(avg_latency_s, 4) if avg_latency_s is not None else None,
+            "total_tokens": int(total_tokens),
+            "daily_cost_usd": round(daily_cost_usd, 6),
+        },
+        # ``slo``/``recent_spans`` are the canonical keys consumed by the SPA;
+        # ``slos``/``spans`` are documented aliases so external consumers can use
+        # either spelling.
+        "slo": slo,
+        "slos": slo,
+        "recent_runs": recent_runs,
+        "recent_spans": recent_spans[:20],
+        "spans": recent_spans[:20],
+        "prompt_templates": _get_prompt_templates(),
+        "raw_metrics": dict(sorted(raw_metrics.items())),
+    }
+
+
+_PROM_LINE_RE = re.compile(
+    r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(?P<labels>[^}]*)\})?\s+"
+    r"(?P<value>[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)$"
+)
+
+
+def _collect_dashboard_metrics() -> tuple[dict[str, float], list[tuple[str, dict[str, str], float]]]:
+    """Collect prometheus_client and effGen-native metric samples."""
+    raw_metrics: dict[str, float] = {}
+    samples: list[tuple[str, dict[str, str], float]] = []
+
+    try:
+        from prometheus_client import REGISTRY
+
+        for metric in REGISTRY.collect():
+            for sample in metric.samples:
+                labels = {str(k): str(v) for k, v in dict(sample.labels).items()}
+                value = float(sample.value)
+                samples.append((sample.name, labels, value))
+                raw_metrics[_metric_key(sample.name, labels)] = value
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        from effgen.observability.metrics import export_metrics
+
+        for name, labels, value in _parse_prometheus_text(export_metrics()):
+            samples.append((name, labels, value))
+            raw_metrics[_metric_key(name, labels)] = value
+    except Exception:  # noqa: BLE001
+        pass
+
+    return raw_metrics, samples
+
+
+def _parse_prometheus_text(text: str) -> list[tuple[str, dict[str, str], float]]:
+    """Parse simple Prometheus text-format sample lines."""
+    parsed: list[tuple[str, dict[str, str], float]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _PROM_LINE_RE.match(line)
+        if not match:
+            continue
+        parsed.append(
+            (
+                match.group("name"),
+                _parse_prometheus_labels(match.group("labels") or ""),
+                float(match.group("value")),
+            )
+        )
+    return parsed
+
+
+def _parse_prometheus_labels(label_text: str) -> dict[str, str]:
+    """Parse a Prometheus label set emitted by effGen's metric exporter."""
+    labels: dict[str, str] = {}
+    if not label_text:
+        return labels
+    for part in label_text.split(","):
+        key, sep, value = part.partition("=")
+        if sep:
+            labels[key.strip()] = value.strip().strip('"')
+    return labels
+
+
+def _metric_key(name: str, labels: dict[str, str]) -> str:
+    if not labels:
+        return name
+    label_str = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
+    return f"{name}{{{label_str}}}"
+
+
+def _sum_samples(
+    samples: list[tuple[str, dict[str, str], float]],
+    name: str,
+    predicate: Any = None,
+) -> float:
+    total = 0.0
+    for sample_name, labels, value in samples:
+        if sample_name != name:
+            continue
+        if predicate is not None and not predicate(labels):
+            continue
+        total += value
+    return total
+
+
+def _get_prompt_templates() -> list[dict[str, str]]:
+    """Expose prompt-library entries for lightweight editor integrations."""
+    try:
+        from effgen.prompts.library import registry
+
+        templates: list[dict[str, str]] = []
+        for prompt in registry.all():
+            templates.append(
+                {
+                    "name": prompt.name,
+                    "description": prompt.description,
+                    "template": f'registry.get("{prompt.name}").render(...)',
+                    "category": prompt.domain,
+                }
+            )
+        return templates
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _get_recent_runs() -> list[dict[str, Any]]:
+    """Return up to 50 recent agent runs from the in-memory run log."""
+    try:
+        from effgen.observability.run_log import get_recent_runs as _runs
+
+        return _runs(limit=50)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _get_recent_spans() -> list[dict[str, Any]]:
+    """Return up to 100 recent trace spans from the in-memory span buffer."""
+    try:
+        from effgen.observability.tracing import get_recent_spans as _spans
+
+        return _spans(limit=100)
+    except Exception:  # noqa: BLE001
+        return []

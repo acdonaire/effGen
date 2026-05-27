@@ -53,6 +53,7 @@ import logging
 import os
 import threading
 import time
+from collections import deque
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
@@ -546,7 +547,7 @@ class _NoOpTracer:
         return _NoOpSpan()
 
     @contextmanager
-    def start_span(self, name: str, **kwargs: Any) -> Generator[_NoOpSpan, None, None]:
+    def start_span(self, name: str, **kwargs: Any) -> Generator[_NoOpSpan]:
         yield _NoOpSpan()
 
 
@@ -560,7 +561,7 @@ def start_agent_run(
     preset: str,
     task: str = "",
     run_id: str | None = None,
-) -> Generator[Any, None, None]:
+) -> Generator[Any]:
     """
     Context manager that opens an ``effgen.agent.run`` span.
 
@@ -579,12 +580,19 @@ def start_agent_run(
     }
     if run_id:
         attrs[AgentAttrs.RUN_ID] = run_id
+    start = time.monotonic()
     try:
         with tracer.start_as_current_span(SpanName.AGENT_RUN, attributes=attrs) as span:
             try:
                 yield span
+                _buffer_span(f"{SpanName.AGENT_RUN} {preset}", (time.monotonic() - start) * 1000)
             except Exception as exc:  # noqa: BLE001
                 _mark_error(span, exc)
+                _buffer_span(
+                    f"{SpanName.AGENT_RUN} {preset}",
+                    (time.monotonic() - start) * 1000,
+                    error=str(exc),
+                )
                 raise
     except Exception:
         raise
@@ -594,7 +602,7 @@ def start_agent_run(
 def start_agent_iteration(
     preset: str,
     iteration: int,
-) -> Generator[Any, None, None]:
+) -> Generator[Any]:
     """
     Context manager for a single ReAct iteration span.
 
@@ -628,7 +636,7 @@ def start_model_call(
     reasoning_effort: str | None = None,
     thinking_budget: int | None = None,
     parts_count: int | None = None,
-) -> Generator[Any, None, None]:
+) -> Generator[Any]:
     """
     Context manager for a model inference span.
 
@@ -663,6 +671,11 @@ def start_model_call(
     if parts_count is not None:
         attrs[ModelAttrs.PARTS_COUNT] = parts_count
 
+    # Model ids often already carry a ``provider:`` prefix (e.g. the caller
+    # passes provider="cerebras", model="cerebras:llama3.1-8b"). Avoid a
+    # doubled "cerebras:cerebras:..." label in the dashboard span stream.
+    _model_label = model if model.startswith(f"{provider}:") else f"{provider}:{model}"
+
     start = time.monotonic()
     try:
         with tracer.start_as_current_span(SpanName.MODEL_CALL, attributes=attrs) as span:
@@ -673,10 +686,16 @@ def start_model_call(
                 if not _has_outcome(span):
                     _set_safe(span, ModelAttrs.OUTCOME, "ok")
                 _mark_ok(span)
+                _buffer_span(f"{SpanName.MODEL_CALL} {_model_label}", (time.monotonic() - start) * 1000)
             except Exception as exc:  # noqa: BLE001
                 _set_safe(span, ModelAttrs.OUTCOME, "error")
                 _set_safe(span, ModelAttrs.LATENCY_MS, round((time.monotonic() - start) * 1000, 1))
                 _mark_error(span, exc)
+                _buffer_span(
+                    f"{SpanName.MODEL_CALL} {_model_label}",
+                    (time.monotonic() - start) * 1000,
+                    error=str(exc),
+                )
                 raise
     except Exception:
         raise
@@ -686,7 +705,7 @@ def start_model_call(
 def start_tool_call(
     tool_name: str,
     tool_input: str = "",
-) -> Generator[Any, None, None]:
+) -> Generator[Any]:
     """
     Context manager for a tool execution span.
 
@@ -711,10 +730,16 @@ def start_tool_call(
                 if not _has_tool_status(span):
                     _set_safe(span, ToolAttrs.STATUS, "ok")
                 _mark_ok(span)
+                _buffer_span(f"{SpanName.TOOL_CALL} {tool_name}", (time.monotonic() - start) * 1000)
             except Exception as exc:  # noqa: BLE001
                 _set_safe(span, ToolAttrs.STATUS, "error")
                 _set_safe(span, ToolAttrs.LATENCY_MS, round((time.monotonic() - start) * 1000, 1))
                 _mark_error(span, exc)
+                _buffer_span(
+                    f"{SpanName.TOOL_CALL} {tool_name}",
+                    (time.monotonic() - start) * 1000,
+                    error=str(exc),
+                )
                 raise
     except Exception:
         raise
@@ -724,7 +749,7 @@ def start_tool_call(
 def start_router_decision(
     policy: str,
     candidates: list[Any] | None = None,
-) -> Generator[Any, None, None]:
+) -> Generator[Any]:
     """
     Context manager for a routing decision span.
 
@@ -928,3 +953,37 @@ def _infer_provider(model_name: str) -> str:
     if m.startswith(("mixtral", "mistral")):
         return "groq"
     return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# In-memory span ring buffer (used by the dashboard)
+# ---------------------------------------------------------------------------
+
+_SPAN_BUFFER_LOCK: threading.Lock = threading.Lock()
+_SPAN_BUFFER: deque[dict] = deque(maxlen=500)  # type: ignore[type-arg]
+
+
+def _buffer_span(name: str, duration_ms: float, error: str | None = None) -> None:
+    """Append a span dict to the in-memory ring buffer (best-effort, never raises)."""
+    try:
+        record = {
+            "ts": time.strftime("%H:%M:%S", time.gmtime()),
+            "name": name,
+            "duration_ms": round(duration_ms, 1),
+            "error": error,
+        }
+        with _SPAN_BUFFER_LOCK:
+            _SPAN_BUFFER.append(record)
+    except Exception:  # noqa: BLE001 - telemetry must never break inference
+        pass
+
+
+def get_recent_spans(*, limit: int = 100) -> list[dict]:  # type: ignore[type-arg]
+    """Return the most-recent *limit* span records (newest first).
+
+    These are populated when effGen agent / model-call context managers exit.
+    Returns an empty list when no spans have been buffered.
+    """
+    with _SPAN_BUFFER_LOCK:
+        spans = list(_SPAN_BUFFER)
+    return list(reversed(spans))[:limit]

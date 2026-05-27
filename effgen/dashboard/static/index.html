@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>effGen Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Chart.js from CDN; pinned to stable version -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <span class="logo">⚡ effGen</span>
+      <span class="version" id="header-version">v0.2.10</span>
+    </div>
+    <div class="header-right">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">Connecting…</span>
+      <button id="refresh-btn" title="Refresh data">↺</button>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- Row 1: summary cards -->
+    <section class="row cards" id="summary-cards">
+      <div class="card" id="card-requests">
+        <div class="card-label">Total Requests</div>
+        <div class="card-value" id="val-requests">—</div>
+      </div>
+      <div class="card" id="card-errors">
+        <div class="card-label">Errors</div>
+        <div class="card-value" id="val-errors">—</div>
+      </div>
+      <div class="card" id="card-latency">
+        <div class="card-label">Avg Latency</div>
+        <div class="card-value" id="val-latency">—</div>
+      </div>
+      <div class="card" id="card-cost">
+        <div class="card-label">Est. Daily Cost</div>
+        <div class="card-value" id="val-cost">—</div>
+      </div>
+      <div class="card" id="card-tokens">
+        <div class="card-label">Tokens Used</div>
+        <div class="card-value" id="val-tokens">—</div>
+      </div>
+    </section>
+
+    <!-- Row 2: SLO burn rates + Latency chart -->
+    <section class="row two-col">
+      <div class="panel" id="panel-slo">
+        <h2>SLO Burn Rates</h2>
+        <div id="slo-list">
+          <div class="slo-row">
+            <span class="slo-name">p99 latency</span>
+            <div class="slo-bar-bg"><div class="slo-bar" id="slo-p99"></div></div>
+            <span class="slo-pct" id="slo-p99-pct">—</span>
+          </div>
+          <div class="slo-row">
+            <span class="slo-name">error rate</span>
+            <div class="slo-bar-bg"><div class="slo-bar slo-bar-err" id="slo-err"></div></div>
+            <span class="slo-pct" id="slo-err-pct">—</span>
+          </div>
+          <div class="slo-row">
+            <span class="slo-name">availability</span>
+            <div class="slo-bar-bg"><div class="slo-bar slo-bar-ok" id="slo-avail"></div></div>
+            <span class="slo-pct" id="slo-avail-pct">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-latency-chart">
+        <h2>Request Latency (recent)</h2>
+        <canvas id="latency-chart" height="120"></canvas>
+      </div>
+    </section>
+
+    <!-- Row 3: recent agent runs -->
+    <section class="panel" id="panel-agent-runs">
+      <h2>Recent Agent Runs</h2>
+      <div class="table-wrapper">
+        <table id="runs-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Model</th>
+              <th>Tokens (in/out)</th>
+              <th>Cost (est.)</th>
+              <th>Duration</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="runs-tbody">
+            <tr><td colspan="6" class="empty-row">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Row 4: live span stream -->
+    <section class="panel" id="panel-spans">
+      <h2>Live Span Stream</h2>
+      <div class="span-toolbar">
+        <button id="span-clear-btn">Clear</button>
+        <label>
+          <input type="checkbox" id="span-pause-cb" /> Pause
+        </label>
+        <span id="span-count">0 spans</span>
+      </div>
+      <div id="span-stream" class="span-stream"></div>
+    </section>
+
+    <!-- Row 5: raw metrics -->
+    <section class="panel" id="panel-metrics">
+      <h2>Prometheus Metrics (raw)</h2>
+      <div class="table-wrapper">
+        <table id="metrics-table">
+          <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+          <tbody id="metrics-tbody">
+            <tr><td colspan="2" class="empty-row">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
