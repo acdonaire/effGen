@@ -24,6 +24,11 @@
 <a href="docs/observability/overview.md"><img src="https://img.shields.io/badge/📊_Prometheus_Metrics-histograms_%2B_SLOs-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" alt="Prometheus Metrics"/></a>
 <a href="docs/observability/tracing.md"><img src="https://img.shields.io/badge/🔭_OTel_Traces-samplers_%2B_span_spec-00B4CE?style=for-the-badge&logo=opentelemetry&logoColor=white" alt="OTel Traces"/></a>
 <a href="docs/observability/alerting.md"><img src="https://img.shields.io/badge/🔔_SLOs_%26_Alerting-Alertmanager_rules-F5A623?style=for-the-badge" alt="SLOs"/></a>
+<a href="deploy/docker/Dockerfile"><img src="https://img.shields.io/badge/🐳_Docker-multi--stage_%2B_non--root-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/></a>
+<a href="deploy/k8s/helm/effgen/"><img src="https://img.shields.io/badge/⎈_Helm-chart_%2B_HPA_%2B_PDB-0F1689?style=for-the-badge&logo=helm&logoColor=white" alt="Helm"/></a>
+<a href="deploy/aws_lambda/"><img src="https://img.shields.io/badge/λ_AWS_Lambda-Mangum_adapter-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="Lambda"/></a>
+<a href="deploy/cloudflare/"><img src="https://img.shields.io/badge/☁_Cloudflare_Worker-edge_proxy-F48120?style=for-the-badge&logo=cloudflare&logoColor=white" alt="Cloudflare"/></a>
+<a href="tools/vscode-effgen/"><img src="https://img.shields.io/badge/🔷_VSCode_Extension-prompt_completion-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="VSCode"/></a>
 
 <!-- Quick Links -->
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
@@ -42,6 +47,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🔒 | **27 May 2026** | **v0.2.10 Released**: Security, Edge & DX — secret scanning (gitleaks), SBOM (CycloneDX), pip-audit CI, sandboxed CodeExecutor (SubprocessSandbox + DockerSandbox), OAuth2/OIDC + RBAC + audit log, Docker + Helm, AWS Lambda (Mangum), Cloudflare Worker edge proxy, VSCode extension, Jupyter magics, live dashboard. [See changelog](CHANGELOG.md#0210---2026-05-27) |
 | 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [See changelog](CHANGELOG.md#029---2026-05-23) |
 | 🖼️ | **21 May 2026** | **v0.2.8 Released**: First-class multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [See changelog](CHANGELOG.md#028---2026-05-21) |
 | 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [See changelog](CHANGELOG.md#027---2026-05-20) |
@@ -1145,6 +1151,117 @@ Rate Limiting<br/>
 </div>
 
 > 📋 For security policies and vulnerability reporting, see [SECURITY.md](SECURITY.md)
+
+---
+
+## 🚀 Deployment
+
+effGen v0.2.10 ships production-ready deployment recipes for every major target:
+
+### 🐳 Docker
+
+Multi-stage build with a non-root user, read-only filesystem, and `/health` healthcheck. See [`docs/deploy/docker.md`](docs/deploy/docker.md).
+
+```bash
+docker build -f deploy/docker/Dockerfile -t effgen:0.2.10 .
+docker run -p 8000:8000 --env-file .env effgen:0.2.10
+curl http://localhost:8000/health
+```
+
+### ⎈ Kubernetes / Helm
+
+Full Helm chart with Deployment, Service, Ingress, NetworkPolicy, PDB, and HPA (scales on CPU + `effgen_model_call_latency_seconds`). See [`docs/deploy/kubernetes.md`](docs/deploy/kubernetes.md).
+
+```bash
+helm lint deploy/k8s/helm/effgen/
+helm install effgen deploy/k8s/helm/effgen/ --set image.tag=0.2.10
+```
+
+### λ AWS Lambda
+
+Mangum adapter wrapping the FastAPI app. Cold start < 3 s; warm call < 100 ms. SAM template included. See [`docs/deploy/lambda.md`](docs/deploy/lambda.md).
+
+```bash
+cd deploy/aws_lambda
+sam build && sam deploy --guided
+```
+
+### ☁ Cloudflare Worker
+
+Thin edge proxy handling CORS, Bearer JWT auth, and KV-backed rate limiting before forwarding to your backend. See [`docs/deploy/cloudflare.md`](docs/deploy/cloudflare.md).
+
+```bash
+cd deploy/cloudflare
+wrangler deploy  # staging: wrangler deploy --env staging
+```
+
+---
+
+## 🔷 Developer Experience
+
+### VSCode Extension
+
+Prompt-template completion, inline "Run" code lens on `LibraryPrompt` definitions, and hover docs — all from the effGen registry. See [`docs/dx/vscode.md`](docs/dx/vscode.md).
+
+```bash
+cd tools/vscode-effgen
+npm ci && npm run compile
+# Install: Extensions → ··· → Install from VSIX → vscode-effgen-*.vsix
+```
+
+### Jupyter Magics
+
+```python
+%load_ext effgen.jupyter
+%effgen_chat "What is 17 * 23?"
+%%effgen_agent general
+Summarise the top HackerNews stories today and rank them by interest.
+%effgen_metrics
+```
+
+See [`docs/dx/jupyter.md`](docs/dx/jupyter.md).
+
+### Live Dashboard
+
+The API server serves a real-time SPA at `/dashboard` (no auth required). Panels: span stream (SSE), Prometheus metrics, recent agent runs with token counts and cost, SLO burn rates. See [`docs/dx/dashboard.md`](docs/dx/dashboard.md).
+
+```bash
+EFFGEN_DEV_MODE=1 effgen serve --port 8000
+open http://localhost:8000/dashboard
+```
+
+---
+
+## 🔒 Security
+
+### Secret Scanning
+
+Gitleaks pre-commit hook + CI workflow (`secret-scan.yml`) catch secrets before they reach the repo. Install the hook once:
+
+```bash
+pip install pre-commit && pre-commit install
+```
+
+### Sandboxed Code Execution
+
+`CodeExecutor` defaults to `SubprocessSandbox` (rootless user-namespace, network blocked, isolated `/tmp`) or `DockerSandbox` when Docker is available. To opt out (not recommended):
+
+```bash
+EFFGEN_SANDBOX_BACKEND=off effgen run ...   # loud warning emitted
+```
+
+### API Server Auth
+
+Protect your API server with OAuth2/OIDC (any OIDC provider — Auth0, Keycloak, Cognito):
+
+```bash
+export EFFGEN_OIDC_ISSUER=https://your-tenant.auth0.com/
+export EFFGEN_OIDC_CLIENT_ID=your-client-id
+export EFFGEN_OIDC_JWKS_URI=https://your-tenant.auth0.com/.well-known/jwks.json
+effgen serve --port 8000
+```
+
+See [`docs/server/auth.md`](docs/server/auth.md), [`docs/server/rbac.md`](docs/server/rbac.md), and [`docs/server/audit.md`](docs/server/audit.md).
 
 ---
 

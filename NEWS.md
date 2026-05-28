@@ -1,5 +1,90 @@
 # effGen Release Notes
 
+## v0.2.10 — May 27, 2026
+
+**effGen v0.2.10** ships the **Security, Edge & Developer Experience** layer — hardening effGen end-to-end from secret scanning to production deployment to everyday developer ergonomics.
+
+### What's new at a glance
+
+**Secret scanning and SBOM.** Gitleaks pre-commit hook + CI workflow catch secrets before they reach the repo. A CycloneDX 1.5 SBOM (`sbom.cdx.json`) is generated and validated on every push and uploaded as a release artifact. `pip-audit` CI fails on any HIGH/CRITICAL vulnerability.
+
+**Supply-chain integrity.** `EFFGEN_VERIFY_HASHES=1` compares installed-wheel hashes against the lockfile at startup and logs `hash_verification: ok` or `hash_verification: drift <package>`. `requirements-all-lock.txt` (uv-generated, with `google-protobuf` floors and `fireworks-ai<0.18` cap) makes `pip install .[all]` fully reproducible.
+
+**Sandboxed CodeExecutor.** LLM-generated Python no longer runs on the host by default. `SubprocessSandbox` uses rootless user-namespace isolation (`unshare --map-root-user --net --pid --mount`) — no `CAP_SYS_ADMIN` required. `DockerSandbox` adds `--read-only --network=none --cap-drop=ALL --pids-limit=100 --memory=256m`. `FirecrackerSandbox` stub ships for v0.3. `EFFGEN_SANDBOX_BACKEND=docker|subprocess|off` selects the backend; `off` emits a loud warning and is never auto-selected.
+
+**OAuth2/OIDC + RBAC + Audit Log.** The API server now validates Bearer JWTs via `authlib` (configurable issuer/JWKS) in non-dev mode. `Role` objects map JWT claims to `allowed_tools`, `allowed_models`, and `max_cost_per_day`. A `RBACBudgetMiddleware` enforces these per-request — returning 403 for disallowed tools and 429 for budget exhaustion. Every request/response pair is appended to `~/.effgen/audit/<date>.jsonl` (content redacted). `EFFGEN_DEV_MODE=1` disables auth for local development.
+
+**Docker and Helm.** A multi-stage `deploy/docker/Dockerfile` produces a slim non-root image with a `/health` healthcheck. A full Helm chart (`deploy/k8s/helm/effgen/`) ships with Deployment, Service, Ingress, ConfigMap, Secret, ServiceAccount, NetworkPolicy, PDB, HPA (CPU + custom `effgen_model_call_latency_seconds` metric), and PVC templates.
+
+**AWS Lambda.** `deploy/aws_lambda/handler.py` wraps the FastAPI app in Mangum (`lifespan="off"`). `ProviderRegistry` is preloaded at module level so cold starts land under 3 s; warm calls are under 100 ms. Per-invocation timeout budget is enforced — overruns return 504. A SAM template (`sam-template.yaml`) wires HTTP API → Lambda → SecretsManager.
+
+**Cloudflare Worker edge proxy.** `deploy/cloudflare/worker.js` handles CORS, Bearer JWT validation, fixed-window KV-backed rate limiting, and upstream forwarding (with `duplex:"half"` for streaming bodies) at the edge. `wrangler.toml` defines routes, KV bindings, and staging/production environments.
+
+**VSCode extension.** `tools/vscode-effgen/` provides prompt-template completion, an inline "Run" code lens on `LibraryPrompt` definitions, and hover docs. Compiled with TypeScript 5.3 strict (0 errors); publishable as a `.vsix`.
+
+**Jupyter magics.** `%effgen_chat <message>` for one-shot chat, `%%effgen_agent <preset>` for cell-body task execution with a tool trace, and `%effgen_metrics` for a Prometheus snapshot. Load with `%load_ext effgen.jupyter`.
+
+**Local dashboard.** The API server now serves a live SPA at `/dashboard` (public, no auth required). Panels: real-time span stream (SSE), `/metrics` summary, recent agent runs with token counts and cost, SLO burn rates. `/dashboard/data.json` exposes the same data as structured JSON.
+
+### CLI quick-start
+
+```bash
+# Verify secret-scanning pre-commit hook is installed
+pre-commit install && pre-commit run gitleaks
+
+# Start server with dev mode (auth disabled)
+EFFGEN_DEV_MODE=1 effgen serve --port 8000
+
+# Check the dashboard
+open http://localhost:8000/dashboard
+
+# Docker
+docker build -f deploy/docker/Dockerfile -t effgen:0.2.10 .
+docker run -p 8000:8000 --env-file .env effgen:0.2.10
+
+# Helm (Kubernetes)
+helm lint deploy/k8s/helm/effgen/
+helm install effgen deploy/k8s/helm/effgen/
+
+# AWS Lambda (SAM)
+cd deploy/aws_lambda && sam build && sam deploy --guided
+
+# Cloudflare Worker
+cd deploy/cloudflare && wrangler deploy
+```
+
+### Python API quick-start
+
+```python
+# Sandboxed code execution
+import asyncio
+from effgen.security.sandbox import get_sandbox, SandboxConfig
+
+async def run_sandboxed():
+    config = SandboxConfig(backend="subprocess", timeout=10)
+    sandbox = await get_sandbox(config)
+    result = await sandbox.run('print("hello, sandbox")', "python", config)
+    print(result.stdout)  # hello, sandbox
+
+asyncio.run(run_sandboxed())
+
+# Jupyter (inside a notebook)
+# %load_ext effgen.jupyter
+# %effgen_chat "What is the square root of 169?"
+# %%effgen_agent general
+# Summarise the top HackerNews stories today.
+```
+
+### Upgrading from v0.2.9
+
+No breaking API changes. All new modules are additive; existing `Agent`, `load_model`, and tool APIs are unaffected.
+
+```bash
+pip install --upgrade effgen
+```
+
+---
+
 ## v0.2.9 — May 23, 2026
 
 **effGen v0.2.9** ships the **Observability & Reliability** layer — everything you need to run effGen agents confidently in production. Structured JSON logs with automatic secret redaction, OpenTelemetry traces with configurable sampling, Prometheus histograms, SLO burn-rate tracking, circuit breakers, bulkheads, jittered retries, a deterministic chaos harness, a Hypothesis-based fuzz suite, a load-testing CLI (`effgen loadtest`), and six Alertmanager-compatible alert rules. All telemetry is async/non-blocking — a failed export never fails inference.

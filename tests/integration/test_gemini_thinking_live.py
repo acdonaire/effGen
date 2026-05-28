@@ -24,7 +24,7 @@ skip_no_key = pytest.mark.skipif(
     reason="GOOGLE_API_KEY not in ~/.effgen/.env — live Gemini tests skipped",
 )
 
-TEST_MODEL = "gemini-3.1-flash-lite-preview"
+TEST_MODEL = "gemini-3.1-flash-lite"
 MATH_PROMPT = (
     "A store sells apples for $1.50 each and oranges for $2.00 each. "
     "If Alice buys 4 apples and 3 oranges, how much does she spend in total? "
@@ -33,9 +33,17 @@ MATH_PROMPT = (
 
 
 def _skip_on_503(exc: Exception) -> None:
-    """Re-raise as pytest.skip if the error is a transient server overload."""
-    if "503" in str(exc) or "UNAVAILABLE" in str(exc):
+    """Skip on transient upstream unavailability (overload or free-tier quota).
+
+    503/UNAVAILABLE is a transient server overload; 429/RESOURCE_EXHAUSTED is a
+    free-tier rate/quota limit. Neither indicates an effGen bug, so we skip
+    rather than fail the live test (mirrors the Cerebras/Replicate live tests).
+    """
+    msg = str(exc)
+    if "503" in msg or "UNAVAILABLE" in msg:
         pytest.skip(f"Model unavailable (503 server overload) — {exc}")
+    if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+        pytest.skip(f"Free-tier quota exhausted (429) — {exc}")
     raise
 
 

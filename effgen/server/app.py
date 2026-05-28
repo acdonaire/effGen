@@ -27,6 +27,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Known provider prefixes — stable fallback when the dynamic ProviderRegistry
+# is unavailable or has been reset (e.g. in test teardowns).
+_KNOWN_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "cerebras",
+        "openai",
+        "anthropic",
+        "gemini",
+        "groq",
+        "together",
+        "fireworks",
+        "replicate",
+        "hf",
+    }
+)
+
 # FastAPI Request must be importable at module level so route type annotations
 # resolve correctly when `from __future__ import annotations` is active.
 try:
@@ -100,6 +116,7 @@ def create_app(
         client_id=oidc_client_id,
         jwks_uri=oidc_jwks_uri,
         metrics_auth=metrics_auth,
+        dev_mode=_dev,
     )
 
     # 3. Audit middleware (logs every request; reads user from state set by auth)
@@ -228,10 +245,18 @@ def _normalize_model_id(model: str) -> str:
     try:
         from effgen.models.registry import ProviderRegistry
 
-        if prefix in ProviderRegistry.list_providers():
+        providers = ProviderRegistry.list_providers()
+        if not providers:
+            # Registry may have been reset (e.g. by test teardowns).
+            # Fall back to the static provider set rather than attempting a
+            # re-import that could cause circular-import or side-effect issues.
+            providers = _KNOWN_PROVIDERS  # type: ignore[assignment]
+
+        if prefix in providers:
             return f"{prefix}:{rest}"
-    except Exception:  # noqa: BLE001 - registry optional; fall back to original
-        pass
+    except Exception:  # noqa: BLE001 - registry optional; fall back to static set
+        if prefix in _KNOWN_PROVIDERS:
+            return f"{prefix}:{rest}"
     return model
 
 

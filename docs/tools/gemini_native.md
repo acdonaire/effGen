@@ -20,7 +20,7 @@ tool spec to the API, and the model decides when (and whether) to use them.
   raises `ToolIncompatibleError` at `Agent` init time (before any API calls).
 - A valid `GOOGLE_API_KEY`.
 - Free-tier note: `GoogleSearchTool` requires a model whose free tier supports
-  grounding (e.g. `gemini-2.5-flash-lite`).  The `gemini-3.1-flash-lite-preview`
+  grounding (e.g. `gemini-2.5-flash-lite`).  The `gemini-3.1-flash-lite`
   free tier does not include Google Search grounding.
 
 ---
@@ -63,7 +63,7 @@ response = agent.run(
 print(response.output)
 
 # --- Code Execution ---
-model2 = GeminiAdapter(model_name="gemini-3.1-flash-lite-preview")
+model2 = GeminiAdapter(model_name="gemini-3.1-flash-lite")
 model2.load()
 agent = Agent(AgentConfig(
     name="code-agent",
@@ -104,7 +104,7 @@ from effgen.tools.builtin.gemini_native import GeminiUrlContextTool
 tool = GeminiUrlContextTool()
 ```
 
-**Compatible models:** `gemini-3.1-flash-lite-preview`, `gemini-2.5-flash-lite`,
+**Compatible models:** `gemini-3.1-flash-lite`, `gemini-2.5-flash-lite`,
 and other models that support `url_context`.
 
 ---
@@ -121,7 +121,7 @@ from effgen.tools.builtin.gemini_native import GeminiCodeExecutionTool
 tool = GeminiCodeExecutionTool()
 ```
 
-**Compatible models:** `gemini-3.1-flash-lite-preview`, `gemini-2.5-flash-lite`,
+**Compatible models:** `gemini-3.1-flash-lite`, `gemini-2.5-flash-lite`,
 and most Gemini models.
 
 ---

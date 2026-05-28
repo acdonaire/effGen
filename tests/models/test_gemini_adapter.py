@@ -108,7 +108,7 @@ def test_generate_with_retry_honors_retry_delay(monkeypatch):
 
     adapter = GeminiAdapter.__new__(GeminiAdapter)
     adapter.MAX_RATE_LIMIT_RETRIES = 3
-    adapter.model_name = "gemini-3.1-flash-lite-preview"
+    adapter.model_name = "gemini-3.1-flash-lite"
 
     sleeps: list[float] = []
     monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
@@ -139,7 +139,7 @@ def test_generate_with_retry_gives_up_after_max(monkeypatch):
 
     adapter = GeminiAdapter.__new__(GeminiAdapter)
     adapter.MAX_RATE_LIMIT_RETRIES = 2
-    adapter.model_name = "gemini-3.1-flash-lite-preview"
+    adapter.model_name = "gemini-3.1-flash-lite"
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     class FakeModels:
@@ -160,7 +160,7 @@ def test_generate_with_retry_gives_up_after_max(monkeypatch):
 
 def test_registry_contains_3_1_flash_lite():
     info = gemini_models.model_info("gemini-3.1-flash-lite")
-    assert info["canonical_id"] == "gemini-3.1-flash-lite-preview"
+    assert info["canonical_id"] == "gemini-3.1-flash-lite"
     assert info["free_tier"] is True
     assert info["rpm"] == 15
     assert info["supports_native_tools"] is True
@@ -168,7 +168,7 @@ def test_registry_contains_3_1_flash_lite():
 
 def test_registry_free_tier_excludes_pro_preview():
     free = set(gemini_models.free_tier_models())
-    assert "gemini-3.1-flash-lite-preview" in free
+    assert "gemini-3.1-flash-lite" in free
     assert "gemini-3-pro-preview" not in free
     assert "gemma-3-27b" in free
 
@@ -176,7 +176,7 @@ def test_registry_free_tier_excludes_pro_preview():
 def test_registry_recommended_models_filters_by_tier():
     free = gemini_models.recommended_models(tier="free")
     assert all(m["tier"] == "free" for m in free)
-    assert any(m["id"] == "gemini-3.1-flash-lite-preview" for m in free)
+    assert any(m["id"] == "gemini-3.1-flash-lite" for m in free)
 
 
 def test_registry_unknown_model_raises():

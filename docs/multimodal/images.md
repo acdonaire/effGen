@@ -28,7 +28,7 @@ adapter.unload()
 
 | Provider | Model | Notes |
 |---|---|---|
-| **Gemini** | gemini-3.1-flash-lite-preview, gemini-2.5-flash, ... | Native vision, inline JPEG/PNG/WEBP/GIF |
+| **Gemini** | gemini-3.1-flash-lite, gemini-2.5-flash, ... | Native vision, inline JPEG/PNG/WEBP/GIF |
 | **OpenAI** | gpt-4o-mini, gpt-4o, gpt-5 | data-URI base64 inline |
 | **Groq** | meta-llama/llama-4-scout-17b-16e-instruct | Llama 4 Scout 17B vision |
 | **Together** | nim/meta/llama-3.2-90b-vision-instruct | Requires dedicated endpoint |

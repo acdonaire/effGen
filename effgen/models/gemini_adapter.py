@@ -59,7 +59,7 @@ class GeminiAdapter(FunctionCallingModel):
     - Rate-limit-aware retry (honors Retry-After from 429s)
 
     Attributes:
-        model_name: Gemini model ID (e.g. 'gemini-3.1-flash-lite-preview')
+        model_name: Gemini model ID (e.g. 'gemini-3.1-flash-lite')
         api_key: Google API key (reads GOOGLE_API_KEY from env if not given)
         safety_settings: Content safety filter settings
     """
@@ -101,9 +101,9 @@ class GeminiAdapter(FunctionCallingModel):
         **kwargs: Any,
     ) -> None:
         import os
-        # Resolve short aliases (e.g. "gemini-3.1-flash-lite") to canonical
-        # registry IDs (e.g. "gemini-3.1-flash-lite-preview"). The Gemini API
-        # only recognizes canonical IDs; aliases are an effGen convenience.
+        # Resolve short/legacy aliases (e.g. the retired
+        # "gemini-3.1-flash-lite-preview") to canonical registry IDs
+        # (e.g. "gemini-3.1-flash-lite"). Aliases are an effGen convenience.
         canonical_name = GEMINI_MODEL_ALIASES.get(model_name, model_name)
         super().__init__(
             model_name=canonical_name,

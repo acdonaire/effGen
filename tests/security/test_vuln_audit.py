@@ -17,7 +17,6 @@ If pip-audit is not installed, the tests are skipped with a clear message.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -54,10 +53,29 @@ _EXEMPT = {
     "diskcache",  # no fix available upstream (CVE-2025-69872, pickle serialization)
 }
 
-_PIP_AUDIT = shutil.which("pip-audit")
+def _pip_audit_runnable() -> bool:
+    """True if ``pip_audit`` is runnable by *this* interpreter.
+
+    We check ``sys.executable -m pip_audit`` rather than ``shutil.which`` so
+    the skip decision matches how :func:`_run_pip_audit` actually invokes the
+    tool. A ``pip-audit`` binary on ``PATH`` may belong to a different
+    interpreter (e.g. ``~/.local/bin``) whose module is not importable here.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip_audit", "--version"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+_PIP_AUDIT = _pip_audit_runnable()
 skip_no_audit = pytest.mark.skipif(
-    _PIP_AUDIT is None,
-    reason="pip-audit not found on PATH; install with: pip install pip-audit",
+    not _PIP_AUDIT,
+    reason="pip-audit not runnable by this interpreter; install with: pip install pip-audit",
 )
 
 

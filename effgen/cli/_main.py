@@ -1284,6 +1284,16 @@ class CLIInterface:
                     }
                 }
 
+            # Mount the local dashboard SPA (/dashboard, /dashboard/data.json,
+            # /dashboard/spans). Public, no auth — matches the documented
+            # `effgen serve` → http://host:port/dashboard workflow.
+            try:
+                from effgen.server.app import _mount_dashboard
+                _mount_dashboard(app)
+                self.print_success("Dashboard available at /dashboard")
+            except Exception as exc:  # noqa: BLE001 - dashboard is optional
+                logging.warning("Dashboard not mounted: %s", exc)
+
             # Start server
             self.print(f"Starting server on {args.host}:{args.port}")
             self.print(f"API docs available at http://{args.host}:{args.port}/docs")

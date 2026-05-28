@@ -367,20 +367,34 @@ class AuthMiddleware:
         jwks_uri: str | None = None,
         public_paths: frozenset[str] | None = None,
         metrics_auth: bool = False,
+        dev_mode: bool | None = None,
     ) -> None:
         self.app = app
         self.issuer = issuer or os.getenv("EFFGEN_OIDC_ISSUER", "")
         self.client_id = client_id or os.getenv("EFFGEN_OIDC_CLIENT_ID", "")
         self.jwks_uri = jwks_uri or os.getenv("EFFGEN_OIDC_JWKS_URI", "")
         self.metrics_auth = metrics_auth or os.getenv("EFFGEN_METRICS_AUTH", "0") == "1"
+        # dev_mode: explicit bool overrides the env var; None means "read env at call time"
+        self._dev_mode_override: bool | None = dev_mode
         _extra = set(public_paths or set())
         _default_public = set(_PUBLIC_PATHS)
         if not self.metrics_auth:
             _default_public.add("/metrics")
         self.public_paths: frozenset[str] = frozenset(_default_public | _extra)
 
-        if _is_dev_mode():
+        if self._effective_dev_mode():
             _warn_dev_mode()
+
+    def _effective_dev_mode(self) -> bool:
+        """Return the effective dev-mode flag.
+
+        If ``dev_mode`` was passed explicitly to the constructor that value is
+        used; otherwise the env-var is re-read on every call so that tests that
+        monkeypatch ``EFFGEN_DEV_MODE`` still work as expected.
+        """
+        if self._dev_mode_override is not None:
+            return self._dev_mode_override
+        return _is_dev_mode()
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -392,8 +406,9 @@ class AuthMiddleware:
         # Also exempt /dashboard and /dashboard/* static assets, but not
         # lookalike paths such as /dashboardevil.
         _is_dashboard = path == "/dashboard" or path.startswith("/dashboard/")
-        if path in self.public_paths or _is_dashboard or _is_dev_mode():
-            if _is_dev_mode():
+        _dev = self._effective_dev_mode()
+        if path in self.public_paths or _is_dashboard or _dev:
+            if _dev:
                 scope.setdefault("state", {})["user"] = TokenPayload(
                     sub="dev-user",
                     iss="dev",

@@ -28,6 +28,11 @@
 <a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/observability/overview.md"><img src="https://img.shields.io/badge/📊_Prometheus_Metrics-histograms_%2B_SLOs-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" alt="Prometheus Metrics"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/observability/tracing.md"><img src="https://img.shields.io/badge/🔭_OTel_Traces-samplers_%2B_span_spec-00B4CE?style=for-the-badge&logo=opentelemetry&logoColor=white" alt="OTel Traces"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/observability/alerting.md"><img src="https://img.shields.io/badge/🔔_SLOs_%26_Alerting-Alertmanager_rules-F5A623?style=for-the-badge" alt="SLOs"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/deploy/docker/Dockerfile"><img src="https://img.shields.io/badge/🐳_Docker-multi--stage_%2B_non--root-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/deploy/k8s/helm/effgen/"><img src="https://img.shields.io/badge/⎈_Helm-chart_%2B_HPA_%2B_PDB-0F1689?style=for-the-badge&logo=helm&logoColor=white" alt="Helm"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/deploy/aws_lambda/"><img src="https://img.shields.io/badge/λ_AWS_Lambda-Mangum_adapter-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="Lambda"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/deploy/cloudflare/"><img src="https://img.shields.io/badge/☁_Cloudflare_Worker-edge_proxy-F48120?style=for-the-badge&logo=cloudflare&logoColor=white" alt="Cloudflare"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/tools/vscode-effgen/"><img src="https://img.shields.io/badge/🔷_VSCode_Extension-prompt_completion-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="VSCode"/></a>
 
 <!-- Quick Links -->
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
@@ -43,6 +48,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🔒 | **27 May 2026** | **v0.2.10 Released**: Security, Edge & DX — secret scanning (gitleaks), SBOM (CycloneDX), pip-audit CI, sandboxed CodeExecutor, OAuth2/OIDC + RBAC + audit log, Docker + Helm, AWS Lambda (Mangum), Cloudflare Worker, VSCode extension, Jupyter magics, live dashboard. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#0210---2026-05-27) |
 | 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#029---2026-05-23) |
 | 🖼️ | **21 May 2026** | **v0.2.8 Released**: First-class multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#028---2026-05-21) |
 | 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#027---2026-05-20) |

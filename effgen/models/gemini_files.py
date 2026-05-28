@@ -11,7 +11,7 @@ Usage::
     from effgen.models.base import GenerationConfig
 
     ref = upload_file("paper.pdf")
-    adapter = GeminiAdapter("gemini-3.1-flash-lite-preview")
+    adapter = GeminiAdapter("gemini-3.1-flash-lite")
     adapter.load()
     result = adapter.generate("Summarise this document.", files=[ref])
 

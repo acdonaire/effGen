@@ -10,7 +10,7 @@ without leaving the framework.
 from effgen.models.gemini_adapter import GeminiAdapter
 from effgen.models.base import GenerationConfig
 
-model = GeminiAdapter(model_name="gemini-3.1-flash-lite-preview")
+model = GeminiAdapter(model_name="gemini-3.1-flash-lite")
 model.load()
 result = model.generate(
     "Summarise the second law of thermodynamics in one sentence.",
@@ -41,7 +41,7 @@ effgen.gemini_model_info("gemini-3.1-flash-lite")  # alias resolves
 
 | Model                                | Family       | Tier    | RPM | TPM     | RPD    | Tools | Thinking | Grounding |
 |--------------------------------------|--------------|---------|-----|---------|--------|-------|----------|-----------|
-| `gemini-3.1-flash-lite-preview`      | flash-lite   | free    | 15  | 250 K   | 500    | yes   | yes      | no¹       |
+| `gemini-3.1-flash-lite`              | flash-lite   | free    | 15  | 250 K   | 500    | yes   | yes      | no¹       |
 | `gemini-3-flash-preview`             | flash        | free    | 5   | 250 K   | 20     | yes   | yes      | yes       |
 | `gemini-3-pro-preview`               | pro          | premium | —   | —       | —      | yes   | yes      | yes       |
 | `gemini-3.1-pro-preview`             | pro          | premium | —   | —       | —      | yes   | yes      | yes       |
@@ -53,7 +53,7 @@ effgen.gemini_model_info("gemini-3.1-flash-lite")  # alias resolves
 | `gemma-3-1b` / `3-4b` / `3-12b` / `3-27b` | gemma   | free    | 30  | 15 K    | 14 400 | no    | no       | no        |
 | `gemma-4-26b` / `gemma-4-31b`        | gemma        | free    | 15  | unlim.  | 1 500  | no    | no       | no        |
 
-¹ Google Search grounding hits quota on the free-tier for `gemini-3.1-flash-lite-preview`. Use `gemini-2.5-flash` or higher for grounding.
+¹ Google Search grounding hits quota on the free-tier for `gemini-3.1-flash-lite`. Use `gemini-2.5-flash` or higher for grounding.
 
 Limits reflect Google's free-tier defaults as of 2026-04-25 — check
 [ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits)
@@ -74,7 +74,7 @@ via two `GenerationConfig` fields:
 from effgen.models.gemini_adapter import GeminiAdapter
 from effgen.models.base import GenerationConfig
 
-model = GeminiAdapter(model_name="gemini-3.1-flash-lite-preview")
+model = GeminiAdapter(model_name="gemini-3.1-flash-lite")
 model.load()
 
 result = model.generate(
@@ -102,7 +102,7 @@ print("Thinking tokens:", result.metadata["thoughts_token_count"])
 
 | Model | Thinking | Notes |
 |---|---|---|
-| `gemini-3.1-flash-lite-preview` | yes | Free tier, 15 RPM / 500 RPD |
+| `gemini-3.1-flash-lite` | yes | Free tier, 15 RPM / 500 RPD |
 | `gemini-3-flash-preview` | yes | Free tier, 5 RPM / 20 RPD |
 | `gemini-3-pro-preview` | yes | Paid only |
 | `gemini-2.5-pro` | yes | Paid only |
@@ -137,7 +137,7 @@ model.unload()
 
 **Notes:**
 - Only `gemini-2.5-flash` and higher reliably support grounding on free-tier
-  keys. The lite model (`gemini-3.1-flash-lite-preview`) hits quota on the
+  keys. The lite model (`gemini-3.1-flash-lite`) hits quota on the
   grounding endpoint.
 - `grounding=False` (default): `metadata["grounding_chunks"]` is always
   an empty list.
@@ -159,7 +159,7 @@ from effgen.models.base import GenerationConfig
 ref = upload_file("paper.pdf")          # auto-detects MIME type
 # ref = upload_file("report.txt", mime_type="text/plain", display_name="Q1 Report")
 
-model = GeminiAdapter(model_name="gemini-3.1-flash-lite-preview")
+model = GeminiAdapter(model_name="gemini-3.1-flash-lite")
 model.load()
 
 result = model.generate(
@@ -210,7 +210,7 @@ from effgen.core.agent import Agent, AgentConfig
 from effgen.models.gemini_adapter import GeminiAdapter
 from effgen.tools.builtin import Calculator
 
-model = GeminiAdapter(model_name="gemini-3.1-flash-lite-preview")
+model = GeminiAdapter(model_name="gemini-3.1-flash-lite")
 model.load()
 agent = Agent(config=AgentConfig(
     name="GeminiAgent",
@@ -232,14 +232,16 @@ Under the hood the adapter:
 
 ## Model aliases
 
-These short forms resolve to the canonical preview ID in the registry:
+These short forms resolve to the canonical ID in the registry:
 
-| Alias                       | Canonical                          |
-|-----------------------------|------------------------------------|
-| `gemini-3.1-flash-lite`     | `gemini-3.1-flash-lite-preview`    |
-| `gemini-3-flash`            | `gemini-3-flash-preview`           |
-| `gemini-3-pro`              | `gemini-3-pro-preview`             |
-| `gemini-3.1-pro`            | `gemini-3.1-pro-preview`           |
-| `gemini-flash-lite-latest`  | `gemini-3.1-flash-lite-preview`    |
+| Alias                              | Canonical                       |
+|------------------------------------|---------------------------------|
+| `gemini-3.1-flash-lite-preview`¹   | `gemini-3.1-flash-lite`         |
+| `gemini-3-flash-lite`              | `gemini-3.1-flash-lite`         |
+| `gemini-3-flash`                   | `gemini-3-flash-preview`        |
+| `gemini-3-pro`                     | `gemini-3-pro-preview`          |
+| `gemini-3.1-pro`                   | `gemini-3.1-pro-preview`        |
+| `gemini-flash-lite-latest`         | `gemini-3.1-flash-lite`         |
 
-Both forms are callable directly against the API.
+¹ The older `-preview` flash-lite ID was retired by Google (returns 404); it is
+kept as a backward-compatible alias that resolves to the GA `gemini-3.1-flash-lite`.

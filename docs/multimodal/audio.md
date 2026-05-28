@@ -30,7 +30,7 @@ Gemini Flash/Pro models natively understand audio. No pre-transcription step.
 ```python
 from effgen.models.gemini_adapter import GeminiAdapter
 
-adapter = GeminiAdapter("gemini-3.1-flash-lite-preview")
+adapter = GeminiAdapter("gemini-3.1-flash-lite")
 adapter.load()
 result = adapter.generate(msg)
 print(result.text)

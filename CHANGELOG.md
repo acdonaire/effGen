@@ -7,6 +7,240 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.10] - 2026-05-27
+
+### Highlights
+
+**effGen v0.2.10** is the **Security, Edge & Developer Experience** release — hardening effGen end-to-end with secret scanning, dependency auditing, a SBOM pipeline, supply-chain integrity verification, a sandboxed `CodeExecutor`, OAuth2/OIDC auth with RBAC and a per-request audit log, Docker and Helm production deployments, AWS Lambda (Mangum adapter), a Cloudflare Worker edge proxy, a VSCode extension with prompt-template completion, Jupyter magics, and a live local dashboard. No breaking API changes; every security and DX feature is additive.
+
+### Added
+
+#### Security — Secret Scanning (`effgen/security/`, `.gitleaks.toml`, `.pre-commit-config.yaml`)
+
+- **`.gitleaks.toml`** — tuned rule set covering OpenAI, Anthropic, Cerebras, Google, HuggingFace, Groq, Slack, Discord, and Bearer-token patterns. Allowlist for test fixtures with obviously fake keys.
+- **`.pre-commit-config.yaml`** — gitleaks pre-commit hook; blocks commits containing secret-like strings.
+- **`.github/workflows/secret-scan.yml`** — CI secret-scan workflow; scans both working tree and full git history. Fails on any detected real secret.
+- **`tests/security/test_secret_patterns.py`** — plants fake secrets in a temp file, runs gitleaks, asserts detected; repo-history scan asserts clean.
+
+#### Security — SBOM (`sbom.cdx.json`, `.github/workflows/sbom.yml`)
+
+- **`sbom.cdx.json`** — CycloneDX 1.5 SBOM; every runtime dependency listed with name, version, and PURL.
+- **`.github/workflows/sbom.yml`** — CI SBOM workflow; generates `sbom.cdx.json` on each push; validates against CycloneDX schema; uploads as release artifact.
+- **`tests/security/test_sbom.py`** — asserts every runtime dep from `pyproject.toml` appears in the SBOM.
+
+#### Security — Dependency Pinning (`requirements-lock.txt`, `requirements-all-lock.txt`)
+
+- **`requirements-lock.txt`** — hash-verified lock for base dependencies. `pip install -e . -c requirements-lock.txt` is reproducible.
+- **`requirements-all-lock.txt`** — hash-verified lock for `.[all]` extras bucket (uv-generated; `google-protobuf` floors + `fireworks-ai<0.18` cap resolve deep-resolution issues).
+
+#### Security — Vulnerability Audit (`docs/security/`)
+
+- **`.github/workflows/deps-audit.yml`** — `pip-audit` CI; fails on HIGH/CRITICAL; reports MEDIUM. Excludes `fastapi==0.136.3` (known malicious, pinned away in lock).
+- **`.github/workflows/sbom.yml`** — SBOM generation and CycloneDX schema validation.
+- **Startup hash verification** — `EFFGEN_VERIFY_HASHES=1` on startup compares installed-wheel hashes against the lockfile; logs `hash_verification: ok` or `hash_verification: drift` with the first drifted package.
+- **`tests/security/test_vuln_audit.py`** — runs `pip-audit --format json`; asserts no HIGH/CRITICAL in the current environment.
+- **`tests/security/test_supply_chain.py`** — asserts `pyproject.toml` contains required fields (`license`, `authors`, `urls`).
+- **`docs/security/secrets.md`** — secret-scanning guide and pre-commit setup.
+- **`docs/security/sbom.md`** — SBOM generation and validation guide.
+- **`docs/security/supply_chain.md`** — supply-chain hardening, hash verification, and Dependabot configuration.
+
+#### Security — Sandbox for CodeExecutor (`effgen/security/sandbox.py`)
+
+- **`SubprocessSandbox`** — rootless user-namespace isolation via `unshare --map-root-user --net --pid --mount`; separate `/tmp` bind-mount; network blocked; no `CAP_SYS_ADMIN` required. Loud warning when falling back from Docker.
+- **`DockerSandbox`** — `--read-only --network=none --cap-drop=ALL --pids-limit=100 --memory=256m`; non-root user; automatically selected when Docker daemon is available.
+- **`FirecrackerSandbox`** — stub interface; `NotImplementedError` with install instructions for v0.3 roadmap.
+- **`OffSandbox`** — `EFFGEN_SANDBOX_BACKEND=off`; executes on host with a loud startup warning; never auto-selected.
+- **`SandboxConfig`** — env-driven: `EFFGEN_SANDBOX_BACKEND=docker|subprocess|off`, `EFFGEN_SANDBOX_TIMEOUT=10`.
+- **`CodeExecutor.run(code, language)`** — dispatches to the configured sandbox backend.
+- **`tests/security/test_sandbox.py`** — network-block test (subprocess path: `urllib.request.urlopen` → `OSError`); filesystem isolation test (`rm -rf /tmp/evil` leaves host untouched). Docker paths skip when daemon unavailable.
+- **`docs/security/codeexecutor.md`** — threat model, sandbox architecture, and configuration reference.
+
+#### Auth — OAuth2/OIDC, RBAC, Audit Log (`effgen/server/auth.py`, `effgen/server/rbac.py`, `effgen/server/budget.py`, `effgen/server/audit.py`)
+
+- **OIDC JWT validation** (`effgen/server/auth.py`) — Bearer JWT validation on every non-public endpoint via `authlib`. Configurable issuer, `client_id`, JWKS endpoint via env vars (`EFFGEN_OIDC_ISSUER`, `EFFGEN_OIDC_CLIENT_ID`, `EFFGEN_OIDC_JWKS_URI`). Public endpoints: `/health`, `/metrics` (configurable).
+- **RBAC** (`effgen/server/rbac.py`) — `Role(name, allowed_tools, allowed_models, max_cost_per_day)`. JWT claim `roles: [...]` resolved per-request. `RBACBudgetMiddleware` (pure-ASGI, no body-consumption issue) enforces `allowed_tools` (403) and daily cost cap (429 `BudgetExceeded`).
+- **Budget tracking** (`effgen/server/budget.py`) — per-principal daily cost accumulation; 429 on cap breach.
+- **Audit log** (`effgen/server/audit.py`) — every request/response pair appended to `~/.effgen/audit/<date>.jsonl`. Fields: `ts, principal, role, endpoint, request_summary, response_summary, outcome`. Content redacted via `Redactor`.
+- **Dev mode** — `EFFGEN_DEV_MODE=1` disables auth with a loud startup warning. Default off in CI/prod.
+- **`tests/server/test_auth.py`** — JWT verify, role matrix, unauthenticated rejected, reader/deny_tools 403, cost-cap 429.
+- **`tests/server/test_audit.py`** — audit log fields present, no secrets in log.
+- **`docs/server/auth.md`** — OIDC configuration guide (Auth0 walkthrough).
+- **`docs/server/rbac.md`** — role definition, JWT claims, tool/model allow-lists.
+- **`docs/server/audit.md`** — audit log format, location, rotation.
+
+#### Deploy — Docker (`deploy/docker/Dockerfile`, `docs/deploy/docker.md`)
+
+- **Multi-stage Dockerfile** — `python:3.11-slim` builder + slim runtime; non-root user (`uid=1000`); read-only filesystem; `HEALTHCHECK` on `/health`; regular (non-editable) install with `EXTRAS=server`.
+- **`prometheus-client`** added to `server` extras (required for `/metrics`).
+- **`tests/deploy/test_dockerfile.py`** — Dockerfile structure: 19 checks (non-root, HEALTHCHECK, EXPOSE, multi-stage); integration path: `docker run --health-cmd` (skipped without Docker group access).
+- **`docs/deploy/docker.md`** — one-liner quickstart, environment variable reference, multi-platform build instructions.
+
+#### Deploy — Kubernetes / Helm (`deploy/k8s/helm/effgen/`, `docs/deploy/kubernetes.md`)
+
+- **Helm chart** — `Chart.yaml`, `values.yaml`; templates: `Deployment`, `Service`, `Ingress`, `ConfigMap`, `Secret`, `ServiceAccount`, `NetworkPolicy`, `PodDisruptionBudget`, `HPA` (CPU + `effgen_model_call_latency_seconds`), `PersistentVolumeClaim`.
+- Default replicas=2; resource requests `cpu:100m / memory:256Mi`; HPA min=2, max=10.
+- **`kubeconform`** validates all rendered manifests against Kubernetes 1.29 strict schema.
+- **`tests/deploy/test_helm_lint.py`** — `helm lint` (40 tests); `helm template` produces valid YAML; all resource kinds present; HPA custom metric configured.
+- **`docs/deploy/kubernetes.md`** — minikube walkthrough, OIDC secret wiring, HPA tuning guide.
+
+#### Deploy — AWS Lambda (`deploy/aws_lambda/`, `docs/deploy/lambda.md`)
+
+- **`deploy/aws_lambda/handler.py`** — Mangum-adapter wrapping the FastAPI app; `lifespan="off"`; `ProviderRegistry` preloaded at module level for cold-start optimisation (first call < 3 s, warm call < 100 ms); per-invocation timeout budget enforced → 504 on overrun.
+- **`deploy/aws_lambda/sam-template.yaml`** — AWS SAM template: HTTP API + Lambda function + CloudWatch Log Group + Outputs. SecretsManager reference for API keys.
+- **`deploy/aws_lambda/_smoke_runner.py`** — local smoke runner for live Cerebras calls through the handler.
+- **`tests/deploy/test_lambda_handler.py`** — 41 tests: v1 + v2 APIGateway events, 4xx invalid body, 404 unknown path, cold-start timing, timeout 504, SAM struct + cfn-lint.
+- **`docs/deploy/lambda.md`** — build zip, deploy via SAM, expected cold-start times, SecretsManager wiring.
+
+#### Deploy — Cloudflare Worker (`deploy/cloudflare/`, `docs/deploy/cloudflare.md`)
+
+- **`deploy/cloudflare/worker.js`** — thin edge proxy: CORS headers, Bearer JWT auth, fixed-window rate limiting (KV-backed), upstream forward with `duplex:"half"` for streaming bodies, security response headers.
+- **`deploy/cloudflare/wrangler.toml`** — routes, KV `RATE_LIMIT` namespace, env vars, staging and production environments.
+- **`tests/deploy/test_cloudflare_worker.py`** — 30 tests: 11 structural + 9 unit (stubbed) + 2 real-fetch round-trip regression guards (file:// → worker.js → live origin).
+- **`docs/deploy/cloudflare.md`** — wrangler deploy guide, KV setup, environment variable reference, JWT configuration.
+
+#### DX — VSCode Extension (`tools/vscode-effgen/`, `docs/dx/vscode.md`)
+
+- **TypeScript extension** (`tools/vscode-effgen/src/extension.ts`) — prompt-template completion from the registry, inline "Run" code lens on `LibraryPrompt` definitions, hover docs with template description + input schema.
+- **`npm run compile`** — TypeScript 5.3 strict, 0 errors.
+- **`tests/dx/test_vscode_build.py`** — asserts `npm ci && npm run compile` succeed; compiled JS present.
+- **`docs/dx/vscode.md`** — install from `.vsix`, feature walkthrough, development guide.
+
+#### DX — Jupyter Magics (`effgen/jupyter/magics.py`, `docs/dx/jupyter.md`)
+
+- **`%effgen_chat <message>`** — one-shot chat; displays formatted response.
+- **`%%effgen_agent <preset>`** — cell body as task; displays final answer + tool trace.
+- **`%effgen_metrics`** — snapshot of current Prometheus counters inline.
+- **`effgen[jupyter]` extra** — `ipython` dependency added.
+- **`tests/dx/test_jupyter_magics.py`** — 31 tests: magic loading, `%effgen_chat` with mock model, `%%effgen_agent`, `%effgen_metrics`.
+- **`docs/dx/jupyter.md`** — `%load_ext effgen.jupyter`, magic reference, Cerebras live example.
+
+#### DX — Local Dashboard (`effgen/dashboard/`, `docs/dx/dashboard.md`)
+
+- **Static SPA** (`effgen/dashboard/static/`) — served at `/dashboard` (public, no auth required). Panels: live span stream (SSE), `/metrics` summary, recent agent runs with token counts and cost, SLO burn rates. Chart.js from CDN.
+- **`/dashboard/data.json`** — `{ts, metrics, slo, recent_runs, recent_spans, raw_metrics}` JSON snapshot.
+- **SSE endpoint** at `/dashboard/spans` — pushes new spans in real time.
+- **Auth exemption** — `/dashboard` and `/dashboard/*` paths bypassed by `AuthMiddleware`.
+- **`tests/dx/test_dashboard.py`** — 46 tests: `/dashboard` 200, panel IDs present, `/dashboard/data.json` schema, SSE stream, auth boundary.
+- **`docs/dx/dashboard.md`** — panel reference, SSE protocol, customisation guide.
+
+### Tests Added
+
+| File | Tests | Coverage |
+|------|-------|----------|
+| `tests/security/test_secret_patterns.py` | 4 | gitleaks planted-secret detection, repo-history clean |
+| `tests/security/test_sbom.py` | 4 | SBOM structure, CycloneDX schema, dep coverage |
+| `tests/security/test_vuln_audit.py` | 6 | pip-audit JSON, no HIGH/CRITICAL |
+| `tests/security/test_supply_chain.py` | 30 | pyproject required fields, hash verification startup |
+| `tests/security/test_sandbox.py` | 35 | SubprocessSandbox net+fs isolation; Docker paths skip |
+| `tests/server/test_auth.py` | 57 | JWT, RBAC, unauthenticated rejected, 429 budget |
+| `tests/server/test_audit.py` | 28 | Audit fields, no secrets, anonymisation |
+| `tests/deploy/test_dockerfile.py` | 19 | Dockerfile structure; integration skipped w/o Docker |
+| `tests/deploy/test_helm_lint.py` | 40 | helm lint + template, resource kinds, HPA metric |
+| `tests/deploy/test_lambda_handler.py` | 41 | v1+v2 events, 4xx, 404, timing, 504, SAM + cfn-lint |
+| `tests/deploy/test_cloudflare_worker.py` | 30 | Structural + unit + real-fetch round-trip |
+| `tests/dx/test_vscode_build.py` | 20 | npm compile, compiled JS, manifest |
+| `tests/dx/test_jupyter_magics.py` | 31 | Magic loading, chat, agent, metrics |
+| `tests/dx/test_dashboard.py` | 46 | /dashboard routes, panels, data.json schema, SSE, auth |
+
+### Validation Results
+
+| Check | Result |
+|-------|--------|
+| `effgen.__version__` | **0.2.10** |
+| gitleaks pre-commit | Detects planted secrets ✓ |
+| gitleaks CI (dir + history) | Both exit 0 on clean repo ✓ |
+| CycloneDX SBOM | Generates + validates against 1.5 schema ✓ |
+| pip-audit | 0 HIGH/CRITICAL ✓ |
+| `EFFGEN_VERIFY_HASHES=1` | ok/drift logged correctly ✓ |
+| SubprocessSandbox network block | `OSError` on `urlopen` ✓ |
+| SubprocessSandbox filesystem isolation | Host `/tmp` unchanged ✓ |
+| DockerSandbox tests | Skip without Docker group (not an error) ✓ |
+| API server (unauthenticated) | 401 in non-dev mode ✓ |
+| RBAC deny_tools | 403 ✓ |
+| Budget exceeded | 429 `BudgetExceeded` ✓ |
+| Audit log | Fields correct, no secrets ✓ |
+| Dockerfile | Builds; /health 200 via uvicorn smoke ✓ |
+| Helm chart | `helm lint` clean; `kubeconform` strict K8s 1.29 ✓ |
+| Lambda handler | 41/41 tests pass; live Cerebras call through handler ✓ |
+| Cloudflare Worker | wrangler --dry-run validates; live round-trip via worker ✓ |
+| VSCode extension | `npm run compile` 0 errors; .vsix buildable ✓ |
+| Jupyter magics | Live Cerebras llama3.1-8b smoke ✓ |
+| Dashboard | /dashboard 200 + /dashboard/data.json valid JSON ✓ |
+| Full regression suite | **3721 passed, 0 failed** (88 skipped, 14 xfailed) ✓ |
+| Wheel build | `effgen-0.2.10-py3-none-any.whl` built cleanly ✓ |
+| Wheel smoke | `python -c "import effgen; assert effgen.__version__ == '0.2.10'"` ✓ |
+
+### Upgrading from v0.2.9
+
+No breaking API changes. All security and DX features are additive.
+
+```bash
+pip install --upgrade effgen
+```
+
+#### Security Quick Start
+
+```python
+# CodeExecutor now sandboxed by default (DockerSandbox if available, else SubprocessSandbox)
+import asyncio
+from effgen.security.sandbox import get_sandbox, SandboxConfig
+
+async def main():
+    config = SandboxConfig(backend="subprocess", timeout=10)
+    sandbox = await get_sandbox(config)
+    result = await sandbox.run('print("hello")', "python", config)
+    print(result.stdout)  # hello
+
+asyncio.run(main())
+
+# Or use EFFGEN_SANDBOX_BACKEND=docker for Docker isolation
+```
+
+#### Auth Quick Start
+
+```bash
+# Start server with OIDC auth
+export EFFGEN_OIDC_ISSUER=https://your-auth0-domain.auth0.com/
+export EFFGEN_OIDC_CLIENT_ID=your-client-id
+export EFFGEN_OIDC_JWKS_URI=https://your-auth0-domain.auth0.com/.well-known/jwks.json
+effgen serve --port 8000
+
+# Dev mode (auth disabled — for local development only)
+EFFGEN_DEV_MODE=1 effgen serve --port 8000
+```
+
+#### Deploy Quick Start
+
+```bash
+# Docker
+docker build -f deploy/docker/Dockerfile -t effgen:0.2.10 .
+docker run -p 8000:8000 --env-file .env effgen:0.2.10
+
+# Helm (Kubernetes)
+helm install effgen deploy/k8s/helm/effgen/ -f deploy/k8s/helm/effgen/values.yaml
+
+# AWS Lambda
+cd deploy/aws_lambda && sam build && sam deploy
+
+# Cloudflare Worker edge proxy
+cd deploy/cloudflare && wrangler deploy
+```
+
+#### DX Quick Start
+
+```python
+# Jupyter
+%load_ext effgen.jupyter
+%effgen_chat "What is 17 * 23?"
+%%effgen_agent general
+Summarise the top HackerNews stories today.
+
+# Python API
+from effgen.jupyter.magics import EffgenMagics
+```
+
+---
+
 ## [0.2.9] - 2026-05-23
 
 ### Highlights

@@ -23,7 +23,7 @@ SKIP = pytest.mark.skipif(
     reason="GOOGLE_API_KEY not available — skipping live Gemini native tools tests",
 )
 
-MODEL = "gemini-3.1-flash-lite-preview"
+MODEL = "gemini-3.1-flash-lite"
 
 
 def _skip_if_gemini_transient(value: object) -> None:

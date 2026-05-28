@@ -61,7 +61,7 @@ vp = VideoPart(
 )
 msg = Message(role=Role.USER, content=[vp, TextPart(text="Describe.")])
 
-adapter = GeminiAdapter(model_name="gemini-3.1-flash-lite-preview")
+adapter = GeminiAdapter(model_name="gemini-3.1-flash-lite")
 adapter.load()
 print(adapter.generate(msg).text)
 adapter.unload()
@@ -81,7 +81,7 @@ api_key = "YOUR_GOOGLE_API_KEY"
 fref = upload_file("clip.mp4", api_key=api_key, mime_type="video/mp4")
 
 # Query with the uploaded video
-adapter = GeminiAdapter(model_name="gemini-3.1-flash-lite-preview", api_key=api_key)
+adapter = GeminiAdapter(model_name="gemini-3.1-flash-lite", api_key=api_key)
 adapter.load()
 result = adapter.generate(
     [TextPart(text="Describe the main action.")],

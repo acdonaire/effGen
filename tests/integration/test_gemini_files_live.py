@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(
     reason="GOOGLE_API_KEY not in ~/.effgen/.env",
 )
 
-MODEL = "gemini-3.1-flash-lite-preview"
+MODEL = "gemini-3.1-flash-lite"
 UNIQUE_FACT = "The secret ingredient of Elara's potion is powdered moonstone."
 
 

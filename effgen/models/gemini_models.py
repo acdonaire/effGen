@@ -47,8 +47,8 @@ from __future__ import annotations
 #   notes              — short human-friendly note (rendered by CLI)
 # ---------------------------------------------------------------------------
 GEMINI_MODELS: dict[str, dict] = {
-    # ---- Gemini 3.x family (preview) ----
-    "gemini-3.1-flash-lite-preview": {
+    # ---- Gemini 3.x family ----
+    "gemini-3.1-flash-lite": {
         "family": "flash-lite",
         "context": 1_000_000,
         "max_output": 32_768,
@@ -351,16 +351,18 @@ GEMINI_MODELS: dict[str, dict] = {
 # Aliases that resolve to a registered key when callers use the short form.
 # Google's API also accepts these names directly.
 GEMINI_MODEL_ALIASES: dict[str, str] = {
-    "gemini-3.1-flash-lite": "gemini-3.1-flash-lite-preview",
-    "gemini-3-flash-lite": "gemini-3.1-flash-lite-preview",
+    # gemini-3.1-flash-lite is the GA id; the older -preview id was retired by
+    # Google (returns 404). Short aliases resolve to the GA canonical id.
+    "gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
+    "gemini-3-flash-lite": "gemini-3.1-flash-lite",
     "gemini-3-flash": "gemini-3-flash-preview",
     "gemini-3-pro": "gemini-3-pro-preview",
     "gemini-3.1-pro": "gemini-3.1-pro-preview",
-    "gemini-flash-lite-latest": "gemini-3.1-flash-lite-preview",
+    "gemini-flash-lite-latest": "gemini-3.1-flash-lite",
 }
 
 # Default model for free-tier live testing (cheap + tool-calling).
-GEMINI_DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+GEMINI_DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
 
 # ---------------------------------------------------------------------------

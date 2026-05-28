@@ -162,7 +162,7 @@ def test_gemini_3_flash_lite_alias_resolves():
     from effgen.models.gemini_models import model_info
 
     info = model_info("gemini-3-flash-lite")
-    assert info["canonical_id"] == "gemini-3.1-flash-lite-preview"
+    assert info["canonical_id"] == "gemini-3.1-flash-lite"
     assert info["supports_vision"] is True
     assert info["supports_audio"] is True
     assert info["supports_video"] is True
