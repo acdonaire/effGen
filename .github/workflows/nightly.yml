@@ -196,7 +196,7 @@ jobs:
             }
 
   # ------------------------------------------------------------------ #
-  # Real-model streaming smoke test (Cerebras llama3.1-8b)            #
+  # Real-model streaming smoke test (Cerebras gpt-oss-120b)            #
   # ------------------------------------------------------------------ #
   cerebras-streaming-smoke:
     name: Cerebras Streaming Smoke
@@ -254,8 +254,9 @@ jobs:
                   raise RuntimeError("empty stream text")
               return chunks, text
 
-          # llama3.1-8b only — qwen excluded due to repeated free-tier queue 429s.
-          model_id = "llama3.1-8b"
+          # gpt-oss-120b only: the older llama3.1-8b / qwen-3-235b ids were
+          # deprecated upstream (404 model_not_found as of 2026-05-27).
+          model_id = "gpt-oss-120b"
           last = None
           for attempt in range(MAX_ATTEMPTS):
               try:
@@ -286,12 +287,12 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner, repo: context.repo.repo,
               title: `Cerebras streaming smoke failure (${new Date().toISOString().slice(0,10)})`,
-              body: "Nightly streaming smoke test failed for Cerebras llama3.1-8b after 5 retries with exponential backoff. Check workflow logs — likely an effGen regression rather than a transient queue 429.",
+              body: "Nightly streaming smoke test failed for Cerebras gpt-oss-120b after 5 retries with exponential backoff. Check workflow logs — likely an effGen regression rather than a transient queue 429.",
               labels: ["bug", "cerebras", "automated"],
             });
 
   # ------------------------------------------------------------------ #
-  # Real-model tool-calling smoke test (Cerebras llama3.1-8b)          #
+  # Real-model tool-calling smoke test (Cerebras gpt-oss-120b)         #
   # ------------------------------------------------------------------ #
   cerebras-tools-smoke:
     name: Cerebras Tools Smoke
@@ -338,11 +339,12 @@ jobs:
           def backoff(a):
               return random.uniform(0.5, min(MAX_DELAY, BASE_DELAY * (2 ** a)))
 
-          # llama3.1-8b only — qwen excluded due to repeated free-tier queue 429s.
+          # gpt-oss-120b only: llama3.1-8b / qwen-3-235b were deprecated upstream
+          # (404 model_not_found as of 2026-05-27).
           last_output = ""
           last_exc = None
           for attempt in range(MAX_ATTEMPTS):
-              adapter = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False)
+              adapter = CerebrasAdapter("gpt-oss-120b", enable_rate_limiting=False)
               adapter.load()
               config = AgentConfig(
                   name="tools-smoke",
@@ -388,7 +390,7 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner, repo: context.repo.repo,
               title: `Cerebras tool-calling smoke failure (${new Date().toISOString().slice(0,10)})`,
-              body: "Nightly tool-calling smoke test failed. Calculator+Agent did not return 144 for 12*12. Check workflow logs.",
+              body: "Nightly tool-calling smoke test failed for Cerebras gpt-oss-120b. Calculator+Agent did not return 144 for 12*12. Check workflow logs.",
               labels: ["bug", "cerebras", "automated"],
             });
 
@@ -444,8 +446,9 @@ jobs:
           def backoff(a):
               return random.uniform(0.5, min(MAX_DELAY, BASE_DELAY * (2 ** a)))
 
-          # llama3.1-8b only — qwen excluded due to repeated free-tier queue 429s.
-          model_id = "llama3.1-8b"
+          # gpt-oss-120b only: llama3.1-8b / qwen-3-235b were deprecated upstream
+          # (404 model_not_found as of 2026-05-27).
+          model_id = "gpt-oss-120b"
           adapter = CerebrasAdapter(model_id, enable_rate_limiting=False)
           adapter.load()
 
@@ -458,7 +461,10 @@ jobs:
                       "If all roses are flowers and all flowers need water, "
                       "do roses need water? Answer with just 'yes' or 'no' first, "
                       "then a one-sentence explanation.",
-                      config=GenerationConfig(temperature=0.0, max_tokens=64),
+                      # gpt-oss-120b is a reasoning model: a tiny max_tokens cap is
+                      # spent on reasoning tokens and leaves the visible answer
+                      # empty, so give it room for the final content.
+                      config=GenerationConfig(temperature=0.0, max_tokens=512),
                   )
                   best_text = (result.text or "").strip()
                   if is_correct(best_text):
@@ -493,7 +499,7 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner, repo: context.repo.repo,
               title: `Cerebras reasoning smoke failure (${new Date().toISOString().slice(0,10)})`,
-              body: "Nightly reasoning smoke: llama3.1-8b failed a basic yes/no logic question after 5 retries with exponential backoff. This indicates either a Cerebras model regression or an effGen prompt/parsing regression — not a transient queue 429.",
+              body: "Nightly reasoning smoke: gpt-oss-120b failed a basic yes/no logic question after 5 retries with exponential backoff. This indicates either a Cerebras model regression or an effGen prompt/parsing regression — not a transient queue 429.",
               labels: ["bug", "cerebras", "automated"],
             });
 
