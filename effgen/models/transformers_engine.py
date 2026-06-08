@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import warnings
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import torch
@@ -40,6 +41,34 @@ warnings.filterwarnings('ignore', category=UserWarning, module='accelerate')
 warnings.filterwarnings('ignore', message='.*Some parameters are on the meta device.*')
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _quiet_model_load():
+    """Silence Transformers' load-time chatter (weight-loading progress bars and
+    INFO reports) for the duration of a model load, restoring the previous state
+    afterwards. Loading diagnostics belong in logs at debug level, not on stdout
+    for every inference call.
+    """
+    try:
+        from transformers.utils import logging as hf_logging
+    except Exception:  # pragma: no cover - transformers always present here
+        yield
+        return
+
+    prev_verbosity = hf_logging.get_verbosity()
+    try:
+        prev_progress = hf_logging.is_progress_bar_enabled()
+    except Exception:
+        prev_progress = True
+    hf_logging.set_verbosity_error()
+    hf_logging.disable_progress_bar()
+    try:
+        yield
+    finally:
+        hf_logging.set_verbosity(prev_verbosity)
+        if prev_progress:
+            hf_logging.enable_progress_bar()
 
 
 class TransformersEngine(BatchModel):
@@ -129,12 +158,12 @@ class TransformersEngine(BatchModel):
             ValueError: If configuration is invalid
         """
         try:
-            logger.info(f"Loading model '{self.model_name}' with Transformers...")
+            logger.debug(f"Loading model '{self.model_name}' with Transformers...")
 
             # Determine device
             if torch.cuda.is_available():
                 self.device = "cuda"
-                logger.info(f"Using CUDA with {torch.cuda.device_count()} GPU(s)")
+                logger.debug(f"Using CUDA with {torch.cuda.device_count()} GPU(s)")
             else:
                 self.device = "cpu"
                 # If the host actually has NVIDIA GPUs but torch can't use them
@@ -160,16 +189,18 @@ class TransformersEngine(BatchModel):
                 else:
                     self.torch_dtype = torch.float32
 
-            logger.info(
+            logger.debug(
                 f"Configuration: quantization={self.quantization_bits}-bit, "
                 f"dtype={self.torch_dtype}, flash_attention={self.use_flash_attention}"
             )
 
-            # Load tokenizer
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                trust_remote_code=self.trust_remote_code
-            )
+            # Load tokenizer (quiet: suppress Transformers progress bars / INFO
+            # reports during load — these are diagnostics, not user output)
+            with _quiet_model_load():
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name,
+                    trust_remote_code=self.trust_remote_code
+                )
 
             # Ensure tokenizer has pad token
             if self.tokenizer.pad_token is None:
@@ -211,21 +242,21 @@ class TransformersEngine(BatchModel):
             # Add additional kwargs
             model_kwargs.update(self.additional_kwargs)
 
-            # Load model
+            # Load model (quiet: suppress weight-loading progress bars / INFO)
             try:
                 # Suppress Flash Attention warnings from transformers
                 import warnings
-                with warnings.catch_warnings():
+                with warnings.catch_warnings(), _quiet_model_load():
                     warnings.filterwarnings('ignore', message='.*FlashAttention.*')
                     warnings.filterwarnings('ignore', message='.*flash_attn.*')
                     self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
             except Exception as e:
                 # Fallback without Flash Attention if it fails
                 if self.use_flash_attention and "flash" in str(e).lower():
-                    logger.info("Flash Attention not available, using standard attention")
+                    logger.debug("Flash Attention not available, using standard attention")
                     model_kwargs.pop("attn_implementation", None)
                     import warnings
-                    with warnings.catch_warnings():
+                    with warnings.catch_warnings(), _quiet_model_load():
                         warnings.filterwarnings('ignore', message='.*FlashAttention.*')
                         warnings.filterwarnings('ignore', message='.*flash_attn.*')
                         self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
@@ -252,7 +283,7 @@ class TransformersEngine(BatchModel):
             }
 
             self._is_loaded = True
-            logger.info(f"Model '{self.model_name}' loaded successfully with Transformers")
+            logger.debug(f"Model '{self.model_name}' loaded successfully with Transformers")
 
         except Exception as e:
             logger.error(f"Failed to load model with Transformers: {e}")
@@ -329,16 +360,42 @@ class TransformersEngine(BatchModel):
         if config is None:
             config = GenerationConfig()
 
-        hf_config = HFGenerationConfig(
-            temperature=config.temperature,
-            top_p=config.top_p,
-            top_k=config.top_k,
-            max_new_tokens=config.max_tokens or 512,
-            repetition_penalty=config.repetition_penalty,
-            do_sample=True,
-            pad_token_id=self.tokenizer.pad_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-        )
+        # Normalize deterministic generation. Transformers 5.x rejects
+        # temperature<=0 ("has to be a strictly positive float") and warns when
+        # sampling params (temperature/top_p/top_k) are set while do_sample is
+        # False. Treat temperature<=0 as greedy decoding: set do_sample=False and
+        # omit the sampling params entirely so the same effGen config works
+        # identically across Transformers versions and other backends.
+        do_sample = config.temperature is not None and config.temperature > 0
+        if do_sample:
+            hf_config = HFGenerationConfig(
+                temperature=config.temperature,
+                top_p=config.top_p,
+                top_k=config.top_k,
+                max_new_tokens=config.max_tokens or 512,
+                repetition_penalty=config.repetition_penalty,
+                do_sample=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+        else:
+            # Greedy decoding. Set the sampling params to their no-op defaults
+            # (temperature=1.0, top_p=1.0, top_k=50) explicitly: leaving them unset
+            # lets Transformers merge the model's own generation_config.json
+            # sampling values (e.g. Qwen's temperature=0.7) into the config, which
+            # then triggers a "generation flags not valid for do_sample=False"
+            # warning on every greedy call. Explicit no-op values suppress it
+            # without affecting greedy output.
+            hf_config = HFGenerationConfig(
+                temperature=1.0,
+                top_p=1.0,
+                top_k=50,
+                max_new_tokens=config.max_tokens or 512,
+                repetition_penalty=config.repetition_penalty,
+                do_sample=False,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
 
         # Return stop sequences separately for post-processing
         # NOTE: We DON'T set them as eos_token_id because that would stop generation
@@ -398,6 +455,17 @@ class TransformersEngine(BatchModel):
                     logger.error(f"Error processing generation parameter {key}: {e}")
                     # Continue processing other parameters
                     continue
+
+            # Normalize a per-call temperature<=0 override to greedy decoding so
+            # an explicit generate(..., temperature=0) doesn't crash Transformers
+            # 5.x or warn about sampling params with do_sample=False.
+            if "temperature" in sanitized_kwargs and (
+                sanitized_kwargs["temperature"] is None
+                or sanitized_kwargs["temperature"] <= 0
+            ):
+                for sampling_key in ("temperature", "top_p", "top_k"):
+                    sanitized_kwargs.pop(sampling_key, None)
+                sanitized_kwargs["do_sample"] = False
 
             # Apply chat template if available for better model compatibility
             # Many modern models like Qwen expect a specific format
@@ -467,10 +535,15 @@ class TransformersEngine(BatchModel):
             # When native tool calling is active, preserve tool-call tokens
             # like <tool_call>, </tool_call>, [TOOL_CALLS] etc. but strip
             # chat-template end markers like <|im_end|>, </s>, <|eot_id|>.
+            # clean_up_tokenization_spaces=False: the cleanup step is destructive
+            # for BPE/SentencePiece tokenizers (it strips spaces before
+            # punctuation) and Transformers warns + ignores it for them anyway.
+            # Passing False explicitly preserves spacing and silences the warning.
             generated_ids = outputs[0][inputs["input_ids"].shape[1]:]
             if tools_for_template:
                 generated_text = self.tokenizer.decode(
                     generated_ids, skip_special_tokens=False,
+                    clean_up_tokenization_spaces=False,
                 )
                 # Strip common chat-template end tokens
                 for end_marker in ("<|im_end|>", "</s>", "<|eot_id|>",
@@ -480,6 +553,7 @@ class TransformersEngine(BatchModel):
             else:
                 generated_text = self.tokenizer.decode(
                     generated_ids, skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
                 )
 
             # Apply stop sequences post-generation
@@ -568,6 +642,7 @@ class TransformersEngine(BatchModel):
                 skip_special_tokens=True,
                 skip_prompt=True,
                 timeout=30.0,  # prevent indefinite block if generation thread dies
+                clean_up_tokenization_spaces=False,  # non-destructive for BPE; see generate()
             )
 
             stop_event = Event()
@@ -694,7 +769,8 @@ class TransformersEngine(BatchModel):
 
                 generated_text = self.tokenizer.decode(
                     generated_ids,
-                    skip_special_tokens=True
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
                 )
 
                 results.append(GenerationResult(
@@ -801,7 +877,7 @@ class TransformersEngine(BatchModel):
         intermittent C-level aborts inside Qwen2 RMSNorm under pytest).
         """
         if self.model is not None:
-            logger.info(f"Unloading model '{self.model_name}'...")
+            logger.debug(f"Unloading model '{self.model_name}'...")
             try:
                 from accelerate.hooks import remove_hook_from_module
                 remove_hook_from_module(self.model, recurse=True)
@@ -830,4 +906,4 @@ class TransformersEngine(BatchModel):
                 logger.debug("torch.cuda.ipc_collect() failed during unload", exc_info=True)
 
         self._is_loaded = False
-        logger.info(f"Model '{self.model_name}' unloaded successfully")
+        logger.debug(f"Model '{self.model_name}' unloaded successfully")

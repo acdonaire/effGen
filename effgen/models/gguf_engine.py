@@ -90,10 +90,14 @@ class GGUFEngine(BaseModel):
     # ------------------------------------------------------------------ inference
     def _to_kwargs(self, config: GenerationConfig | None) -> dict[str, Any]:
         cfg = config or GenerationConfig()
+        # Normalize deterministic generation: temperature<=0 means greedy. llama.cpp
+        # treats temperature=0 as greedy; clamp negatives to 0 so the effGen config
+        # behaves consistently with the other backends.
+        greedy = cfg.temperature is None or cfg.temperature <= 0
         return {
-            "temperature": cfg.temperature,
-            "top_p": cfg.top_p,
-            "top_k": cfg.top_k,
+            "temperature": 0.0 if greedy else cfg.temperature,
+            "top_p": 1.0 if greedy else cfg.top_p,
+            "top_k": -1 if greedy else cfg.top_k,
             "max_tokens": cfg.max_tokens or 256,
             "stop": cfg.stop_sequences or None,
             "repeat_penalty": cfg.repetition_penalty,

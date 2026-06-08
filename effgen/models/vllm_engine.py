@@ -356,10 +356,23 @@ class VLLMEngine(BatchModel):
         if config is None:
             config = GenerationConfig()
 
+        # Normalize deterministic generation: vLLM treats temperature=0 as greedy
+        # decoding. Clamp temperature<=0 to exactly 0.0 (vLLM rejects negatives)
+        # and disable top_p/top_k so the result is consistent with the other
+        # backends' greedy path.
+        if config.temperature is None or config.temperature <= 0:
+            temperature = 0.0
+            top_p = 1.0
+            top_k = -1
+        else:
+            temperature = config.temperature
+            top_p = config.top_p
+            top_k = config.top_k
+
         return SamplingParams(
-            temperature=config.temperature,
-            top_p=config.top_p,
-            top_k=config.top_k,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
             max_tokens=config.max_tokens,
             stop=config.stop_sequences,
             presence_penalty=config.presence_penalty,

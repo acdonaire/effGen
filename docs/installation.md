@@ -136,19 +136,41 @@ exact `(python, torch, cuda)` triple.
 
 ## Installing vLLM (optional)
 
-vLLM ships pre-built wheels on PyPI for common
-`(python, torch, cuda)` combinations:
+vLLM gives much higher throughput than the Transformers backend, but it is the
+trickiest optional stack to install because **each vLLM release pins one exact
+torch version**, and that torch build determines the CUDA runtime. The latest
+vLLM pins a CUDA-13 torch, so a plain `pip install effgen[vllm]` on a CUDA-12
+driver will pull `torch ...+cu130`, which then reports
+`torch.cuda.is_available() == False` and fails to import vLLM's compiled
+extension (`libcudart.so.13: cannot open shared object file`).
+
+Pick the vLLM release whose pinned torch matches your driver:
+
+| Driver (`nvidia-smi` CUDA) | torch build | Known-good vLLM | Install |
+|---|---|---|---|
+| **CUDA 12.1–12.7** (e.g. 12.4) | `torch==2.6.0+cu124` | `vllm==0.8.5.post1` | see below |
+| **CUDA 12.8+** | `torch==2.7.1+cu128` | `vllm==0.10.1.1` | swap the version + `cu128` index |
+| **CUDA 13.x** (driver ≥ 580) | `torch>=2.11+cu130` | latest (`pip install effgen[vllm]`) | latest works directly |
 
 ```bash
-pip install effgen[vllm]
-```
-
-If the resolver cannot find a matching wheel, use vLLM's extra index:
-
-```bash
+# CUDA 12.4 box: install a CUDA-12.4 torch first, then a matching vLLM
 pip install effgen
-pip install vllm --extra-index-url https://download.pytorch.org/whl/cu124
+pip install "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" \
+    --index-url https://download.pytorch.org/whl/cu124
+pip install "vllm==0.8.5.post1"
+python -c "import torch; from vllm import LLM; print('vLLM ready:', torch.cuda.is_available())"
 ```
+
+`pip check` must report no conflicts after this — if vLLM and torch disagree on
+versions, you installed a mismatched pair (re-check the table above).
+
+Two effGen safety nets make a mismatch easy to diagnose rather than mysterious:
+
+- `VLLMEngine.load()` reports an ABI/CUDA import failure (e.g. a missing
+  `libcudart`) as exactly that, instead of "vLLM is not installed".
+- `load_model(..., engine="auto-fast")` uses vLLM only when it imports cleanly
+  and a GPU is usable, and **transparently falls back to the Transformers
+  backend** otherwise — so opting into speed never hard-fails your program.
 
 ## Supported Python versions
 

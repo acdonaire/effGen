@@ -140,7 +140,9 @@ class ModelLoader:
         Args:
             cache_dir: Directory to cache downloaded models
             default_device: Default device allocation ('auto', 'cuda', 'cpu')
-            force_engine: Force specific engine ('vllm', 'transformers', or None for auto)
+            force_engine: Force specific engine ('vllm', 'transformers', 'auto-fast',
+                or None for auto). 'auto-fast' prefers vLLM when it is importable
+                and a GPU is usable, else Transformers; None defaults to Transformers.
         """
         # Expand ~ to full path and use environment variable if set
         default_cache = os.path.expanduser(os.getenv("HF_HOME", "~/.cache/huggingface"))
@@ -517,6 +519,23 @@ class ModelLoader:
                 logger.info("Falling back to Transformers...")
                 return self._load_with_transformers(model_name, params)
 
+        # Opt-in "auto-fast": prefer vLLM when it is importable and the GPU is
+        # usable, otherwise fall back to Transformers. The default (force_engine
+        # None) stays on Transformers — auto-fast must be requested explicitly.
+        if self.force_engine == "auto-fast":
+            if self._vllm_usable():
+                logger.info("Using vLLM engine (auto-fast: vLLM available and GPU usable)")
+                try:
+                    return self._load_with_vllm(model_name, params)
+                except Exception as e:
+                    logger.warning(f"vLLM loading failed: {e}")
+                    logger.info("Falling back to Transformers...")
+                    return self._load_with_transformers(model_name, params)
+            logger.info(
+                "Using Transformers engine (auto-fast: vLLM unavailable or no usable GPU)"
+            )
+            return self._load_with_transformers(model_name, params)
+
         # Auto-detection: prefer MLX on Apple Silicon when no CUDA available
         if self.force_engine is None:
             try:
@@ -534,6 +553,31 @@ class ModelLoader:
         # Default to Transformers (more compatible, easier setup)
         logger.info("Using Transformers engine (default)")
         return self._load_with_transformers(model_name, params)
+
+    @staticmethod
+    def _vllm_usable() -> bool:
+        """Return True only if vLLM can actually run here: the package imports
+        cleanly (no CUDA/torch ABI mismatch) and a CUDA GPU is available. Used by
+        the opt-in ``engine="auto-fast"`` path to decide vLLM vs Transformers
+        without ever raising.
+        """
+        if not torch.cuda.is_available():
+            return False
+        try:
+            import importlib.util
+            if importlib.util.find_spec("vllm") is None:
+                return False
+            # Probe the EXACT import VLLMEngine.load() performs. `import vllm`
+            # alone succeeds even when the compiled extension is ABI-incompatible
+            # (e.g. a missing libcudart.so) — only importing LLM/SamplingParams
+            # surfaces that. Probing here keeps auto-fast on Transformers instead
+            # of constructing an engine whose later load() would hard-fail.
+            from vllm import LLM, SamplingParams  # noqa: F401
+            return True
+        except Exception:
+            logger.debug("vLLM present but not usable; auto-fast will use Transformers",
+                         exc_info=True)
+            return False
 
     def _load_with_vllm(
         self,
@@ -926,7 +970,9 @@ def load_model(
 
     Args:
         model_name: Model identifier
-        engine: Engine to use ('vllm', 'transformers', or None for auto)
+        engine: Engine to use ('vllm', 'transformers', 'auto-fast', or None for auto).
+                'auto-fast' prefers vLLM when available and the GPU is usable, else
+                Transformers. None defaults to Transformers.
         engine_config: Optional engine configuration
         tensor_parallel_size: Number of GPUs for tensor parallelism (vLLM only).
                              If not specified, auto-detected based on model size.

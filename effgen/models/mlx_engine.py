@@ -309,11 +309,13 @@ class MLXEngine(BatchModel):
         self.validate_prompt(formatted_prompt)
 
         try:
-            # Build MLX generation kwargs
+            # Build MLX generation kwargs. Normalize deterministic generation:
+            # temperature<=0 means greedy (temp=0 in mlx-lm); clamp negatives.
+            _greedy = config.temperature is None or config.temperature <= 0
             gen_kwargs: dict[str, Any] = {
                 "max_tokens": config.max_tokens or 512,
-                "temp": config.temperature,
-                "top_p": config.top_p,
+                "temp": 0.0 if _greedy else config.temperature,
+                "top_p": 1.0 if _greedy else config.top_p,
                 "repetition_penalty": config.repetition_penalty,
             }
             if config.seed is not None:
@@ -402,10 +404,12 @@ class MLXEngine(BatchModel):
         self.validate_prompt(formatted_prompt)
 
         try:
+            # Normalize deterministic generation: temperature<=0 means greedy.
+            _greedy = config.temperature is None or config.temperature <= 0
             gen_kwargs: dict[str, Any] = {
                 "max_tokens": config.max_tokens or 512,
-                "temp": config.temperature,
-                "top_p": config.top_p,
+                "temp": 0.0 if _greedy else config.temperature,
+                "top_p": 1.0 if _greedy else config.top_p,
                 "repetition_penalty": config.repetition_penalty,
             }
             if config.seed is not None:

@@ -156,6 +156,12 @@ dev = [
     "pip-audit>=2.7.0",
     "tomli>=2.0.0; python_version < '3.11'",
 ]
+# vLLM pins one EXACT torch version per release, and that torch build fixes the
+# CUDA runtime. A Python extra cannot express "the torch that matches your
+# driver", so on a CUDA-12 box `pip install effgen[vllm]` (latest vLLM) pulls a
+# CUDA-13 torch and disables the GPU. Install vLLM against your driver's torch
+# build per docs/installation.md ("Installing vLLM"); engine="auto-fast" falls
+# back to Transformers if the installed vLLM can't import.
 vllm = ["vllm>=0.2.7,<1.0"]
 mlx = [
     "mlx>=0.16.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
