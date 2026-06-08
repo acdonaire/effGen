@@ -142,6 +142,103 @@ def _safe_float_or_none(value: Any) -> float | None:
         return None
 
 
+# Literal loop-bookkeeping strings the ReAct scaffolding/prompts inject into the
+# scratchpad. These must never reach a user-facing answer. An adjacent newline is
+# consumed when present so removing a mid-line marker doesn't leave an orphan line.
+_SCAFFOLD_LITERALS: tuple[str, ...] = (
+    "[Tool results computed above. Continue or provide Final Answer:]",
+    "[You have the answer from the tool. Please respond with 'Final Answer:' now.]",
+    "[You already computed this. Please provide your final response using 'Final Answer:' now.]",
+    "You already computed this. Please provide your final response using 'Final Answer:' now.",
+    "No tools available. Please provide your answer directly using 'Final Answer:'.",
+    "Please provide your final response using 'Final Answer:' now.",
+)
+_SCAFFOLD_LITERAL_RES: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(r"[ \t]*\n?[ \t]*" + re.escape(lit)) for lit in _SCAFFOLD_LITERALS
+)
+
+# A line-anchored "Final Answer:" / "Answer:" label (allows quote/list prefixes).
+_ANSWER_LABEL_RE = re.compile(
+    r"(?:^|\n)[ \t>*\-]*(?:final[ \t]*answer|answer)[ \t]*[:\-][ \t]*",
+    re.IGNORECASE,
+)
+# Trailing ReAct bleed: an Observation/Thought/Question/Action section the model
+# appended after its real answer.
+_TRAILING_BLEED_RE = re.compile(
+    r"\n[ \t>*\-]*(?:observation|thought|question|action(?:[ \t]+input)?)[ \t]*:.*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
+# Tool-echo fragment like "[calculator({'expression': '15*15'})] → 225". The
+# scaffolding always emits the Unicode arrow (see the f-strings in the ReAct/
+# native loops); we deliberately do NOT match an ASCII "->" here so legitimate
+# prose like "see [1] -> next" is never corrupted.
+_TOOL_ECHO_RE = re.compile(r"\[[^\[\]\n]*\][ \t]*→[ \t]*")
+
+# A brace-delimited JSON object allowing up to two levels of nesting, so a tool
+# call with structured args ("{\"args\": {\"x\": 1}}") is matched whole rather
+# than leaving a dangling "}" behind.
+_JSON_OBJ = r"\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}"
+# Model tool-call syntax that some families (e.g. Llama 3.1) emit as plain text
+# when a native tool call isn't routed: "<function=calc>{...}</function>",
+# "<tool_call>{...}</tool_call>", and stray special tokens. These are pure
+# scaffolding and must never surface in an answer.
+_TOOLCALL_CONSTRUCT_RE = re.compile(
+    r"<?\s*(?:function\s*=\s*[\w.\-]+|tool_call)\s*>?\s*" + _JSON_OBJ
+    + r"\s*(?:</\s*(?:function|tool_call)\s*>)?",
+    re.IGNORECASE | re.DOTALL,
+)
+_TOOLCALL_TAG_RE = re.compile(
+    r"</?\s*(?:function(?:\s*=\s*[\w.\-]+)?|tool_call)\s*>"
+    r"|<\|[^>|]*\|>",
+    re.IGNORECASE,
+)
+
+
+def sanitize_final_answer(text: str | None) -> str | None:
+    """Strip internal ReAct/tool scaffolding from a user-facing answer.
+
+    Conservative and idempotent: removes the loop-bookkeeping strings the agent
+    injects, leading ``Final Answer:``/``Answer:`` labels (returning the text
+    after the *last* such label, so ``"Canberra\\nFinal Answer: Canberra"`` →
+    ``"Canberra"``), trailing ``Observation:``/``Thought:``/``Question:`` bleed,
+    and ``[tool(args)] →`` echo prefixes — without reflowing markdown tables,
+    code blocks, or legitimate pipe-separated content. ``None``/non-``str`` input
+    is returned unchanged.
+    """
+    if not text or not isinstance(text, str):
+        return text
+    s = text
+    # 1. Remove literal loop-bookkeeping strings (with any adjacent newline).
+    for pat in _SCAFFOLD_LITERAL_RES:
+        s = pat.sub("", s)
+    # 2. Remove tool-echo prefixes, keeping the result after the arrow.
+    s = _TOOL_ECHO_RE.sub("", s)
+    # 2b. Remove leaked model tool-call syntax (whole constructs, then stray tags).
+    s = _TOOLCALL_CONSTRUCT_RE.sub("", s)
+    s = _TOOLCALL_TAG_RE.sub("", s)
+    # 3. Drop trailing Observation/Thought/Question/Action bleed.
+    s = _TRAILING_BLEED_RE.sub("", s)
+    # 4. If a line-anchored answer label is present, the real answer is what
+    #    follows the LAST such label (when that tail is non-empty).
+    labels = list(_ANSWER_LABEL_RE.finditer(s))
+    if labels:
+        tail = s[labels[-1].end():].strip()
+        if tail:
+            s = tail
+    # 5. Tidy separators left by removed scaffolding, without disturbing
+    #    multi-line content (tables/code): collapse empty "| |" fragments and
+    #    runs of spaces, then strip a dangling leading/trailing bare pipe.
+    s = re.sub(r"\|[ \t]*\|", "|", s)
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    s = s.strip()
+    # Strip a dangling leading/trailing bare pipe only for single-line content,
+    # so markdown tables (multi-line, pipe-delimited) are left intact.
+    if "\n" not in s:
+        s = re.sub(r"^\|[ \t]*", "", s)
+        s = re.sub(r"[ \t]*\|$", "", s)
+    return s.strip()
+
+
 class AgentMode(Enum):
     """Agent execution modes."""
     SINGLE = "single"  # Single agent execution
@@ -846,6 +943,13 @@ Question: {task}
                     # Single agent mode
                     response = self._run_single_agent(task, context, **kwargs)
 
+                # Strip any internal scaffolding from the answer before it is
+                # used downstream (structured output, guardrails, memory). This
+                # is the single funnel covering every execution path; individual
+                # assembly sites also sanitize so direct callers stay clean.
+                if response.success and isinstance(response.output, str):
+                    response.output = sanitize_final_answer(response.output)
+
                 # Apply structured output constraint if requested
                 if effective_schema and response.success and response.output:
                     response = self._apply_structured_output(
@@ -1417,6 +1521,8 @@ Question: {task}
                 **extra_meta: Any,
             ) -> AgentResponse:
                 """Helper to build response and attach debug trace."""
+                if success:
+                    output = sanitize_final_answer(output) or output
                 meta: dict[str, Any] = {
                     "reason": "final_answer",
                     "tool_calling_strategy": self._tool_calling_strategy.name,
@@ -1453,6 +1559,19 @@ Question: {task}
                         "returning latest observation"
                     )
                     return _build_response(partial, answer_source="null_final_from_model", partial=True)
+
+            # A "final answer" that is purely leaked tool-call syntax /
+            # scaffolding (sanitizes to nothing) is not a real answer — keep
+            # looping so the tool actually runs or a partial is extracted.
+            if final_answer and not (sanitize_final_answer(final_answer) or "").strip():
+                logger.info(
+                    "Discarding scaffolding-only final answer; continuing loop"
+                )
+                scratchpad += (
+                    "\nObservation: That was not a usable answer. "
+                    "Call the tool correctly or give a plain Final Answer."
+                )
+                final_answer = None
 
             if final_answer:
                 # Record final debug iteration
@@ -1611,6 +1730,7 @@ Question: {task}
         # Max iterations reached — try to extract partial answer from scratchpad
         partial_answer = self._extract_partial_answer(scratchpad)
         if partial_answer:
+            partial_answer = sanitize_final_answer(partial_answer) or partial_answer
             logger.info("Max iterations reached, returning partial answer from scratchpad")
             meta: dict[str, Any] = {"reason": "max_iterations_partial", "partial": True}
             if debug_trace is not None:
@@ -1659,6 +1779,11 @@ Question: {task}
         if not scratchpad:
             return None
 
+        # Remove injected loop-bookkeeping markers before extraction so they are
+        # never captured into an observation/thought and leaked as the answer.
+        for pat in _SCAFFOLD_LITERAL_RES:
+            scratchpad = pat.sub("", scratchpad)
+
         # Pattern 1: "I now know" type thoughts
         know_match = re.search(
             r"Thought:\s*I (?:now )?know[^.]*\.\s*(.+?)(?=\nThought:|\nAction:|\Z)",
@@ -1670,12 +1795,19 @@ Question: {task}
         # Pattern 2: Observations with clear result values
         observations = re.findall(r"Observation:\s*(.+?)(?=\nThought:|\nAction:|\Z)", scratchpad, re.DOTALL)
         if observations:
-            # If multiple observations, combine non-error ones for multi-tool tasks
-            valid_obs = [o.strip() for o in observations if o.strip() and not o.strip().lower().startswith("error")]
+            # If multiple observations, combine non-error ones for multi-tool tasks.
+            # Strip tool-echo prefixes ("[tool(args)] → result") so only the
+            # results are joined, not the scaffolding.
+            valid_obs = [
+                _TOOL_ECHO_RE.sub("", o.strip())
+                for o in observations
+                if o.strip() and not o.strip().lower().startswith("error")
+            ]
+            valid_obs = [o for o in valid_obs if o]
             if len(valid_obs) > 1:
-                return " | ".join(valid_obs)
+                return sanitize_final_answer(" | ".join(valid_obs))
             elif valid_obs:
-                return valid_obs[-1]
+                return sanitize_final_answer(valid_obs[-1])
 
         # Pattern 2b: Look for day names or numeric results in any observation
         day_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -1822,7 +1954,7 @@ Question: {task}
             total_tool_calls = synthesis["metrics"]["total_tool_calls"]
 
             return AgentResponse(
-                output=synthesis["final_output"],
+                output=sanitize_final_answer(synthesis["final_output"]) or synthesis["final_output"],
                 success=synthesis["successful"] > 0,
                 mode=AgentMode.SUB_AGENTS,
                 iterations=len(subtasks),
@@ -3030,7 +3162,7 @@ Question: {task}
                 try:
                     followup_result = adapter.generate(followup)
                     return AgentResponse(
-                        output=followup_result.text,
+                        output=sanitize_final_answer(followup_result.text) or followup_result.text,
                         success=True,
                         mode=AgentMode.SINGLE,
                         iterations=2,
@@ -3042,7 +3174,7 @@ Question: {task}
                     logger.debug("Native tool follow-up assembly failed; using prior result", exc_info=True)
 
         return AgentResponse(
-            output=result.text or "(no output from native tools call)",
+            output=sanitize_final_answer(result.text) or "(no output from native tools call)",
             success=bool(result.text),
             mode=AgentMode.SINGLE,
             iterations=1,
@@ -3134,7 +3266,7 @@ Question: {task}
             try:
                 followup_result = self.model.generate(followup, config=gen_config)
                 return AgentResponse(
-                    output=followup_result.text,
+                    output=sanitize_final_answer(followup_result.text) or followup_result.text,
                     success=True,
                     mode=AgentMode.SINGLE,
                     iterations=2,
@@ -3146,7 +3278,7 @@ Question: {task}
                 logger.debug("Native tool follow-up assembly failed; using prior result", exc_info=True)
 
         return AgentResponse(
-            output=result.text or "(no output from Gemini native tools call)",
+            output=sanitize_final_answer(result.text) or "(no output from Gemini native tools call)",
             success=bool(result.text),
             mode=AgentMode.SINGLE,
             iterations=1,
@@ -3198,6 +3330,7 @@ Question: {task}
                 )
 
             answer = response["text"].strip()
+            answer = sanitize_final_answer(answer) or answer
             return AgentResponse(
                 output=answer,
                 success=True,
@@ -3779,7 +3912,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
 
             # Check for final answer
             if parsed.get("final_answer"):
-                answer = parsed["final_answer"]
+                answer = sanitize_final_answer(parsed["final_answer"]) or parsed["final_answer"]
                 if on_answer:
                     on_answer(answer)
                 # Store in memory

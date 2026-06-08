@@ -1,9 +1,11 @@
 name: Cerebras Quick Check
 
 # Lightweight push-time verification that CerebrasAdapter still talks to the
-# real API. Runs llama3.1-8b only (free-tier callable, low queue pressure);
-# qwen-3-235b is excluded because Cerebras's free-tier queue regularly returns
-# 429 queue_exceeded for that model and we don't want flaky CI.
+# real API. Runs gpt-oss-120b only (free-tier callable, low queue pressure);
+# the older llama3.1-8b / qwen-3-235b ids were deprecated upstream (404
+# model_not_found as of 2026-05-27). gpt-oss-120b is a reasoning model, so the
+# plain-generate step uses a larger max_tokens budget (reasoning tokens would
+# otherwise consume an 8-token cap and leave the visible content empty).
 
 on:
   push:
@@ -42,7 +44,7 @@ permissions:
 
 jobs:
   cerebras-quick-check:
-    name: Cerebras Quick Check (llama3.1-8b)
+    name: Cerebras Quick Check (gpt-oss-120b)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,10 +79,10 @@ jobs:
           # GitHub auto-redacts the value in logs; only safe metadata is printed.
           echo "PRESENT, length=${#K}, first4=${K:0:4}"
 
-      - name: Generation + streaming + tool-calling smoke (llama3.1-8b)
+      - name: Generation + streaming + tool-calling smoke (gpt-oss-120b)
         env:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          MODEL: "llama3.1-8b"
+          MODEL: "gpt-oss-120b"
         run: |
           python - <<'PY'
           import os, random, sys, time
@@ -142,9 +144,11 @@ jobs:
           def _gen():
               return adapter.generate(
                   "Reply with a single word: ALIVE",
-                  config=GenerationConfig(temperature=0.0, max_tokens=8),
+                  config=GenerationConfig(temperature=0.0, max_tokens=64),
               )
 
+          # gpt-oss-120b is a reasoning model: a tiny max_tokens cap is spent on
+          # reasoning tokens and leaves visible content empty, so give it room.
           out = with_retry("generate", _gen)
           if not (out.text or "").strip():
               print(f"FAIL[{model_id}]: generate returned empty text")
