@@ -435,6 +435,7 @@ effgen = [
     "config/schemas/*.yaml",
     "config/*.yaml",
     "config/*.json",
+    "models/_data/*.json",
     "py.typed",
     "dashboard/static/*.html",
     "dashboard/static/*.js",

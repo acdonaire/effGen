@@ -23,6 +23,28 @@ Example:
     >>> print(result.text)
 """
 
+from effgen.models._catalog import (
+    ModelRecord,
+    nearest_alternatives,
+    snapshot_age_days,
+    stale_providers,
+    warn_if_stale,
+)
+from effgen.models._catalog import (
+    build_records as build_catalog_records,
+)
+from effgen.models._catalog import (
+    list_models as list_catalog_models,
+)
+from effgen.models._catalog import (
+    load_snapshot as load_catalog_snapshot,
+)
+from effgen.models._catalog import (
+    lookup as lookup_catalog_model,
+)
+from effgen.models._catalog import (
+    save_snapshot as save_catalog_snapshot,
+)
 from effgen.models._cost import CostTracker
 from effgen.models._cost_store import SQLiteCostStore
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -243,6 +265,18 @@ __all__ = [
     "list_models",
     "lookup",
     "check_keys",
+
+    # Normalized, drift-aware model catalog (uniform across providers)
+    "ModelRecord",
+    "list_catalog_models",
+    "lookup_catalog_model",
+    "build_catalog_records",
+    "nearest_alternatives",
+    "stale_providers",
+    "warn_if_stale",
+    "snapshot_age_days",
+    "load_catalog_snapshot",
+    "save_catalog_snapshot",
 
     # Schema helpers
     "to_openai_schema",
