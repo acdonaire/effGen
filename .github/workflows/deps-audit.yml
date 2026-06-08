@@ -81,6 +81,8 @@ jobs:
               "vllm", "torch", "transformers", "xgrammar",
               # no upstream fix; effgen does not use the pickle-deserialization path
               "diskcache",
+              # optional [vector-db] extra; no upstream fix for CVE-2026-45829
+              "chromadb",
           }
 
           try:

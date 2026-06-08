@@ -11,6 +11,26 @@ pip install effgen[vllm]               # vLLM backend (NVIDIA GPUs)
 pip install effgen[mlx]                # MLX backend (Apple Silicon)
 ```
 
+### Use-case extras
+
+Install only the slice you need instead of the everything-extra `[all]`. The
+base install already leaves the heavy optional stacks (vLLM, vector DBs, OCR,
+OpenCV, spaCy/Stanza) out, so these pull just their use case on top:
+
+```bash
+pip install effgen[api]                # hosted-inference SDKs (groq/together/fireworks/replicate/cerebras/hf)
+pip install effgen[local]              # local-model quantization + GGUF backends (bitsandbytes, llama-cpp)
+pip install effgen[server]             # OIDC/JWT auth + Prometheus metrics for the API server
+pip install effgen[tools-web]          # web-search / browsing tools
+pip install effgen[tools-docs]         # document parsing (PDF / DOCX / XLSX)
+```
+
+> `[all]` is the **CI / everything** extra — it installs every optional
+> dependency so the full test suite runs. It is large and slow to resolve;
+> prefer a use-case extra above unless you specifically need everything. See
+> [Installing the `[all]` extra](#installing-the-all-extra) for the constraints
+> lock it requires.
+
 ### Installing the `[all]` extra
 
 `[all]` pulls vLLM plus every provider SDK and the full Google client stack.

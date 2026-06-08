@@ -1,0 +1,31 @@
+# Controls what goes into the source distribution (sdist). The wheel contents
+# are governed separately by [tool.setuptools.packages.find] + package-data in
+# pyproject.toml, so these rules only shape the source tarball.
+
+# Ship the metadata users actually need from a source checkout.
+include LICENSE
+include README.md
+include README_PYPI.md
+include pyproject.toml
+include setup.py
+include requirements.txt
+include requirements-dev.txt
+include requirements-lock.txt
+include requirements-all-lock.txt
+recursive-include docs *.md
+
+# Keep heavy / internal repo material out of the published tarball.
+prune build_plan
+prune node_modules
+prune tools
+prune .github
+
+# Never ship build/test/cache artifacts or local secrets.
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude *.so
+global-exclude .coverage .coverage.*
+global-exclude *.log
+exclude .env
+exclude .env.*
+recursive-exclude * .DS_Store

@@ -40,8 +40,11 @@ classifiers = [
 
 dependencies = [
     # Deep Learning & Model Support
-    "torch>=2.0.0",
-    "transformers>=4.35.0",
+    # Upper bounds cap fast-moving majors at the last line validated for this
+    # release so a fresh install never silently pulls an untested next major
+    # (torch 3.x / transformers 6.x). The "latest deps" CI lane tests above these.
+    "torch>=2.0.0,<3.0",
+    "transformers>=4.35.0,<6",
     "accelerate>=0.24.0",
     "safetensors>=0.4.0",
     "sentencepiece>=0.1.99",
@@ -73,7 +76,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     # Tool Support & HTTP
     "requests>=2.31.0",
-    "aiohttp>=3.9.0",
+    # aiohttp>=3.14.0 patches CVE-2026-34993 / CVE-2026-47265 (fixed in 3.14.0).
+    "aiohttp>=3.14.0",
     "httpx>=0.25.0",
     # Web Search
     "duckduckgo-search>=8.1.0",
@@ -83,8 +87,8 @@ dependencies = [
     "nbformat>=5.9.0",
     "jupyter-client>=8.5.0",
     # Utilities
-    "numpy>=1.24.0",
-    "pandas>=2.0.0",
+    "numpy>=1.24.0,<3",
+    "pandas>=2.0.0,<4",
     "pydantic>=2.0.0",
     "tqdm>=4.66.0",
     "rich>=13.7.0",
@@ -109,12 +113,14 @@ dependencies = [
     # Security
     "cryptography>=41.0.0",
     # starlette pinned >= patched release per PYSEC-2026-161
-    # (host-header injection — transitively pulled by fastapi)
-    "starlette>=1.0.1",
+    # (host-header injection — transitively pulled by fastapi). Upper bound
+    # caps the next major (2.x) which is untested for this release.
+    "starlette>=1.0.1,<2.0",
     # API Server
     # 0.136.3 is excluded: that release was flagged malicious (MAL-2026-4750)
-    # and injects an undocumented 'fastar' dependency.
-    "fastapi>=0.109.0,!=0.136.3",
+    # and injects an undocumented 'fastar' dependency. The <0.140 ceiling keeps
+    # fresh installs on the FastAPI line validated for this release.
+    "fastapi>=0.109.0,<0.140,!=0.136.3",
     "uvicorn>=0.27.0",
 ]
 
@@ -145,9 +151,12 @@ dev = [
     "bitsandbytes>=0.46.1",
     "hypothesis>=6.100.0",
     "cyclonedx-bom>=4.0.0",
+    # Local supply-chain auditing so the security gate (tests/security/
+    # test_vuln_audit.py) is runnable from a dev install, matching the CI gate.
+    "pip-audit>=2.7.0",
     "tomli>=2.0.0; python_version < '3.11'",
 ]
-vllm = ["vllm>=0.2.7"]
+vllm = ["vllm>=0.2.7,<1.0"]
 mlx = [
     "mlx>=0.16.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.18.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
@@ -283,7 +292,48 @@ monitoring = [
     "wandb>=0.16.0",
     "tensorboard>=2.15.0",
 ]
+# ---------------------------------------------------------------------------
+# Use-case extras (curated groupings for common install intents). The base
+# install already excludes the heavy optional stacks (vLLM, vector DBs, OCR,
+# OpenCV, spaCy/Stanza); these named extras let users pull exactly the slice
+# they need instead of the everything-extra [all].
+# ---------------------------------------------------------------------------
+api = [
+    # Hosted-inference provider SDKs (openai/anthropic/google are already in the
+    # base install). Pick this when you only call cloud models, no local stack.
+    "groq>=0.15",
+    "together>=1.3",
+    "fireworks-ai>=0.15,<0.18",
+    "replicate>=1.0",
+    "cerebras-cloud-sdk>=1.0",
+    "huggingface_hub>=0.26",
+]
+local = [
+    # Run/quantize local Transformers models on GPU (torch/transformers/accelerate
+    # ship in the base install; this adds the quantization + GGUF backends).
+    "bitsandbytes>=0.46.1",
+    "llama-cpp-python>=0.2.0",
+]
+tools-web = [
+    # Web-search / browsing tools (DuckDuckGo ships in the base install).
+    "google-search-results>=2.4.2",
+    "google-api-python-client>=2.108.0",
+]
+tools-docs = [
+    # Document parsing tools (PDF / DOCX / XLSX).
+    "pypdf>=4.0.0",
+    "pdfplumber>=0.10.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.0.0,<4",
+]
 all = [
+    # [all] is the CI / everything extra: it installs every optional dependency
+    # so the documented fresh-env verification path (`pip install -e ".[all]"
+    # -c requirements-all-lock.txt && pytest tests/`) runs end to end. Most users
+    # want a use-case extra above ([api], [server], [rag], [local], [vllm],
+    # [tools-web], [tools-docs]) instead — [all] is large and slow to resolve.
+    #
     # NOTE: flash-attn is intentionally NOT in [all]. Its setup.py imports
     # torch before pip's isolated build env has torch installed (well-known
     # upstream bug), which makes `pip install effgen[all]` always fail.
@@ -298,8 +348,12 @@ all = [
     "pexpect>=4.9.0",
     "hypothesis>=6.100.0",
     "cyclonedx-bom>=4.0.0",
+    # pip-audit so the security gate (tests/security/test_vuln_audit.py) actually
+    # RUNS — not skips — in the documented `pip install -e ".[all]" && pytest
+    # tests/` path. Without it the core-CVE gate is silently skipped.
+    "pip-audit>=2.7.0",
     "tomli>=2.0.0; python_version < '3.11'",
-    "vllm>=0.2.7",
+    "vllm>=0.2.7,<1.0",
     "faiss-cpu>=1.7.4",
     "chromadb>=0.4.18",
     "qdrant-client>=1.7.0",
@@ -361,7 +415,11 @@ all = [
 version = {attr = "effgen.__version__"}
 
 [tool.setuptools.packages.find]
-exclude = ["tests", "tests.*", "examples", "docs", "scripts"]
+# Ship ONLY the importable effgen package. An exclude-list let sub-packages of
+# top-level repo dirs (examples.*, deploy.*, tools) leak into the wheel because
+# the bare names didn't match their sub-packages; an allowlist is leak-proof.
+include = ["effgen*"]
+exclude = ["tests*", "examples*", "docs*", "scripts*", "deploy*"]
 
 [tool.setuptools.package-data]
 effgen = [

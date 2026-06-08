@@ -51,6 +51,7 @@ _EXEMPT = {
     "transformers",
     "xgrammar",
     "diskcache",  # no fix available upstream (CVE-2025-69872, pickle serialization)
+    "chromadb",  # optional [vector-db] extra; no upstream fix for CVE-2026-45829
 }
 
 def _pip_audit_runnable() -> bool:
@@ -205,6 +206,8 @@ class TestExemptPackagesKnownVulns:
             "xgrammar": "optional extra (vllm dependency); segfault in nested syntax",
             "diskcache": "no upstream fix available for CVE-2025-69872 (pickle); "
                          "effgen does not use pickle-deserialization paths",
+            "chromadb": "optional [vector-db] extra (not a core dependency); no "
+                        "upstream fix for CVE-2026-45829",
         }
         missing = _EXEMPT - set(rationale.keys())
         assert not missing, (
