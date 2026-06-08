@@ -137,7 +137,12 @@ class TransformersEngine(BatchModel):
                 logger.info(f"Using CUDA with {torch.cuda.device_count()} GPU(s)")
             else:
                 self.device = "cpu"
-                logger.warning("CUDA not available, using CPU (this will be slow)")
+                # If the host actually has NVIDIA GPUs but torch can't use them
+                # (almost always a torch-CUDA vs driver mismatch), emit one clear,
+                # actionable warning instead of a bland "CUDA not available".
+                from effgen.gpu.cuda_compat import warn_cuda_mismatch_once
+                if not warn_cuda_mismatch_once():
+                    logger.warning("CUDA not available, using CPU (this will be slow)")
 
             # Setup quantization config if specified
             quantization_config = None

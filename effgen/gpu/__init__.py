@@ -24,6 +24,15 @@ from effgen.gpu.allocator import (
     GPUInfo,
     ParallelismType,
 )
+from effgen.gpu.cuda_compat import (
+    CudaStatus,
+    cuda_usable,
+    driver_cuda_version,
+    get_cuda_status,
+    physical_gpu_count,
+    torch_cuda_version,
+    warn_cuda_mismatch_once,
+)
 from effgen.gpu.monitor import (
     Alert,
     AlertLevel,
@@ -52,4 +61,13 @@ __all__ = [
 
     # Utilities module
     "gpu_utils",
+
+    # CUDA / driver compatibility
+    "CudaStatus",
+    "cuda_usable",
+    "get_cuda_status",
+    "physical_gpu_count",
+    "driver_cuda_version",
+    "torch_cuda_version",
+    "warn_cuda_mismatch_once",
 ]

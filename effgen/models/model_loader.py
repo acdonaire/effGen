@@ -557,6 +557,10 @@ class ModelLoader:
 
         # Check CUDA availability
         if not torch.cuda.is_available():
+            from effgen.gpu.cuda_compat import get_cuda_status
+            status = get_cuda_status()
+            if status.mismatch and status.message:
+                raise RuntimeError(f"vLLM requires a usable GPU. {status.message}")
             raise RuntimeError("CUDA not available, vLLM requires GPU")
 
         # Determine quantization if not specified

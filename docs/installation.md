@@ -11,6 +11,13 @@ pip install effgen[vllm]               # vLLM backend (NVIDIA GPUs)
 pip install effgen[mlx]                # MLX backend (Apple Silicon)
 ```
 
+> **On an NVIDIA GPU box?** The default PyTorch wheel on PyPI may be built for a
+> newer CUDA runtime than your driver supports, which silently disables the GPU
+> (`torch.cuda.is_available()` is `False` even though `nvidia-smi` lists your
+> GPUs). Pick a torch wheel that matches your driver — see
+> [GPU / CUDA compatibility](#gpu--cuda-compatibility) below. The bundled
+> `./install.sh` does this automatically.
+
 ### Use-case extras
 
 Install only the slice you need instead of the everything-extra `[all]`. The
@@ -60,6 +67,45 @@ uv pip compile pyproject.toml --extra all --output-file requirements-all-lock.tx
 > lists `flash-attn` as a dependency will cause `pip install` to fail. To keep
 > `pip install effgen[all]` working for everyone, `flash-attn` is kept out of
 > `[all]` and installed separately (see below).
+
+## GPU / CUDA compatibility
+
+PyTorch wheels are built against a specific CUDA runtime (`torch 2.x+cu124`,
+`+cu130`, …). An NVIDIA driver is **forward-compatible only**: a driver that
+reports `CUDA Version: 12.4` (`nvidia-smi`) can run torch built for CUDA ≤ 12.x,
+but **not** a torch built for CUDA 13. Installing a CUDA-13 wheel on a CUDA-12.4
+driver leaves you with `torch.cuda.is_available() == False` and everything runs
+(slowly) on the CPU.
+
+Check your driver's maximum CUDA version first:
+
+```bash
+nvidia-smi    # top-right: "CUDA Version: 12.4"
+```
+
+Then install a matching torch wheel **before** installing effgen (or let
+`./install.sh` detect the driver and do it for you):
+
+| Your environment | torch index URL | Install command |
+|---|---|---|
+| **CPU only** (no NVIDIA GPU) | `cpu` | `pip install torch --index-url https://download.pytorch.org/whl/cpu` |
+| **CUDA 12.1–12.7 driver** (e.g. 12.4) | `cu124` | `pip install "torch>=2.0,<3" --index-url https://download.pytorch.org/whl/cu124` |
+| **CUDA 12.8+ driver** | `cu128` | `pip install "torch>=2.0,<3" --index-url https://download.pytorch.org/whl/cu128` |
+| **CUDA 13.x driver** | `cu130` | `pip install "torch>=2.0,<3" --index-url https://download.pytorch.org/whl/cu130` |
+| **vLLM** (NVIDIA GPU) | matches vLLM's pinned torch | see [Installing vLLM](#installing-vllm-optional) |
+
+```bash
+# Example: a host with a CUDA 12.4 driver
+pip install "torch>=2.0,<3" --index-url https://download.pytorch.org/whl/cu124
+pip install effgen
+python -c "import torch; print(torch.cuda.is_available())"   # -> True
+```
+
+effGen detects a torch-CUDA / driver mismatch at runtime: when it sees physical
+NVIDIA GPUs but `torch.cuda` cannot use them, it prints **one** warning naming the
+torch CUDA build vs the driver's CUDA version and pointing back here, instead of
+silently running on the CPU. Set `EFFGEN_NO_GPU_WARN=1` to silence it if you are
+deliberately running CPU-only on a GPU box.
 
 ## Installing flash-attn (optional, NVIDIA GPUs only)
 

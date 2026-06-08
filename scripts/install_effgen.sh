@@ -416,9 +416,18 @@ if check_command nvidia-smi; then
     echo -e "${CYAN}${BOLD}╚════╩═══════════════════════╩═══════════════╩══════════════════╝${NC}"
 
     HAS_GPU=true
+
+    # Capture the maximum CUDA runtime the installed driver supports (e.g. "12.4").
+    # We use this to install a matching PyTorch wheel so a CUDA-13 default wheel is
+    # not silently installed on a CUDA-12 driver (which disables the GPU).
+    DRIVER_CUDA_VERSION=$(nvidia-smi 2>/dev/null | grep -oE 'CUDA Version: [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    if [ -n "$DRIVER_CUDA_VERSION" ]; then
+        print_info "Driver supports up to CUDA ${DRIVER_CUDA_VERSION}"
+    fi
 else
     print_info "No NVIDIA GPU detected - will use CPU mode"
     HAS_GPU=false
+    DRIVER_CUDA_VERSION=""
 fi
 
 echo ""
@@ -477,6 +486,56 @@ cd "$PROJECT_ROOT"
 print_step "Upgrading pip, setuptools, and wheel..."
 $PYTHON_CMD -m pip install --upgrade pip setuptools wheel > /dev/null 2>&1
 print_success "Core tools upgraded"
+
+# Install a PyTorch build that matches the host CUDA driver BEFORE installing the
+# rest of the dependencies. Installing torch here pins a driver-compatible wheel so
+# the later `pip install -e .` (which only constrains `torch>=2.0,<3`) does not pull
+# the default PyPI wheel, which may be built for a newer CUDA runtime than the
+# driver supports and would silently fall back to CPU.
+install_compatible_torch() {
+    if [ "$HAS_GPU" != true ]; then
+        return 0
+    fi
+
+    # Map the driver's max CUDA version to a PyTorch wheel index. The cuXYZ index
+    # ships wheels built for that CUDA runtime; a driver is forward-compatible with
+    # equal-or-older CUDA runtimes only.
+    local cuda_major cuda_minor torch_index
+    cuda_major=$(echo "${DRIVER_CUDA_VERSION:-}" | cut -d. -f1)
+    cuda_minor=$(echo "${DRIVER_CUDA_VERSION:-0.0}" | cut -d. -f2)
+    case "$cuda_major" in
+        13|14|15) torch_index="cu130" ;;
+        12)
+            # cu124 runs on any CUDA 12.x driver; prefer cu128 on 12.8+ for newer GPUs.
+            if [ "${cuda_minor:-0}" -ge 8 ] 2>/dev/null; then
+                torch_index="cu128"
+            else
+                torch_index="cu124"
+            fi
+            ;;
+        11)       torch_index="cu118" ;;
+        *)        torch_index="" ;;
+    esac
+
+    if [ -z "$torch_index" ]; then
+        print_info "Could not map driver CUDA '${DRIVER_CUDA_VERSION:-unknown}' to a torch wheel; using default PyPI torch."
+        return 0
+    fi
+
+    print_step "Installing PyTorch for CUDA ${DRIVER_CUDA_VERSION} (index: ${torch_index})..."
+    if $PYTHON_CMD -m pip install "torch>=2.0.0,<3.0" \
+            --index-url "https://download.pytorch.org/whl/${torch_index}" > /dev/null 2>&1; then
+        # Confirm torch can actually see the GPUs; if not, report the mismatch loudly.
+        if $PYTHON_CMD -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" > /dev/null 2>&1; then
+            print_success "PyTorch installed with working CUDA (${torch_index})"
+        else
+            print_warning "PyTorch installed (${torch_index}) but torch.cuda.is_available() is False — see docs/installation.md (CUDA matrix)."
+        fi
+    else
+        print_warning "Could not install the ${torch_index} PyTorch wheel; falling back to default. See docs/installation.md."
+    fi
+}
+install_compatible_torch
 
 if [ "$MINIMAL_INSTALL" = true ]; then
     print_step "Installing minimal dependencies..."
@@ -707,7 +766,16 @@ try:
         print('${GREEN}  ●${NC} CUDA available: ' + torch.cuda.get_device_name(0))
         print('${BLUE}  ℹ${NC} CUDA version: ' + torch.version.cuda)
     else:
-        print('${YELLOW}  ⚠${NC} CUDA not available (CPU mode)')
+        # Explain *why* — a torch-CUDA / driver mismatch is the common, fixable cause.
+        try:
+            from effgen.gpu.cuda_compat import get_cuda_status
+            st = get_cuda_status()
+            if st.mismatch and st.message:
+                print('${YELLOW}  ⚠${NC} ' + st.message)
+            else:
+                print('${YELLOW}  ⚠${NC} CUDA not available (CPU mode)')
+        except Exception:
+            print('${YELLOW}  ⚠${NC} CUDA not available (CPU mode)')
 except ImportError as e:
     print('${YELLOW}⚠${NC} PyTorch not installed: ' + str(e))
 

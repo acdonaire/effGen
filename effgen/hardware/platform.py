@@ -32,10 +32,14 @@ def is_apple_silicon() -> bool:
 
 @functools.lru_cache(maxsize=1)
 def is_cuda_available() -> bool:
-    """Check if CUDA GPU is available. Lazy-imports torch."""
+    """Check if CUDA GPU is available and usable by torch.
+
+    Defers to :func:`effgen.gpu.cuda_compat.cuda_usable`, the single source of
+    truth, so hardware detection and ``gpu.utils`` always agree.
+    """
     try:
-        import torch
-        return torch.cuda.is_available() and torch.cuda.device_count() > 0
+        from effgen.gpu.cuda_compat import cuda_usable
+        return cuda_usable()
     except ImportError:
         return False
 

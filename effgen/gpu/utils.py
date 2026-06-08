@@ -40,15 +40,18 @@ TB = 1024 * GB
 
 def is_gpu_available() -> bool:
     """
-    Check if CUDA GPU is available.
+    Check if CUDA GPU is available and usable by torch.
+
+    Defers to :func:`effgen.gpu.cuda_compat.cuda_usable` so that ``gpu.utils``,
+    ``hardware.platform`` and ``torch.cuda`` can never disagree about whether the
+    GPUs are usable.
 
     Returns:
         True if at least one CUDA GPU is available, False otherwise
     """
-    if not TORCH_AVAILABLE:
-        return False
+    from effgen.gpu.cuda_compat import cuda_usable
 
-    return torch.cuda.is_available() and torch.cuda.device_count() > 0
+    return cuda_usable()
 
 
 def is_accelerator_available() -> bool:
