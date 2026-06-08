@@ -386,22 +386,23 @@ class GPUMonitor:
 
     def _collect_torch_metrics(self, device_id: int, timestamp: float) -> GPUMetrics:
         """Collect metrics using PyTorch (basic info)"""
-        torch.cuda.set_device(device_id)
-
-        # Memory info
+        # Memory info. Prefer the driver's free/total (device-scoped, reflects
+        # all processes) over this-process reservations; no global set_device.
         vram_total = torch.cuda.get_device_properties(device_id).total_memory
-        vram_reserved = torch.cuda.memory_reserved(device_id)
-        vram_allocated = torch.cuda.memory_allocated(device_id)
-        vram_free = vram_total - vram_reserved
+        try:
+            vram_free, vram_total = torch.cuda.mem_get_info(device_id)
+        except Exception:
+            vram_free = vram_total - torch.cuda.memory_reserved(device_id)
+        vram_used = vram_total - vram_free
 
         return GPUMetrics(
             device_id=device_id,
             timestamp=timestamp,
             vram_total=vram_total,
-            vram_used=vram_allocated,
+            vram_used=vram_used,
             vram_free=vram_free,
             gpu_utilization=0.0,  # Not available in PyTorch
-            memory_utilization=vram_allocated / vram_total if vram_total > 0 else 0.0
+            memory_utilization=vram_used / vram_total if vram_total > 0 else 0.0
         )
 
     def _check_thresholds(self) -> None:

@@ -169,11 +169,19 @@ def get_free_memory(device_id: int) -> int:
     if device_id < 0 or device_id >= get_device_count():
         raise ValueError(f"Invalid device ID: {device_id}")
 
-    torch.cuda.set_device(device_id)
-    total = torch.cuda.get_device_properties(device_id).total_memory
-    reserved = torch.cuda.memory_reserved(device_id)
-
-    return total - reserved
+    # Driver-reported free memory (reflects all processes on the GPU), queried
+    # device-scoped so the process-wide current device is not changed.
+    try:
+        free, _total = torch.cuda.mem_get_info(device_id)
+        return int(free)
+    except Exception as e:
+        logger.debug(
+            f"mem_get_info unavailable for GPU {device_id}, "
+            f"falling back to per-process reservations: {e}"
+        )
+        total = torch.cuda.get_device_properties(device_id).total_memory
+        reserved = torch.cuda.memory_reserved(device_id)
+        return total - reserved
 
 
 def get_allocated_memory(device_id: int) -> int:
@@ -195,7 +203,7 @@ def get_allocated_memory(device_id: int) -> int:
     if device_id < 0 or device_id >= get_device_count():
         raise ValueError(f"Invalid device ID: {device_id}")
 
-    torch.cuda.set_device(device_id)
+    # memory_allocated is device-scoped; no need to mutate the current device.
     return torch.cuda.memory_allocated(device_id)
 
 
@@ -437,14 +445,15 @@ def clear_cache(device_id: int | None = None) -> None:
     if not is_gpu_available():
         return
 
+    # Use device-scoped contexts so the process-wide current device is restored.
     if device_id is not None:
-        torch.cuda.set_device(device_id)
-        torch.cuda.empty_cache()
+        with torch.cuda.device(device_id):
+            torch.cuda.empty_cache()
         logger.debug(f"Cleared cache for GPU {device_id}")
     else:
         for device_id in range(get_device_count()):
-            torch.cuda.set_device(device_id)
-            torch.cuda.empty_cache()
+            with torch.cuda.device(device_id):
+                torch.cuda.empty_cache()
         logger.debug("Cleared cache for all GPUs")
 
 
@@ -458,8 +467,8 @@ def synchronize(device_id: int | None = None) -> None:
     if not is_gpu_available():
         return
 
+    # synchronize accepts an explicit device; no global current-device mutation.
     if device_id is not None:
-        torch.cuda.set_device(device_id)
         torch.cuda.synchronize(device_id)
     else:
         torch.cuda.synchronize()
@@ -504,12 +513,11 @@ def get_memory_summary(device_id: int) -> dict[str, int | str]:
             'error': f'Invalid device ID: {device_id}'
         }
 
-    torch.cuda.set_device(device_id)
-
     total = torch.cuda.get_device_properties(device_id).total_memory
     allocated = torch.cuda.memory_allocated(device_id)
     reserved = torch.cuda.memory_reserved(device_id)
-    free = total - reserved
+    # Real free memory from the driver (reflects other processes); device-scoped.
+    free = get_free_memory(device_id)
 
     return {
         'available': True,

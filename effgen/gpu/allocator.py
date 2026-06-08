@@ -15,7 +15,7 @@ import logging
 import warnings
 from dataclasses import dataclass, field
 from enum import Enum
-from threading import Lock
+from threading import RLock
 
 try:
     import torch
@@ -26,6 +26,27 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _device_free_memory(device_id: int, total_memory: int) -> int:
+    """Return real free memory on a device in bytes.
+
+    Uses ``torch.cuda.mem_get_info`` (the CUDA driver's view), which reflects
+    memory consumed by *all* processes sharing the GPU — not just this one — so
+    the allocator does not over-commit GPUs that other tenants are already using.
+    The call is device-scoped and does not mutate the process-wide current device.
+    Falls back to this-process reservations only if the driver query is
+    unavailable (e.g. older torch without a live CUDA context).
+    """
+    try:
+        free, _total = torch.cuda.mem_get_info(device_id)
+        return int(free)
+    except Exception as e:
+        logger.debug(
+            f"mem_get_info unavailable for GPU {device_id}, "
+            f"falling back to per-process reservations: {e}"
+        )
+        return total_memory - torch.cuda.memory_reserved(device_id)
 
 
 class AllocationStrategy(Enum):
@@ -123,7 +144,9 @@ class GPUAllocator:
         Args:
             enable_monitoring: Enable real-time GPU monitoring
         """
-        self._lock = Lock()
+        # Reentrant so that lock-holding helpers (e.g. reset -> deallocate) do
+        # not deadlock by re-acquiring the same lock.
+        self._lock = RLock()
         self._allocations: dict[str, Allocation] = {}
         self._devices: dict[int, GPUInfo] = {}
         self._enable_monitoring = enable_monitoring
@@ -154,12 +177,10 @@ class GPUAllocator:
             for device_id in range(num_devices):
                 props = torch.cuda.get_device_properties(device_id)
 
-                # Get current memory info
-                torch.cuda.set_device(device_id)
+                # Real free memory from the driver (respects other processes);
+                # device-scoped, so the global current device is left untouched.
                 total_memory = props.total_memory
-                reserved = torch.cuda.memory_reserved(device_id)
-                torch.cuda.memory_allocated(device_id)
-                available = total_memory - reserved
+                available = _device_free_memory(device_id, total_memory)
 
                 gpu_info = GPUInfo(
                     device_id=device_id,
@@ -206,10 +227,12 @@ class GPUAllocator:
 
         try:
             for device_id in self._devices:
-                torch.cuda.set_device(device_id)
                 total = self._devices[device_id].total_memory
-                reserved = torch.cuda.memory_reserved(device_id)
-                self._devices[device_id].available_memory = total - reserved
+                # Driver-reported free memory (includes other processes);
+                # device-scoped query, no global current-device mutation.
+                self._devices[device_id].available_memory = _device_free_memory(
+                    device_id, total
+                )
         except Exception as e:
             logger.error(f"Error refreshing device info: {e}")
 
@@ -299,13 +322,15 @@ class GPUAllocator:
                 # Tensor parallelism splits memory across devices
                 required_memory = request.memory_required // request.num_gpus
 
-            # Account for existing allocations
-            used_memory = sum(
+            # Start from the driver's real free memory (which already reflects
+            # other processes on shared boxes), then subtract effGen's own
+            # outstanding logical reservations as an overlay.
+            reserved_by_effgen = sum(
                 alloc.memory_allocated.get(device_id, 0)
                 for alloc in self._allocations.values()
             )
 
-            free_memory = info.total_memory - used_memory
+            free_memory = max(0, info.available_memory - reserved_by_effgen)
 
             if free_memory >= required_memory:
                 available_devices.append((device_id, free_memory, info.utilization))
@@ -455,26 +480,36 @@ class GPUAllocator:
             True if deallocation successful, False otherwise
         """
         with self._lock:
-            if requester_id not in self._allocations:
-                logger.warning(f"No allocation found for {requester_id}")
-                return False
+            return self._deallocate_locked(requester_id)
 
-            allocation = self._allocations.pop(requester_id)
+    def _deallocate_locked(self, requester_id: str) -> bool:
+        """Deallocate without acquiring ``self._lock``.
 
-            logger.info(
-                f"Deallocated GPU(s) {allocation.device_ids} from {requester_id}"
-            )
+        Caller MUST already hold ``self._lock``. This is the shared core used by
+        both :meth:`deallocate` (which takes the lock) and :meth:`reset` (which
+        already holds it), so reset never re-acquires the lock and deadlocks.
+        """
+        if requester_id not in self._allocations:
+            logger.warning(f"No allocation found for {requester_id}")
+            return False
 
-            # Clear GPU cache if using PyTorch
-            if self.is_cuda_available():
-                try:
-                    for device_id in allocation.device_ids:
-                        torch.cuda.set_device(device_id)
+        allocation = self._allocations.pop(requester_id)
+
+        logger.info(
+            f"Deallocated GPU(s) {allocation.device_ids} from {requester_id}"
+        )
+
+        # Clear GPU cache if using PyTorch. Use a device-scoped context so the
+        # process-wide current CUDA device is not mutated.
+        if self.is_cuda_available():
+            try:
+                for device_id in allocation.device_ids:
+                    with torch.cuda.device(device_id):
                         torch.cuda.empty_cache()
-                except Exception as e:
-                    logger.error(f"Error clearing GPU cache: {e}")
+            except Exception as e:
+                logger.error(f"Error clearing GPU cache: {e}")
 
-            return True
+        return True
 
     def get_allocation(self, requester_id: str) -> Allocation | None:
         """
@@ -512,13 +547,14 @@ class GPUAllocator:
         if device_id not in self._devices:
             raise ValueError(f"Device {device_id} not found")
 
-        # Account for existing allocations
-        used_memory = sum(
+        # Driver-reported free memory (respects other processes) minus effGen's
+        # own outstanding logical reservations.
+        reserved_by_effgen = sum(
             alloc.memory_allocated.get(device_id, 0)
             for alloc in self._allocations.values()
         )
 
-        return self._devices[device_id].total_memory - used_memory
+        return max(0, self._devices[device_id].available_memory - reserved_by_effgen)
 
     def can_allocate(self, request: AllocationRequest) -> bool:
         """
@@ -557,7 +593,7 @@ class GPUAllocator:
         with self._lock:
             requester_ids = list(self._allocations.keys())
             for requester_id in requester_ids:
-                self.deallocate(requester_id)
+                self._deallocate_locked(requester_id)
 
             logger.info("GPU allocator reset complete")
 
