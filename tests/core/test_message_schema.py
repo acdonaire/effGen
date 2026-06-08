@@ -260,9 +260,17 @@ class TestMessageConstruction:
         with pytest.raises(InvalidMultimodalContent):
             Message(role=Role.USER, content=12345)  # type: ignore[arg-type]
 
+    def test_bare_str_content_list_item_is_wrapped(self):
+        # A bare string in the content list is auto-wrapped in a TextPart so
+        # Message(content=[img, "describe this"]) works as documented.
+        msg = Message(role=Role.USER, content=["not a part"])  # type: ignore[list-item]
+        assert len(msg.content) == 1
+        assert isinstance(msg.content[0], TextPart)
+        assert msg.content[0].text == "not a part"
+
     def test_invalid_content_list_item_raises(self):
         with pytest.raises(InvalidMultimodalContent):
-            Message(role=Role.USER, content=["not a part"])  # type: ignore[list-item]
+            Message(role=Role.USER, content=[123])  # type: ignore[list-item]
 
     def test_invalid_metadata_type_raises(self):
         with pytest.raises(InvalidMultimodalContent):

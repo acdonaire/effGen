@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..memory.long_term import (
     ImportanceLevel,
@@ -68,6 +68,9 @@ from .tool_calling import (
     ToolCallResult,
     get_strategy,
 )
+
+if TYPE_CHECKING:
+    from .messages import Message
 
 logger = logging.getLogger(__name__)
 _slog = get_structured_logger(__name__)
@@ -733,17 +736,21 @@ Question: {task}
         return True
 
     def run(self,
-            task: str,
+            task: "str | Message | list[Any]",
             mode: AgentMode = AgentMode.AUTO,
             context: dict[str, Any] | None = None,
             output_schema: dict[str, Any] | None = None,
             output_model: Any = None,
+            inputs: list[Any] | None = None,
             **kwargs) -> AgentResponse:
         """
         Execute a task.
 
         Args:
-            task: Task description
+            task: Task description. Accepts a plain ``str``, a multimodal
+                ``Message``, or a ``list[ContentPart]``; text is extracted and
+                any image/audio/video parts are routed through the multimodal
+                path.
             mode: Execution mode (single, sub_agents, auto)
             context: Optional context
             output_schema: JSON Schema dict — when provided, the final output
@@ -761,6 +768,12 @@ Question: {task}
         """
         start_time = time.time()
         context = context or {}
+
+        # Accept str | Message | list[ContentPart]; route media to the
+        # multimodal `inputs` path. Raises a clear TypeError otherwise.
+        task, inputs = self._coerce_task_input(task, inputs)
+        if inputs is not None:
+            kwargs["inputs"] = inputs
         self._current_depth = 0  # Reset depth at the start of each top-level run()
         debug = kwargs.pop("debug", False)
         run_id = generate_run_id()
@@ -799,15 +812,16 @@ Question: {task}
         self.execution_tracker.track_event(ExecutionEvent(
             type=EventType.TASK_START,
             agent_id=self.name,
-            message=f"Starting task: {task[:100]}...",
+            message=f"Starting task: {self._extract_task_preview(task, 100)}...",
             data={"task": task, "mode": mode.value}
         ))
 
         # Wrap entire run in tracing span + structured log context
+        _task_preview = self._extract_task_preview(task, 200)
         with start_agent_run(preset=self.name, task=task, run_id=run_id) as _span, \
              LogRunContext(run_id=run_id, agent_name=self.name):
-            _slog.agent_event(self.name, "task_start", task=task[:200], mode=mode.value, run_id=run_id)
-            _obs_log.agent_event("run.started", agent=self.name, task=task[:200], mode=mode.value, run_id=run_id)
+            _slog.agent_event(self.name, "task_start", task=_task_preview, mode=mode.value, run_id=run_id)
+            _obs_log.agent_event("run.started", agent=self.name, task=_task_preview, mode=mode.value, run_id=run_id)
 
             try:
                 # Pass debug flag through kwargs
@@ -3207,6 +3221,87 @@ Question: {task}
                 metadata={"reason": "generation_failed", "error": detail},
             )
 
+    @staticmethod
+    def _extract_task_preview(task: Any, limit: int = 200) -> str:
+        """Return a safe, short string preview of a ``run()`` task argument.
+
+        ``task`` may be a ``str``, a ``Message``, or a ``list[ContentPart]`` —
+        never assume it is subscriptable.
+        """
+        try:
+            if isinstance(task, str):
+                return task[:limit]
+            from effgen.core.messages import Message, TextPart
+
+            if isinstance(task, Message):
+                return task.text[:limit]
+            if isinstance(task, list | tuple):
+                texts = [p.text for p in task if isinstance(p, TextPart)]
+                if texts:
+                    return " ".join(texts)[:limit]
+                return f"<{len(task)} content part(s)>"
+        except Exception:
+            logger.debug("Failed to build task preview", exc_info=True)
+        return str(task)[:limit]
+
+    @staticmethod
+    def _coerce_task_input(
+        task: Any, inputs: Any = None,
+    ) -> tuple[str, list[Any] | None]:
+        """Normalise a ``run()``/``stream()`` task into ``(text, inputs)``.
+
+        Accepts ``str``, a multimodal ``Message``, or a ``list[ContentPart]``.
+        Text parts become the task string; image/audio/video parts are routed to
+        the multimodal ``inputs`` path (merged with any explicit ``inputs=``).
+        Any other type raises a clear ``TypeError``.
+        """
+        from effgen.core.messages import (
+            _CONTENT_PART_TYPES,
+            Message,
+            TextPart,
+        )
+
+        # Fast path: the overwhelmingly common case.
+        if isinstance(task, str):
+            return task, inputs
+
+        if isinstance(task, Message):
+            parts: list[Any] = list(task.content)
+        elif isinstance(task, list | tuple):
+            parts = list(task)
+        else:
+            raise TypeError(
+                "Agent.run(task=...) accepts a str, a Message, or a "
+                "list[ContentPart]; got "
+                f"{type(task).__name__}. For images/audio/video pass text plus "
+                "inputs=[image_from(...)], e.g. "
+                'agent.run("describe this", inputs=[image_from(path)]).'
+            )
+
+        texts: list[str] = []
+        media: list[Any] = []
+        for index, part in enumerate(parts):
+            if isinstance(part, str):
+                texts.append(part)
+            elif isinstance(part, TextPart):
+                texts.append(part.text)
+            elif isinstance(part, _CONTENT_PART_TYPES):
+                media.append(part)
+            else:
+                raise TypeError(
+                    f"Agent.run(task=...) content item {index} must be a "
+                    "ContentPart (image_from/audio_from/video_from) or str; got "
+                    f"{type(part).__name__}."
+                )
+
+        text_task = "\n".join(t for t in texts if t)
+
+        merged: list[Any] = list(media)
+        if inputs is not None:
+            merged.extend(inputs if isinstance(inputs, list | tuple) else [inputs])
+
+        return text_task, (merged or None)
+
     def _build_multimodal_prompt(self, task: str, inputs: Any) -> list[Any]:
         """Build structured Messages for adapter-native multimodal input."""
         from effgen.core.messages import ContentPart, Message, Role, TextPart
@@ -3451,9 +3546,10 @@ Provide a well-structured, comprehensive response that integrates all findings."
         return response.get("text", "").strip()
 
     async def run_async(self,
-                       task: str,
+                       task: "str | Message | list[Any]",
                        mode: AgentMode = AgentMode.AUTO,
                        context: dict[str, Any] | None = None,
+                       inputs: list[Any] | None = None,
                        **kwargs) -> AgentResponse:
         """
         Truly asynchronous version of run().
@@ -3463,9 +3559,10 @@ Provide a well-structured, comprehensive response that integrates all findings."
         async callers.
 
         Args:
-            task: Task description
+            task: Task description (str, Message, or list[ContentPart])
             mode: Execution mode
             context: Optional context
+            inputs: Optional multimodal content parts (see ``run``).
             **kwargs: Additional arguments
 
         Returns:
@@ -3473,7 +3570,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
         """
         import functools
         loop = asyncio.get_running_loop()
-        func = functools.partial(self.run, task, mode, context, **kwargs)
+        func = functools.partial(self.run, task, mode, context, inputs=inputs, **kwargs)
         return await loop.run_in_executor(None, func)
 
     # ── Resource management ─────────────────────────────────────────────
@@ -3533,13 +3630,14 @@ Provide a well-structured, comprehensive response that integrates all findings."
             pass
 
     def stream(self,
-               task: str,
+               task: "str | Message | list[Any]",
                mode: AgentMode = AgentMode.AUTO,
                context: dict[str, Any] | None = None,
                on_thought: Callable[[str], None] | None = None,
                on_tool_call: Callable[[str, str], None] | None = None,
                on_observation: Callable[[str], None] | None = None,
                on_answer: Callable[[str], None] | None = None,
+               inputs: list[Any] | None = None,
                **kwargs) -> Iterator[str]:
         """
         Stream response token by token using real model streaming.
@@ -3551,18 +3649,31 @@ Provide a well-structured, comprehensive response that integrates all findings."
         - Yields final answer tokens
 
         Args:
-            task: Task description
+            task: Task description. Accepts a ``str``, a ``Message``, or a
+                ``list[ContentPart]`` (text is extracted).
             mode: Execution mode
             context: Optional context
             on_thought: Callback for thought tokens
             on_tool_call: Callback(tool_name, tool_input) when a tool is called
             on_observation: Callback for tool observation text
             on_answer: Callback for final answer tokens
+            inputs: Multimodal content parts. Streaming is text-only today; if
+                media parts are supplied a clear error points to ``run()``.
             **kwargs: Additional arguments
 
         Yields:
             Response tokens (str)
         """
+        # Accept str | Message | list[ContentPart]; streaming is text-only, so
+        # surface a clear error if media is supplied rather than dropping it.
+        task, _stream_inputs = self._coerce_task_input(task, inputs)
+        if _stream_inputs is not None:
+            raise TypeError(
+                "Agent.stream() is text-only; multimodal inputs are not "
+                "supported while streaming. Use agent.run(task, inputs=[...]) "
+                "for image/audio/video input."
+            )
+
         if self.model is None:
             raise RuntimeError(
                 f"Agent '{self.name}' has no model loaded. "

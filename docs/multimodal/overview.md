@@ -91,6 +91,45 @@ vid = video_from("/tmp/clip.mp4", fps=1)   # 1 frame/second, max 16 frames
 
 ---
 
+## Agent API (recommended)
+
+The simplest way to send multimodal input is through an `Agent`. Pass text plus
+an `inputs=` list of parts, **or** pass a `Message` / `list[ContentPart]`
+directly as the task — the agent extracts the text and routes any image/audio/
+video parts through the multimodal path.
+
+```python
+from effgen import image_from
+from effgen.core.agent import Agent, AgentConfig
+
+agent = Agent(config=AgentConfig(
+    name="vision", model="gemini-3.1-flash-lite", provider="gemini",
+))
+
+# 1) text + inputs= (the canonical form)
+result = agent.run(
+    "What single color dominates this image?",
+    inputs=[image_from("photo.png")],
+)
+print(result.output)
+
+# 2) a Message as the task — a bare string in the content list is fine
+from effgen.core.messages import Message, Role
+msg = Message(role=Role.USER, content=[image_from("photo.png"), "Describe this."])
+result = agent.run(msg)
+
+# 3) a list[ContentPart] as the task
+result = agent.run([image_from("photo.png"), "What is this?"])
+```
+
+`inputs` is an explicit keyword parameter of `run()` (and `run_async()`), so it
+shows up in IDE autocomplete and `inspect.signature`. Streaming (`agent.stream`)
+is text-only; pass media through `run()` instead.
+
+If a part targets a model without the matching capability, the agent surfaces a
+clear `CapabilityNotSupportedError` message (with a suggested model) rather than
+silently dropping the input.
+
 ## Preprocessing Pipeline
 
 ### Image preprocessing (`effgen/multimodal/image_pre.py`)

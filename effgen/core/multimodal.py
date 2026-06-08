@@ -81,9 +81,15 @@ def _detect_audio_mime(data: bytes) -> str:
     return "audio/wav"
 
 
-def _fetch_url(url: str) -> bytes:
+# A descriptive User-Agent so hosts that reject the default ``Python-urllib``
+# client (e.g. Wikimedia) still serve the media.
+_FETCH_USER_AGENT = "effGen/multimodal (+https://github.com/effgen)"
+
+
+def _fetch_url(url: str, timeout: float = 30.0) -> bytes:
     """Fetch raw bytes from a URL."""
-    with urllib.request.urlopen(url) as resp:  # noqa: S310 — URL comes from user
+    req = urllib.request.Request(url, headers={"User-Agent": _FETCH_USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — URL comes from user
         return resp.read()
 
 

@@ -208,12 +208,22 @@ class Message:
                 f"content must be str or list[ContentPart], got {type(self.content)}",
             )
         else:
+            normalised: list[ContentPart] = []
             for index, part in enumerate(self.content):
-                if not isinstance(part, _CONTENT_PART_TYPES):
+                # Back-compat / ergonomics: a bare string in the content list is
+                # auto-wrapped in a TextPart, so Message(content=[img, "describe"])
+                # works as the docs show.
+                if isinstance(part, str):
+                    normalised.append(TextPart(text=part))
+                elif isinstance(part, _CONTENT_PART_TYPES):
+                    normalised.append(part)
+                else:
                     raise InvalidMultimodalContent(
                         "content",
-                        f"content[{index}] must be a ContentPart, got {type(part).__name__}",
+                        f"content[{index}] must be a ContentPart or str, "
+                        f"got {type(part).__name__}",
                     )
+            self.content = normalised
         if not isinstance(self.metadata, dict):
             raise InvalidMultimodalContent("metadata", "metadata must be a dict")
 
