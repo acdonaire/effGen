@@ -616,7 +616,7 @@ class TransformersEngine(BatchModel):
                 try:
                     streamer.end()
                 except Exception:
-                    pass
+                    logger.debug("Failed to end streamer", exc_info=True)
                 thread.join(timeout=30.0)
 
             if thread.is_alive():
@@ -801,7 +801,7 @@ class TransformersEngine(BatchModel):
                 from accelerate.hooks import remove_hook_from_module
                 remove_hook_from_module(self.model, recurse=True)
             except Exception:
-                pass
+                logger.debug("Failed to remove accelerate hooks during unload", exc_info=True)
             del self.model
             self.model = None
 
@@ -817,12 +817,12 @@ class TransformersEngine(BatchModel):
             try:
                 torch.cuda.synchronize()
             except Exception:
-                pass
+                logger.debug("torch.cuda.synchronize() failed during unload", exc_info=True)
             torch.cuda.empty_cache()
             try:
                 torch.cuda.ipc_collect()
             except Exception:
-                pass
+                logger.debug("torch.cuda.ipc_collect() failed during unload", exc_info=True)
 
         self._is_loaded = False
         logger.info(f"Model '{self.model_name}' unloaded successfully")

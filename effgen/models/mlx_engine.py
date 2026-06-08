@@ -159,7 +159,7 @@ class MLXEngine(BatchModel):
                     logger.info(f"Unified memory available: {mem_gb:.1f} GB")
                     self._metadata["unified_memory_gb"] = mem_gb
             except Exception:
-                pass
+                logger.debug("Failed to read unified memory info", exc_info=True)
 
             self._is_loaded = True
             logger.info(f"Model '{self.model_name}' loaded successfully with MLX")

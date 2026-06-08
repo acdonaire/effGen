@@ -62,6 +62,7 @@ from effgen.models.errors import (
     AllCandidatesExhaustedError,
     AmbiguousModelError,
     BudgetExceededError,
+    ErrorClass,
     InvalidRequestError,
     ModelAuthError,
     ModelNotFoundError,
@@ -70,6 +71,7 @@ from effgen.models.errors import (
     ModelUnavailableError,
     NoCandidateWithinBudgetError,
     ProviderTransientError,
+    classify_provider_error,
 )
 from effgen.models.fireworks_adapter import FireworksAdapter
 from effgen.models.fireworks_models import FIREWORKS_MODELS
@@ -232,6 +234,8 @@ __all__ = [
     "AllCandidatesExhaustedError",
     "InvalidRequestError",
     "BudgetExceededError",
+    "ErrorClass",
+    "classify_provider_error",
 
     # Provider registry + auth
     "ProviderRegistry",

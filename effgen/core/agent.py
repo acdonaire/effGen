@@ -31,6 +31,13 @@ from ..memory.long_term import (
 )
 from ..memory.short_term import MessageRole, ShortTermMemory
 from ..models.base import BaseModel, GenerationConfig
+from ..models.errors import (
+    InvalidRequestError,
+    ModelAuthError,
+    ModelNotFoundError,
+    ModelRefusalError,
+    classify_provider_error,
+)
 from ..models.model_loader import ModelLoader
 from ..observability import get_logger as _get_obs_logger
 from ..observability.spans import AgentAttrs, ModelAttrs, ToolAttrs
@@ -158,7 +165,18 @@ class AgentConfig:
         router_config: Configuration for sub-agent router
         sub_agent_config: Configuration for sub-agent manager
         model_config: Optional model engine configuration
-        require_model: Whether model loading is required (raise error on failure)
+        require_model: Whether a string model must load at construction time.
+            Defaults to True so a typo'd id / missing key fails immediately
+            instead of building a working-looking agent that only crashes on
+            the first run(). Set False to defer loading (advanced use).
+        provider: Optional explicit provider for a string ``model`` (e.g.
+            "openai", "cerebras"). Equivalent to the "provider:model" prefix
+            and the CLI ``--provider`` flag; resolves bare ids that exist on
+            multiple providers.
+        raise_on_error: When True, run() raises the typed error on failure
+            instead of returning an AgentResponse with success=False. The same
+            failure raises regardless of which internal path (direct or tool
+            loop) produced it.
     """
     name: str
     model: BaseModel | str
@@ -173,7 +191,9 @@ class AgentConfig:
     router_config: dict[str, Any] = field(default_factory=dict)
     sub_agent_config: dict[str, Any] = field(default_factory=dict)
     model_config: dict[str, Any] | None = None
-    require_model: bool = False
+    require_model: bool = True
+    provider: str | None = None
+    raise_on_error: bool = False
     system_prompt_template: str | None = None
     verbose_tools: bool | None = None
     fallback_chain: dict[str, list] | None = None
@@ -227,7 +247,25 @@ class AgentResponse:
         execution_trace: Full execution trace
         execution_tree: Hierarchical execution tree
         routing_decision: Routing decision (if sub-agents used)
-        metadata: Additional metadata
+        metadata: Additional metadata. Always includes ``reason``, one of:
+
+            - ``"final_answer"`` — the model produced an answer (``success=True``).
+              A finer ``answer_source`` may also be present (e.g.
+              ``loop_detected``, ``direct_calculator_result``) for heuristically
+              recovered answers.
+            - ``"max_iterations_partial"`` — the tool loop hit its iteration cap
+              but a usable partial answer was recovered (``success=True``,
+              ``partial=True``).
+            - ``"max_iterations_exhausted"`` — the loop gave up with no answer
+              (``success=False``).
+            - ``"generation_failed"`` — the model/provider call failed
+              (``success=False``); ``metadata["error"]`` is a structured dict
+              ``{type, category, provider, model, message, retryable}`` and is
+              identical whether the failure happened on the direct or tool path.
+
+            Success rule: ``success`` is ``True`` only when a real answer was
+            produced (``final_answer`` / ``max_iterations_partial``); it is
+            never ``True`` with empty output.
     """
     output: str
     success: bool = True
@@ -346,24 +384,31 @@ Question: {task}
         elif isinstance(config.model, str):
             # Model name provided - load it
             self.model_name = config.model
+            load_kwargs: dict[str, Any] = {}
+            if config.provider:
+                load_kwargs["provider"] = config.provider
             try:
-                logger.info(f"Loading model: {self.model_name}")
+                logger.debug(f"Loading model: {self.model_name}")
                 self.model = self.model_loader.load_model(
                     self.model_name,
-                    engine_config=config.model_config
+                    engine_config=config.model_config,
+                    **load_kwargs,
                 )
-                logger.info(f"Model loaded successfully: {self.model_name}")
+                logger.debug(f"Model loaded successfully: {self.model_name}")
             except Exception as e:
-                logger.error(f"Failed to load model '{self.model_name}': {e}")
                 self.model = None
                 if config.require_model:
-                    raise RuntimeError(f"Failed to load required model: {e}")
-                else:
-                    logger.warning(
-                        f"Model loading failed for '{self.model_name}'. "
-                        "Agent will crash on first inference call. "
-                        "Set require_model=True to fail fast."
-                    )
+                    # Fail fast on a typo'd id / missing key rather than
+                    # returning a working-looking agent (see AgentConfig docs).
+                    logger.error(f"Failed to load model '{self.model_name}': {e}")
+                    raise RuntimeError(
+                        f"Failed to load model '{self.model_name}': {e}"
+                    ) from e
+                logger.warning(
+                    f"Model loading failed for '{self.model_name}' and "
+                    "require_model=False; the agent will fail on first inference. "
+                    "Set require_model=True (the default) to fail fast at construction."
+                )
         else:
             # No model provided
             self.model_name = None
@@ -902,9 +947,20 @@ Question: {task}
                     except Exception as _e:
                         logger.warning("Failed to save final checkpoint: %s", _e)
 
+                # raise_on_error contract: surface a typed error on any failure
+                # instead of returning success=False (same on both run paths).
+                if not response.success and self.config.raise_on_error:
+                    raise self._reconstruct_error(response.metadata)
+
                 return response
 
             except Exception as e:
+                # When raise_on_error is set, propagate the typed error rather
+                # than swallowing it into a success=False response.
+                if self.config.raise_on_error:
+                    prom_metrics.errors.inc(labels=labels)
+                    set_span_error(e)
+                    raise
                 # Track failure
                 self.execution_tracker.track_event(ExecutionEvent(
                     type=EventType.TASK_FAILED,
@@ -954,7 +1010,7 @@ Question: {task}
                 error=error if error is not None else (None if response.success else response.output[:200]),
             )
         except Exception:  # noqa: BLE001 - dashboard logging must not break runs
-            pass
+            logger.debug("Dashboard run logging failed", exc_info=True)
 
     def run_batch(
         self,
@@ -1261,7 +1317,7 @@ Question: {task}
                             _mspan.set_attribute(ModelAttrs.CACHED_TOKENS, int(_cached))
                         _mspan.set_attribute(ModelAttrs.OUTCOME, "ok" if response.get("finish_reason") != "error" else "error")
                     except Exception:
-                        pass
+                        logger.debug("Failed to set model span attributes", exc_info=True)
                 iter_tokens = response.get("tokens_used", 0)
                 tokens_used += iter_tokens
 
@@ -1269,24 +1325,12 @@ Question: {task}
             _obs_log.event("agent.iteration.generate", iteration=iterations, tokens=iter_tokens, model=getattr(self, "model_name", "unknown"))
 
             if response.get("finish_reason") == "error":
-                metadata = response.get("metadata") or {}
-                error_text = str(metadata.get("error") or "generation_error")
-                meta_fail: dict[str, Any] = {
-                    "reason": "generation_error",
-                    "error": error_text,
-                }
-                if debug_trace is not None:
-                    debug_trace.total_tokens = tokens_used
-                    debug_trace.success = False
-                    meta_fail["debug_trace"] = debug_trace
-                return AgentResponse(
-                    output=error_text,
-                    success=False,
-                    mode=AgentMode.SINGLE,
+                return self._generation_failure_response(
+                    response,
                     iterations=iterations,
                     tool_calls=tool_calls,
-                    tokens_used=tokens_used,
-                    metadata=meta_fail,
+                    tokens=tokens_used,
+                    debug_trace=debug_trace,
                 )
 
             # Debug: Log the raw response
@@ -1317,7 +1361,7 @@ Question: {task}
                             try:
                                 _btspan.set_attribute(ToolAttrs.STATUS, "ok")
                             except Exception:
-                                pass
+                                logger.debug("Failed to set tool span status", exc_info=True)
                         tool_calls += 1
                         batch_observations.append(f"[{_tname}({_targs})] → {_obs}")
                         scratchpad += f"\nAction: {_tname}\nAction Input: {json.dumps(_targs)}\nObservation: {_obs}"
@@ -1359,7 +1403,10 @@ Question: {task}
                 **extra_meta: Any,
             ) -> AgentResponse:
                 """Helper to build response and attach debug trace."""
-                meta: dict[str, Any] = {"tool_calling_strategy": self._tool_calling_strategy.name}
+                meta: dict[str, Any] = {
+                    "reason": "final_answer",
+                    "tool_calling_strategy": self._tool_calling_strategy.name,
+                }
                 meta.update(extra_meta)
                 if debug_trace is not None:
                     debug_trace.total_tokens = _tokens_used
@@ -1391,7 +1438,7 @@ Question: {task}
                         "Ignoring null-like final answer after tool execution; "
                         "returning latest observation"
                     )
-                    return _build_response(partial, reason="null_final_from_model", partial=True)
+                    return _build_response(partial, answer_source="null_final_from_model", partial=True)
 
             if final_answer:
                 # Record final debug iteration
@@ -1466,7 +1513,7 @@ Question: {task}
                     # Extract the last successful observation from scratchpad
                     partial = self._extract_partial_answer(scratchpad)
                     if partial:
-                        return _build_response(partial, reason="loop_detected", repeated_action=action)
+                        return _build_response(partial, answer_source="loop_detected", repeated_action=action)
                     # If no partial answer, add a hint to the scratchpad and continue
                     scratchpad += (
                         f"\nAction: {action}"
@@ -1493,7 +1540,7 @@ Question: {task}
                         try:
                             _tspan.set_attribute(ToolAttrs.STATUS, "ok")
                         except Exception:
-                            pass
+                            logger.debug("Failed to set tool span status", exc_info=True)
                     tool_elapsed = time.time() - tool_start
                     tool_calls += 1
                     cur_observation = tool_result
@@ -1520,7 +1567,7 @@ Question: {task}
                         return _build_response(
                             tool_result,
                             _tool_calls=tool_calls,
-                            reason="direct_calculator_result",
+                            answer_source="direct_calculator_result",
                         )
 
                     # Nudge model to answer when iterations are running low
@@ -1567,7 +1614,7 @@ Question: {task}
                 metadata=meta,
             )
 
-        meta_fail: dict[str, Any] = {"reason": "max_iterations_reached"}
+        meta_fail: dict[str, Any] = {"reason": "max_iterations_exhausted"}
         if debug_trace is not None:
             debug_trace.total_tokens = tokens_used
             debug_trace.success = False
@@ -1907,10 +1954,23 @@ Question: {task}
 
                 except Exception as e:
                     last_error = e
+                    err_class = classify_provider_error(e)
+                    # Only retry errors that could plausibly succeed on retry
+                    # (transient/timeout/rate-limited/unknown). Auth, not-found,
+                    # refusal and invalid-request errors fail fast — no retry
+                    # storm and no wasted latency (C5).
+                    if not err_class.should_retry:
+                        logger.error(
+                            "Generation failed with non-retryable %s error on '%s': %s",
+                            err_class.category,
+                            getattr(current_model, "model_name", "?"),
+                            e,
+                        )
+                        break  # stop retrying this model; outer loop may failover
                     if attempt < max_retries - 1:
                         logger.warning(
-                            f"Generation error on attempt {attempt + 1}/{max_retries}: {e}, "
-                            f"retrying in {backoff_delays[attempt]}s"
+                            f"Generation error on attempt {attempt + 1}/{max_retries} "
+                            f"({err_class.category}): {e}, retrying in {backoff_delays[attempt]}s"
                         )
                         time.sleep(backoff_delays[attempt])
                     else:
@@ -1924,15 +1984,143 @@ Question: {task}
                     next_name, getattr(current_model, 'model_name', '?'),
                 )
 
-        # All models and retries exhausted
-        if last_error:
-            logger.warning(f"Returning empty response due to generation failure: {last_error}")
+        # All models and retries exhausted — return a structured, redacted error
+        # so callers (both the tool loop and the direct path) can fail honestly.
+        if last_error is not None:
+            detail = self._build_error_detail(last_error, current_model)
+        else:
+            detail = {
+                "type": "EmptyResponse",
+                "category": "empty_response",
+                "provider": self._model_provider(current_model),
+                "model": getattr(current_model, "model_name", None) or self.model_name or "unknown",
+                "message": "Model returned an empty response after retries.",
+                "retryable": True,
+            }
+        logger.warning("Generation failed: %s", detail["message"])
         return {
             "text": "",
             "tokens_used": total_tokens,
             "finish_reason": "error",
-            "metadata": {"error": str(last_error) if last_error else "empty_response"}
+            "metadata": {"error": detail["message"], "error_detail": detail},
         }
+
+    def _model_provider(self, model: Any) -> str:
+        """Best-effort provider name for a model object (for error reporting)."""
+        for attr in ("_provider", "provider", "provider_name"):
+            val = getattr(model, attr, None)
+            if isinstance(val, str) and val:
+                return val
+        return "unknown"
+
+    def _build_error_detail(self, exc: Exception, model: Any) -> dict[str, Any]:
+        """Build a structured, redacted error record from an exception.
+
+        Shape: ``{type, category, provider, model, message, retryable}`` —
+        used identically by the tool-loop and direct-inference paths so a
+        failure looks the same regardless of which path produced it.
+        """
+        from ..observability.redact import get_redactor
+
+        ec = classify_provider_error(exc)
+        provider = getattr(exc, "provider", None) or self._model_provider(model)
+        model_name = (
+            getattr(exc, "model_name", None)
+            or getattr(model, "model_name", None)
+            or self.model_name
+            or "unknown"
+        )
+        try:
+            message = get_redactor().scrub(str(exc))
+        except Exception:  # redaction must never mask the underlying error
+            logger.debug("Error-message redaction failed", exc_info=True)
+            message = str(exc)
+        return {
+            "type": type(exc).__name__,
+            "category": ec.category,
+            "provider": provider or "unknown",
+            "model": model_name,
+            "message": message,
+            "retryable": ec.should_retry,
+        }
+
+    def _generation_failure_response(
+        self,
+        gen_result: dict[str, Any],
+        *,
+        iterations: int = 1,
+        tool_calls: int = 0,
+        tokens: int = 0,
+        debug_trace: Any = None,
+    ) -> AgentResponse:
+        """Build the canonical failure AgentResponse from a ``_generate`` result.
+
+        Both the no-tool direct path and the ReAct tool loop call this so a
+        generation failure returns an identical shape: ``success=False``, a
+        clear redacted message, ``metadata["reason"]="generation_failed"`` and
+        a structured ``metadata["error"]={type,provider,model,message,...}``.
+        Never returns ``success=True`` with empty output.
+        """
+        meta_src = gen_result.get("metadata") or {}
+        detail = meta_src.get("error_detail")
+        if not isinstance(detail, dict):
+            message = str(meta_src.get("error") or "generation_failed")
+            detail = {
+                "type": "GenerationError",
+                "category": "unknown",
+                "provider": self._model_provider(self.model),
+                "model": self.model_name or "unknown",
+                "message": message,
+                "retryable": False,
+            }
+        message = detail.get("message") or "generation failed"
+        meta: dict[str, Any] = {"reason": "generation_failed", "error": detail}
+        if debug_trace is not None:
+            debug_trace.total_tokens = tokens
+            debug_trace.success = False
+            meta["debug_trace"] = debug_trace
+        return AgentResponse(
+            output=f"Generation failed: {message}",
+            success=False,
+            mode=AgentMode.SINGLE,
+            iterations=iterations,
+            tool_calls=tool_calls,
+            tokens_used=tokens,
+            metadata=meta,
+        )
+
+    @staticmethod
+    def _reconstruct_error(metadata: dict[str, Any] | None) -> Exception:
+        """Rebuild a typed exception from a failure response's metadata.
+
+        Used by ``raise_on_error`` so callers get a typed error rather than a
+        bare AgentResponse. Falls back to ``RuntimeError`` when the failure was
+        not a classified provider error (e.g. guardrail block, max-iterations).
+        """
+        metadata = metadata or {}
+        detail = metadata.get("error")
+        if not isinstance(detail, dict):
+            if metadata.get("guardrail_blocked"):
+                return RuntimeError(
+                    f"Blocked by guardrail: {metadata.get('guardrail_reason', 'policy')}"
+                )
+            reason = metadata.get("reason")
+            if reason in ("max_iterations_exhausted", "max_iterations_reached"):
+                return RuntimeError("Maximum iterations reached without a final answer.")
+            return RuntimeError(str(detail) if detail else "Agent run failed")
+        category = detail.get("category")
+        provider = detail.get("provider", "") or ""
+        model = detail.get("model", "") or ""
+        message = detail.get("message", "") or ""
+        if category == "auth":
+            return ModelAuthError(provider, model, message)
+        if category == "not_found":
+            return ModelNotFoundError(provider, model, message)
+        if category == "refusal":
+            return ModelRefusalError(message, model)
+        if category == "invalid_request":
+            return InvalidRequestError(provider, model, message)
+        return RuntimeError(f"{detail.get('type', 'Error')}: {message}")
 
     def _generate_speculative(self, prompt: str, **kwargs) -> dict[str, Any] | None:
         """Run generation on 2 models concurrently, return first success.
@@ -2837,7 +3025,7 @@ Question: {task}
                         metadata=result.metadata,
                     )
                 except Exception:
-                    pass
+                    logger.debug("Native tool follow-up assembly failed; using prior result", exc_info=True)
 
         return AgentResponse(
             output=result.text or "(no output from native tools call)",
@@ -2941,7 +3129,7 @@ Question: {task}
                     metadata=result.metadata,
                 )
             except Exception:
-                pass
+                logger.debug("Native tool follow-up assembly failed; using prior result", exc_info=True)
 
         return AgentResponse(
             output=result.text or "(no output from Gemini native tools call)",
@@ -2985,9 +3173,17 @@ Question: {task}
 
         try:
             response = self._generate(prompt, _task_hint=task, **kwargs)
-            answer = response["text"].strip()
             tokens_used = response.get("tokens_used", 0)
 
+            # Mirror the tool-loop's check: a generation error must NOT be
+            # reported as success=True with empty output (A1/N3). Both paths
+            # return the identical failure shape via _generation_failure_response.
+            if response.get("finish_reason") == "error":
+                return self._generation_failure_response(
+                    response, iterations=1, tool_calls=0, tokens=tokens_used,
+                )
+
+            answer = response["text"].strip()
             return AgentResponse(
                 output=answer,
                 success=True,
@@ -2995,19 +3191,20 @@ Question: {task}
                 iterations=1,
                 tool_calls=0,
                 tokens_used=tokens_used,
-                metadata={"multimodal_inputs": inputs is not None},
+                metadata={"reason": "final_answer", "multimodal_inputs": inputs is not None},
             )
 
         except Exception as e:
             logger.error(f"Direct inference failed: {e}")
+            detail = self._build_error_detail(e, self.model)
             return AgentResponse(
-                output=f"Failed to answer: {str(e)}",
+                output=f"Generation failed: {detail['message']}",
                 success=False,
                 mode=AgentMode.SINGLE,
                 iterations=1,
                 tool_calls=0,
                 tokens_used=0,
-                metadata={"error": str(e)}
+                metadata={"reason": "generation_failed", "error": detail},
             )
 
     def _build_multimodal_prompt(self, task: str, inputs: Any) -> list[Any]:
@@ -3048,7 +3245,7 @@ Question: {task}
                 if text:
                     return text[:500]
         except Exception:
-            pass
+            logger.debug("Failed to extract task hint from prompt", exc_info=True)
         return str(prompt)[:500]
 
     def _get_tools_description(self, verbose: bool | None = None) -> str:
@@ -3297,7 +3494,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
             try:
                 self.long_term_memory.close()
             except Exception:
-                pass
+                logger.debug("Failed to close long-term memory", exc_info=True)
         logger.debug(f"Agent '{self.name}' closed")
 
     def __enter__(self):
@@ -3320,12 +3517,20 @@ Provide a well-structured, comprehensive response that integrates all findings."
 
     def __del__(self):
         """Warn if agent was garbage-collected without close()."""
-        if not getattr(self, '_closed', True):
+        if getattr(self, '_closed', True):
+            return
+        # During interpreter shutdown module globals (including ``logger``) may
+        # already be torn down to None — guard so __del__ never raises.
+        if logger is None:
+            return
+        try:
             logger.warning(
                 f"Agent '{getattr(self, 'name', '?')}' was garbage-collected "
                 "without calling close(). Use 'with Agent(config) as agent:' "
                 "or call agent.close() explicitly."
             )
+        except Exception:
+            pass
 
     def stream(self,
                task: str,

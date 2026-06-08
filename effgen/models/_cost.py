@@ -37,7 +37,7 @@ def _load_budget() -> dict:
         if _BUDGET_CONFIG_PATH.exists():
             return json.loads(_BUDGET_CONFIG_PATH.read_text())
     except Exception:
-        pass
+        logger.debug("Failed to load budget config; treating as empty", exc_info=True)
     return {}
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ def _rate(provider: str, model: str) -> tuple[float, float]:
                     float(info.get("pricing_per_1m_output", 0.0)),
                 )
         except Exception:
-            pass
+            logger.debug("Failed to read pricing from model info", exc_info=True)
         return (0.0, 0.0)
 
     provider_rates = _RATES.get(provider.lower(), {})

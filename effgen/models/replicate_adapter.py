@@ -55,7 +55,12 @@ from effgen.models.base import (
     GenerationResult,
     TokenCount,
 )
-from effgen.models.errors import BudgetExceededError, ModelAuthError, ModelTimeoutError
+from effgen.models.errors import (
+    BudgetExceededError,
+    ModelAuthError,
+    ModelNotFoundError,
+    ModelTimeoutError,
+)
 from effgen.models.latency_tracker import timed_call
 from effgen.models.replicate_models import (
     REGISTRY_FETCH_DATE,
@@ -360,7 +365,7 @@ class ReplicateAdapter(BaseModel):
                 try:
                     prediction.cancel()
                 except Exception:
-                    pass
+                    logger.debug("Failed to cancel hung Replicate prediction", exc_info=True)
                 raise ModelTimeoutError(
                     provider="replicate",
                     model_name=self.model_name,
@@ -458,6 +463,12 @@ class ReplicateAdapter(BaseModel):
                 last_exc = exc
                 if exc.status == 401:
                     raise ModelAuthError(
+                        provider="replicate",
+                        model_name=self.model_name,
+                        message=str(exc),
+                    ) from exc
+                if exc.status == 404:
+                    raise ModelNotFoundError(
                         provider="replicate",
                         model_name=self.model_name,
                         message=str(exc),
@@ -692,6 +703,12 @@ class ReplicateAdapter(BaseModel):
                     model_name=self.model_name,
                     message=str(exc),
                 ) from exc
+            if exc.status == 404:
+                raise ModelNotFoundError(
+                    provider="replicate",
+                    model_name=self.model_name,
+                    message=str(exc),
+                ) from exc
             if exc.status == 402:
                 raise RuntimeError(
                     "Replicate account has insufficient credits.  "
@@ -717,6 +734,12 @@ class ReplicateAdapter(BaseModel):
                     model_name=self.model_name,
                     message=str(exc),
                 ) from exc
+            if exc.status == 404:
+                raise ModelNotFoundError(
+                    provider="replicate",
+                    model_name=self.model_name,
+                    message=str(exc),
+                ) from exc
             raise RuntimeError(
                 f"Replicate prediction creation failed for '{self.model_name}': {exc}"
             ) from exc
@@ -730,7 +753,7 @@ class ReplicateAdapter(BaseModel):
                 try:
                     prediction.cancel()
                 except Exception:
-                    pass
+                    logger.debug("Failed to cancel hung Replicate prediction", exc_info=True)
                 raise ModelTimeoutError(
                     provider="replicate",
                     model_name=self.model_name,
@@ -879,7 +902,7 @@ def _register() -> None:
             pricing={"input_per_1m": 0.8, "output_per_1m": 4.0, "free_tier": False},
         )
     except Exception:
-        pass
+        logger.debug("Failed to build detailed provider info; using fallback", exc_info=True)
 
 
 _register()

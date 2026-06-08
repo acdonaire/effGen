@@ -361,7 +361,7 @@ class PolicyBasedRouter:
                 _rspan.set_attribute(RouterAttrs.POLICY, _policy_names[0])
                 _rspan.set_attribute(RouterAttrs.ELIMINATED_COUNT, 0)
             except Exception:
-                pass
+                logger.debug("Failed to set router span attributes", exc_info=True)
 
             for policy in self._policies:
                 try:
@@ -378,7 +378,7 @@ class PolicyBasedRouter:
                         _rspan.set_attribute(RouterAttrs.SELECTED_PROVIDER, decision.chosen.provider)
                         _rspan.set_attribute(RouterAttrs.ELIMINATED_COUNT, len(decision.eliminated))
                     except Exception:
-                        pass
+                        logger.debug("Failed to set router span attributes", exc_info=True)
                     return decision
                 except NoCandidateError as exc:
                     last_error = exc
@@ -397,7 +397,7 @@ class PolicyBasedRouter:
                     _rspan.set_attribute(RouterAttrs.SELECTED_PROVIDER, decision.chosen.provider)
                     _rspan.set_attribute(RouterAttrs.ELIMINATED_COUNT, len(decision.eliminated))
                 except Exception:
-                    pass
+                    logger.debug("Failed to set router span attributes", exc_info=True)
                 return decision
             except NoCandidateError:
                 _obs_log.router_event("no_candidate", candidates_considered=len(candidates))

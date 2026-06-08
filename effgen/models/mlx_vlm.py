@@ -340,7 +340,7 @@ class MLXVLMAdapter(BaseModel):
                 n = len(self._engine.tokenizer.encode(text))
                 return TokenCount(count=n, model_name=self.model_name)
             except Exception:
-                pass
+                logger.debug("Tokenizer-based token counting failed", exc_info=True)
         # Heuristic: ~1.3 tokens per whitespace token for English text
         return TokenCount(
             count=max(1, int(len(text.split()) * 1.3)),

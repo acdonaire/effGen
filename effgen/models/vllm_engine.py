@@ -138,9 +138,26 @@ class VLLMEngine(BatchModel):
         try:
             from vllm import LLM, SamplingParams  # noqa: F401
         except ImportError as e:
+            import importlib.util
+
+            # Distinguish "package not installed" from "package installed but
+            # failed to import" (almost always a CUDA/torch ABI mismatch, e.g.
+            # a missing libcudart .so). Reporting the latter as "not installed"
+            # sends users down the wrong path (reinstalling vLLM won't fix it).
+            try:
+                pkg_present = importlib.util.find_spec("vllm") is not None
+            except (ImportError, ValueError):
+                pkg_present = False
+            if not pkg_present:
+                raise RuntimeError(
+                    "vLLM is not installed. Please install it with: pip install vllm"
+                ) from e
             raise RuntimeError(
-                "vLLM is not installed. Please install it with: "
-                "pip install vllm"
+                f"vLLM is installed but failed to import "
+                f"({type(e).__name__}: {e}). This is usually a CUDA/torch ABI "
+                "mismatch (for example a missing libcudart shared library), not a "
+                "missing package — verify your torch build matches the CUDA runtime "
+                "vLLM was compiled against. Reinstalling vLLM alone will not fix it."
             ) from e
 
         # Validate GPU availability

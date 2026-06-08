@@ -1282,7 +1282,7 @@ def _register() -> None:
             pricing={"input_per_1m": 0.05, "output_per_1m": 0.40, "free_tier": False},
         )
     except Exception:
-        pass
+        logger.debug("Failed to build detailed provider info; using fallback", exc_info=True)
 
 
 _register()

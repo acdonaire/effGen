@@ -11,6 +11,7 @@ Checkpoints are JSON-serializable only (no pickle) for security.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -18,6 +19,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -252,7 +255,7 @@ class CheckpointManager:
             if stm is not None and hasattr(stm, "to_dict"):
                 memory_dict["short_term"] = stm.to_dict()
         except Exception:
-            pass
+            logger.debug("Failed to snapshot short-term memory for checkpoint", exc_info=True)
 
         tool_states: dict[str, Any] = {}
         for tname, tool in getattr(agent, "tools", {}).items():
@@ -291,4 +294,4 @@ class CheckpointManager:
                 from ..memory.short_term import ShortTermMemory
                 agent.short_term_memory = ShortTermMemory.from_dict(stm_data)
             except Exception:
-                pass
+                logger.debug("Failed to restore short-term memory from checkpoint", exc_info=True)

@@ -10,6 +10,7 @@ and basic cancel/pause/resume controls.
 from __future__ import annotations
 
 import heapq
+import logging
 import threading
 import time
 import uuid
@@ -17,6 +18,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class TaskStatus(str, Enum):
@@ -237,4 +240,6 @@ class BackgroundTaskRunner:
                 try:
                     cb(task)
                 except Exception:
-                    pass
+                    logger.debug(
+                        "Progress callback for task %s raised", task.task_id, exc_info=True
+                    )

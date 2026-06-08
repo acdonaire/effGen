@@ -190,7 +190,7 @@ class ModelLoader:
                     provider = _prefix
                     model_name = _rest
             except Exception:
-                pass
+                logger.debug("Provider-prefix registry lookup failed", exc_info=True)
 
         # Disambiguate bare model ids that exist across multiple cloud providers.
         # Single-provider hits are NOT auto-routed here to preserve the existing
@@ -206,7 +206,7 @@ class ModelLoader:
             except AmbiguousModelError:
                 raise
             except Exception:
-                pass
+                logger.debug("Bare-id provider disambiguation lookup failed", exc_info=True)
 
         if provider == "openai":
             model = self._load_openai_model(model_name, engine_config, **kwargs)

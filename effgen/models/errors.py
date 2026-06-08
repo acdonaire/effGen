@@ -2,10 +2,14 @@
 effGen model error types.
 
 Defines exceptions raised by model adapters beyond the standard
-RuntimeError/ValueError hierarchy.
+RuntimeError/ValueError hierarchy, plus :func:`classify_provider_error`, a
+single classification layer the agent/retry logic uses to decide whether an
+error is worth retrying and how to report it.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 
 class ModelRefusalError(Exception):
@@ -340,3 +344,150 @@ class ToolIncompatibleError(Exception):
         if reason:
             parts.append(reason)
         super().__init__(" ".join(parts))
+
+
+# ---------------------------------------------------------------------------
+# Error classification
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ErrorClass:
+    """Classification of a provider/model error for retry + reporting.
+
+    ``category`` is the single human-readable label (``"auth"``,
+    ``"not_found"``, ``"rate_limited"``, ``"transient"``, ``"timeout"``,
+    ``"refusal"``, ``"invalid_request"``, ``"fatal"``, or ``"unknown"``).
+    The boolean flags let callers branch without string-matching ``category``.
+
+    Only ``retryable`` errors (transient/timeout/unknown) and ``rate_limited``
+    errors should be retried. ``auth``, ``not_found``, ``refusal`` and
+    ``fatal`` errors will not succeed on retry and must fail fast.
+    """
+
+    category: str
+    retryable: bool = False
+    rate_limited: bool = False
+    auth: bool = False
+    not_found: bool = False
+    refusal: bool = False
+    fatal: bool = False
+
+    @property
+    def should_retry(self) -> bool:
+        """True when retrying the call could plausibly succeed."""
+        return self.retryable or self.rate_limited
+
+
+# Reusable instances (frozen → safe to share).
+_AUTH = ErrorClass("auth", auth=True, fatal=True)
+_NOT_FOUND = ErrorClass("not_found", not_found=True)
+_RATE_LIMITED = ErrorClass("rate_limited", rate_limited=True, retryable=True)
+_TRANSIENT = ErrorClass("transient", retryable=True)
+_TIMEOUT = ErrorClass("timeout", retryable=True)
+_REFUSAL = ErrorClass("refusal", refusal=True)
+_INVALID = ErrorClass("invalid_request", fatal=True)
+_FATAL = ErrorClass("fatal", fatal=True)
+_UNKNOWN = ErrorClass("unknown", retryable=True)
+
+
+def _status_code_of(exc: Exception) -> int | None:
+    """Best-effort HTTP status extraction across SDK exception shapes."""
+    for attr in ("status_code", "status", "http_status", "code"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, int):
+            return val
+        if isinstance(val, str) and val.isdigit():
+            return int(val)
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        sc = getattr(resp, "status_code", None)
+        if isinstance(sc, int):
+            return sc
+    return None
+
+
+def classify_provider_error(exc: Exception) -> ErrorClass:
+    """Classify a provider/model exception into an :class:`ErrorClass`.
+
+    Recognises effGen's own typed errors first, then falls back to inspecting
+    SDK exception class names, HTTP status codes, and message text so raw
+    provider-SDK errors (openai/groq/gemini/…) are still classified correctly.
+
+    Args:
+        exc: The exception raised by an adapter or provider SDK.
+
+    Returns:
+        An :class:`ErrorClass`. Unknown errors default to ``retryable`` so a
+        genuine transient blip is not turned into a hard failure, while the
+        recognised auth/not-found/refusal/invalid classes fail fast.
+    """
+    # 1. effGen typed errors (adapters map most provider errors to these).
+    if isinstance(exc, ModelAuthError):
+        return _AUTH
+    if isinstance(exc, ModelNotFoundError | ModelUnavailableError):
+        return _NOT_FOUND
+    if isinstance(exc, ModelRefusalError):
+        return _REFUSAL
+    if isinstance(exc, ModelTimeoutError):
+        return _TIMEOUT
+    if isinstance(exc, ProviderTransientError):
+        return _TRANSIENT
+    if isinstance(exc, InvalidRequestError):
+        return _INVALID
+    if isinstance(
+        exc,
+        BudgetExceededError
+        | NoCandidateWithinBudgetError
+        | NoCandidateWithinLatencyError
+        | AllCandidatesExhaustedError
+        | AmbiguousModelError,
+    ):
+        return _FATAL
+
+    # 2. HTTP status code (raw SDK errors carry one).
+    status = _status_code_of(exc)
+    if status is not None:
+        if status in (401, 403):
+            return _AUTH
+        if status == 404:
+            return _NOT_FOUND
+        if status == 429:
+            return _RATE_LIMITED
+        if status in (400, 422):
+            return _INVALID
+        if status == 408 or status >= 500:
+            return _TRANSIENT
+
+    # 3. Exception class name heuristics.
+    name = type(exc).__name__.lower()
+    if "ratelimit" in name or "toomanyrequests" in name:
+        return _RATE_LIMITED
+    if any(k in name for k in ("authentication", "permission", "unauthorized", "forbidden")):
+        return _AUTH
+    if "notfound" in name:
+        return _NOT_FOUND
+    if "timeout" in name or "timedout" in name:
+        return _TIMEOUT
+    if any(k in name for k in ("connection", "serviceunavailable", "internalserver", "apistatus", "overloaded")):
+        return _TRANSIENT
+    if any(k in name for k in ("badrequest", "invalidrequest", "unprocessable", "validation")):
+        return _INVALID
+
+    # 4. Message-text heuristics (last resort).
+    msg = str(exc).lower()
+    if any(k in msg for k in ("rate limit", "rate-limit", "too many requests", "quota exceeded", "429")):
+        return _RATE_LIMITED
+    if any(k in msg for k in (
+        "invalid api key", "incorrect api key", "invalid_api_key", "no api key",
+        "authentication", "unauthorized", "permission denied", "api key not",
+    )):
+        return _AUTH
+    if any(k in msg for k in ("model_not_found", "does not exist", "not found", "no such model", "unknown model")):
+        return _NOT_FOUND
+    if "timed out" in msg or "timeout" in msg:
+        return _TIMEOUT
+    if any(k in msg for k in ("connection error", "service unavailable", "temporarily unavailable", "overloaded", "503", "502", "500")):
+        return _TRANSIENT
+
+    return _UNKNOWN

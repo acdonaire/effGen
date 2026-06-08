@@ -567,7 +567,7 @@ def get_strategy(
                     logger.info("Auto-detected native tool calling support, using hybrid strategy")
                     return HybridStrategy()
             except Exception:
-                pass
+                logger.debug("Native tool-calling capability check failed; using default strategy", exc_info=True)
         logger.debug("Using ReAct strategy (model does not support native tool calling)")
         return ReActStrategy()
     else:

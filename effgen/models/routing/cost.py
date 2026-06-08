@@ -139,7 +139,7 @@ def _get_model_pricing(
         elif "output_price_per_1m" in model_info:
             prov_output = float(model_info["output_price_per_1m"])
     except Exception:
-        pass
+        logger.debug("Failed to read provider pricing from model info", exc_info=True)
 
     if provider in _ZERO_COST_FREE_TIER_PROVIDERS and free_tier:
         return 0.0, 0.0, True

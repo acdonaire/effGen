@@ -660,12 +660,12 @@ class GeminiAdapter(FunctionCallingModel):
                     try:
                         generated_text = response.text or ""
                     except Exception:
-                        pass
+                        logger.debug("Failed to read response.text during generate", exc_info=True)
             else:
                 try:
                     generated_text = response.text or ""
                 except Exception:
-                    pass
+                    logger.debug("Failed to read response.text during generate", exc_info=True)
 
             # Emit ALL tool calls as <tool_call> tokens for the agent dispatcher.
             # Parallel function calls: Gemini may return multiple functionCall
@@ -828,7 +828,7 @@ class GeminiAdapter(FunctionCallingModel):
                                 _first_token = False
                             yield chunk.text
                     except Exception:
-                        pass
+                        logger.debug("Failed to read chunk.text during streaming", exc_info=True)
         except Exception as exc:
             logger.error("Gemini streaming failed: %s", exc)
             raise RuntimeError(f"Streaming generation failed: {exc}") from exc
@@ -952,7 +952,7 @@ def _register() -> None:
             pricing={"input_per_1m": 0.10, "output_per_1m": 0.40, "free_tier": False},
         )
     except Exception:
-        pass
+        logger.debug("Failed to build detailed provider info; using fallback", exc_info=True)
 
 
 _register()
