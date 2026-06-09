@@ -60,6 +60,52 @@ def test_sanitize_schema_preserves_property_names():
     assert cleaned["required"] == ["minLength"]
 
 
+def test_build_config_sanitizes_native_response_schema():
+    """A native JSON-mode schema with JSON-Schema extras (e.g.
+    ``additionalProperties``) must be stripped before reaching the SDK — Gemini
+    rejects those fields at request time, which previously forced a slow reprompt
+    fallback instead of the one-shot native path."""
+    pytest.importorskip("google.genai")
+    from effgen.models.base import GenerationConfig
+
+    adapter = GeminiAdapter.__new__(GeminiAdapter)
+    adapter.safety_settings = None
+    adapter.model_name = "gemini-3.1-flash-lite"
+
+    cfg = GenerationConfig(
+        response_mime_type="application/json",
+        response_schema={
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+            "additionalProperties": False,
+        },
+    )
+    gc = adapter._build_config(cfg)
+    assert gc.response_mime_type == "application/json"
+    assert "additionalProperties" not in gc.response_schema
+    assert gc.response_schema["properties"] == {"city": {"type": "string"}}
+
+
+def test_build_config_native_schema_with_no_real_properties_keeps_json_mode_only():
+    """If sanitization leaves no usable properties, keep JSON mode but drop the
+    schema rather than send Gemini an empty/invalid one."""
+    pytest.importorskip("google.genai")
+    from effgen.models.base import GenerationConfig
+
+    adapter = GeminiAdapter.__new__(GeminiAdapter)
+    adapter.safety_settings = None
+    adapter.model_name = "gemini-3.1-flash-lite"
+
+    cfg = GenerationConfig(
+        response_mime_type="application/json",
+        response_schema={"type": "object", "additionalProperties": False},
+    )
+    gc = adapter._build_config(cfg)
+    assert gc.response_mime_type == "application/json"
+    assert gc.response_schema is None
+
+
 # ---------------------------------------------------------------------------
 # Tool conversion
 # ---------------------------------------------------------------------------

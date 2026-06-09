@@ -1203,12 +1203,14 @@ Question: {task}
         """
         from .structured_output import (
             StructuredOutputConfig,
-            constrain_output,
             extract_json_from_text,
+            structured_generate,
             validate_json_schema,
         )
 
-        # First, try to extract and validate JSON from existing output
+        raw_output = response.output
+
+        # Fast path (0 extra calls): the agent's own answer already validates.
         json_str = extract_json_from_text(response.output)
         if json_str:
             try:
@@ -1217,6 +1219,8 @@ Question: {task}
                 if valid:
                     response.output = json_str
                     response.metadata["structured_output"] = True
+                    response.metadata["structured_output_attempts"] = 0
+                    response.metadata["structured_output_method"] = "agent_output"
                     if output_model is not None:
                         response.metadata["parsed"] = self._parse_with_pydantic(
                             output_model, parsed,
@@ -1225,30 +1229,57 @@ Question: {task}
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Existing output doesn't match — use constrain_output to re-prompt
-        if self.model is not None:
-            try:
-                logger.info("Re-prompting model for structured output")
-                config = StructuredOutputConfig(schema=schema)
-                structured_prompt = (
-                    f"Based on this task and result, produce structured output.\n"
-                    f"Task: {task}\n"
-                    f"Result: {response.output}"
+        # The free-text answer didn't validate. Constrain via a native JSON mode
+        # (one call) before any text reprompt, and surface the attempt count so
+        # callers can see when/how much repair happened.
+        if self.model is None:
+            response.success = False
+            response.metadata["structured_output"] = False
+            response.metadata["structured_output_attempts"] = 0
+            response.metadata["structured_output_error"] = (
+                "structured output requested but no model is available to produce it"
+            )
+            response.metadata["raw_output"] = raw_output
+            response.metadata["reason"] = "structured_output_failed"
+            return response
+
+        structured_prompt = (
+            f"Based on this task and result, produce structured output.\n"
+            f"Task: {task}\n"
+            f"Result: {raw_output}"
+        )
+        outcome = structured_generate(
+            self.model, structured_prompt, schema,
+            StructuredOutputConfig(schema=schema),
+        )
+        response.metadata["structured_output_attempts"] = outcome.attempts
+        response.metadata["structured_output_method"] = outcome.method
+        if outcome.success and outcome.json_str is not None:
+            response.output = outcome.json_str
+            response.metadata["structured_output"] = True
+            # Preserve the historical flag for any consumer that checks it.
+            response.metadata["structured_output_reprompted"] = outcome.attempts > 0
+            if output_model is not None:
+                response.metadata["parsed"] = self._parse_with_pydantic(
+                    output_model, outcome.parsed,
                 )
-                json_str, parsed = constrain_output(
-                    self.model, structured_prompt, schema, config,
-                )
-                response.output = json_str
-                response.metadata["structured_output"] = True
-                response.metadata["structured_output_reprompted"] = True
-                if output_model is not None:
-                    response.metadata["parsed"] = self._parse_with_pydantic(
-                        output_model, parsed,
-                    )
-            except ValueError as e:
-                logger.warning(f"Structured output constraint failed: {e}")
-                response.metadata["structured_output"] = False
-                response.metadata["structured_output_error"] = str(e)
+        else:
+            # Honest failure: keep the raw answer, mark the run unsuccessful, and
+            # explain why — consistent with the framework's no-silent-failure rule.
+            logger.warning(
+                "Structured output constraint failed after %d attempt(s): %s",
+                outcome.attempts, outcome.error,
+            )
+            response.success = False
+            response.output = raw_output
+            response.metadata["structured_output"] = False
+            response.metadata["structured_output_error"] = (
+                outcome.error or "could not produce schema-valid output"
+            )
+            response.metadata["raw_output"] = raw_output
+            response.metadata["reason"] = "structured_output_failed"
+            if outcome.raw_text:
+                response.metadata["structured_output_raw_attempt"] = outcome.raw_text
 
         return response
 

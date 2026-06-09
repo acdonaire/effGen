@@ -55,6 +55,13 @@ class GenerationConfig:
     # Anthropic extended thinking. Pass {"type": "enabled", "budget_tokens": N}.
     # None means the field is not sent (standard generation).
     thinking: dict | None = None
+    # Structured-output controls. When set, backends that support a native
+    # JSON/structured mode constrain generation accordingly. response_mime_type
+    # (e.g. "application/json") asks the provider to emit raw JSON; response_schema
+    # is an optional JSON-Schema dict the provider validates against where it can.
+    # Both default to None so ordinary generation is unaffected.
+    response_mime_type: str | None = None
+    response_schema: dict | None = None
 
 
 @dataclass

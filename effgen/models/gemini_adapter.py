@@ -264,6 +264,30 @@ class GeminiAdapter(FunctionCallingModel):
         if self.safety_settings:
             kwargs["safety_settings"] = self.safety_settings
 
+        # Native structured-output / JSON mode. response_mime_type forces the
+        # model to emit raw JSON (no markdown fences); response_schema additionally
+        # constrains the shape. Gemini's response_schema accepts only an OpenAPI
+        # subset and rejects standard JSON-Schema extras (e.g. additionalProperties,
+        # $schema, title) at request time — not at SDK-construct time — so we strip
+        # to that subset with _sanitize_schema. If the cleaned schema is empty/invalid
+        # we keep JSON mode only and validate the result ourselves downstream.
+        if config.response_mime_type:
+            kwargs["response_mime_type"] = config.response_mime_type
+            if config.response_schema:
+                cleaned = self._sanitize_schema(config.response_schema)
+                if isinstance(cleaned, dict) and cleaned.get("properties"):
+                    try:
+                        types.GenerateContentConfig(
+                            response_mime_type=config.response_mime_type,
+                            response_schema=cleaned,
+                        )
+                        kwargs["response_schema"] = cleaned
+                    except Exception:
+                        logger.debug(
+                            "Gemini rejected response_schema dict; using JSON mode only.",
+                            exc_info=True,
+                        )
+
         return types.GenerateContentConfig(**kwargs)
 
     # Gemini's Schema accepts a strict subset of JSON Schema. Strip extras

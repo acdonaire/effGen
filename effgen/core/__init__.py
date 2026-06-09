@@ -85,7 +85,13 @@ from .shared_state import SharedState, StateMutation
 from .state import AgentState
 
 # Structured Output
-from .structured_output import StructuredOutputConfig, constrain_output, validate_json_schema
+from .structured_output import (
+    StructuredOutcome,
+    StructuredOutputConfig,
+    constrain_output,
+    structured_generate,
+    validate_json_schema,
+)
 
 # Sub-Agent Manager
 from .sub_agent_manager import (
@@ -209,7 +215,9 @@ __all__ = [
 
     # Structured Output
     "StructuredOutputConfig",
+    "StructuredOutcome",
     "constrain_output",
+    "structured_generate",
     "validate_json_schema",
 
     # Human-in-the-Loop
