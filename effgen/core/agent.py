@@ -1332,6 +1332,7 @@ Question: {task}
 
         # ReAct loop
         previous_actions: list[tuple[str, str]] = []  # Track (action, input) pairs for loop detection
+        previous_results: list[tuple[str, str]] = []  # Track (action, result) pairs to stop on a confident, repeated answer
         _batch_tool_runs = 0  # Count of batch native-tool runs; cap at 2 to prevent infinite loops
         # Optional periodic checkpointing
         _ckpt_interval = _ckpt_interval_arg
@@ -1714,9 +1715,39 @@ Question: {task}
                             answer_source="direct_calculator_result",
                         )
 
+                    # Result-based short-circuit: small models often re-derive an
+                    # answer they already have (e.g. "15^2" then "15*15", both
+                    # 225) with slightly different inputs, so the exact-input loop
+                    # guard never fires. If a tool reproduces a result it already
+                    # returned, the answer is confident — stop and return it
+                    # instead of burning iterations on redundant re-planning.
+                    if not tool_result.startswith("Error executing tool"):
+                        normalized_result = " ".join(tool_result.split())[:500]
+                        result_key = (action, normalized_result)
+                        if result_key in previous_results:
+                            logger.info(
+                                "[Loop efficiency] Tool '%s' reproduced an identical "
+                                "result; returning it as the final answer",
+                                action,
+                            )
+                            return _build_response(
+                                tool_result,
+                                _tool_calls=tool_calls,
+                                answer_source="repeated_tool_result",
+                            )
+                        previous_results.append(result_key)
+
                     # Nudge model to answer when iterations are running low
                     if iterations >= self.config.max_iterations - 2:
                         scratchpad += "\n[You have the answer from the tool. Please respond with 'Final Answer:' now.]"
+                    elif action_call_count >= 1 and not tool_result.startswith("Error executing tool"):
+                        # This tool has now run at least twice. The needed data is
+                        # almost certainly in the scratchpad — nudge toward a final
+                        # answer before the loop drifts into repeated re-planning.
+                        scratchpad += (
+                            "\n[You already have results from this tool. If you have "
+                            "enough information, respond now with 'Final Answer:'.]"
+                        )
 
             else:
                 # No action specified, prompt to continue
@@ -1887,6 +1918,7 @@ Question: {task}
             "*",
             "/",
             "^",
+            "%",
             " plus ",
             " minus ",
             " times ",
@@ -1895,6 +1927,13 @@ Question: {task}
             " divided ",
             " square root ",
             " sqrt",
+            " squared",
+            " cube",
+            " cubed",
+            " to the power",
+            " power of ",
+            " modulo ",
+            " factorial",
         )
         return any(marker in f" {task_lower} " for marker in arithmetic_markers)
 
