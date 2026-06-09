@@ -53,7 +53,12 @@ class OpenAINativeTool(BaseTool):
 
     def to_openai_tool_spec(self) -> dict[str, Any]:
         """Return the OpenAI-format tool spec for this native tool."""
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement to_openai_tool_spec() to return "
+            "the OpenAI Responses-API tool dict (e.g. {'type': 'web_search_preview'}). "
+            "Use OpenAIWebSearchTool / OpenAICodeInterpreterTool / OpenAIFileSearchTool, "
+            "or override this method in your subclass."
+        )
 
     async def _execute(self, **kwargs) -> Any:
         """Local execution is intentionally unsupported for native tools.

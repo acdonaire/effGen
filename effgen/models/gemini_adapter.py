@@ -32,7 +32,7 @@ from effgen.models.base import (
     ModelType,
     TokenCount,
 )
-from effgen.models.errors import ModelAuthError, ModelNotFoundError
+from effgen.models.errors import InvalidRequestError, ModelAuthError, ModelNotFoundError
 from effgen.models.gemini_files import FileRef
 from effgen.models.gemini_models import (
     GEMINI_MODEL_ALIASES,
@@ -815,7 +815,8 @@ class GeminiAdapter(FunctionCallingModel):
                 metadata=metadata,
             )
 
-        except (ModelAuthError, ModelNotFoundError):
+        except (ModelAuthError, ModelNotFoundError, InvalidRequestError):
+            # Already a precisely-typed provider error — never re-wrap/re-classify.
             raise
         except Exception as exc:
             logger.error("Gemini API call failed: %s", exc)
@@ -823,10 +824,21 @@ class GeminiAdapter(FunctionCallingModel):
             lowered = msg.lower()
             if "429" in msg or "resource_exhausted" in lowered or "quota" in lowered:
                 raise provider_runtime_error("gemini", self.model_name, "generate", exc, message="Gemini generation failed") from exc
-            if "401" in msg or "api_key_invalid" in lowered or "api key not valid" in lowered or "INVALID_ARGUMENT" in msg:
+            # Auth: 401, or a 400 INVALID_ARGUMENT specifically about the API key.
+            if (
+                "401" in msg
+                or "api_key_invalid" in lowered
+                or "api key not valid" in lowered
+                or "permission_denied" in lowered
+            ):
                 raise ModelAuthError("gemini", self.model_name, msg) from exc
             if "404" in msg or "model not found" in lowered:
                 raise ModelNotFoundError("gemini", self.model_name, msg) from exc
+            # A generic 400 INVALID_ARGUMENT is a malformed/unsupported request
+            # (e.g. bad schema, or combining google_search with function tools),
+            # NOT an auth failure — classify it honestly so retries don't fire.
+            if "invalid_argument" in lowered or "400" in msg:
+                raise InvalidRequestError("gemini", self.model_name, msg) from exc
             raise provider_runtime_error("gemini", self.model_name, "generate", exc, message="Gemini generation failed") from exc
 
     def generate_stream(

@@ -1099,16 +1099,21 @@ Question: {task}
                 ))
                 prom_metrics.errors.inc(labels=labels)
                 set_span_error(e)
-                _slog.agent_event(self.name, "task_failed", level=logging.ERROR, error=str(e))
-                _obs_log.agent_event("run.failed", level=logging.ERROR, agent=self.name, run_id=run_id, error=str(e))
+                # Build a structured, redacted error record so this catch-all
+                # surfaces the same metadata["error"]={type,provider,model,...}
+                # shape (and redacted message) as the inner failure paths.
+                detail = self._build_error_detail(e, self.model)
+                redacted_msg = detail["message"]
+                _slog.agent_event(self.name, "task_failed", level=logging.ERROR, error=redacted_msg)
+                _obs_log.agent_event("run.failed", level=logging.ERROR, agent=self.name, run_id=run_id, error=redacted_msg)
                 response = AgentResponse(
-                    output=f"Error: {str(e)}",
+                    output=f"Error: {redacted_msg}",
                     success=False,
                     execution_time=time.time() - start_time,
                     execution_trace=self.execution_tracker.get_trace(),
-                    metadata={"error": str(e), "run_id": run_id}
+                    metadata={"reason": "run_failed", "error": detail, "run_id": run_id}
                 )
-                self._record_dashboard_run(response, error=str(e))
+                self._record_dashboard_run(response, error=redacted_msg)
                 return response
 
             finally:
@@ -2837,20 +2842,16 @@ Question: {task}
 
             tool = self.tools[tool_name]
 
-            # OpenAI native tools cannot be executed locally — they run server-side
-            # via the Responses API.  If we end up here it means the ReAct loop
-            # tried to call a native tool directly (e.g. "Action: openai_web_search").
-            # Return a helpful note so the loop can recover gracefully.
-            try:
-                from ..tools.builtin.openai_native import OpenAINativeTool
-                if isinstance(tool, OpenAINativeTool):
-                    return (
-                        f"Tool '{tool_name}' is an OpenAI server-side tool and cannot be "
-                        "executed locally in the ReAct loop.  Use tool_calling_mode='native' "
-                        "so the adapter routes it through the OpenAI Responses API."
-                    )
-            except ImportError:
-                pass
+            # Provider-native tools (OpenAI web_search / Gemini google_search /
+            # Anthropic computer-use, …) run server-side and cannot be executed
+            # locally.  If we end up here it means the ReAct loop tried to call one
+            # directly (e.g. "Action: openai_web_search") — either because the model
+            # isn't the matching provider, or the native dispatch was bypassed.
+            # Return a helpful note so the loop can recover gracefully instead of
+            # surfacing a raw "cannot be executed locally" RuntimeError.
+            native_hint = self._native_tool_loop_hint(tool, tool_name)
+            if native_hint is not None:
+                return native_hint
 
             # Parse input intelligently
             input_dict = {}
@@ -3141,6 +3142,39 @@ Question: {task}
             # Fallback
             return {"input": str(input_value)}
 
+    @staticmethod
+    def _native_tool_loop_hint(tool: Any, tool_name: str) -> str | None:
+        """Return a recovery note if *tool* is a provider-native server-side tool.
+
+        Native tools (OpenAI web_search/code_interpreter/file_search, Gemini
+        google_search/url_context/code_execution, Anthropic computer-use) execute
+        inside the provider's infrastructure and cannot run locally.  When one is
+        reached inside the ReAct loop we return an actionable hint instead of the
+        raw ``RuntimeError`` from the tool's local ``_execute`` so the loop (and
+        the user) get a clear next step.  Returns ``None`` for ordinary tools.
+        """
+        specs = (
+            ("openai_native", "OpenAINativeTool", "OpenAI", "an OpenAI model"),
+            ("gemini_native", "GeminiNativeTool", "Google", "a Gemini model"),
+            ("anthropic_native", "AnthropicNativeTool", "Anthropic", "an Anthropic model"),
+        )
+        for module, cls_name, vendor, model_hint in specs:
+            try:
+                mod = __import__(
+                    f"effgen.tools.builtin.{module}", fromlist=[cls_name]
+                )
+                native_cls = getattr(mod, cls_name)
+            except (ImportError, AttributeError):
+                continue
+            if isinstance(tool, native_cls):
+                return (
+                    f"Tool '{tool_name}' is {vendor}'s server-side tool and cannot be "
+                    f"executed locally in the ReAct loop. Pair it with {model_hint} and "
+                    "use tool_calling_mode='native' so the adapter routes it to the "
+                    f"provider; otherwise remove '{tool_name}' from this agent."
+                )
+        return None
+
     def _has_native_tools(self) -> bool:
         """Return True if any OpenAI native tool is in the tools list and the model supports Responses API."""
         try:
@@ -3192,15 +3226,16 @@ Question: {task}
                 system_prompt=system_prompt,
             )
         except Exception as e:
-            logger.error("Native tool generation failed: %s", e)
+            logger.debug("Native tool generation failed", exc_info=True)
+            detail = self._build_error_detail(e, self.model)
             return AgentResponse(
-                output=f"Error: {e}",
+                output=f"Generation failed: {detail['message']}",
                 success=False,
                 mode=AgentMode.SINGLE,
                 iterations=1,
                 tool_calls=0,
                 tokens_used=0,
-                metadata={"error": str(e)},
+                metadata={"reason": "generation_failed", "error": detail},
             )
 
         # Handle any function tool calls that came back (local effGen tools)
@@ -3292,6 +3327,7 @@ Question: {task}
 
         # Combine: native tool objects first, then regular function specs
         all_tools = native_tools + function_tool_specs
+        mixed = bool(native_tools and function_tool_specs)
 
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
@@ -3307,15 +3343,34 @@ Question: {task}
         try:
             result = self.model.generate(prompt, config=gen_config, tools=all_tools)
         except Exception as exc:
-            logger.error("Gemini native tool generation failed: %s", exc)
+            logger.debug("Gemini native tool generation failed", exc_info=True)
+            detail = self._build_error_detail(exc, self.model)
+            # Most Gemini models reject combining a built-in tool (google_search,
+            # url_context, code_execution) with custom function tools in one
+            # request ("cannot be combined" / "context circulation is not
+            # enabled"). Translate that raw 400 into an actionable remediation
+            # instead of a bare provider error.
+            low = detail.get("message", "").lower()
+            if mixed and ("cannot be combined" in low or "circulation" in low
+                          or "function calling" in low):
+                native_names = ", ".join(t.name for t in native_tools)
+                detail["message"] = (
+                    f"Gemini model '{self.model_name}' cannot use its built-in tool(s) "
+                    f"({native_names}) together with custom function tools in a single "
+                    "request. Build the agent with EITHER the native tool(s) OR your "
+                    "custom tools — not both — or use a model that supports tool-call "
+                    "context circulation."
+                )
+                detail["category"] = "invalid_request"
+                detail["retryable"] = False
             return AgentResponse(
-                output=f"Error: {exc}",
+                output=f"Generation failed: {detail['message']}",
                 success=False,
                 mode=AgentMode.SINGLE,
                 iterations=1,
                 tool_calls=0,
                 tokens_used=0,
-                metadata={"error": str(exc)},
+                metadata={"reason": "generation_failed", "error": detail},
             )
 
         tool_calls_made = len(result.metadata.get("tool_calls") or [])

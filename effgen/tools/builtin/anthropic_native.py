@@ -59,7 +59,12 @@ class AnthropicNativeTool(BaseTool):
 
     def to_anthropic_tool_spec(self) -> dict[str, Any]:
         """Return the Anthropic-format tool spec for this native tool."""
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement to_anthropic_tool_spec() to return "
+            "the Anthropic computer-use tool dict (e.g. {'type': 'bash_20250124', 'name': 'bash'}). "
+            "Use AnthropicBashTool / AnthropicTextEditorTool / AnthropicComputerTool, "
+            "or override this method in your subclass."
+        )
 
     async def _execute(self, **kwargs: Any) -> Any:
         raise RuntimeError(

@@ -42,7 +42,12 @@ class GeminiNativeTool(BaseTool):
 
     def to_gemini_tool(self) -> Any:
         """Return a ``google.genai.types.Tool`` for this native tool."""
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement to_gemini_tool() to return a "
+            "google.genai.types.Tool (e.g. types.Tool(google_search=types.GoogleSearch())). "
+            "Use GoogleSearchTool / GeminiUrlContextTool / GeminiCodeExecutionTool, "
+            "or override this method in your subclass."
+        )
 
     async def _execute(self, **kwargs: Any) -> Any:
         raise RuntimeError(
