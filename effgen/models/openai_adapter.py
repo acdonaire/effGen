@@ -20,6 +20,7 @@ import os
 from collections.abc import Iterator
 from typing import Any
 
+from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
 from effgen.models._multimodal import (
     require_audio_support,
     require_video_support,
@@ -314,7 +315,7 @@ class OpenAIAdapter(FunctionCallingModel):
             return response.text or ""
         except Exception as exc:
             logger.error("Whisper transcription failed: %s", exc)
-            raise RuntimeError(f"Audio transcription via Whisper failed: {exc}") from exc
+            raise provider_runtime_error("openai", "whisper-1", "transcribe", exc, message="OpenAI audio transcription failed") from exc
 
     def transcribe_audio(
         self,
@@ -369,7 +370,7 @@ class OpenAIAdapter(FunctionCallingModel):
                 transcripts.append(resp.text or "")
             except Exception as exc:
                 logger.error("Whisper transcription failed: %s", exc)
-                raise RuntimeError(f"Audio transcription failed: {exc}") from exc
+                raise provider_runtime_error("openai", model, "transcribe", exc, message="OpenAI audio transcription failed") from exc
 
         return " ".join(transcripts).strip()
 
@@ -570,11 +571,11 @@ class OpenAIAdapter(FunctionCallingModel):
                     self.model_name,
                     msg + suggest_for_missing("openai", self.model_name),
                 ) from e
-            raise RuntimeError(f"Generation failed: {e}") from e
+            raise provider_runtime_error("openai", self.model_name, "generate", e, message="OpenAI generation failed") from e
 
         choice = response.choices[0]
         generated_text = choice.message.content or ""
-        finish_reason = choice.finish_reason
+        finish_reason = normalize_finish_reason(choice.finish_reason)
 
         usage = response.usage
         prompt_tokens = usage.prompt_tokens
@@ -675,7 +676,7 @@ class OpenAIAdapter(FunctionCallingModel):
                         yield chunk.choices[0].delta.content
         except Exception as e:
             logger.error(f"OpenAI streaming failed: {e}")
-            raise RuntimeError(f"Streaming generation failed: {e}") from e
+            raise provider_runtime_error("openai", self.model_name, "stream", e, message="OpenAI streaming failed") from e
 
     def generate_structured(
         self,
@@ -734,7 +735,7 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI structured call failed: {e}")
-            raise RuntimeError(f"Structured generation failed: {e}") from e
+            raise provider_runtime_error("openai", self.model_name, "structured", e, message="OpenAI structured generation failed") from e
 
         choice = response.choices[0]
         message = choice.message
@@ -745,7 +746,7 @@ class OpenAIAdapter(FunctionCallingModel):
             raise ModelRefusalError(refusal_message=refusal, model_name=self.model_name)
 
         generated_text = message.content or ""
-        finish_reason = choice.finish_reason
+        finish_reason = normalize_finish_reason(choice.finish_reason)
 
         usage = response.usage
         prompt_tokens = usage.prompt_tokens
@@ -811,11 +812,11 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI API call with system prompt failed: {e}")
-            raise RuntimeError(f"Generation with system prompt failed: {e}") from e
+            raise provider_runtime_error("openai", self.model_name, "generate", e, message="OpenAI generation with system prompt failed") from e
 
         choice = response.choices[0]
         generated_text = choice.message.content or ""
-        finish_reason = choice.finish_reason
+        finish_reason = normalize_finish_reason(choice.finish_reason)
 
         usage = response.usage
         prompt_tokens = usage.prompt_tokens
@@ -890,11 +891,11 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI API call with tools failed: {e}")
-            raise RuntimeError(f"Generation with tools failed: {e}") from e
+            raise provider_runtime_error("openai", self.model_name, "generate_with_tools", e, message="OpenAI generation with tools failed") from e
 
         choice = response.choices[0]
         message = choice.message
-        finish_reason = choice.finish_reason
+        finish_reason = normalize_finish_reason(choice.finish_reason)
 
         usage = response.usage
         prompt_tokens = usage.prompt_tokens
@@ -1019,7 +1020,7 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.responses.create(**params)
         except Exception as e:
             logger.error(f"OpenAI Responses API call failed: {e}")
-            raise RuntimeError(f"Native tool generation failed: {e}") from e
+            raise provider_runtime_error("openai", self.model_name, "generate_with_tools", e, message="OpenAI native tool generation failed") from e
 
         # Extract the output text from the response
         output_text = ""
@@ -1084,7 +1085,7 @@ class OpenAIAdapter(FunctionCallingModel):
         return GenerationResult(
             text=output_text,
             tokens_used=completion_tokens,
-            finish_reason=getattr(response, "status", "completed"),
+            finish_reason=normalize_finish_reason(getattr(response, "status", "completed")),
             model_name=self.model_name,
             metadata={
                 "prompt_tokens": prompt_tokens,
@@ -1141,7 +1142,7 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI chat failed: {e}")
-            raise RuntimeError(f"Chat failed: {e}") from e
+            raise provider_runtime_error("openai", self.model_name, "chat", e, message="OpenAI chat failed") from e
 
         choice = response.choices[0]
         message = choice.message
@@ -1163,7 +1164,7 @@ class OpenAIAdapter(FunctionCallingModel):
         return GenerationResult(
             text=message.content or "",
             tokens_used=usage.completion_tokens,
-            finish_reason=choice.finish_reason,
+            finish_reason=normalize_finish_reason(choice.finish_reason),
             model_name=self.model_name,
             metadata={
                 "prompt_tokens": usage.prompt_tokens,

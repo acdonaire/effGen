@@ -47,6 +47,7 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models.base import (
@@ -495,8 +496,9 @@ class ReplicateAdapter(BaseModel):
                 if attempt < self.max_retries:
                     time.sleep(2 ** attempt)
                     continue
-                raise RuntimeError(
-                    f"Replicate request failed for '{self.model_name}': {exc}"
+                raise provider_runtime_error(
+                    "replicate", self.model_name, "generate", exc,
+                    message=f"Replicate request failed for '{self.model_name}'",
                 ) from exc
 
         if prediction is None:
@@ -572,6 +574,10 @@ class ReplicateAdapter(BaseModel):
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
+            # Canonical aliases (OpenAI-style) so downstream token/cost
+            # accounting reads the same keys across every provider.
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
             "cost_usd": cost_usd,
             "cost_per_second_usd": cost_per_sec,
             "tool_calls": tool_calls,
@@ -592,7 +598,7 @@ class ReplicateAdapter(BaseModel):
         return GenerationResult(
             text=text,
             tokens_used=total_tokens,
-            finish_reason="stop",
+            finish_reason=normalize_finish_reason("stop"),
             model_name=self.model_name,
             metadata=metadata,
         )

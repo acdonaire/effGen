@@ -28,6 +28,7 @@ from transformers import (
     GenerationConfig as HFGenerationConfig,
 )
 
+from effgen.models._adapter_utils import normalize_finish_reason
 from effgen.models.base import (
     BatchModel,
     GenerationConfig,
@@ -577,9 +578,10 @@ class TransformersEngine(BatchModel):
             return GenerationResult(
                 text=generated_text,
                 tokens_used=completion_tokens,
-                finish_reason=finish_reason,
+                finish_reason=normalize_finish_reason(finish_reason),
                 model_name=self.model_name,
                 metadata={
+                    "raw_finish_reason": finish_reason,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "total_tokens": prompt_tokens + completion_tokens,

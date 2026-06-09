@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
 from effgen.models._multimodal import require_audio_support, require_vision_support
 from effgen.models.anthropic_cache import validate_breakpoint_count
 from effgen.models.anthropic_models import (
@@ -460,6 +461,7 @@ class AnthropicAdapter(FunctionCallingModel):
             )
 
             metadata: dict[str, Any] = {
+                "raw_finish_reason": response.stop_reason,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
@@ -492,7 +494,7 @@ class AnthropicAdapter(FunctionCallingModel):
             return GenerationResult(
                 text=text,
                 tokens_used=completion_tokens,
-                finish_reason=response.stop_reason,
+                finish_reason=normalize_finish_reason(response.stop_reason),
                 model_name=self.model_name,
                 metadata=metadata,
             )
@@ -506,7 +508,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 raise ModelAuthError("anthropic", self.model_name, msg) from e
             if "404" in msg or "not_found_error" in msg.lower():
                 raise ModelNotFoundError("anthropic", self.model_name, msg) from e
-            raise RuntimeError(f"Generation failed: {e}") from e
+            raise provider_runtime_error("anthropic", self.model_name, "generate", e, message="Anthropic generation failed") from e
 
     # ── Generate stream ───────────────────────────────────────────────────
 
@@ -565,7 +567,7 @@ class AnthropicAdapter(FunctionCallingModel):
                         yield chunk.text
         except Exception as e:
             logger.error(f"Anthropic streaming failed: {e}")
-            raise RuntimeError(f"Streaming generation failed: {e}") from e
+            raise provider_runtime_error("anthropic", self.model_name, "stream", e, message="Anthropic streaming failed") from e
 
     def generate_stream_full(
         self,
@@ -742,7 +744,7 @@ class AnthropicAdapter(FunctionCallingModel):
 
         except Exception as e:
             logger.error(f"Anthropic streaming failed: {e}")
-            raise RuntimeError(f"Streaming generation failed: {e}") from e
+            raise provider_runtime_error("anthropic", self.model_name, "stream", e, message="Anthropic streaming failed") from e
 
     # ── Generate with tools ──────────────────────────────────────────────
 
@@ -783,6 +785,7 @@ class AnthropicAdapter(FunctionCallingModel):
             ]
 
             metadata: dict[str, Any] = {
+                "raw_finish_reason": response.stop_reason,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
@@ -802,14 +805,14 @@ class AnthropicAdapter(FunctionCallingModel):
             return GenerationResult(
                 text=text,
                 tokens_used=completion_tokens,
-                finish_reason=response.stop_reason,
+                finish_reason=normalize_finish_reason(response.stop_reason),
                 model_name=self.model_name,
                 metadata=metadata,
             )
 
         except Exception as e:
             logger.error(f"Anthropic API call with tools failed: {e}")
-            raise RuntimeError(f"Generation with tools failed: {e}") from e
+            raise provider_runtime_error("anthropic", self.model_name, "generate_with_tools", e, message="Anthropic generation with tools failed") from e
 
     # ── Multi-turn helpers ────────────────────────────────────────────────
 
@@ -891,6 +894,7 @@ class AnthropicAdapter(FunctionCallingModel):
             cost = self._record_usage(prompt_tokens, completion_tokens)
 
             metadata: dict[str, Any] = {
+                "raw_finish_reason": response.stop_reason,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
@@ -908,14 +912,14 @@ class AnthropicAdapter(FunctionCallingModel):
             return GenerationResult(
                 text=text,
                 tokens_used=completion_tokens,
-                finish_reason=response.stop_reason,
+                finish_reason=normalize_finish_reason(response.stop_reason),
                 model_name=self.model_name,
                 metadata=metadata,
             )
 
         except Exception as e:
             logger.error(f"Anthropic multi-turn call failed: {e}")
-            raise RuntimeError(f"Multi-turn generation failed: {e}") from e
+            raise provider_runtime_error("anthropic", self.model_name, "generate", e, message="Anthropic multi-turn generation failed") from e
 
     # ── Capabilities ──────────────────────────────────────────────────────
 

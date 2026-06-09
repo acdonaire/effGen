@@ -19,6 +19,7 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
+from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
 from effgen.models._multimodal import (
     require_audio_support,
     require_video_support,
@@ -729,9 +730,10 @@ class GeminiAdapter(FunctionCallingModel):
             self.total_cost += cost
             self.total_tokens += total_tokens
 
-            finish_reason = "stop"
+            raw_finish_reason = None
             if hasattr(response, "candidates") and response.candidates:
-                finish_reason = str(response.candidates[0].finish_reason)
+                raw_finish_reason = response.candidates[0].finish_reason
+            finish_reason = normalize_finish_reason(raw_finish_reason)
 
             # Extract grounding chunks (URLs + snippets) from the response.
             grounding_chunks: list[dict[str, Any]] = []
@@ -766,6 +768,7 @@ class GeminiAdapter(FunctionCallingModel):
                 "safety_ratings": getattr(response, "safety_ratings", None),
                 "tool_calls": tool_calls,
                 "grounding_chunks": grounding_chunks,
+                "raw_finish_reason": str(raw_finish_reason) if raw_finish_reason is not None else None,
             }
             if thinking_text:
                 metadata["thinking"] = thinking_text
@@ -795,12 +798,12 @@ class GeminiAdapter(FunctionCallingModel):
             msg = str(exc)
             lowered = msg.lower()
             if "429" in msg or "resource_exhausted" in lowered or "quota" in lowered:
-                raise RuntimeError(f"Generation failed: {exc}") from exc
+                raise provider_runtime_error("gemini", self.model_name, "generate", exc, message="Gemini generation failed") from exc
             if "401" in msg or "api_key_invalid" in lowered or "api key not valid" in lowered or "INVALID_ARGUMENT" in msg:
                 raise ModelAuthError("gemini", self.model_name, msg) from exc
             if "404" in msg or "model not found" in lowered:
                 raise ModelNotFoundError("gemini", self.model_name, msg) from exc
-            raise RuntimeError(f"Generation failed: {exc}") from exc
+            raise provider_runtime_error("gemini", self.model_name, "generate", exc, message="Gemini generation failed") from exc
 
     def generate_stream(
         self,
@@ -863,7 +866,7 @@ class GeminiAdapter(FunctionCallingModel):
                         logger.debug("Failed to read chunk.text during streaming", exc_info=True)
         except Exception as exc:
             logger.error("Gemini streaming failed: %s", exc)
-            raise RuntimeError(f"Streaming generation failed: {exc}") from exc
+            raise provider_runtime_error("gemini", self.model_name, "stream", exc, message="Gemini streaming failed") from exc
 
     def generate_with_tools(
         self,

@@ -37,6 +37,7 @@ import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_audio_support, require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -423,7 +424,7 @@ class HFInferenceAdapter(BaseModel):
             return result.text or ""
         except Exception as exc:
             logger.error("HF ASR failed: %s", exc)
-            raise RuntimeError(f"HF audio transcription failed: {exc}") from exc
+            raise provider_runtime_error("hf_inference", "openai/whisper-large-v3", "transcribe", exc, message="HF audio transcription failed") from exc
 
     def transcribe_audio(
         self,
@@ -459,7 +460,7 @@ class HFInferenceAdapter(BaseModel):
                 transcripts.append(result.text or "")
             except Exception as exc:
                 logger.error("HF ASR transcription failed: %s", exc)
-                raise RuntimeError(f"HF audio transcription failed: {exc}") from exc
+                raise provider_runtime_error("hf_inference", asr_model, "transcribe", exc, message="HF audio transcription failed") from exc
         return " ".join(transcripts).strip()
 
     def _build_messages(
@@ -610,7 +611,7 @@ class HFInferenceAdapter(BaseModel):
 
         choice = resp.choices[0]
         text = choice.message.content or ""
-        finish_reason = choice.finish_reason or "stop"
+        finish_reason = normalize_finish_reason(choice.finish_reason)
 
         # Extract tool calls if present
         tool_calls = []
@@ -742,6 +743,10 @@ class HFInferenceAdapter(BaseModel):
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
+            # Canonical aliases (OpenAI-style) so downstream token/cost
+            # accounting reads the same keys across every provider.
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
             "cost_usd": cost_usd,
             "tool_calls": tool_calls,
             "usage": {

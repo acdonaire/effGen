@@ -20,6 +20,7 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -471,17 +472,18 @@ class TogetherAdapter(BaseModel):
                     continue
 
                 logger.error("Together API call failed: %s", exc)
-                raise RuntimeError(f"Together generation failed: {exc}") from exc
+                raise provider_runtime_error("together", self.model_name, "generate", exc, message="Together generation failed") from exc
         else:
             assert _last_exc is not None
-            raise RuntimeError(
-                f"Together generation failed after {_MAX_RETRIES} retries: {_last_exc}"
+            raise provider_runtime_error(
+                "together", self.model_name, "generate", _last_exc,
+                message=f"Together generation failed after {_MAX_RETRIES} retries",
             ) from _last_exc
 
         choice = response.choices[0]
         message = choice.message
         text = message.content or ""
-        finish_reason = choice.finish_reason or "stop"
+        finish_reason = normalize_finish_reason(choice.finish_reason)
 
         usage = response.usage
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
@@ -741,7 +743,7 @@ class TogetherAdapter(BaseModel):
                     message=msg,
                 ) from exc
             logger.error("Together streaming failed: %s", exc)
-            raise RuntimeError(f"Together streaming failed: {exc}") from exc
+            raise provider_runtime_error("together", self.model_name, "stream", exc, message="Together streaming failed") from exc
 
     # ------------------------------------------------------------------
     # Token counting / context length

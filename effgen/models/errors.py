@@ -11,6 +11,66 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# ---------------------------------------------------------------------------
+# Structured error context (shared by typed errors below and by adapters via
+# effgen.models._adapter_utils). One source of truth for the per-category
+# retry status + remediation text so every provider failure reports the same
+# machine-readable shape: {provider, model, request_type, retry_status,
+# remediation, category}.
+# ---------------------------------------------------------------------------
+
+# retry_status values (stable, machine-readable).
+RETRY_WILL_RETRY = "will_retry"
+RETRY_RATE_LIMITED = "rate_limited"
+RETRY_NON_RETRYABLE = "non_retryable"
+
+# category -> retry_status
+_RETRY_STATUS_BY_CATEGORY: dict[str, str] = {
+    "auth": RETRY_NON_RETRYABLE,
+    "not_found": RETRY_NON_RETRYABLE,
+    "refusal": RETRY_NON_RETRYABLE,
+    "invalid_request": RETRY_NON_RETRYABLE,
+    "fatal": RETRY_NON_RETRYABLE,
+    "rate_limited": RETRY_RATE_LIMITED,
+    "transient": RETRY_WILL_RETRY,
+    "timeout": RETRY_WILL_RETRY,
+    "unknown": RETRY_WILL_RETRY,
+}
+
+# category -> remediation hint (no secrets; safe to log/surface).
+REMEDIATION_BY_CATEGORY: dict[str, str] = {
+    "auth": "Check the provider API key (present, correct, not expired, and has access to this model).",
+    "not_found": "Model id not found — run `effgen models refresh` and verify the id/provider prefix.",
+    "rate_limited": "Rate limited — lower concurrency or configure a rate limit; the client backs off and retries.",
+    "timeout": "Request timed out — increase the adapter timeout or retry.",
+    "transient": "Transient provider error — retry shortly; check the provider status page if it persists.",
+    "invalid_request": "Request rejected as invalid — check parameters, prompt size, and any JSON schema.",
+    "refusal": "The model refused the request — rephrase or adjust the content.",
+    "fatal": "Unrecoverable error — check configuration and provider status.",
+    "unknown": "Unexpected provider error — check the provider status and effGen logs (set EFFGEN_LOG_LEVEL=DEBUG).",
+}
+
+
+def error_context_dict(
+    provider: str,
+    model: str,
+    request_type: str,
+    category: str,
+) -> dict[str, str]:
+    """Build the canonical structured error-context dict for *category*.
+
+    The returned dict is always free of secret material (the fields are
+    static/derived), so it is safe to attach to exceptions, log, and surface.
+    """
+    return {
+        "provider": provider or "",
+        "model": model or "",
+        "request_type": request_type or "request",
+        "retry_status": _RETRY_STATUS_BY_CATEGORY.get(category, RETRY_WILL_RETRY),
+        "remediation": REMEDIATION_BY_CATEGORY.get(category, REMEDIATION_BY_CATEGORY["unknown"]),
+        "category": category,
+    }
+
 
 class ModelRefusalError(Exception):
     """Raised when a model refuses to answer a structured-output request.
@@ -28,6 +88,7 @@ class ModelRefusalError(Exception):
     def __init__(self, refusal_message: str, model_name: str = "") -> None:
         self.refusal_message = refusal_message
         self.model_name = model_name
+        self.error_context = error_context_dict("", model_name, "request", "refusal")
         suffix = f" (model={model_name!r})" if model_name else ""
         super().__init__(f"Model refused to generate structured output{suffix}: {refusal_message}")
 
@@ -49,6 +110,7 @@ class ModelAuthError(Exception):
         self.provider = provider
         self.model_name = model_name
         self.message = message
+        self.error_context = error_context_dict(provider, model_name, "request", "auth")
         suffix = f" (model={model_name!r})" if model_name else ""
         body = message or "authentication failed"
         super().__init__(f"{provider} auth error{suffix}: {body}")
@@ -79,6 +141,7 @@ class ModelTimeoutError(Exception):
         self.model_name = model_name
         self.timeout_seconds = timeout_seconds
         self.prediction_id = prediction_id
+        self.error_context = error_context_dict(provider, model_name, "request", "timeout")
         suffix = f" (model={model_name!r})" if model_name else ""
         pid = f", prediction_id={prediction_id!r}" if prediction_id else ""
         super().__init__(
@@ -112,6 +175,7 @@ class ModelUnavailableError(Exception):
         self.model_name = model_name
         self.suggestions = suggestions or []
         self.message = message
+        self.error_context = error_context_dict(provider, model_name, "request", "not_found")
         suffix = f" (model={model_name!r})" if model_name else ""
         body = message or "model is not available on the serverless tier"
         suggest_str = ""
@@ -132,6 +196,7 @@ class ModelNotFoundError(Exception):
         self.provider = provider
         self.model_name = model_name
         self.message = message
+        self.error_context = error_context_dict(provider, model_name, "request", "not_found")
         suffix = f" (model={model_name!r})" if model_name else ""
         body = message or "model not found"
         super().__init__(f"{provider} error{suffix}: {body}")
@@ -232,6 +297,7 @@ class ProviderTransientError(Exception):
         self.model_name = model_name
         self.status_code = status_code
         self.message = message
+        self.error_context = error_context_dict(provider, model_name, "request", "transient")
         suffix = f" (model={model_name!r})" if model_name else ""
         body = message or "transient server error"
         super().__init__(f"{provider} {status_code}{suffix}: {body}")
@@ -284,6 +350,7 @@ class InvalidRequestError(Exception):
         self.provider = provider
         self.model_name = model_name
         self.message = message
+        self.error_context = error_context_dict(provider, model_name, "request", "invalid_request")
         suffix = f" (model={model_name!r})" if model_name else ""
         body = message or "invalid request"
         super().__init__(f"{provider} invalid request{suffix}: {body}")

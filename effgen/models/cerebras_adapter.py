@@ -16,6 +16,7 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models.base import (
@@ -394,15 +395,15 @@ class CerebrasAdapter(BaseModel):
                     time.sleep(delay)
                     continue
                 logger.error("Cerebras API call failed: %s", exc)
-                raise RuntimeError(f"Cerebras generation failed: {exc}") from exc
+                raise provider_runtime_error("cerebras", self.model_name, "generate", exc, message="Cerebras generation failed") from exc
         else:
             assert _last_exc is not None
-            raise RuntimeError(f"Cerebras generation failed after {_MAX_RETRIES} retries: {_last_exc}") from _last_exc
+            raise provider_runtime_error("cerebras", self.model_name, "generate", _last_exc, message=f"Cerebras generation failed after {_MAX_RETRIES} retries") from _last_exc
 
         choice = response.choices[0]
         message = choice.message
         text = message.content or ""
-        finish_reason = choice.finish_reason or "stop"
+        finish_reason = normalize_finish_reason(choice.finish_reason)
 
         usage = response.usage
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
@@ -629,7 +630,7 @@ class CerebrasAdapter(BaseModel):
                 from effgen.models.errors import ProviderTransientError as _PTE
                 raise _PTE(provider="cerebras", model_name=self.model_name, status_code=500, message=msg) from exc
             logger.error("Cerebras streaming failed: %s", exc)
-            raise RuntimeError(f"Cerebras streaming failed: {exc}") from exc
+            raise provider_runtime_error("cerebras", self.model_name, "stream", exc, message="Cerebras streaming failed") from exc
 
     def generate_with_tools(
         self,
