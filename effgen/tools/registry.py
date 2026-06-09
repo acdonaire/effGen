@@ -15,6 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from ..utils.async_bridge import run_coroutine_sync
 from .base_tool import BaseTool, ToolCategory, ToolMetadata
 
 logger = logging.getLogger(__name__)
@@ -124,9 +125,15 @@ class ToolRegistry:
         if name not in self._tools:
             raise KeyError(f"Tool '{name}' is not registered")
 
-        # Clean up instance if exists
+        # Clean up instance if exists. Run cleanup to completion regardless of
+        # whether an event loop is already running — never leave the coroutine
+        # un-awaited (the old asyncio.create_task path raised "no running event
+        # loop" when called from synchronous code).
         if name in self._instances:
-            asyncio.create_task(self._instances[name].cleanup())
+            try:
+                run_coroutine_sync(self._instances[name].cleanup())
+            except Exception:
+                logger.debug("Cleanup for tool '%s' failed during unregister", name, exc_info=True)
             del self._instances[name]
 
         # Remove from all tracking structures
@@ -470,8 +477,29 @@ def get_registry() -> ToolRegistry:
 
 
 def reset_registry() -> None:
-    """Reset the global tool registry (mainly for testing)."""
+    """Reset the global tool registry (mainly for testing).
+
+    Cleans up all initialized tool instances *synchronously*, working whether or
+    not an event loop is already running in the calling thread. Prefer
+    :func:`async_reset_registry` from async code to avoid blocking the loop on a
+    worker thread.
+    """
     global _global_registry
-    if _global_registry:
-        asyncio.create_task(_global_registry.cleanup_all())
+    if _global_registry is not None:
+        try:
+            run_coroutine_sync(_global_registry.cleanup_all())
+        except Exception:
+            logger.debug("Registry cleanup_all failed during reset", exc_info=True)
+    _global_registry = None
+
+
+async def async_reset_registry() -> None:
+    """Async variant of :func:`reset_registry`.
+
+    Awaits tool cleanup directly on the current event loop, then clears the
+    global registry. Use this from coroutines/async test fixtures.
+    """
+    global _global_registry
+    if _global_registry is not None:
+        await _global_registry.cleanup_all()
     _global_registry = None

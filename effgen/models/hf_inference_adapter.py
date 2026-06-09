@@ -62,6 +62,7 @@ from effgen.models.hf_inference_models import (
 from effgen.models.latency_tracker import timed_call
 from effgen.observability.spans import ModelAttrs
 from effgen.observability.tracing import set_span_attribute as _set_span_attr
+from effgen.utils.async_bridge import run_coroutine_sync
 
 if TYPE_CHECKING:
     from effgen.models._rate_limit_store import SQLiteRateLimitStore
@@ -538,16 +539,7 @@ class HFInferenceAdapter(BaseModel):
         )
 
         if self._rate_limiter is not None:
-            try:
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    pass
-                else:
-                    loop.run_until_complete(self._rate_limiter.acquire(500))
-            except RuntimeError:
-                import asyncio
-                asyncio.run(self._rate_limiter.acquire(500))
+            run_coroutine_sync(self._rate_limiter.acquire(500))
 
         tools = kwargs.pop("tools", None)
         messages = kwargs.pop("messages", None)
@@ -908,7 +900,7 @@ class HFInferenceAdapter(BaseModel):
         import asyncio
         import functools
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             functools.partial(self.generate, prompt, config, **kwargs),

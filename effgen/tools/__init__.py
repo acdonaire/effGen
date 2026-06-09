@@ -19,6 +19,7 @@ from .registry import (
     ToolDependencyError,
     ToolRegistrationError,
     ToolRegistry,
+    async_reset_registry,
     get_registry,
     reset_registry,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "ToolRegistrationError",
     "get_registry",
     "reset_registry",
+    "async_reset_registry",
     # Protocols
     "protocols",
 ]

@@ -53,6 +53,7 @@ from ..prompts.agent_system_prompt import AgentSystemPromptBuilder
 from ..prompts.tool_prompt_generator import ToolPromptGenerator
 from ..tools.base_tool import BaseTool, ToolCategory
 from ..tools.fallback import ToolFallbackChain
+from ..utils.async_bridge import run_coroutine_sync
 from ..utils.circuit_breaker import CircuitBreaker
 from ..utils.prometheus_metrics import metrics as prom_metrics
 from ..utils.structured_logging import (
@@ -2306,7 +2307,7 @@ Question: {task}
             extra_gen_kwargs["tools"] = kwargs["tools"]
 
         async def _run_model(model: BaseModel) -> dict[str, Any]:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None, lambda: model.generate(prompt, config=gen_config, **extra_gen_kwargs)
             )
@@ -2579,27 +2580,16 @@ Question: {task}
         """
         Run an async coroutine from synchronous code.
 
-        Uses a simple strategy: try asyncio.run() first. If an event loop
-        is already running, fall back to a thread-based approach.
+        Thin wrapper over the shared :func:`effgen.utils.run_coroutine_sync`
+        so every sync-to-async bridge in the codebase behaves identically:
+        drive the coroutine directly when no loop is running, otherwise run it
+        on a worker thread and block — never skip it.
 
         Args:
             coro: The coroutine to run.
             timeout: Maximum seconds to wait (default 120s).
         """
-        try:
-            # No running loop — simplest path
-            return asyncio.run(coro)
-        except RuntimeError:
-            # Event loop already running (Jupyter, FastAPI, etc.) —
-            # run in a dedicated thread with its own event loop.
-            import concurrent.futures
-            logger.info(
-                "Event loop already running — falling back to "
-                "ThreadPoolExecutor for coroutine execution"
-            )
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result(timeout=timeout)
+        return run_coroutine_sync(coro, timeout=timeout)
 
     @staticmethod
     def _clean_json_input(raw: str) -> str:

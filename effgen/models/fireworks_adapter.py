@@ -37,6 +37,7 @@ from effgen.models.fireworks_models import (
 from effgen.models.latency_tracker import timed_call
 from effgen.observability.spans import ModelAttrs
 from effgen.observability.tracing import set_span_attribute as _set_span_attr
+from effgen.utils.async_bridge import run_coroutine_sync
 
 if TYPE_CHECKING:
     from effgen.models._rate_limit_store import SQLiteRateLimitStore
@@ -230,8 +231,6 @@ class FireworksAdapter(BaseModel):
         Returns:
             GenerationResult with text and token usage.
         """
-        import asyncio
-
         if not self._is_loaded or self._client is None:
             raise RuntimeError("FireworksAdapter not loaded. Call load() first.")
 
@@ -244,14 +243,7 @@ class FireworksAdapter(BaseModel):
             est_tokens = 500
 
         if self._rate_limiter is not None:
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    logger.debug("Skipping blocking rate-limit acquire (nested event loop)")
-                else:
-                    loop.run_until_complete(self._rate_limiter.acquire(est_tokens))
-            except RuntimeError:
-                asyncio.run(self._rate_limiter.acquire(est_tokens))
+            run_coroutine_sync(self._rate_limiter.acquire(est_tokens))
 
         with timed_call("fireworks", self.model_name):
             result = self._do_generate(prompt, config, **kwargs)
