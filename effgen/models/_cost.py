@@ -41,18 +41,34 @@ def _load_budget() -> dict:
     return {}
 
 # ---------------------------------------------------------------------------
-# Per-million-token rates (USD).  [input_per_M, output_per_M]
+# Pricing resolution
 #
-# Status key:
-#   OFFICIAL   - rate reflects the current provider-published list price
-#                (Cerebras free tier = $0 is official; verified 2026-04-24).
-#   PLACEHOLDER - rate will be refined as provider pricing changes.
-#                Treat numbers here as rough guidance, not billing truth.
+# The normalized model catalog (``effgen/models/_catalog.py``) is the single
+# source of truth for per-token prices: it reads the same in-package ``*_MODELS``
+# dicts the adapters call, so the cost a user is charged can never disagree with
+# the catalog the CLI shows.  ``_rate()`` consults the catalog first and only
+# falls back to the small legacy table below for ids no catalog knows (e.g. the
+# deprecated Cerebras test ids or a bare local model name).
+#
+# A model is treated as:
+#   * "priced"   - the catalog publishes a per-token price (use it),
+#   * "free"     - the catalog flags a genuine free tier ($0, labeled "free"),
+#   * "metered"  - non-token billing (e.g. Replicate per-second; cost arrives
+#                  pre-computed via ``record(cost_usd=...)``),
+#   * "unpriced" - no published price (we never invent one; shown as "unpriced"
+#                  rather than a misleading "$0.000000").
 #
 # The process-global tracker persists events to SQLite. Constructing
 # ``CostTracker(storage=None)`` keeps the old in-memory behavior for callers
 # that need isolated accounting.
 # ---------------------------------------------------------------------------
+
+# Providers whose legacy fallback rate of $0 means "genuinely free tier" rather
+# than "price unknown" (used only for ids absent from the catalog).
+_FREE_TIER_PROVIDERS = {"cerebras"}
+
+# Legacy fallback rates (USD per 1M tokens) for ids the catalog does not carry.
+# Kept intentionally small — the catalog is authoritative for everything else.
 _RATES: dict[str, dict[str, tuple[float, float]]] = {
     "cerebras": {
         # OFFICIAL: Cerebras free tier pricing = $0 for all models.
@@ -158,29 +174,82 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
 }
 
 
-def _rate(provider: str, model: str) -> tuple[float, float]:
-    """Lookup (input_per_M, output_per_M) rate for provider/model."""
-    if provider.lower() == "fireworks":
-        try:
-            from effgen.models.fireworks_models import FIREWORKS_MODELS
-            info = FIREWORKS_MODELS.get(model)
-            if info is not None:
-                return (
-                    float(info.get("pricing_per_1m_input", 0.0)),
-                    float(info.get("pricing_per_1m_output", 0.0)),
-                )
-        except Exception:
-            logger.debug("Failed to read pricing from model info", exc_info=True)
-        return (0.0, 0.0)
+def _catalog_pricing(provider: str, model: str) -> tuple[float, float, str, str] | None:
+    """Resolve pricing for *provider*/*model* from the normalized catalog.
 
-    provider_rates = _RATES.get(provider.lower(), {})
-    # Exact match first, then prefix match, then wildcard
+    Returns ``(price_in_per_1m, price_out_per_1m, status, note)`` where *status*
+    is one of ``priced``/``free``/``metered``/``unpriced``, or ``None`` when the
+    catalog has no record for this id (so the caller can fall back).
+    """
+    try:
+        from effgen.models import _catalog as _cat
+
+        rec = _cat.lookup(model, provider.lower())
+    except Exception:  # pragma: no cover - catalog import/lookup is best-effort
+        logger.debug("Catalog pricing lookup failed for %s/%s", provider, model, exc_info=True)
+        return None
+    if rec is None:
+        return None
+
+    pin = rec.price_in_per_1m
+    pout = rec.price_out_per_1m
+    if pin is not None or pout is not None:
+        return (float(pin or 0.0), float(pout or 0.0), "priced", rec.price_note or "")
+    if rec.free_tier:
+        return (0.0, 0.0, "free", rec.price_note or "")
+    if rec.price_note:
+        # Non-token billing (e.g. Replicate per-second); cost comes in via cost_usd.
+        return (0.0, 0.0, "metered", rec.price_note)
+    return (0.0, 0.0, "unpriced", "")
+
+
+def _legacy_rate(provider: str, model: str) -> tuple[float, float] | None:
+    """Per-1M rate from the small fallback table, or None if the provider/id is unknown."""
+    provider_rates = _RATES.get(provider.lower())
+    if not provider_rates:
+        return None
     if model in provider_rates:
         return provider_rates[model]
     for key in provider_rates:
         if key != "*" and model.startswith(key):
             return provider_rates[key]
-    return provider_rates.get("*", (0.0, 0.0))
+    if "*" in provider_rates:
+        return provider_rates["*"]
+    return None
+
+
+def _rate(provider: str, model: str) -> tuple[float, float]:
+    """Lookup (input_per_M, output_per_M) rate for provider/model.
+
+    Catalog-first (the single source of truth shared with the adapters); falls
+    back to the small legacy table for ids the catalog does not carry.  Returns
+    ``(0.0, 0.0)`` for genuinely free/unpriced/unknown ids — pricing is never
+    invented.
+    """
+    catalog = _catalog_pricing(provider, model)
+    if catalog is not None:
+        # priced -> real numbers; free/metered/unpriced -> 0 token rate.
+        return (catalog[0], catalog[1])
+    legacy = _legacy_rate(provider, model)
+    return legacy if legacy is not None else (0.0, 0.0)
+
+
+def pricing_status(provider: str, model: str) -> str:
+    """Return how *provider*/*model* is priced: ``priced``/``free``/``metered``/``unpriced``.
+
+    Used by ``effgen cost`` to label a $0 row honestly — a genuine free tier
+    reads "free" while a model with no published price reads "unpriced" instead
+    of a misleading "$0.000000".
+    """
+    catalog = _catalog_pricing(provider, model)
+    if catalog is not None:
+        return catalog[2]
+    legacy = _legacy_rate(provider, model)
+    if legacy is not None and (legacy[0] > 0 or legacy[1] > 0):
+        return "priced"
+    if provider.lower() in _FREE_TIER_PROVIDERS:
+        return "free"
+    return "unpriced"
 
 
 @dataclass
@@ -454,6 +523,7 @@ class CostTracker:
                     "completion_tokens": stats.completion_tokens,
                     "total_tokens": stats.prompt_tokens + stats.completion_tokens,
                     "cost_usd": round(stats.total_cost_usd, 8),
+                    "pricing": pricing_status(stats.provider, stats.model),
                 })
         return rows
 

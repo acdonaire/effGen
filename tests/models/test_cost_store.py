@@ -166,7 +166,8 @@ class TestCostTrackerWithStorage:
     def test_in_memory_tracker_no_storage(self):
         """Passing storage=None gives a pure in-memory tracker (back-compat)."""
         t = CostTracker(storage=None)
-        cost = t.record("groq", "llama-3.1-8b-instant", 50, 20)
+        # Cerebras is a genuine free tier → $0 cost.
+        cost = t.record("cerebras", "gpt-oss-120b", 50, 20)
         assert cost == 0.0
         assert len(t.summary()) == 1
 
@@ -273,11 +274,13 @@ class TestBudgetAlerts:
         self._set_budget(0.000001)
         self.store.insert("openai", "gpt-4o", 100, 50, 0.000002, time.time())
 
-        cost = self.tracker.record("groq", "llama-3.1-8b-instant", 100, 50)
+        # A genuine free-tier call (cerebras, $0) must still be allowed so the
+        # router can fail over to a free provider after the budget is hit.
+        cost = self.tracker.record("cerebras", "gpt-oss-120b", 100, 50)
 
         assert cost == 0.0
         rows = self.store.query_today()
-        assert rows[-1].provider == "groq"
+        assert rows[-1].provider == "cerebras"
 
     def test_monthly_budget_exceeded_raises(self):
         cost_mod._BUDGET_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)

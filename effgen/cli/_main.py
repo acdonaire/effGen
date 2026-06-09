@@ -2370,6 +2370,21 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
     total_cost = sum(r['cost_usd'] for r in rows)
     total_requests = sum(r['requests'] for r in rows)
 
+    # Honest cost label: a genuine free tier reads "free" and a model with no
+    # published price reads "unpriced", instead of a misleading "$0.000000".
+    from effgen.models._cost import pricing_status as _pricing_status
+
+    def _cost_label(row: dict) -> str:
+        cost = row['cost_usd']
+        if cost > 0 or row['model'] == 'all models':
+            return f"${cost:.6f}"
+        status = _pricing_status(row['provider'], row['model'])
+        if status == 'free':
+            return 'free'
+        if status == 'unpriced':
+            return 'unpriced'
+        return f"${cost:.6f}"
+
     # Load budget for display
     budget_cfg = {}
     if budget_path.exists():
@@ -2382,7 +2397,8 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
     if RICH_AVAILABLE and cli.console:
         table = Table(title=f"effGen Cost Summary — {period_label}", show_footer=True)
         table.add_column("Provider", style="cyan", no_wrap=True)
-        table.add_column("Model", style="white")
+        # Wrap (fold) long model ids instead of truncating with an ellipsis.
+        table.add_column("Model", style="white", overflow="fold")
         table.add_column("Requests", style="yellow", justify="right")
         table.add_column("Prompt Tokens", style="blue", justify="right")
         table.add_column("Completion Tokens", style="blue", justify="right")
@@ -2399,7 +2415,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
                     str(r['requests']),
                     f"{r['prompt_tokens']:,}",
                     f"{r['completion_tokens']:,}",
-                    f"${r['cost_usd']:.6f}",
+                    _cost_label(r),
                 )
 
         cli.console.print(table)
@@ -2417,16 +2433,22 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
     else:
         print(f"\neffGen Cost Summary — {period_label}")
         print("-" * 80)
-        print(f"{'Provider':<15} {'Model':<35} {'Reqs':>5} {'Cost (USD)':>12}")
+        print(f"{'Provider':<12} {'Model':<48} {'Reqs':>5} {'Cost (USD)':>12}")
         print("-" * 80)
         if not rows:
             print("  (no data)")
         else:
             for r in rows:
-                model_short = r['model'][:34] if len(r['model']) > 34 else r['model']
-                print(f"{r['provider']:<15} {model_short:<35} {r['requests']:>5} ${r['cost_usd']:>11.6f}")
+                # Show the full model id (wrap rather than truncate).
+                model = r['model']
+                cost_label = _cost_label(r)
+                if len(model) > 48:
+                    print(f"{r['provider']:<12} {model}")
+                    print(f"{'':<12} {'':<48} {r['requests']:>5} {cost_label:>12}")
+                else:
+                    print(f"{r['provider']:<12} {model:<48} {r['requests']:>5} {cost_label:>12}")
         print("-" * 80)
-        print(f"{'TOTAL':<15} {'':<35} {total_requests:>5} ${total_cost:>11.6f}")
+        print(f"{'TOTAL':<12} {'':<48} {total_requests:>5} ${total_cost:>11.6f}")
         if daily_budget is not None:
             ratio = total_cost / daily_budget if daily_budget > 0 else 0
             print(f"\nDaily budget: ${total_cost:.4f} / ${daily_budget:.4f} ({ratio*100:.0f}%)")

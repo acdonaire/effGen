@@ -672,7 +672,13 @@ Question: {task}
             openai_native = [t for t in tools if isinstance(t, OpenAINativeTool)]
             if openai_native:
                 is_openai = isinstance(self.model, OpenAIAdapter)
-                if not is_openai:
+                if not is_openai and not isinstance(self.model, BaseModel):
+                    # Only guess from the model name when the object is not a
+                    # known effGen adapter (e.g. a duck-typed custom model). A
+                    # concrete non-OpenAI adapter is authoritative: do NOT match
+                    # on the "gpt-" prefix, or Cerebras' ``gpt-oss-*`` (and other
+                    # OpenAI-compatible providers) would be mistaken for OpenAI
+                    # and silently skip this fail-closed guard.
                     model_name_str = getattr(self.model, "model_name", "") or ""
                     provider = getattr(self.model, "_provider", "") or ""
                     is_openai = (
@@ -703,7 +709,9 @@ Question: {task}
             gemini_native = [t for t in tools if isinstance(t, GeminiNativeTool)]
             if gemini_native:
                 is_gemini = isinstance(self.model, GeminiAdapter)
-                if not is_gemini:
+                if not is_gemini and not isinstance(self.model, BaseModel):
+                    # Name guess only for unknown duck-typed objects; a concrete
+                    # non-Gemini adapter is authoritative (see OpenAI note above).
                     model_name_str = getattr(self.model, "model_name", "") or ""
                     is_gemini = model_name_str.startswith("gemini")
                 if not is_gemini:
@@ -730,7 +738,9 @@ Question: {task}
             anthropic_native = [t for t in tools if isinstance(t, AnthropicNativeTool)]
             if anthropic_native:
                 is_anthropic = isinstance(self.model, AnthropicAdapter)
-                if not is_anthropic:
+                if not is_anthropic and not isinstance(self.model, BaseModel):
+                    # Name guess only for unknown duck-typed objects; a concrete
+                    # non-Anthropic adapter is authoritative (see OpenAI note above).
                     model_name_str = getattr(self.model, "model_name", "") or ""
                     is_anthropic = model_name_str.startswith("claude")
                 if not is_anthropic:

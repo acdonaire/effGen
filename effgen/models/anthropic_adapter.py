@@ -383,6 +383,22 @@ class AnthropicAdapter(FunctionCallingModel):
         cost = self._calculate_cost(prompt_tokens, completion_tokens)
         self.total_cost += cost
         self.total_tokens += prompt_tokens + completion_tokens
+        # Persist to the process-global tracker so `effgen cost` includes
+        # Anthropic spend (the dashboard previously never saw it).
+        try:
+            from effgen.models._cost import CostTracker
+            from effgen.models.errors import BudgetExceededError
+
+            CostTracker.get().record(
+                provider="anthropic",
+                model=self.model_name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+        except BudgetExceededError:
+            raise
+        except Exception:
+            logger.debug("CostTracker recording failed for Anthropic", exc_info=True)
         return cost
 
     # ── Generate ──────────────────────────────────────────────────────────

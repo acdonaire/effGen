@@ -195,6 +195,32 @@ class GeminiAdapter(FunctionCallingModel):
             completion_tokens / 1_000_000
         ) * cost_entry[1]
 
+    def _record_to_cost_tracker(
+        self, prompt_tokens: int, completion_tokens: int
+    ) -> float | None:
+        """Record this call in the process-global cost tracker.
+
+        Returns the catalog-priced USD cost (so it matches the model catalog and
+        the dashboard), or ``None`` if tracking is unavailable.  Re-raises
+        :class:`BudgetExceededError` so budget limits are enforced.
+        """
+        try:
+            from effgen.models._cost import CostTracker
+
+            return CostTracker.get().record(
+                provider="gemini",
+                model=self.model_name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+        except Exception as exc:
+            from effgen.models.errors import BudgetExceededError
+
+            if isinstance(exc, BudgetExceededError):
+                raise
+            logger.debug("CostTracker recording failed for Gemini", exc_info=True)
+            return None
+
     def _build_config(self, config: GenerationConfig | None) -> Any:
         """Build a google.genai GenerateContentConfig from an effGen GenerationConfig."""
         from google.genai import types  # type: ignore[import]
@@ -693,7 +719,13 @@ class GeminiAdapter(FunctionCallingModel):
                 total_tokens = prompt_tokens + completion_tokens
                 thoughts_tokens = 0
 
-            cost = self._calculate_cost(prompt_tokens, completion_tokens)
+            # Persist + price via the shared catalog-backed tracker so
+            # `effgen cost` includes Gemini spend (it previously never saw it)
+            # and the number matches the model catalog.  Fall back to the local
+            # estimate if tracking is unavailable.
+            cost = self._record_to_cost_tracker(prompt_tokens, completion_tokens)
+            if cost is None:
+                cost = self._calculate_cost(prompt_tokens, completion_tokens)
             self.total_cost += cost
             self.total_tokens += total_tokens
 
