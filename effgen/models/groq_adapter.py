@@ -33,7 +33,6 @@ from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.groq_models import (
     GROQ_DEFAULT_MODEL,
     GROQ_MODELS,
-    available_models,
     chat_models,
 )
 from effgen.models.latency_tracker import timed_call
@@ -140,11 +139,13 @@ class GroqAdapter(BaseModel):
         **kwargs: Any,
     ) -> None:
         if model_name not in GROQ_MODELS:
+            from effgen.models._catalog import suggest_for_missing
+
             raise ModelNotFoundError(
                 provider="groq",
                 model_name=model_name,
-                message=f"Unknown Groq model '{model_name}'. "
-                        f"Available: {available_models()}",
+                message=f"Unknown Groq model '{model_name}'."
+                        + suggest_for_missing("groq", model_name),
             )
 
         info = GROQ_MODELS[model_name]

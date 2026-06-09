@@ -16,15 +16,19 @@ reflect the **free-tier** values, since users on the paid tier can override
 via the ``context`` / ``max_output`` kwargs of :class:`CerebrasAdapter` if
 needed.  ``context_paid`` and ``max_output_paid`` are included for reference.
 
-Deprecation notice (from Cerebras docs 2026-04-24):
-  - ``llama3.1-8b`` and ``qwen-3-235b-a22b-instruct-2507`` will be
-    deprecated on **2026-05-27**.
+Catalog scope:
+  The live Cerebras inference API serves exactly two chat models —
+  ``gpt-oss-120b`` and ``zai-glm-4.7`` (verified against
+  ``client.models.list()``).  The earlier ``llama3.1-8b`` and
+  ``qwen-3-235b-a22b-instruct-2507`` reached end-of-life on 2026-05-27 and now
+  return 404 ``model_not_found``; they have been removed so the catalog reflects
+  what is actually callable.  Run ``effgen models refresh --provider cerebras``
+  to re-sync from the live endpoint.
 
 Access notes:
-  - ``gpt-oss-120b`` and ``zai-glm-4.7`` are currently rate-limited /
-    access-restricted on the free tier due to high demand.  The adapter
-    still tracks them so paid-tier users can call them; free-tier users
-    typically receive a 404 ``model_not_found`` response.
+  - Both models are reasoning-style models: a response's text lands in
+    ``message.content`` but reasoning tokens are billed and can dominate a low
+    ``max_completion_tokens`` budget, so give them generous output room.
 """
 
 from __future__ import annotations
@@ -56,45 +60,11 @@ CEREBRAS_MODELS: dict[str, dict] = {
         "tpm": 64_000,
         "tph": 1_000_000,
         "tpd": 1_000_000,
-        # Free-tier inference typically returns 404 due to high demand
-        # ("temporarily reduced free-tier rate limits" per Cerebras docs).
-        "free_tier": False,
+        # Verified callable via client.models.list() + a live generation
+        # (gpt-oss-120b returned "4" for 2+2 on 2026-06-08).
+        "free_tier": True,
         "deprecated": None,
         # Supports OpenAI-compatible function calling (empirically verified 2026-04-24)
-        "supports_native_tools": True,
-    },
-    "llama3.1-8b": {
-        "family": "llama",
-        "context": 8_192,           # free tier: 8k
-        "context_paid": 32_768,     # paid tier: 32k
-        "max_output": 8_192,
-        "max_output_paid": 8_192,
-        "rpm": 30,
-        "rph": 900,
-        "rpd": 14_400,
-        "tpm": 60_000,
-        "tph": 1_000_000,
-        "tpd": 1_000_000,
-        "free_tier": True,
-        "deprecated": "2026-05-27",
-        # Llama 3.1 supports OpenAI-compatible function calling (empirically verified 2026-04-24)
-        "supports_native_tools": True,
-    },
-    "qwen-3-235b-a22b-instruct-2507": {
-        "family": "qwen",
-        "context": 65_536,          # free tier: 65k
-        "context_paid": 131_072,    # paid tier: 131k
-        "max_output": 32_768,       # free tier: 32k
-        "max_output_paid": 40_960,  # paid tier: 40k
-        "rpm": 30,
-        "rph": 900,
-        "rpd": 14_400,
-        "tpm": 60_000,
-        "tph": 1_000_000,
-        "tpd": 1_000_000,
-        "free_tier": True,
-        "deprecated": "2026-05-27",
-        # Qwen 3 supports OpenAI-compatible function calling (empirically verified 2026-04-24)
         "supports_native_tools": True,
     },
     "zai-glm-4.7": {
@@ -110,17 +80,17 @@ CEREBRAS_MODELS: dict[str, dict] = {
         "tpm": 60_000,
         "tph": 1_000_000,
         "tpd": 1_000_000,
-        # Free-tier inference typically returns 404 due to high demand
-        "free_tier": False,
+        # Verified callable via client.models.list() on 2026-06-08.
+        "free_tier": True,
         "deprecated": None,
-        # GLM-4.7: tool calling not reliably supported on free tier (404 + restricted access)
-        # Marked False so agent falls back to ReAct; paid-tier users can override.
+        # GLM-4.7: tool calling not reliably surfaced; marked False so the agent
+        # falls back to ReAct.  Paid-tier users can override.
         "supports_native_tools": False,
     },
 }
 
-# Default model for live testing (free-tier callable)
-CEREBRAS_DEFAULT_MODEL = "llama3.1-8b"
+# Default model for live testing — one of the two models the live API serves.
+CEREBRAS_DEFAULT_MODEL = "gpt-oss-120b"
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +104,7 @@ def available_models() -> list[str]:
 
         >>> from effgen.models.cerebras_models import available_models
         >>> available_models()
-        ['gpt-oss-120b', 'llama3.1-8b', 'qwen-3-235b-a22b-instruct-2507', 'zai-glm-4.7']
+        ['gpt-oss-120b', 'zai-glm-4.7']
     """
     return list(CEREBRAS_MODELS.keys())
 
@@ -170,7 +140,7 @@ def model_info(model_id: str) -> dict:
     Example::
 
         >>> from effgen.models.cerebras_models import model_info
-        >>> info = model_info("llama3.1-8b")
+        >>> info = model_info("gpt-oss-120b")
         >>> info["rpm"]
         30
     """

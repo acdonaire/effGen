@@ -58,10 +58,10 @@ class TestCerebrasNativeTools:
         }
     ]
 
-    def test_llama_native_tools_returns_tool_call(self):
+    def test_gpt_oss_native_tools_returns_tool_call(self):
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
-        adapter = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False)
+        adapter = CerebrasAdapter("gpt-oss-120b", enable_rate_limiting=False)
         adapter.load()
         try:
             try:
@@ -79,29 +79,6 @@ class TestCerebrasNativeTools:
         finally:
             adapter.unload()
 
-    def test_qwen_native_tools_returns_tool_call(self):
-        from effgen.models.cerebras_adapter import CerebrasAdapter
-
-        adapter = CerebrasAdapter(
-            "qwen-3-235b-a22b-instruct-2507",
-            enable_rate_limiting=False,
-            max_retries=1,
-            timeout=20,
-        )
-        adapter.load()
-        try:
-            try:
-                result = adapter.generate_with_tools(
-                    "What is 17 * 23?",
-                    tools=self.TOOLS,
-                )
-            except Exception as exc:
-                _xfail_if_cerebras_backpressure(exc)
-                raise
-            assert result.metadata is not None
-        finally:
-            adapter.unload()
-
     def test_unsupported_model_raises_not_implemented(self):
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
@@ -114,8 +91,7 @@ class TestCerebrasNativeTools:
     def test_supports_tool_calling_flag(self):
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
-        assert CerebrasAdapter("llama3.1-8b").supports_tool_calling() is True
-        assert CerebrasAdapter("qwen-3-235b-a22b-instruct-2507").supports_tool_calling() is True
+        assert CerebrasAdapter("gpt-oss-120b").supports_tool_calling() is True
         assert CerebrasAdapter("zai-glm-4.7").supports_tool_calling() is False
 
 
@@ -123,13 +99,13 @@ class TestCerebrasNativeTools:
 @pytest.mark.api
 @pytest.mark.skipif(not _has_key(), reason="SKIPPED: CEREBRAS_API_KEY not in ~/.effgen/.env")
 class TestCerebrasAgentWithTools:
-    def test_agent_math_task_llama(self):
-        """Agent with Calculator on a multi-step math task using llama3.1-8b."""
+    def test_agent_math_task_gpt_oss(self):
+        """Agent with Calculator on a multi-step math task using gpt-oss-120b."""
         from effgen.core.agent import Agent, AgentConfig
         from effgen.models.cerebras_adapter import CerebrasAdapter
         from effgen.tools.builtin.calculator import Calculator
 
-        adapter = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False)
+        adapter = CerebrasAdapter("gpt-oss-120b", enable_rate_limiting=False)
         adapter.load()
         try:
             config = AgentConfig(
@@ -158,14 +134,14 @@ class TestCerebrasAgentWithTools:
         finally:
             adapter.unload()
 
-    def test_agent_math_task_qwen(self):
-        """Agent with Calculator on a multi-step task using qwen-3-235b."""
+    def test_agent_math_task_zai_glm_react(self):
+        """Agent with Calculator using zai-glm-4.7 (no native tools → ReAct path)."""
         from effgen.core.agent import Agent, AgentConfig
         from effgen.models.cerebras_adapter import CerebrasAdapter
         from effgen.tools.builtin.calculator import Calculator
 
         adapter = CerebrasAdapter(
-            "qwen-3-235b-a22b-instruct-2507",
+            "zai-glm-4.7",
             enable_rate_limiting=False,
             max_retries=1,
             timeout=20,
@@ -173,7 +149,7 @@ class TestCerebrasAgentWithTools:
         adapter.load()
         try:
             config = AgentConfig(
-                name="cerebras-qwen-agent",
+                name="cerebras-zai-glm-agent",
                 model=adapter,
                 tools=[Calculator()],
                 system_prompt="You are a math assistant. Use the calculator tool.",

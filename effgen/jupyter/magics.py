@@ -16,7 +16,7 @@ Configuration
 -------------
 Set environment variables or pass options on the magic line:
 
-    EFFGEN_JUPYTER_MODEL      — model id (default: cerebras:llama3.1-8b)
+    EFFGEN_JUPYTER_MODEL      — model id (default: cerebras:gpt-oss-120b)
     EFFGEN_JUPYTER_SERVER_URL — server URL for /v1 chat (default: none;
                                 uses in-process agent when unset)
 """
@@ -46,7 +46,7 @@ except ImportError as _exc:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 def _default_model() -> str:
-    return os.environ.get("EFFGEN_JUPYTER_MODEL", "cerebras:llama3.1-8b")
+    return os.environ.get("EFFGEN_JUPYTER_MODEL", "cerebras:gpt-oss-120b")
 
 
 def _server_url() -> str | None:
@@ -210,7 +210,7 @@ def _context_overflow_hint(text: str, preset: str | None) -> str | None:
         return None
     suggestion = (
         "a smaller preset (e.g. `math` for arithmetic) or a model with a larger "
-        "context window (e.g. `--model cerebras:qwen-3-235b-a22b-instruct-2507`)"
+        "context window (e.g. `--model cerebras:gpt-oss-120b`)"
     )
     label = f"`{preset}`" if preset else "this"
     return (
@@ -307,7 +307,7 @@ class EffgenMagics(Magics):  # type: ignore[misc]
         Usage::
 
             %effgen_chat Tell me a one-sentence joke
-            %effgen_chat --model cerebras:qwen-3-235b-a22b-instruct-2507 Hello!
+            %effgen_chat --model cerebras:gpt-oss-120b Hello!
         """
         args = parse_argstring(self.effgen_chat, line)
         message = " ".join(args.message)
@@ -347,7 +347,7 @@ class EffgenMagics(Magics):  # type: ignore[misc]
             %%effgen_agent coding
             Write a Python function to check if a number is prime.
 
-            %%effgen_agent --model cerebras:qwen-3-235b-a22b-instruct-2507
+            %%effgen_agent --model cerebras:gpt-oss-120b
             Search for the latest papers on mixture-of-experts.
         """
         args = parse_argstring(self.effgen_agent, line)

@@ -170,7 +170,7 @@ def test_registry_free_tier_excludes_pro_preview():
     free = set(gemini_models.free_tier_models())
     assert "gemini-3.1-flash-lite" in free
     assert "gemini-3-pro-preview" not in free
-    assert "gemma-3-27b" in free
+    assert "gemma-4-31b-it" in free
 
 
 def test_registry_recommended_models_filters_by_tier():

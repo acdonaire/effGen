@@ -50,26 +50,26 @@ def main():
     print("CostTracker demo — accumulating token usage across Cerebras calls")
     print_summary("Initial state (empty)")
 
-    # Make some calls with llama3.1-8b
-    llama = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False, enable_cost_tracking=True)
+    # Make some calls with gpt-oss-120b
+    llama = CerebrasAdapter("gpt-oss-120b", enable_rate_limiting=False, enable_cost_tracking=True)
     llama.load()
 
-    print("\nMaking 3 calls with llama3.1-8b...")
+    print("\nMaking 3 calls with gpt-oss-120b...")
     llama.generate("What is the capital of France?")
     llama.generate("Name three programming languages.")
     llama.generate("Explain what a neural network is in one sentence.")
     llama.unload()
 
-    print_summary("After 3 llama3.1-8b calls")
+    print_summary("After 3 gpt-oss-120b calls")
 
     # Make a call with qwen
     qwen = CerebrasAdapter(
-        "qwen-3-235b-a22b-instruct-2507",
+        "zai-glm-4.7",
         enable_rate_limiting=False,
         enable_cost_tracking=True,
     )
     qwen.load()
-    print("\nMaking 1 call with qwen-3-235b...")
+    print("\nMaking 1 call with zai-glm-4.7...")
     qwen.generate("What is machine learning?")
     qwen.unload()
 
@@ -77,8 +77,8 @@ def main():
 
     # Show per-model filtering
     tracker = CostTracker.get()
-    llama_tokens = tracker.total_tokens("cerebras", "llama3.1-8b")
-    print(f"\nllama3.1-8b total tokens: {llama_tokens['total']}")
+    llama_tokens = tracker.total_tokens("cerebras", "gpt-oss-120b")
+    print(f"\ngpt-oss-120b total tokens: {llama_tokens['total']}")
 
     # Reset stats
     print("\nResetting CostTracker stats...")

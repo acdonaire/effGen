@@ -265,7 +265,7 @@ class PlaygroundREPL:
 
     def __init__(self, default_model: str | None = None) -> None:
         self.session = PlaygroundSession()
-        self.default_model = default_model or "llama3.1-8b"
+        self.default_model = default_model or "cerebras:gpt-oss-120b"
         self._running = False
 
     # ------------------------------------------------------------------

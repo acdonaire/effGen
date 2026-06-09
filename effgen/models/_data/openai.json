@@ -1,7 +1,7 @@
 {
   "provider": "openai",
   "verified_on": "2026-06-08",
-  "source": "bundled-catalog",
+  "source": "live-verified",
   "count": 35,
   "models": [
     {
@@ -23,7 +23,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -46,7 +46,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -69,7 +69,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -92,7 +92,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -115,7 +115,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -138,7 +138,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -161,7 +161,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -184,7 +184,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -207,7 +207,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -230,7 +230,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -253,7 +253,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -276,7 +276,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -299,7 +299,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -322,7 +322,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -345,7 +345,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -368,7 +368,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -391,7 +391,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -414,7 +414,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -435,9 +435,9 @@
       "rpm": null,
       "tpm": null,
       "rpd": null,
-      "deprecated": false,
+      "deprecated": true,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -460,7 +460,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -483,7 +483,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -506,7 +506,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -527,9 +527,9 @@
       "rpm": null,
       "tpm": null,
       "rpd": null,
-      "deprecated": false,
+      "deprecated": true,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -552,7 +552,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -575,7 +575,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -598,7 +598,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -619,9 +619,9 @@
       "rpm": null,
       "tpm": null,
       "rpd": null,
-      "deprecated": false,
+      "deprecated": true,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -644,7 +644,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -667,7 +667,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -688,9 +688,9 @@
       "rpm": null,
       "tpm": null,
       "rpd": null,
-      "deprecated": false,
+      "deprecated": true,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -711,9 +711,9 @@
       "rpm": null,
       "tpm": null,
       "rpd": null,
-      "deprecated": false,
+      "deprecated": true,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -736,7 +736,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -759,7 +759,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -782,7 +782,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     },
@@ -805,7 +805,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": null,
+      "verified_on": "2026-06-08",
       "price_note": "",
       "notes": ""
     }

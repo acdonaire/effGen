@@ -8,7 +8,7 @@ Prerequisites:
 What this demonstrates:
   - Real streaming from Cerebras with generate_stream()
   - Chunk-by-chunk output with live timestamps
-  - Both llama3.1-8b and qwen-3-235b models
+  - Both gpt-oss-120b and zai-glm-4.7 models
   - CostTracker showing $0 for free-tier usage
 """
 
@@ -63,7 +63,7 @@ def main():
     )
 
     # Stream from two free-tier models
-    for model_id in ["llama3.1-8b", "qwen-3-235b-a22b-instruct-2507"]:
+    for model_id in ["gpt-oss-120b", "zai-glm-4.7"]:
         stream_demo(model_id, prompt)
 
     # Show cost summary — Cerebras free tier = $0

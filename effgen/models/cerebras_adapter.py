@@ -67,7 +67,7 @@ class CerebrasAdapter(BaseModel):
     Args:
         model_name: Cerebras model ID. Must be a key in
             :data:`~effgen.models.cerebras_models.CEREBRAS_MODELS`.
-            Defaults to ``"llama3.1-8b"``.
+            Defaults to ``"gpt-oss-120b"``.
         api_key: Cerebras API key. If omitted, reads ``CEREBRAS_API_KEY``
             from the environment.
         max_retries: Maximum number of SDK retry attempts.
@@ -81,7 +81,7 @@ class CerebrasAdapter(BaseModel):
 
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
-        adapter = CerebrasAdapter("llama3.1-8b")
+        adapter = CerebrasAdapter("gpt-oss-120b")
         adapter.load()
 
         # Synchronous generation
@@ -107,11 +107,13 @@ class CerebrasAdapter(BaseModel):
         **kwargs: Any,
     ) -> None:
         if model_name not in CEREBRAS_MODELS:
+            from effgen.models._catalog import suggest_for_missing
+
             raise ModelNotFoundError(
                 provider="cerebras",
                 model_name=model_name,
-                message=f"Unknown Cerebras model '{model_name}'. "
-                        f"Available: {available_models()}",
+                message=f"Unknown Cerebras model '{model_name}'."
+                        + suggest_for_missing("cerebras", model_name),
             )
 
         info = CEREBRAS_MODELS[model_name]
@@ -347,13 +349,9 @@ class CerebrasAdapter(BaseModel):
                 if "401" in msg or "wrong_api_key" in msg_lower or "wrong api key" in msg_lower:
                     raise ModelAuthError("cerebras", self.model_name, str(exc)) from exc
                 if "404" in msg and "model_not_found" in msg:
-                    info = CEREBRAS_MODELS.get(self.model_name, {})
-                    hint = (
-                        f" Model '{self.model_name}' is currently not accessible on your tier "
-                        "(Cerebras has temporarily restricted free-tier access to high-demand "
-                        "models like gpt-oss-120b and zai-glm-4.7). "
-                        f"Try a free-tier model: {free_tier_models()}."
-                    ) if not info.get("free_tier", False) else ""
+                    from effgen.models._catalog import suggest_for_missing
+
+                    hint = suggest_for_missing("cerebras", self.model_name)
                     logger.error("Cerebras API 404 for model '%s': %s", self.model_name, exc)
                     raise ModelNotFoundError("cerebras", self.model_name, str(exc) + hint) from exc
                 is_rate = "429" in msg or "rate_limit" in msg_lower
@@ -616,9 +614,13 @@ class CerebrasAdapter(BaseModel):
             msg = str(exc)
             msg_lower = msg.lower()
             if "404" in msg and "model_not_found" in msg:
-                raise RuntimeError(
-                    f"Cerebras streaming failed (model not found): {exc}. "
-                    f"Try: {free_tier_models()}"
+                from effgen.models._catalog import suggest_for_missing
+
+                raise ModelNotFoundError(
+                    "cerebras",
+                    self.model_name,
+                    f"streaming failed (model not found): {exc}"
+                    + suggest_for_missing("cerebras", self.model_name),
                 ) from exc
             if "429" in msg or "rate_limit" in msg_lower:
                 from effgen.models._rate_limit import RateLimitExceeded as _RLE

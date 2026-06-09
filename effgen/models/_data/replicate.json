@@ -1,7 +1,7 @@
 {
   "provider": "replicate",
   "verified_on": "2026-06-08",
-  "source": "bundled-catalog",
+  "source": "live-verified",
   "count": 38,
   "models": [
     {

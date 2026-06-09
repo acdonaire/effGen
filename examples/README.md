@@ -107,7 +107,7 @@ python examples/openai/native_tools_hybrid_agent.py     # OpenAI native tools + 
 ### Cerebras (cloud, free-tier API)
 
 Requires `CEREBRAS_API_KEY` (free tier; place in `~/.effgen/.env`). All 4 free-tier
-models supported: `llama3.1-8b`, `qwen-3-235b-a22b-instruct-2507`, `gpt-oss-120b`, `zai-glm-4.7`. Each example prints raw API output.
+models supported: `gpt-oss-120b`, `zai-glm-4.7`. Each example prints raw API output.
 
 | Example | Demonstrates |
 |---------|--------------|

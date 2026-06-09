@@ -28,8 +28,8 @@ from effgen.models.cerebras_adapter import CerebrasAdapter  # noqa: E402
 # -----------------------------------------------------------
 # 1. Load the adapter
 # -----------------------------------------------------------
-print("Loading Cerebras adapter (llama3.1-8b) ...")
-adapter = CerebrasAdapter(model_name="llama3.1-8b")
+print("Loading Cerebras adapter (gpt-oss-120b) ...")
+adapter = CerebrasAdapter(model_name="gpt-oss-120b")
 adapter.load()
 
 print(f"Context length : {adapter.get_context_length():,} tokens")

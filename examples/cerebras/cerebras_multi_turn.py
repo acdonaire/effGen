@@ -25,7 +25,7 @@ from cerebras.cloud.sdk import Cerebras  # noqa: E402
 
 from effgen.models.cerebras_adapter import CerebrasAdapter  # noqa: E402
 
-adapter = CerebrasAdapter(model_name="llama3.1-8b")
+adapter = CerebrasAdapter(model_name="gpt-oss-120b")
 adapter.load()
 
 # Access the underlying SDK client for multi-turn message passing
@@ -47,7 +47,7 @@ for user_msg in turns:
     print(f"User  : {user_msg}")
 
     resp = client.chat.completions.create(
-        model="llama3.1-8b",
+        model="gpt-oss-120b",
         messages=history,
         max_completion_tokens=128,
         temperature=0.7,

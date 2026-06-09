@@ -34,8 +34,8 @@ for name, meta in CEREBRAS_MODELS.items():
 # -----------------------------------------------------------
 # Load via shorthand
 # -----------------------------------------------------------
-print("\nLoading llama3.1-8b via load_model(provider='cerebras') ...")
-model = load_model("llama3.1-8b", provider="cerebras")
+print("\nLoading gpt-oss-120b via load_model(provider='cerebras') ...")
+model = load_model("gpt-oss-120b", provider="cerebras")
 print(f"Model type     : {type(model).__name__}")
 print(f"Context length : {model.get_context_length():,}")
 print(f"Is loaded      : {model.is_loaded()}")

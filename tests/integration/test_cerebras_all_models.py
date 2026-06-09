@@ -23,10 +23,8 @@ def _has_key() -> bool:
 
 
 MODELS = [
-    "llama3.1-8b",
-    "qwen-3-235b-a22b-instruct-2507",
-    "zai-glm-4.7",
     "gpt-oss-120b",
+    "zai-glm-4.7",
 ]
 
 RATE_LIMIT_MARKERS = ("429", "rate-limit", "rate_limit", "queue_exceeded", "too many requests")

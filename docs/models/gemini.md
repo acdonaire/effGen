@@ -50,8 +50,7 @@ effgen.gemini_model_info("gemini-3.1-flash-lite")  # alias resolves
 | `gemini-2.5-pro`                     | pro          | premium | —   | —       | —      | yes   | yes      | yes       |
 | `gemini-2.0-flash`                   | flash        | premium | —   | —       | —      | yes   | no       | yes       |
 | `gemini-2.0-flash-lite`              | flash-lite   | premium | —   | —       | —      | yes   | no       | yes       |
-| `gemma-3-1b` / `3-4b` / `3-12b` / `3-27b` | gemma   | free    | 30  | 15 K    | 14 400 | no    | no       | no        |
-| `gemma-4-26b` / `gemma-4-31b`        | gemma        | free    | 15  | unlim.  | 1 500  | no    | no       | no        |
+| `gemma-4-26b-a4b-it` / `gemma-4-31b-it` | gemma     | free    | 15  | unlim.  | 1 500  | no    | no       | no        |
 
 ¹ Google Search grounding hits quota on the free-tier for `gemini-3.1-flash-lite`. Use `gemini-2.5-flash` or higher for grounding.
 

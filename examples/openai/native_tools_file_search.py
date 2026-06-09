@@ -47,8 +47,8 @@ ANTHROPIC_API_KEY: Your Anthropic API key. Required for Claude models.
 - o3: High-capability reasoning, 200K context, $2.00/1M input
 
 ### Cerebras Models (Free Tier)
-- llama3.1-8b: Fast, lightweight model, 128K context
-- qwen-3-235b-a22b-instruct-2507: Large MoE model, 128K context
+- gpt-oss-120b: Fast, lightweight model, 128K context
+- zai-glm-4.7: Large MoE model, 128K context
 
 ## AgentConfig Options
 

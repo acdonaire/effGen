@@ -1584,6 +1584,8 @@ class CLIInterface:
             self._models_unload(args)
         elif args.model_command == 'status':
             self._models_status(args)
+        elif args.model_command == 'refresh':
+            return self._models_refresh(args) or 0
         else:
             self.print_error(f"Unknown models command: {args.model_command}")
             return 1
@@ -1612,7 +1614,15 @@ class CLIInterface:
                     if isinstance(model_config, dict):
                         table.add_row(
                             name,
-                            model_config.get("model_path", model_config.get("api", "N/A")),
+                            model_config.get(
+                                "model_path",
+                                model_config.get(
+                                    "model_id",
+                                    model_config.get(
+                                        "model_name", model_config.get("api", "N/A")
+                                    ),
+                                ),
+                            ),
                             model_config.get("type", "unknown")
                         )
 
@@ -1742,6 +1752,71 @@ class CLIInterface:
         from effgen.models.capabilities import list_registered_models
         registered = list_registered_models()
         self.print(f"\nCapability profiles registered: {len(registered)}")
+
+    def _models_refresh(self, args):
+        """Refresh the bundled model catalog from each provider's live API.
+
+        Fetches the live model list for the requested provider(s), reports what
+        was added / removed / changed versus the bundled snapshot, and (unless
+        ``--dry-run``) updates the snapshot so later runs see the fresh list
+        offline. Providers without a configured key are skipped with a note.
+        """
+        from effgen.models import _refresh
+
+        requested = getattr(args, "provider", None)
+        dry_run = bool(getattr(args, "dry_run", False))
+
+        if requested:
+            if requested not in _refresh.refreshable_providers():
+                self.print_error(
+                    f"Unknown provider '{requested}'. "
+                    f"Refreshable: {', '.join(_refresh.refreshable_providers())}"
+                )
+                return 1
+            providers = [requested]
+        else:
+            providers = _refresh.refreshable_providers()
+
+        self.print_header("Refresh model catalog" + (" (dry run)" if dry_run else ""))
+        any_done = False
+        had_error = False
+        for provider in providers:
+            if not _refresh.has_credentials(provider) and provider != "hf":
+                if requested:  # explicit request for a keyless provider is an error
+                    self.print_error(f"No API key for '{provider}'.")
+                    had_error = True
+                else:
+                    self.print(f"  {provider}: skipped (no key)")
+                continue
+            try:
+                rep = _refresh.refresh_models(provider, persist=not dry_run)
+            except Exception as e:  # noqa: BLE001 - report per-provider, keep going
+                self.print_error(f"{provider}: refresh failed: {e}")
+                had_error = True
+                continue
+            any_done = True
+            diff = rep["diff"]
+            n_add, n_rem, n_chg = (
+                len(diff["added"]), len(diff["removed"]), len(diff["changed"])
+            )
+            verb = "would update" if dry_run else "updated"
+            self.print_success(
+                f"{provider}: {rep['live_count']} live models "
+                f"(+{n_add} / -{n_rem} / ~{n_chg} changed) — {verb} snapshot"
+            )
+            for mid in diff["added"][:10]:
+                self.print(f"    + {mid}")
+            for mid in diff["removed"][:10]:
+                self.print(f"    - {mid}")
+
+        if had_error:
+            return 1
+        if not any_done:
+            self.print_warning(
+                "No providers refreshed. Set a provider API key, e.g. "
+                "OPENAI_API_KEY / CEREBRAS_API_KEY / GROQ_API_KEY."
+            )
+        return 0
 
     def examples_commands(self, args):
         """
@@ -1955,6 +2030,15 @@ Examples:
     models_unload.add_argument('name', help='Model name')
 
     models_subparsers.add_parser('status', help='Show loaded models and GPU memory status')
+
+    models_refresh = models_subparsers.add_parser(
+        'refresh', help="Refresh the model catalog from each provider's live API")
+    models_refresh.add_argument(
+        '--provider', default=None,
+        help='Only refresh this provider (default: all providers with a key)')
+    models_refresh.add_argument(
+        '--dry-run', action='store_true',
+        help='Show what would change without writing the snapshot')
 
     # Examples commands
     examples_parser = subparsers.add_parser('examples', help='Run example scripts')

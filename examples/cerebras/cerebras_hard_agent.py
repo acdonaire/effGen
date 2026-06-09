@@ -8,7 +8,7 @@ Prerequisites:
 What this demonstrates:
   - Complex multi-step agent tasks requiring tool chains
   - Calculator + DateTimeTool + Python REPL
-  - Both llama3.1-8b and qwen-3-235b-a22b-instruct-2507
+  - Both gpt-oss-120b and zai-glm-4.7
   - Inspecting iteration count and tool call traces
 """
 
@@ -88,7 +88,7 @@ def run_hard_task(model_id: str, task_name: str, task: str) -> None:
 
 
 if __name__ == "__main__":
-    models = ["llama3.1-8b", "qwen-3-235b-a22b-instruct-2507"]
+    models = ["gpt-oss-120b", "zai-glm-4.7"]
 
     for model_id in models:
         for task_spec in HARD_TASKS:

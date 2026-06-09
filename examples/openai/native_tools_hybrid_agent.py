@@ -127,7 +127,7 @@ def demo_incompatibility_guard():
     # Try to mix Cerebras with OpenAI native tools
     try:
         from effgen.models.cerebras_adapter import CerebrasAdapter
-        cerebras = CerebrasAdapter(model_name="llama3.1-8b")
+        cerebras = CerebrasAdapter(model_name="gpt-oss-120b")
 
         Agent(AgentConfig(
             name="bad-hybrid",

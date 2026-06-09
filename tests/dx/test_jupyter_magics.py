@@ -68,7 +68,7 @@ class TestHelpers:
         monkeypatch.delenv("EFFGEN_JUPYTER_MODEL", raising=False)
         from effgen.jupyter import magics
 
-        assert magics._default_model() == "cerebras:llama3.1-8b"
+        assert magics._default_model() == "cerebras:gpt-oss-120b"
 
     def test_server_url_none_when_unset(self, monkeypatch):
         monkeypatch.delenv("EFFGEN_JUPYTER_SERVER_URL", raising=False)

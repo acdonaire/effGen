@@ -17,7 +17,7 @@ Usage (library)
 Usage (CLI)
 -----------
     effgen loadtest --concurrency 10 --duration 30 --scenario fixed
-    effgen loadtest --provider cerebras --model llama3.1-8b --concurrency 5
+    effgen loadtest --provider cerebras --model gpt-oss-120b --concurrency 5
 
 Scenarios
 ---------

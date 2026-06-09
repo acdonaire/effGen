@@ -290,7 +290,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(character_bio_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(character_bio_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -311,7 +311,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(story_continuation_zero_shot, model="llama3.1-8b")
+        result = evaluator.eval_live(story_continuation_zero_shot, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -327,7 +327,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(world_building_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(world_building_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"

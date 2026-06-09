@@ -563,7 +563,13 @@ class OpenAIAdapter(FunctionCallingModel):
             if "401" in msg or "invalid_api_key" in msg.lower() or "incorrect api key" in msg.lower():
                 raise ModelAuthError("openai", self.model_name, msg) from e
             if "404" in msg or "model_not_found" in msg.lower():
-                raise ModelNotFoundError("openai", self.model_name, msg) from e
+                from effgen.models._catalog import suggest_for_missing
+
+                raise ModelNotFoundError(
+                    "openai",
+                    self.model_name,
+                    msg + suggest_for_missing("openai", self.model_name),
+                ) from e
             raise RuntimeError(f"Generation failed: {e}") from e
 
         choice = response.choices[0]

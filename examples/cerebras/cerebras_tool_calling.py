@@ -69,11 +69,11 @@ def run_math_agent(model_id: str, task: str) -> None:
 def main():
     task = "Calculate (17 * 23) + sqrt(144). Use the calculator for each step."
 
-    # llama3.1-8b supports native tools
-    run_math_agent("llama3.1-8b", task)
+    # gpt-oss-120b supports native tools
+    run_math_agent("gpt-oss-120b", task)
 
-    # qwen-3-235b also supports native tools
-    run_math_agent("qwen-3-235b-a22b-instruct-2507", task)
+    # gpt-oss-120b supports native tools
+    run_math_agent("gpt-oss-120b", task)
 
     # Show cost (always $0 for Cerebras free tier)
     print("\n--- Cost Summary ---")

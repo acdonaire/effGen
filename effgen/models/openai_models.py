@@ -253,6 +253,7 @@ OPENAI_MODELS: dict[str, dict] = {
     },
     "gpt-4-turbo-preview": {
         "family": "chat",
+        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
         "context": 128_000,
         "max_output": 4_096,
         "supports_reasoning": False,
@@ -297,6 +298,7 @@ OPENAI_MODELS: dict[str, dict] = {
     },
     "gpt-4-32k": {
         "family": "chat",
+        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
         "context": 32_768,
         "max_output": 4_096,
         "supports_reasoning": False,
@@ -344,6 +346,7 @@ OPENAI_MODELS: dict[str, dict] = {
     },
     "gpt-3.5-turbo-16k-0613": {
         "family": "chat",
+        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
         "context": 16_385,
         "max_output": 4_096,
         "supports_reasoning": False,
@@ -380,6 +383,7 @@ OPENAI_MODELS: dict[str, dict] = {
     },
     "o1-mini": {
         "family": "reasoning",
+        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
         "context": 128_000,
         "max_output": 65_536,
         "supports_reasoning": True,
@@ -391,6 +395,7 @@ OPENAI_MODELS: dict[str, dict] = {
     },
     "o1-preview": {
         "family": "reasoning",
+        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
         "context": 128_000,
         "max_output": 32_768,
         "supports_reasoning": True,

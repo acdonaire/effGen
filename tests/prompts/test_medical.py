@@ -380,7 +380,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(symptom_triage_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(symptom_triage_v1, model="gpt-oss-120b")
         if not result.passed:
             _skip_transient_live_error(result.message)
         assert result.passed, (
@@ -403,7 +403,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(drug_interaction_query_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(drug_interaction_query_v1, model="gpt-oss-120b")
         if not result.passed:
             _skip_transient_live_error(result.message)
         assert result.passed, (
@@ -425,7 +425,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(medical_literature_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(medical_literature_v1, model="gpt-oss-120b")
         if not result.passed:
             _skip_transient_live_error(result.message)
         assert result.passed, (

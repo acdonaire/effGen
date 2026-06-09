@@ -69,9 +69,9 @@ def _is_transient_provider_error(*texts: str | None) -> bool:
 
 PARITY_PARAMS = [
     pytest.param(
-        "cerebras", "llama3.1-8b",
+        "cerebras", "gpt-oss-120b",
         marks=pytest.mark.skipif(not _has("CEREBRAS_API_KEY"), reason="SKIPPED: CEREBRAS_API_KEY not set"),
-        id="cerebras/llama3.1-8b",
+        id="cerebras/gpt-oss-120b",
     ),
     pytest.param(
         "groq", "llama-3.3-70b-versatile",
@@ -207,9 +207,9 @@ def test_canonical_task_parity(provider, model_id):
 
 NATIVE_PARAMS = [
     pytest.param(
-        "cerebras", "llama3.1-8b",
+        "cerebras", "gpt-oss-120b",
         marks=pytest.mark.skipif(not _has("CEREBRAS_API_KEY"), reason="SKIPPED: CEREBRAS_API_KEY not set"),
-        id="cerebras/llama3.1-8b/native",
+        id="cerebras/gpt-oss-120b/native",
     ),
     pytest.param(
         "groq", "llama-3.3-70b-versatile",

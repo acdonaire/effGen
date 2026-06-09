@@ -185,7 +185,7 @@ def test_tool_incompatible_error_with_cerebras_model():
     from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
 
     # Create a Cerebras adapter (no real connection needed just for init check)
-    adapter = CerebrasAdapter(model_name="llama3.1-8b")
+    adapter = CerebrasAdapter(model_name="gpt-oss-120b")
 
     with pytest.raises(ToolIncompatibleError) as exc_info:
         Agent(AgentConfig(
@@ -196,7 +196,7 @@ def test_tool_incompatible_error_with_cerebras_model():
 
     err = exc_info.value
     assert err.tool_name == "openai_web_search"
-    assert "llama3.1-8b" in err.model_name
+    assert "gpt-oss-120b" in err.model_name
 
 
 def test_live_agent_with_web_search_tool():

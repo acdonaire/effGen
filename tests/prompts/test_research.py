@@ -281,7 +281,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(lit_review_zero_shot, model="llama3.1-8b")
+        result = evaluator.eval_live(lit_review_zero_shot, model="gpt-oss-120b")
         assert result.passed, f"Live eval failed: {result.message}\nOutput: {result.model_output[:800]}"
 
     @pytest.mark.skipif(
@@ -294,7 +294,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(paper_summary_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(paper_summary_v1, model="gpt-oss-120b")
         assert result.passed, f"Live eval failed: {result.message}\nOutput: {result.model_output[:500]}"
         # Also assert JSON parseable with required keys
         output = result.model_output.strip()

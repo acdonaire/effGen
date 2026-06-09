@@ -68,7 +68,7 @@ def _inject_sdk_into_adapter(mock_client: MagicMock, api_key: str = "test-key") 
 class TestCerebrasAdapterInit:
     def test_default_model(self):
         adapter = CerebrasAdapter()
-        assert adapter.model_name == "llama3.1-8b"
+        assert adapter.model_name == "gpt-oss-120b"
 
     def test_custom_model(self):
         adapter = CerebrasAdapter(model_name="gpt-oss-120b")
@@ -280,14 +280,9 @@ class TestCerebrasAdapterTokens:
         # Free-tier context for gpt-oss-120b is 65k (paid: 131k)
         assert adapter.get_context_length() == 65_536
 
-    def test_get_context_length_llama(self):
-        adapter = CerebrasAdapter(model_name="llama3.1-8b")
-        assert adapter.get_context_length() == 8_192
-
-    def test_get_max_output_qwen(self):
-        adapter = CerebrasAdapter(model_name="qwen-3-235b-a22b-instruct-2507")
-        # Free-tier max_output for qwen-3-235b is 32k (paid: 40k)
-        assert adapter.get_max_output() == 32_768
+    def test_get_max_output_zai_glm(self):
+        adapter = CerebrasAdapter(model_name="zai-glm-4.7")
+        assert adapter.get_max_output() == 40_960
 
 
 # ---------------------------------------------------------------------------
@@ -310,27 +305,24 @@ class TestCerebrasAdapterUnload:
 # ---------------------------------------------------------------------------
 
 class TestCerebrasModelRegistry:
-    def test_available_models_returns_all_four(self):
+    def test_available_models_returns_live_two(self):
         from effgen.models.cerebras_models import available_models
         models = available_models()
-        assert "gpt-oss-120b" in models
-        assert "llama3.1-8b" in models
-        assert "qwen-3-235b-a22b-instruct-2507" in models
-        assert "zai-glm-4.7" in models
-        assert len(models) == 4
+        # Only the two models the live Cerebras API serves remain.
+        assert set(models) == {"gpt-oss-120b", "zai-glm-4.7"}
 
-    def test_free_tier_models_excludes_gpt_oss(self):
+    def test_free_tier_models_are_the_live_models(self):
         from effgen.models.cerebras_models import free_tier_models
         free = free_tier_models()
-        assert "gpt-oss-120b" not in free
-        assert "llama3.1-8b" in free
+        assert "gpt-oss-120b" in free
+        assert "zai-glm-4.7" in free
 
     def test_model_info_returns_limits(self):
         from effgen.models.cerebras_models import model_info
-        info = model_info("llama3.1-8b")
+        info = model_info("gpt-oss-120b")
         assert info["rpm"] == 30
-        assert info["tpm"] == 60_000
-        assert info["context"] == 8_192
+        assert info["tpm"] == 64_000
+        assert info["context"] == 65_536
 
     def test_model_info_unknown_raises(self):
         from effgen.models.cerebras_models import model_info
@@ -345,18 +337,18 @@ class TestCerebrasModelRegistry:
                 assert info[field] > 0, f"Model {mid!r}: {field} must be positive"
 
     def test_adapter_list_models(self):
-        assert len(CerebrasAdapter.list_models()) == 4
+        assert len(CerebrasAdapter.list_models()) == 2
 
     def test_adapter_get_model_info(self):
-        info = CerebrasAdapter.get_model_info("qwen-3-235b-a22b-instruct-2507")
+        info = CerebrasAdapter.get_model_info("gpt-oss-120b")
         # Free-tier context is 65k, paid-tier is 131k
         assert info["context"] == 65_536
         assert info["context_paid"] == 131_072
 
     def test_adapter_list_free_tier(self):
         free = CerebrasAdapter.list_free_tier_models()
-        assert "llama3.1-8b" in free
-        assert "gpt-oss-120b" not in free
+        assert "gpt-oss-120b" in free
+        assert "zai-glm-4.7" in free
 
 
 # ---------------------------------------------------------------------------
@@ -427,12 +419,8 @@ def _make_mock_response_with_tools(
 
 
 class TestCerebrasNativeTools:
-    def test_supports_tool_calling_llama(self):
-        adapter = CerebrasAdapter(model_name="llama3.1-8b")
-        assert adapter.supports_tool_calling() is True
-
-    def test_supports_tool_calling_qwen(self):
-        adapter = CerebrasAdapter(model_name="qwen-3-235b-a22b-instruct-2507")
+    def test_supports_tool_calling_gpt_oss(self):
+        adapter = CerebrasAdapter(model_name="gpt-oss-120b")
         assert adapter.supports_tool_calling() is True
 
     def test_supports_tool_calling_zai_glm_false(self):
@@ -444,8 +432,8 @@ class TestCerebrasNativeTools:
         mock_client.chat.completions.create.return_value = _make_mock_response_with_tools(
             tool_name="calculator", tool_args={"expression": "17*23"}
         )
-        # Use llama which has supports_native_tools=True
-        adapter = CerebrasAdapter(model_name="llama3.1-8b", enable_rate_limiting=False,
+        # Use gpt-oss-120b which has supports_native_tools=True
+        adapter = CerebrasAdapter(model_name="gpt-oss-120b", enable_rate_limiting=False,
                                   enable_cost_tracking=False)
         adapter._client = mock_client
         adapter._is_loaded = True
@@ -479,15 +467,15 @@ class TestCostTracker:
     def test_cerebras_cost_is_zero(self):
         from effgen.models._cost import CostTracker
         tracker = CostTracker.get()
-        cost = tracker.record("cerebras", "llama3.1-8b", 100, 50)
+        cost = tracker.record("cerebras", "gpt-oss-120b", 100, 50)
         assert cost == 0.0
 
     def test_accumulates_tokens(self):
         from effgen.models._cost import CostTracker
         tracker = CostTracker.get()
-        tracker.record("cerebras", "llama3.1-8b", 50, 20)
-        tracker.record("cerebras", "llama3.1-8b", 30, 10)
-        totals = tracker.total_tokens("cerebras", "llama3.1-8b")
+        tracker.record("cerebras", "gpt-oss-120b", 50, 20)
+        tracker.record("cerebras", "gpt-oss-120b", 30, 10)
+        totals = tracker.total_tokens("cerebras", "gpt-oss-120b")
         assert totals["prompt"] == 80
         assert totals["completion"] == 30
         assert totals["total"] == 110
@@ -495,7 +483,7 @@ class TestCostTracker:
     def test_total_cost_across_providers(self):
         from effgen.models._cost import CostTracker
         tracker = CostTracker.get()
-        tracker.record("cerebras", "llama3.1-8b", 100, 50)
+        tracker.record("cerebras", "gpt-oss-120b", 100, 50)
         tracker.record("openai", "gpt-4o-mini", 1000, 500)
         cerebras_cost = tracker.total_cost("cerebras")
         openai_cost = tracker.total_cost("openai")
@@ -505,12 +493,12 @@ class TestCostTracker:
     def test_summary_returns_rows(self):
         from effgen.models._cost import CostTracker
         tracker = CostTracker.get()
-        tracker.record("cerebras", "qwen-3-235b-a22b-instruct-2507", 100, 40)
+        tracker.record("cerebras", "zai-glm-4.7", 100, 40)
         summary = tracker.summary()
         assert len(summary) == 1
         row = summary[0]
         assert row["provider"] == "cerebras"
-        assert row["model"] == "qwen-3-235b-a22b-instruct-2507"
+        assert row["model"] == "zai-glm-4.7"
         assert row["prompt_tokens"] == 100
         assert row["completion_tokens"] == 40
         assert row["cost_usd"] == 0.0
@@ -529,6 +517,6 @@ class TestCostTracker:
         adapter._is_loaded = True
 
         adapter.generate("test")
-        totals = tracker.total_tokens("cerebras", "llama3.1-8b")
+        totals = tracker.total_tokens("cerebras", "gpt-oss-120b")
         assert totals["prompt"] == 15
         assert totals["completion"] == 8

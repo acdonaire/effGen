@@ -24,7 +24,7 @@ class TestCerebrasStreaming:
         from effgen.models._rate_limit import RateLimitExceeded
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
-        adapter = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False)
+        adapter = CerebrasAdapter("gpt-oss-120b", enable_rate_limiting=False)
         adapter.load()
         try:
             chunks = list(adapter.generate_stream("Say hello briefly."))
@@ -41,7 +41,7 @@ class TestCerebrasStreaming:
         from effgen.models._rate_limit import RateLimitExceeded
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
-        adapter = CerebrasAdapter("qwen-3-235b-a22b-instruct-2507", enable_rate_limiting=False)
+        adapter = CerebrasAdapter("zai-glm-4.7", enable_rate_limiting=False)
         adapter.load()
         last_exc: Exception | None = None
         try:
@@ -66,7 +66,7 @@ class TestCerebrasStreaming:
         """For a longer response, timestamps should span >50ms (not all at once)."""
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
-        adapter = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False)
+        adapter = CerebrasAdapter("gpt-oss-120b", enable_rate_limiting=False)
         adapter.load()
         try:
             chunks = []
@@ -100,7 +100,7 @@ class TestCerebrasStreaming:
         from effgen.models.base import GenerationConfig
         from effgen.models.cerebras_adapter import CerebrasAdapter
 
-        adapter = CerebrasAdapter("llama3.1-8b", enable_rate_limiting=False)
+        adapter = CerebrasAdapter("gpt-oss-120b", enable_rate_limiting=False)
         adapter.load()
         try:
             config = GenerationConfig(max_tokens=20)
@@ -122,7 +122,7 @@ class TestCerebrasStreaming:
 
         CostTracker.reset()
         adapter = CerebrasAdapter(
-            "llama3.1-8b", enable_rate_limiting=False, enable_cost_tracking=True
+            "gpt-oss-120b", enable_rate_limiting=False, enable_cost_tracking=True
         )
         adapter.load()
         try:

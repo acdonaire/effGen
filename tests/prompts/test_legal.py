@@ -301,7 +301,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(contract_summarize_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(contract_summarize_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -320,7 +320,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(clause_classify_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(clause_classify_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -337,7 +337,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(legal_research_brief_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(legal_research_brief_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"

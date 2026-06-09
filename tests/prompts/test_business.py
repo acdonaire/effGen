@@ -346,7 +346,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(meeting_summary_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(meeting_summary_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -366,7 +366,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(elevator_pitch_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(elevator_pitch_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output ({len(result.model_output.split())} words): {result.model_output}"
@@ -386,7 +386,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(swot_analysis_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(swot_analysis_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -401,7 +401,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(okr_generate_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(okr_generate_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"

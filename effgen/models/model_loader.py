@@ -194,21 +194,51 @@ class ModelLoader:
             except Exception:
                 logger.debug("Provider-prefix registry lookup failed", exc_info=True)
 
-        # Disambiguate bare model ids that exist across multiple cloud providers.
-        # Single-provider hits are NOT auto-routed here to preserve the existing
-        # detection path (local HF / Transformers / vLLM) for callers that pass
-        # a HuggingFace model id which happens to also live in one cloud catalog.
-        if provider is None and isinstance(model_name, str):
+        # Route / disambiguate bare cloud model ids by consulting the model
+        # catalog directly (I6, Audit-2 #13).  Without this, a documented
+        # provider id such as ``gpt-oss-120b`` or ``llama-3.3-70b-versatile``
+        # falls through to the local HuggingFace path and fails with a confusing
+        # download error instead of calling the provider.  Bare ids that no cloud
+        # catalog knows (the normal case for local HF repos / paths) are left
+        # untouched so the existing local detection still runs.
+        # A "/" in a bare id means an org/model HuggingFace-style repo (also how
+        # Together/Fireworks/Replicate/HF list their models), so it stays on the
+        # local/HF path; only slash-free cloud slugs (gpt-oss-120b,
+        # llama-3.3-70b-versatile, zai-glm-4.7, …) are candidates for routing.
+        if (
+            provider is None
+            and isinstance(model_name, str)
+            and "/" not in model_name
+            and not os.path.exists(model_name)
+            and not model_name.lower().endswith(".gguf")
+        ):
             try:
+                from effgen.models import _catalog, _refresh
                 from effgen.models.errors import AmbiguousModelError
-                from effgen.models.registry import ProviderRegistry
-                candidates = ProviderRegistry._model_index.get(model_name, [])
+
+                candidates = _catalog.providers_for(model_name)
                 if len(candidates) > 1:
                     raise AmbiguousModelError(model_name, candidates)
+                if len(candidates) == 1:
+                    only = candidates[0]
+                    if _refresh.has_credentials(only):
+                        provider = only
+                        logger.info(
+                            "Routing bare model id %r to provider %r (catalog match)",
+                            model_name, only,
+                        )
+                    else:
+                        envs = _refresh._KEY_ENVS.get(only, ("<API_KEY>",))[0]
+                        logger.warning(
+                            "Model %r is a known %s model but %s is not set — "
+                            "treating it as a local model. To call the provider, "
+                            "pass provider=%r (or use '%s:%s') and set %s.",
+                            model_name, only, envs, only, only, model_name, envs,
+                        )
             except AmbiguousModelError:
                 raise
             except Exception:
-                logger.debug("Bare-id provider disambiguation lookup failed", exc_info=True)
+                logger.debug("Bare-id provider routing lookup failed", exc_info=True)
 
         if provider == "openai":
             model = self._load_openai_model(model_name, engine_config, **kwargs)

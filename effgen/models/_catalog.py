@@ -500,6 +500,28 @@ def lookup(model_id: str, provider: str | None = None) -> ModelRecord | None:
     return None
 
 
+def providers_for(model_id: str) -> list[str]:
+    """Return the providers whose in-package catalog exposes *model_id* exactly.
+
+    Used by the loader to route a bare provider model id (e.g. ``gpt-oss-120b``)
+    to the one cloud provider that serves it, instead of mistaking it for a local
+    HuggingFace repo (I6 / Audit-2 #13).  An optional ``provider:`` prefix is
+    honored.  Returns ``[]`` for ids no cloud catalog knows (the normal case for
+    local HF models), and the matches in :func:`known_providers` order otherwise.
+    """
+    pref_provider, bare = _split_prefix(model_id)
+    if pref_provider:
+        return [pref_provider] if bare in _load_models_dict(pref_provider) else []
+    out: list[str] = []
+    for prov in known_providers():
+        try:
+            if bare in _load_models_dict(prov):
+                out.append(prov)
+        except Exception:  # pragma: no cover - one bad catalog shouldn't break routing
+            logger.debug("providers_for: could not read %s catalog", prov, exc_info=True)
+    return out
+
+
 def nearest_alternatives(
     model_id: str,
     provider: str | None = None,
@@ -542,6 +564,42 @@ def nearest_alternatives(
 
     candidates.sort(key=score)
     return candidates[:n]
+
+
+def suggest_for_missing(
+    provider: str,
+    model_id: str,
+    *,
+    n: int = 3,
+    warn: bool = True,
+) -> str:
+    """Build a one-line, user-facing hint for a model id the provider rejected.
+
+    Generalizes the per-provider "did you mean" helpers (B8 / Audit-2 #63): on a
+    404 / ``model_not_found`` an adapter can append this so the user sees the
+    nearest live alternatives instead of raw provider text.  When *warn* is True
+    it also fires :func:`warn_if_stale` once per process for *provider* (the
+    catalog may simply be out of date).  Returns ``""`` if nothing useful can be
+    suggested.
+    """
+    parts: list[str] = []
+    try:
+        alts = nearest_alternatives(model_id, provider, n=n)
+    except Exception:  # pragma: no cover - unknown provider
+        alts = []
+    if alts:
+        parts.append("Did you mean: " + ", ".join(r.id for r in alts) + "?")
+    try:
+        live = [r.id for r in build_records(provider) if not r.deprecated]
+    except Exception:  # pragma: no cover - unknown provider
+        live = []
+    if live:
+        shown = live[:6]
+        more = "" if len(live) <= 6 else f" (+{len(live) - 6} more)"
+        parts.append(f"Available {provider} models: {', '.join(shown)}{more}.")
+    if warn:
+        warn_if_stale(provider)
+    return (" " + " ".join(parts)) if parts else ""
 
 
 def _guess_family(model_id: str) -> str:
@@ -643,7 +701,9 @@ __all__ = [
     "check_drift_against_snapshot",
     "list_models",
     "lookup",
+    "providers_for",
     "nearest_alternatives",
+    "suggest_for_missing",
     "stale_providers",
     "warn_if_stale",
     "reset_stale_warnings",

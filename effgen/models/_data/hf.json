@@ -1,7 +1,7 @@
 {
   "provider": "hf",
   "verified_on": "2026-06-08",
-  "source": "bundled-catalog",
+  "source": "live-verified",
   "count": 124,
   "models": [
     {

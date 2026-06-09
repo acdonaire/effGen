@@ -107,8 +107,8 @@ class TestBuildConfigGrounding:
 
     def test_grounding_true_unsupported_model_no_tool(self):
         with patch("google.genai.Client"):
-            # gemma-3-2b and gemini-3.1-flash-lite-preview do NOT support grounding
-            adapter = self._make_adapter("gemma-3-2b")
+            # gemma-4-26b-a4b-it and gemini-3.1-flash-lite-preview do NOT support grounding
+            adapter = self._make_adapter("gemma-4-26b-a4b-it")
         cfg = GenerationConfig(grounding=True)
         with patch("google.genai.types") as mock_types:
             mock_types.GenerateContentConfig = MagicMock(return_value=MagicMock())

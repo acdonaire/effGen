@@ -33,7 +33,7 @@ from effgen.models.cerebras_models import model_info  # noqa: E402
 # 1. Show rate limits for each model
 # -----------------------------------------------------------
 print("=== Rate limits per model (free tier) ===\n")
-for model_id in ["llama3.1-8b", "qwen-3-235b-a22b-instruct-2507", "zai-glm-4.7", "gpt-oss-120b"]:
+for model_id in ["gpt-oss-120b", "zai-glm-4.7", "zai-glm-4.7", "gpt-oss-120b"]:
     info = model_info(model_id)
     print(
         f"  {model_id:<45}  "
@@ -46,7 +46,7 @@ for model_id in ["llama3.1-8b", "qwen-3-235b-a22b-instruct-2507", "zai-glm-4.7",
 # -----------------------------------------------------------
 print("\n=== Rate-limit coordinator in action ===\n")
 
-MODEL = "llama3.1-8b"
+MODEL = "gpt-oss-120b"
 adapter = CerebrasAdapter(model_name=MODEL)  # rate limiting enabled by default
 adapter.load()
 

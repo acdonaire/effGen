@@ -83,8 +83,8 @@ def test_build_config_thinking_budget_positive():
 def test_build_config_thinking_dropped_for_unsupported_model(caplog):
     pytest.importorskip("google.genai")
     import logging
-    # gemma-3-27b does not support thinking
-    adapter = _make_adapter("gemma-3-27b")
+    # gemma-4-31b-it does not support thinking
+    adapter = _make_adapter("gemma-4-31b-it")
     cfg = GenerationConfig(thinking_budget=4096)
     with caplog.at_level(logging.DEBUG, logger="effgen.models.gemini_adapter"):
         result = adapter._build_config(cfg)

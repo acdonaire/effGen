@@ -460,7 +460,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(sql_from_nl_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(sql_from_nl_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -482,7 +482,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(sql_explain_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(sql_explain_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -502,7 +502,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(sql_optimize_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(sql_optimize_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"
@@ -518,7 +518,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(etl_plan_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(etl_plan_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:600]}"

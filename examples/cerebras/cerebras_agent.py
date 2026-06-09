@@ -28,7 +28,7 @@ from effgen.tools.builtin import Calculator, DateTimeTool  # noqa: E402
 # -----------------------------------------------------------
 # Build the model and agent
 # -----------------------------------------------------------
-adapter = CerebrasAdapter(model_name="llama3.1-8b")
+adapter = CerebrasAdapter(model_name="gpt-oss-120b")
 adapter.load()
 
 config = AgentConfig(

@@ -10,7 +10,7 @@ Examples
     effgen loadtest --duration 30 --concurrency 10
 
     # Live run against Cerebras
-    effgen loadtest --provider cerebras --model llama3.1-8b \\
+    effgen loadtest --provider cerebras --model gpt-oss-120b \\
         --concurrency 5 --duration 60
 
     # Synthetic scenario, also save the report to a file
@@ -85,7 +85,7 @@ def add_loadtest_subparser(subparsers: argparse._SubParsersAction) -> None:
         "--model",
         default=None,
         metavar="MODEL_ID",
-        help="Model id for live runs (e.g. llama3.1-8b). Default: mock",
+        help="Model id for live runs (e.g. gpt-oss-120b). Default: mock",
     )
     p.add_argument(
         "--output", "-o",

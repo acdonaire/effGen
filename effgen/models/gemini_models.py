@@ -224,95 +224,13 @@ GEMINI_MODELS: dict[str, dict] = {
         "pricing_per_1m_output": 0.30,
     },
 
-    # ---- Gemma 3 family (open weights, free-tier hosted) ----
-    "gemma-3-2b": {
-        "family": "gemma",
-        "context": 32_768,
-        "max_output": 8_192,
-        "rpm": 30,
-        "tpm": 15_000,
-        "rpd": 14_400,
-        "free_tier": True,
-        "supports_thinking": False,
-        "supports_grounding": False,
-        "supports_native_tools": False,
-        "supports_vision": False,
-        "tier": "free",
-        "notes": "Gemma 3 2B. Generous free-tier RPD.",
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-    },
-    "gemma-3-1b": {
-        "family": "gemma",
-        "context": 32_768,
-        "max_output": 8_192,
-        "rpm": 30,
-        "tpm": 15_000,
-        "rpd": 14_400,
-        "free_tier": True,
-        "supports_thinking": False,
-        "supports_grounding": False,
-        "supports_native_tools": False,
-        "supports_vision": False,
-        "tier": "free",
-        "notes": "Smallest Gemma 3 (1B). Generous free-tier RPD.",
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-    },
-    "gemma-3-4b": {
-        "family": "gemma",
-        "context": 32_768,
-        "max_output": 8_192,
-        "rpm": 30,
-        "tpm": 15_000,
-        "rpd": 14_400,
-        "free_tier": True,
-        "supports_thinking": False,
-        "supports_grounding": False,
-        "supports_native_tools": False,
-        "supports_vision": False,
-        "tier": "free",
-        "notes": "Mid Gemma 3 (4B). Generous free-tier RPD.",
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-    },
-    "gemma-3-12b": {
-        "family": "gemma",
-        "context": 32_768,
-        "max_output": 8_192,
-        "rpm": 30,
-        "tpm": 15_000,
-        "rpd": 14_400,
-        "free_tier": True,
-        "supports_thinking": False,
-        "supports_grounding": False,
-        "supports_native_tools": False,
-        "supports_vision": False,
-        "tier": "free",
-        "notes": "Gemma 3 12B. Generous free-tier RPD.",
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-    },
-    "gemma-3-27b": {
-        "family": "gemma",
-        "context": 32_768,
-        "max_output": 8_192,
-        "rpm": 30,
-        "tpm": 15_000,
-        "rpd": 14_400,
-        "free_tier": True,
-        "supports_thinking": False,
-        "supports_grounding": False,
-        "supports_native_tools": False,
-        "supports_vision": False,
-        "tier": "free",
-        "notes": "Largest stable Gemma 3 (27B). Generous free-tier RPD.",
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-    },
-
-    # ---- Gemma 4 family (preview / paid burst limits) ----
-    "gemma-4-26b": {
+    # ---- Gemma family (open weights, free-tier hosted) ----
+    # Only the ids the live Gemini API serves today are listed (verified against
+    # client.models.list() + a live generate on 2026-06-08).  Earlier hand-listed
+    # Gemma 3 ids (gemma-3-1b/4b/12b/27b, and the never-real gemma-3-2b) and the
+    # un-suffixed gemma-4-26b / gemma-4-31b now return 404 model_not_found and
+    # have been dropped; the un-suffixed names resolve via GEMINI_MODEL_ALIASES.
+    "gemma-4-26b-a4b-it": {
         "family": "gemma",
         "context": 65_536,
         "max_output": 8_192,
@@ -325,11 +243,11 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_native_tools": False,
         "supports_vision": False,
         "tier": "free",
-        "notes": "Gemma 4 26B preview. TPM unlimited; lower RPD.",
+        "notes": "Gemma 4 26B (A4B) instruction-tuned. TPM unlimited; lower RPD.",
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
     },
-    "gemma-4-31b": {
+    "gemma-4-31b-it": {
         "family": "gemma",
         "context": 65_536,
         "max_output": 8_192,
@@ -342,7 +260,7 @@ GEMINI_MODELS: dict[str, dict] = {
         "supports_native_tools": False,
         "supports_vision": False,
         "tier": "free",
-        "notes": "Gemma 4 31B preview. TPM unlimited; lower RPD.",
+        "notes": "Gemma 4 31B instruction-tuned. TPM unlimited; lower RPD.",
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
     },
@@ -359,6 +277,10 @@ GEMINI_MODEL_ALIASES: dict[str, str] = {
     "gemini-3-pro": "gemini-3-pro-preview",
     "gemini-3.1-pro": "gemini-3.1-pro-preview",
     "gemini-flash-lite-latest": "gemini-3.1-flash-lite",
+    # The live Gemma-4 ids carry an instruction-tuned suffix; accept the short
+    # forms users naturally type and resolve them to the canonical live ids.
+    "gemma-4-26b": "gemma-4-26b-a4b-it",
+    "gemma-4-31b": "gemma-4-31b-it",
 }
 
 # Default model for free-tier live testing (cheap + tool-calling).

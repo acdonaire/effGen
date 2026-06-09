@@ -387,7 +387,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(test_generate_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(test_generate_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:800]}"
@@ -403,7 +403,7 @@ class TestLiveEval:
         from effgen.prompts.library.eval import PromptEval
 
         evaluator = PromptEval()
-        result = evaluator.eval_live(code_review_v1, model="llama3.1-8b")
+        result = evaluator.eval_live(code_review_v1, model="gpt-oss-120b")
         assert result.passed, (
             f"Live eval failed: {result.message}\n"
             f"Output: {result.model_output[:500]}"
