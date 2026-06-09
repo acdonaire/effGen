@@ -69,6 +69,9 @@ class ChatCompletionRequest(BaseModel):  # type: ignore[misc]
     response_format: dict[str, Any] | None = None
     seed: int | None = None
     stop: str | list[str] | None = None
+    # OpenAI streaming option: {"include_usage": true} requests a final
+    # usage-only chunk (choices: []) after the content chunks.
+    stream_options: dict[str, Any] | None = None
 
 
 class CompletionRequest(BaseModel):  # type: ignore[misc]
@@ -209,6 +212,34 @@ def build_chat_chunk(
     }
 
 
+def build_usage_chunk(
+    model: str,
+    *,
+    chat_id: str | None = None,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> dict[str, Any]:
+    """Build a final usage-only streaming chunk (OpenAI ``include_usage`` form).
+
+    Per the OpenAI streaming spec, when ``stream_options.include_usage`` is set
+    the server emits one extra chunk after the content chunks whose ``choices``
+    is empty and which carries the ``usage`` totals so clients can reconcile
+    billing for streamed requests (Audit-2 #47).
+    """
+    return {
+        "id": chat_id or _chat_id(),
+        "object": "chat.completion.chunk",
+        "created": _now(),
+        "model": model,
+        "choices": [],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
+
+
 def build_text_completion(
     model: str,
     text: str,
@@ -327,25 +358,45 @@ def create_openai_router(runner: Runner) -> Any:
 
         if request.stream:
             chat_id = _chat_id()
+            include_usage = bool(
+                (request.stream_options or {}).get("include_usage")
+            )
 
             def sse_iter():
                 first = build_chat_chunk(
                     model, "", chat_id=chat_id, role="assistant"
                 )
                 yield f"data: {json.dumps(first)}\n\n"
+                completion_text_parts: list[str] = []
                 try:
                     for chunk in result:
+                        text = str(chunk)
+                        completion_text_parts.append(text)
                         payload = build_chat_chunk(
-                            model, str(chunk), chat_id=chat_id
+                            model, text, chat_id=chat_id
                         )
                         yield f"data: {json.dumps(payload)}\n\n"
                 except TypeError:
-                    payload = build_chat_chunk(model, str(result), chat_id=chat_id)
+                    text = str(result)
+                    completion_text_parts.append(text)
+                    payload = build_chat_chunk(model, text, chat_id=chat_id)
                     yield f"data: {json.dumps(payload)}\n\n"
                 final = build_chat_chunk(
                     model, "", chat_id=chat_id, finish_reason="stop"
                 )
                 yield f"data: {json.dumps(final)}\n\n"
+                # Emit a final usage-only chunk when the client opts in via
+                # stream_options.include_usage so streamed requests can be
+                # reconciled for billing (Audit-2 #47).
+                if include_usage:
+                    completion_tokens = count_tokens("".join(completion_text_parts))
+                    usage_chunk = build_usage_chunk(
+                        model,
+                        chat_id=chat_id,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
+                    yield f"data: {json.dumps(usage_chunk)}\n\n"
                 yield "data: [DONE]\n\n"
 
             return StreamingResponse(sse_iter(), media_type="text/event-stream")

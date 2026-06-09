@@ -3762,6 +3762,60 @@ Provide a well-structured, comprehensive response that integrates all findings."
         except Exception:
             pass
 
+    def _stream_direct(self, task: str, on_answer: Callable[[str], None] | None = None,
+                       **kwargs) -> Iterator[str]:
+        """Stream a model answer directly, without the ReAct scaffold.
+
+        Used by ``stream()`` when the agent has no tools. The prompt mirrors
+        ``_run_direct_inference`` so streamed and non-streamed answers match.
+        Tokens are yielded as they arrive (true incrementality); the assembled
+        answer is sanitized before it is stored in memory and handed to
+        ``on_answer`` (Phase-2 hygiene). A mid-stream provider error is raised
+        (typed + redacted) rather than yielded as a chunk, so a consumer can
+        tell success from failure (C3).
+        """
+        conversation_history = self._format_conversation_history()
+        if conversation_history:
+            prompt = (
+                f"{conversation_history}\n\n"
+                f"Based on the conversation above, answer this question directly "
+                f"and concisely:\n\n{task}\n\nAnswer:"
+            )
+        else:
+            prompt = f"Answer this question directly and concisely:\n\n{task}\n\nAnswer:"
+
+        # No ReAct stop sequences here: there is no scaffold to trim, and the
+        # GPT-5/reasoning families reject `stop`. reasoning_effort is threaded
+        # through so callers can request "minimal" for trivial prompts.
+        gen_config = GenerationConfig(
+            temperature=kwargs.get("temperature", self.config.temperature),
+            max_tokens=kwargs.get("max_tokens", 1024),
+            top_p=kwargs.get("top_p", 0.9),
+            stop_sequences=kwargs.get("stop_sequences"),
+            reasoning_effort=kwargs.get("reasoning_effort"),
+        )
+
+        accumulated = ""
+        stream_iter = self.model.generate_stream(prompt, config=gen_config)
+        try:
+            for token in stream_iter:
+                accumulated += token
+                yield token
+        except Exception:
+            logger.debug("Streaming generation failed", exc_info=True)
+            raise
+        finally:
+            close_stream = getattr(stream_iter, "close", None)
+            if close_stream is not None:
+                close_stream()
+
+        answer = sanitize_final_answer(accumulated) or accumulated.strip()
+        if answer:
+            self.short_term_memory.add_user_message(task)
+            self.short_term_memory.add_assistant_message(answer)
+        if on_answer:
+            on_answer(answer)
+
     def stream(self,
                task: "str | Message | list[Any]",
                mode: AgentMode = AgentMode.AUTO,
@@ -3814,6 +3868,17 @@ Provide a well-structured, comprehensive response that integrates all findings."
             )
 
         context = context or {}
+
+        # Fast path: with no tools there is nothing for the ReAct loop to do, so
+        # stream the model's answer directly. The ReAct scaffold otherwise forces
+        # the model to emit Thought/Action/Final Answer bookkeeping that wastes
+        # latency (acute on reasoning models) and leaks into the streamed output —
+        # and small models that write "Action: Final Answer" instead of
+        # "Final Answer:" loop to max-iterations and never surface an answer.
+        if not self.tools:
+            yield from self._stream_direct(task, on_answer=on_answer, **kwargs)
+            return
+
         max_iterations = self.config.max_iterations
         scratchpad = ""
         iterations = 0
@@ -3893,10 +3958,13 @@ Provide a well-structured, comprehensive response that integrates all findings."
 
                     yield token
 
-            except Exception as e:
-                logger.error(f"Streaming generation failed: {e}")
-                yield f"\n[Error: {e}]"
-                return
+            except Exception:
+                # Fail honestly: raise the typed (already-redacted) provider error
+                # at the iterator boundary so a consumer iterating stream() can tell
+                # success from failure, instead of receiving the error text as a
+                # normal chunk that looks like model output (C3).
+                logger.debug("Streaming generation failed", exc_info=True)
+                raise
             finally:
                 close_stream = getattr(stream_iter, "close", None)
                 if close_stream is not None:

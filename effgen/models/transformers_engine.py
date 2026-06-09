@@ -403,6 +403,46 @@ class TransformersEngine(BatchModel):
         # at the first token match, not the full sequence match
         return hf_config, config.stop_sequences if config.stop_sequences else []
 
+    def _apply_chat_template(self, prompt: str, tools_for_template: Any = None) -> str:
+        """Wrap *prompt* with the tokenizer's chat template when one exists.
+
+        Instruct/chat models (Qwen, Llama-3, …) expect their role-tagged format;
+        feeding the raw text makes them ramble and skip the stop token. Both the
+        batched ``generate`` and ``generate_stream`` paths use this so streamed
+        and non-streamed answers are formatted identically.
+        """
+        if not (hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template):
+            return prompt
+        messages = [{"role": "user", "content": prompt}]
+        try:
+            template_kwargs: dict[str, Any] = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+            }
+            if tools_for_template:
+                template_kwargs["tools"] = tools_for_template
+                logger.debug(
+                    f"Passing {len(tools_for_template)} tool definitions "
+                    "to chat template for native function calling"
+                )
+            formatted = self.tokenizer.apply_chat_template(messages, **template_kwargs)
+            logger.debug("Applied chat template to prompt")
+            return formatted
+        except TypeError as e:
+            if tools_for_template:
+                logger.debug(
+                    f"Chat template does not accept tools param: {e}, "
+                    "falling back to plain template"
+                )
+                return self.tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True,
+                )
+            logger.warning(f"Failed to apply chat template: {e}")
+            return prompt
+        except Exception as e:
+            logger.warning(f"Failed to apply chat template, using raw prompt: {e}")
+            return prompt
+
     def generate(
         self,
         prompt: str,
@@ -470,47 +510,7 @@ class TransformersEngine(BatchModel):
 
             # Apply chat template if available for better model compatibility
             # Many modern models like Qwen expect a specific format
-            formatted_prompt = prompt
-            if hasattr(self.tokenizer, 'apply_chat_template') and self.tokenizer.chat_template:
-                try:
-                    # Wrap prompt as a user message for chat models
-                    messages = [
-                        {"role": "user", "content": prompt}
-                    ]
-                    template_kwargs: dict[str, Any] = {
-                        "tokenize": False,
-                        "add_generation_prompt": True,
-                    }
-                    # Pass tool definitions for native function calling
-                    if tools_for_template:
-                        template_kwargs["tools"] = tools_for_template
-                        logger.debug(
-                            f"Passing {len(tools_for_template)} tool definitions "
-                            "to chat template for native function calling"
-                        )
-                    formatted_prompt = self.tokenizer.apply_chat_template(
-                        messages,
-                        **template_kwargs,
-                    )
-                    logger.debug("Applied chat template to prompt")
-                except TypeError as e:
-                    # Template may not support tools param — fall back without tools
-                    if tools_for_template:
-                        logger.debug(
-                            f"Chat template does not accept tools param: {e}, "
-                            "falling back to plain template"
-                        )
-                        formatted_prompt = self.tokenizer.apply_chat_template(
-                            messages,
-                            tokenize=False,
-                            add_generation_prompt=True,
-                        )
-                    else:
-                        logger.warning(f"Failed to apply chat template: {e}")
-                        formatted_prompt = prompt
-                except Exception as e:
-                    logger.warning(f"Failed to apply chat template, using raw prompt: {e}")
-                    formatted_prompt = prompt
+            formatted_prompt = self._apply_chat_template(prompt, tools_for_template)
 
             # Tokenize input
             inputs = self.tokenizer(
@@ -622,9 +622,16 @@ class TransformersEngine(BatchModel):
         generation_config, stop_sequences = self._create_generation_config(config)
 
         try:
+            # Apply the chat template (same as generate()) so instruct/chat
+            # models receive their expected role-tagged format. Without this,
+            # streaming fed the raw prompt and the model rambled / never emitted
+            # its stop token.
+            tools_for_template = kwargs.pop("tools", None)
+            formatted_prompt = self._apply_chat_template(prompt, tools_for_template)
+
             # Tokenize input
             inputs = self.tokenizer(
-                prompt,
+                formatted_prompt,
                 return_tensors="pt",
                 truncation=True,
                 max_length=self._context_length
