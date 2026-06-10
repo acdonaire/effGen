@@ -20,6 +20,7 @@ import logging
 import socket
 import ssl
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -61,27 +62,53 @@ class HealthChecker:
     PYPI_URL = "https://pypi.org/pypi/effgen/json"
     TIMEOUT = 10
 
-    def __init__(self, urls: list[str] | None = None, timeout: int = 10):
+    def __init__(self, urls: list[str] | None = None, timeout: int = 8):
         self.urls = urls or self.DEFAULT_URLS
         self.timeout = timeout
 
     def check_all(self) -> list[HealthCheckResult]:
-        """Run all health checks and return results."""
-        results = []
+        """Run all health checks concurrently and return results.
 
-        # Website checks
-        for url in self.urls:
-            results.append(self.check_website(url))
+        The checks are independent network probes, so they run in parallel with
+        a bounded wall-clock budget. Run sequentially they would sum every
+        per-check timeout (several unreachable targets could take a minute);
+        in parallel the command stays responsive — wall time is roughly a
+        single check's timeout regardless of how many targets are down.
+        """
+        from concurrent.futures import ThreadPoolExecutor, wait
 
-        # DNS check
-        results.append(self.check_dns("effgen.org"))
+        # (name, thunk) pairs; output order matches this list.
+        checks: list[tuple[str, Callable[[], HealthCheckResult]]] = [
+            (f"HTTP {url}", (lambda u=url: self.check_website(u))) for url in self.urls
+        ]
+        checks += [
+            ("DNS effgen.org", lambda: self.check_dns("effgen.org")),
+            ("SSL effgen.org", lambda: self.check_ssl("effgen.org")),
+            ("PyPI effgen", lambda: self.check_pypi()),
+        ]
 
-        # SSL check
-        results.append(self.check_ssl("effgen.org"))
+        # A little headroom over a single check's timeout so a slow-but-bounded
+        # probe still reports, while a wedged one can't stall the whole command.
+        budget = self.timeout + 5
+        pool = ThreadPoolExecutor(max_workers=max(1, len(checks)))
+        futures = [pool.submit(thunk) for _, thunk in checks]
+        wait(futures, timeout=budget)
 
-        # PyPI check
-        results.append(self.check_pypi())
-
+        results: list[HealthCheckResult] = []
+        for (name, _), fut in zip(checks, futures):
+            if fut.done():
+                try:
+                    results.append(fut.result())
+                except Exception as exc:  # noqa: BLE001 - report, don't crash
+                    results.append(HealthCheckResult(name=name, passed=False, message=str(exc)))
+            else:
+                fut.cancel()
+                results.append(HealthCheckResult(
+                    name=name, passed=False, message=f"Timed out after {budget}s",
+                ))
+        # Don't block the CLI waiting on any still-running probe; per-check
+        # timeouts mean stragglers finish on their own shortly after.
+        pool.shutdown(wait=False, cancel_futures=True)
         return results
 
     def check_website(self, url: str) -> HealthCheckResult:
