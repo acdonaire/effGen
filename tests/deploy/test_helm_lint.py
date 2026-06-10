@@ -158,8 +158,10 @@ class TestValuesYaml:
         assert "memory" in res["requests"]
 
     def test_health_probes_present(self) -> None:
-        assert self.values["livenessProbe"]["httpGet"]["path"] == "/health"
-        assert self.values["readinessProbe"]["httpGet"]["path"] == "/health"
+        # Liveness uses /livez, readiness uses /readyz — the conventional K8s
+        # probe paths, all served (and auth-exempt) by the API.
+        assert self.values["livenessProbe"]["httpGet"]["path"] == "/livez"
+        assert self.values["readinessProbe"]["httpGet"]["path"] == "/readyz"
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +251,8 @@ class TestHelmTemplate:
         container = dep["spec"]["template"]["spec"]["containers"][0]
         assert "livenessProbe" in container
         assert "readinessProbe" in container
-        assert container["livenessProbe"]["httpGet"]["path"] == "/health"
+        assert container["livenessProbe"]["httpGet"]["path"] == "/livez"
+        assert container["readinessProbe"]["httpGet"]["path"] == "/readyz"
 
     def test_deployment_non_root_security(self, rendered: list[dict]) -> None:
         dep = next(d for d in rendered if d.get("kind") == "Deployment")

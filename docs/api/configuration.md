@@ -64,7 +64,7 @@ config = ConfigLoader().load_config("config.yaml")
 |----------|-------------|
 | `EFFGEN_PLUGINS_DIR` | Custom plugin directory path |
 | `EFFGEN_API_KEY` | API server authentication key |
-| `EFFGEN_RATE_LIMIT` | API rate limit (requests/min, default 60) |
+| `EFFGEN_RATE_LIMIT` | Per-client API rate limit in requests/min (unset or `0` = disabled) |
 | `CUDA_VISIBLE_DEVICES` | GPU selection for model loading |
 | `OPENAI_API_KEY` | OpenAI API key (for OpenAI backend) |
 | `ANTHROPIC_API_KEY` | Anthropic API key (for Claude backend) |

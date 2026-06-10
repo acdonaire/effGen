@@ -21,7 +21,7 @@ For an id effGen already curates we carry the hand-verified fields (pricing,
 context window, capabilities) and only stamp ``verified_on`` with today's date —
 the live API confirmed the id exists.  For a genuinely new id we keep whatever
 the live endpoint returned and mark ``price_source = "live-api"`` with pricing
-left ``None`` rather than fabricating a number (Phase 9 owns pricing accuracy).
+left ``None`` rather than fabricating a number (cost data is curated separately).
 """
 
 from __future__ import annotations

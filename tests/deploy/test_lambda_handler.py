@@ -169,9 +169,23 @@ def _load_handler():
 
 @pytest.fixture(scope="module")
 def handler_module():
-    """Return the imported handler module (dev mode, module-scoped)."""
+    """Return the imported handler module (dev mode, module-scoped).
+
+    ``EFFGEN_DEV_MODE`` only matters at handler-import time (the module builds
+    the app once at load). We set it for the import and then restore the prior
+    value so it does not leak into other test modules (a stray ``=1`` flips
+    RBAC out of strict mode for the rest of the session).
+    """
+    _prev = os.environ.get("EFFGEN_DEV_MODE")
     os.environ["EFFGEN_DEV_MODE"] = "1"
-    return _load_handler()
+    try:
+        module = _load_handler()
+    finally:
+        if _prev is None:
+            os.environ.pop("EFFGEN_DEV_MODE", None)
+        else:
+            os.environ["EFFGEN_DEV_MODE"] = _prev
+    return module
 
 
 @pytest.fixture(scope="module")

@@ -13,12 +13,34 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
+import time
 import uuid
 from collections.abc import Iterable
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_rate_limit(rate_limit_per_minute: int | None) -> int:
+    """Resolve the requests-per-minute limit (param overrides EFFGEN_RATE_LIMIT).
+
+    Returns ``0`` (disabled) when neither source provides a positive integer.
+    """
+    if rate_limit_per_minute is None:
+        raw = (os.getenv("EFFGEN_RATE_LIMIT", "") or "").strip()
+        if not raw:
+            return 0
+        try:
+            rate_limit_per_minute = int(raw)
+        except ValueError:
+            logger.warning(
+                "EFFGEN_RATE_LIMIT=%r is not an integer — request rate limiting disabled",
+                raw,
+            )
+            return 0
+    return max(0, int(rate_limit_per_minute))
 
 
 def install_production_middleware(
@@ -31,6 +53,7 @@ def install_production_middleware(
     gzip_min_size: int = 500,
     enable_request_id: bool = True,
     shutdown_timeout: float = 10.0,
+    rate_limit_per_minute: int | None = None,
 ) -> None:
     """Install production-grade middleware on a FastAPI ``app``.
 
@@ -92,7 +115,16 @@ def install_production_middleware(
     if enable_request_id:
         app.add_middleware(RequestIDMiddleware)  # type: ignore[arg-type]
 
-    # 4. Graceful shutdown
+    # 4. Per-client request rate limiting (opt-in via EFFGEN_RATE_LIMIT).
+    # Added last so it wraps as the outermost layer: a request flood is rejected
+    # cheaply (per-IP, before auth/route work). Disabled unless a positive limit
+    # is configured.
+    limit = _resolve_rate_limit(rate_limit_per_minute)
+    if limit > 0:
+        app.add_middleware(RateLimitMiddleware, requests_per_minute=limit)  # type: ignore[arg-type]
+        logger.info("Request rate limiting enabled: %d req/min per client", limit)
+
+    # 5. Graceful shutdown
     _install_graceful_shutdown(app, shutdown_timeout)
 
 
@@ -134,6 +166,93 @@ class RequestIDMiddleware:
         except Exception:
             logger.exception("request %s failed", req_id)
             raise
+
+
+# Health/liveness/readiness probes are exempt from rate limiting so that a
+# frequently-polling load balancer or K8s probe can never throttle real traffic.
+_RATE_LIMIT_EXEMPT_PATHS: frozenset[str] = frozenset(
+    {"/health", "/healthz", "/livez", "/readyz", "/ready"}
+)
+
+
+class RateLimitMiddleware:
+    """Pure-ASGI fixed-window per-client request limiter.
+
+    Honours the ``EFFGEN_RATE_LIMIT`` knob (requests/minute). Keyed by client IP
+    so a flood is rejected before auth/route work, mirroring the per-IP limit the
+    Cloudflare worker enforces at the edge. The window is per-process (each
+    uvicorn worker keeps its own counters); behind multiple workers the effective
+    limit is ``requests_per_minute × workers``. Probe paths are exempt and
+    ``OPTIONS`` preflight requests are never counted. On breach it returns a
+    redacted ``429`` with a ``Retry-After`` header — no buffering, so SSE
+    responses on the allowed path stay incremental.
+    """
+
+    def __init__(self, app: Any, *, requests_per_minute: int, window_seconds: int = 60) -> None:
+        self.app = app
+        self.limit = max(1, int(requests_per_minute))
+        self.window = max(1, int(window_seconds))
+        # client-ip -> [window_start_epoch, count]
+        self._buckets: dict[str, list[float]] = {}
+
+    def _client_ip(self, scope: dict) -> str:
+        # Honour a single X-Forwarded-For hop when present (reverse-proxy case),
+        # else fall back to the socket peer. Never trust beyond the first hop.
+        for k, v in scope.get("headers", []):
+            if k == b"x-forwarded-for":
+                first = v.decode("latin-1", errors="replace").split(",")[0].strip()
+                if first:
+                    return first
+        client = scope.get("client")
+        return client[0] if client else "unknown"
+
+    def _check(self, ip: str) -> tuple[bool, int]:
+        """Return (allowed, retry_after_seconds)."""
+        now = time.monotonic()
+        bucket = self._buckets.get(ip)
+        if bucket is None or now - bucket[0] >= self.window:
+            self._buckets[ip] = [now, 1]
+            # Opportunistically prune stale buckets to bound memory.
+            if len(self._buckets) > 4096:
+                cutoff = now - self.window
+                self._buckets = {
+                    k: b for k, b in self._buckets.items() if b[0] >= cutoff
+                }
+            return True, 0
+        if bucket[1] < self.limit:
+            bucket[1] += 1
+            return True, 0
+        return False, max(1, int(self.window - (now - bucket[0])))
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or scope.get("method") == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if path in _RATE_LIMIT_EXEMPT_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        allowed, retry_after = self._check(self._client_ip(scope))
+        if allowed:
+            await self.app(scope, receive, send)
+            return
+
+        import json as _json
+
+        body = _json.dumps(
+            {"detail": "Rate limit exceeded. Please retry later."}
+        ).encode()
+        await send({
+            "type": "http.response.start",
+            "status": 429,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+                (b"retry-after", str(retry_after).encode()),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
 
 
 def _install_graceful_shutdown(app: Any, timeout: float) -> None:

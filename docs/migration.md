@@ -168,5 +168,5 @@ effgen --completion bash                    # Print completion script
 ### API Server Changes
 - New endpoints: `WS /ws`, `GET /metrics`
 - Auth: Set `EFFGEN_API_KEY` environment variable
-- Rate limiting: Set `EFFGEN_RATE_LIMIT` (default: 60 req/min)
+- Rate limiting: Set `EFFGEN_RATE_LIMIT` to a requests/min cap per client (unset or `0` = disabled)
 - `POST /run` now accepts `preset` field

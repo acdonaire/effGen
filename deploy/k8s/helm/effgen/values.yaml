@@ -184,7 +184,7 @@ persistence:
 # --------------------------------------------------------------------------
 livenessProbe:
   httpGet:
-    path: /health
+    path: /livez
     port: 8080
   initialDelaySeconds: 15
   periodSeconds: 30
@@ -193,7 +193,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /health
+    path: /readyz
     port: 8080
   initialDelaySeconds: 10
   periodSeconds: 10

@@ -97,6 +97,7 @@ def create_app(
     public_metrics: bool | None = None,
     public_dashboard: bool | None = None,
     cors_origins: list[str] | None = None,
+    rate_limit_per_minute: int | None = None,
     runner: Any = None,
 ) -> Any:
     """Create and return the FastAPI application.
@@ -180,7 +181,12 @@ def create_app(
     try:
         from effgen.api.middleware import install_production_middleware
 
-        install_production_middleware(app, cors_origins=cors_origins, dev_mode=_dev)
+        install_production_middleware(
+            app,
+            cors_origins=cors_origins,
+            dev_mode=_dev,
+            rate_limit_per_minute=rate_limit_per_minute,
+        )
     except ImportError:
         logger.warning("Production middleware not available")
 
@@ -189,9 +195,28 @@ def create_app(
     # ------------------------------------------------------------------
 
     @app.get("/health", tags=["ops"])
+    @app.get("/healthz", tags=["ops"])
+    @app.get("/livez", tags=["ops"])
     async def health() -> dict[str, str]:
-        """Health probe — always public."""
+        """Liveness probe — always public.
+
+        ``/health`` is the canonical name; ``/healthz`` and ``/livez`` are
+        aliases for the conventional Kubernetes liveness probe path. A 200 here
+        means the process is up and serving requests.
+        """
         return {"status": "ok", "version": _server_version()}
+
+    @app.get("/ready", tags=["ops"])
+    @app.get("/readyz", tags=["ops"])
+    async def ready() -> dict[str, str]:
+        """Readiness probe — always public.
+
+        Returns 200 once the application is constructed and able to accept
+        traffic. K8s readiness probes conventionally use ``/readyz``; ``/ready``
+        is provided as an alias. Kept lightweight (no per-request model load) so
+        a load balancer can poll it cheaply.
+        """
+        return {"status": "ready", "version": _server_version()}
 
     @app.get("/metrics", tags=["ops"])
     async def metrics(request: _FastAPIRequest) -> Any:  # type: ignore[valid-type]
