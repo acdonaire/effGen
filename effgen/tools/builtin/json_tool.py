@@ -36,6 +36,24 @@ class JSONTool(BaseTool):
     - No external dependencies
     """
 
+    # Natural-name aliases for the ``operation`` selector.
+    operation_aliases = {
+        "parse": "query",
+        "load": "query",
+        "get": "query",
+        "extract": "query",
+        "stringify": "format",
+        "dumps": "format",
+        "pretty": "format",
+        "prettify": "format",
+        "minify": "format",
+        "check": "validate",
+        "is_valid": "validate",
+        "count": "length",
+        "size": "length",
+        "fields": "keys",
+    }
+
     def __init__(self):
         super().__init__(
             metadata=ToolMetadata(

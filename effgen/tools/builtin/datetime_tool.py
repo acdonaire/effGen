@@ -47,6 +47,24 @@ class DateTimeTool(BaseTool):
     - No external dependencies
     """
 
+    # Natural-name aliases for the ``operation`` selector.
+    operation_aliases = {
+        "current_time": "now",
+        "current": "now",
+        "current_date": "now",
+        "today": "now",
+        "time": "now",
+        "timestamp": "now",
+        "parse": "format",
+        "strftime": "format",
+        "difference": "diff",
+        "delta": "diff",
+        "between": "diff",
+        "convert_timezone": "convert",
+        "to_timezone": "convert",
+        "tz": "convert",
+    }
+
     def __init__(self):
         super().__init__(
             metadata=ToolMetadata(

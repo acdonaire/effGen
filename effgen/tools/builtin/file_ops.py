@@ -48,6 +48,21 @@ class FileOperations(BaseTool):
     - Extension whitelisting
     """
 
+    # Natural-name aliases for the ``operation`` selector.
+    operation_aliases = {
+        "open": "read",
+        "cat": "read",
+        "load": "read",
+        "save": "write",
+        "create": "write",
+        "ls": "list",
+        "dir": "list",
+        "find": "search",
+        "grep": "search",
+        "stat": "metadata",
+        "info": "metadata",
+    }
+
     DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
     DEFAULT_ENCODING = "utf-8"
 

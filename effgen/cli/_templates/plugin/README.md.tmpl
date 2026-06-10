@@ -1,0 +1,20 @@
+# effgen-plugin-__PLUGIN_NAME__
+
+An effGen tool plugin.
+
+## Install
+
+```bash
+pip install -e .
+```
+
+The plugin will be auto-discovered by effGen via entry points.
+
+## Usage
+
+```python
+from effgen.tools import get_registry
+from __PLUGIN_NAME__.plugin import __PLUGIN_CLASS__Plugin
+
+__PLUGIN_CLASS__Plugin().register(get_registry())
+```

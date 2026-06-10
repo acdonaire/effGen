@@ -14,6 +14,9 @@ include requirements-lock.txt
 include requirements-all-lock.txt
 recursive-include docs *.md
 
+# Plugin scaffold templates (shipped as package data).
+recursive-include effgen/cli/_templates *.tmpl
+
 # Keep heavy / internal repo material out of the published tarball.
 prune build_plan
 prune node_modules

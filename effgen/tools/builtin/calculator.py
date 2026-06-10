@@ -46,6 +46,20 @@ class Calculator(BaseTool):
     - Timeout protection
     """
 
+    # Natural-name aliases for the ``operation`` selector.
+    operation_aliases = {
+        "eval": "calculate",
+        "evaluate": "calculate",
+        "compute": "calculate",
+        "math": "calculate",
+        "arithmetic": "calculate",
+        "convert": "convert_units",
+        "conversion": "convert_units",
+        "units": "convert_units",
+        "stats": "statistics",
+        "statistic": "statistics",
+    }
+
     # Supported operators
     OPERATORS = {
         ast.Add: operator.add,

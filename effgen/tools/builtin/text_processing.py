@@ -36,6 +36,24 @@ class TextProcessingTool(BaseTool):
     - No external dependencies
     """
 
+    # Natural-name aliases for the ``operation`` selector.
+    operation_aliases = {
+        "count": "word_count",
+        "wordcount": "word_count",
+        "words": "word_count",
+        "summary": "summarize",
+        "summarise": "summarize",
+        "search": "regex_search",
+        "find": "regex_search",
+        "match": "regex_search",
+        "regex": "regex_search",
+        "replace": "regex_replace",
+        "sub": "regex_replace",
+        "substitute": "regex_replace",
+        "diff": "compare",
+        "comparison": "compare",
+    }
+
     def __init__(self):
         super().__init__(
             metadata=ToolMetadata(

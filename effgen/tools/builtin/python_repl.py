@@ -320,6 +320,7 @@ class PythonREPL(BaseTool):
             import_error = self._check_imports(code)
             if import_error:
                 return {
+                    "success": False,
                     "result": None,
                     "stdout": "",
                     "stderr": "",
@@ -329,6 +330,7 @@ class PythonREPL(BaseTool):
             security_error = self._check_security(code)
             if security_error:
                 return {
+                    "success": False,
                     "result": None,
                     "stdout": "",
                     "stderr": "",
@@ -400,8 +402,10 @@ class PythonREPL(BaseTool):
         if len(stderr_value) > self.DEFAULT_MAX_OUTPUT:
             stderr_value = stderr_value[:self.DEFAULT_MAX_OUTPUT] + "\n... (output truncated)"
 
-        # Prepare response
+        # Prepare response. ``success`` mirrors the actual outcome so the tool
+        # envelope never claims success while carrying an execution error.
         response = {
+            "success": error is None,
             "result": result,
             "stdout": stdout_value,
             "stderr": stderr_value,

@@ -33,6 +33,26 @@ def _redact_error(text: str) -> str:
         return text
 
 
+def _inner_status(output: Any) -> tuple[bool | None, str | None]:
+    """Detect a self-reported failure inside a tool's returned value.
+
+    Builtin tools follow a ``{"success": bool, "error"/"message": str}``
+    convention for outcomes that aren't exceptions (missing files, blocked
+    paths, runtime errors in sandboxed code). Returns ``(False, message)`` when
+    the payload explicitly reports failure, otherwise ``(None, None)`` so the
+    caller leaves the outer status untouched.
+
+    Only an explicit ``success is False`` is treated as a failure. A bare
+    ``error``/``valid`` key is intentionally ignored, because some tools report
+    domain results that way (e.g. JSON validation returning ``valid: False`` is
+    a *successful* check, not a tool failure).
+    """
+    if isinstance(output, dict) and output.get("success") is False:
+        msg = output.get("error") or output.get("message")
+        return False, str(msg) if msg else None
+    return None, None
+
+
 class ToolCategory(Enum):
     """Categories for organizing tools."""
     INFORMATION_RETRIEVAL = "information_retrieval"
@@ -303,6 +323,16 @@ class BaseTool(ABC):
                 return f"Processed: {input}"
     """
 
+    # Candidate names for the single "which action" selector parameter. Tools
+    # name it inconsistently (``operation``/``action``/``op``/``mode``); we treat
+    # them as interchangeable so a model that guesses any of them succeeds.
+    _SELECTOR_PARAM_NAMES = ("operation", "action", "op", "mode")
+
+    # Optional per-tool map of friendly/natural selector values to the canonical
+    # enum value (e.g. ``{"current_time": "now"}``). Subclasses override this so
+    # callers can use the obvious verb instead of memorizing the exact enum.
+    operation_aliases: dict[str, str] = {}
+
     def __init__(self, metadata: ToolMetadata):
         """
         Initialize the tool with metadata.
@@ -313,6 +343,53 @@ class BaseTool(ABC):
         self._metadata = metadata
         self._initialized = False
         self._dependencies: list[str] = []
+
+    def _selector_param(self) -> str | None:
+        """Return this tool's canonical action-selector parameter name, if any."""
+        names = {p.name for p in self._metadata.parameters}
+        for cand in self._SELECTOR_PARAM_NAMES:
+            if cand in names:
+                return cand
+        return None
+
+    def _normalize_selector(self, kwargs: dict) -> dict:
+        """Accept selector synonyms (param name and value) before validation.
+
+        Two ergonomics fixes happen here:
+
+        * **Parameter name** — if the tool's selector is ``operation`` but the
+          caller passed ``action`` (or vice-versa), move the value onto the
+          canonical name so it is not stripped as "unknown".
+        * **Selector value** — map natural verbs (``current_time`` → ``now``,
+          ``parse`` → ``query`` …) declared in :attr:`operation_aliases` onto the
+          real enum value.
+        """
+        selector = self._selector_param()
+        if selector is None:
+            return kwargs
+
+        # Param-name aliasing: only when the canonical name is absent, and never
+        # consume a synonym that is itself a *distinct* declared parameter of this
+        # tool (e.g. data_analysis has both ``operation`` and ``op`` — ``op`` is a
+        # real filter-operator value, not a misnamed selector).
+        param_names = {p.name for p in self._metadata.parameters}
+        if selector not in kwargs or kwargs.get(selector) is None:
+            for alias in self._SELECTOR_PARAM_NAMES:
+                if alias == selector or alias in param_names:
+                    continue
+                if kwargs.get(alias) is not None:
+                    kwargs[selector] = kwargs.pop(alias)
+                    break
+
+        # Value aliasing.
+        value = kwargs.get(selector)
+        if isinstance(value, str) and self.operation_aliases:
+            mapped = self.operation_aliases.get(value)
+            if mapped is None:
+                mapped = self.operation_aliases.get(value.lower())
+            if mapped is not None:
+                kwargs[selector] = mapped
+        return kwargs
 
     @property
     def metadata(self) -> ToolMetadata:
@@ -367,6 +444,21 @@ class BaseTool(ABC):
             value = kwargs.get(param_spec.name)
             is_valid, error = param_spec.validate(value)
             if not is_valid:
+                # Friendlier guidance for selector/enum mistakes: list the
+                # allowed values (and any natural-name aliases) instead of a
+                # bare repr, so a model or human can self-correct (Audit-2 #36).
+                if param_spec.enum is not None and value is not None:
+                    allowed = ", ".join(str(v) for v in param_spec.enum)
+                    msg = (
+                        f"Invalid {param_spec.name} '{value}'. "
+                        f"Allowed: {allowed}."
+                    )
+                    if self.operation_aliases:
+                        alias_str = ", ".join(
+                            f"{a}->{c}" for a, c in sorted(self.operation_aliases.items())
+                        )
+                        msg += f" Aliases: {alias_str}."
+                    return False, msg
                 return False, error
 
         return True, None
@@ -451,6 +543,9 @@ class BaseTool(ABC):
         start_time = time.time()
 
         try:
+            # Accept selector synonyms (operation/action + natural verb values)
+            kwargs = self._normalize_selector(kwargs)
+
             # Coerce string-typed numerics from LLM responses before validation
             kwargs = self._coerce_parameters(kwargs)
 
@@ -472,6 +567,23 @@ class BaseTool(ABC):
             output = await self._execute(**kwargs)
 
             execution_time = time.time() - start_time
+
+            # Honest envelope: many tools report their own outcome inside the
+            # returned dict (``{"success": False, ...}``). Never bury a failure
+            # inside a "successful" ToolResult — reflect the real outcome so the
+            # outer and inner status agree.
+            inner_ok, inner_err = _inner_status(output)
+            if inner_ok is False:
+                return ToolResult(
+                    success=False,
+                    output=output,
+                    error=_redact_error(inner_err or "Tool reported a failure"),
+                    execution_time=execution_time,
+                    metadata={
+                        "tool_name": self.name,
+                        "tool_version": self._metadata.version,
+                    },
+                )
 
             return ToolResult(
                 success=True,

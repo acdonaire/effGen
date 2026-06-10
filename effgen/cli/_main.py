@@ -1446,25 +1446,34 @@ class CLIInterface:
             args: Parsed command-line arguments
         """
         if args.tool_command == 'list':
-            self._tools_list(args)
+            return self._tools_list(args) or 0
         elif args.tool_command == 'info':
-            self._tools_info(args)
+            return self._tools_info(args)
         elif args.tool_command == 'test':
-            self._tools_test(args)
+            return self._tools_test(args)
         else:
             self.print_error(f"Unknown tools command: {args.tool_command}")
             return 1
 
-        return 0
+    def _suggest_tool(self, name: str) -> None:
+        """Print a 'tool not found' error with close-match suggestions."""
+        import difflib
+
+        self.print_error(f"Tool not found: {name}")
+        try:
+            available = self.tool_registry.list_tools()
+        except Exception:
+            available = []
+        close = difflib.get_close_matches(name, available, n=3, cutoff=0.5)
+        if close:
+            self.print(f"Did you mean: {', '.join(close)}?")
+        self.print("Run 'effgen tools list' to see all available tools.")
 
     def _tools_list(self, args):
         """List available tools."""
         self.print_header("Available Tools")
 
-        # Discover builtin tools
-        self.tool_registry.discover_builtin_tools()
-
-        # Get tools
+        # Get tools (the registry auto-discovers built-ins on first access)
         tools = self.tool_registry.list_tools()
 
         if not tools:
@@ -1493,79 +1502,161 @@ class CLIInterface:
             for tool_name in tools:
                 print(f"- {tool_name}")
 
+    def _example_input(self, metadata, tool=None) -> dict:
+        """Build a runnable example input for a tool from its metadata."""
+        # Prefer a curated example (drop the illustrative 'output' field).
+        for ex in metadata.examples or []:
+            if isinstance(ex, dict):
+                example = {k: v for k, v in ex.items() if k != "output"}
+                if example:
+                    return example
+        # Otherwise synthesize from required parameters.
+        from effgen.tools.base_tool import ParameterType
+
+        sample = {
+            ParameterType.STRING: "example",
+            ParameterType.INTEGER: 1,
+            ParameterType.FLOAT: 1.0,
+            ParameterType.BOOLEAN: True,
+            ParameterType.ARRAY: [],
+            ParameterType.OBJECT: {},
+            ParameterType.ANY: "example",
+        }
+        example: dict = {}
+        for p in metadata.parameters:
+            if p.required or p.default is not None:
+                if p.enum:
+                    example[p.name] = p.enum[0]
+                elif p.default is not None:
+                    example[p.name] = p.default
+                else:
+                    example[p.name] = sample.get(p.type, "example")
+        return example
+
+    def _print_tool_usage(self, metadata, tool=None) -> None:
+        """Print a tool's input schema and a copy-paste runnable example."""
+        self.print("\n[bold]Input schema:[/bold]" if self.console else "\nInput schema:")
+        schema = metadata.to_json_schema()
+        if self.console:
+            self.console.print(Syntax(json.dumps(schema, indent=2), "json", theme="monokai"))
+        else:
+            print(json.dumps(schema, indent=2))
+
+        example = self._example_input(metadata, tool)
+        if example:
+            cmd = f"effgen tools test {metadata.name} -i '{json.dumps(example)}'"
+            self.print("\n[bold]Example:[/bold]" if self.console else "\nExample:")
+            self.print(f"  {cmd}")
+
     def _tools_info(self, args):
         """Show detailed tool information."""
         if not args.name:
             self.print_error("Tool name required")
-            return
+            return 1
 
         try:
+            # get_metadata auto-discovers built-ins, so info works standalone.
             metadata = self.tool_registry.get_metadata(args.name)
-
-            self.print_header(f"Tool: {metadata.name}")
-            self.print(f"\n[bold]Description:[/bold] {metadata.description}" if self.console else f"\nDescription: {metadata.description}")
-            self.print(f"[bold]Category:[/bold] {metadata.category.value}" if self.console else f"Category: {metadata.category.value}")
-            self.print(f"[bold]Version:[/bold] {metadata.version}" if self.console else f"Version: {metadata.version}")
-
-            if metadata.tags:
-                self.print(f"[bold]Tags:[/bold] {', '.join(metadata.tags)}" if self.console else f"Tags: {', '.join(metadata.tags)}")
-
-            # Show parameters
-            if metadata.parameters:
-                self.print("\n[bold]Parameters:[/bold]" if self.console else "\nParameters:")
-                schema = metadata.to_json_schema()
-                if self.console:
-                    syntax = Syntax(
-                        json.dumps(schema, indent=2),
-                        "json",
-                        theme="monokai"
-                    )
-                    self.console.print(syntax)
-                else:
-                    print(json.dumps(schema, indent=2))
-
         except KeyError:
-            self.print_error(f"Tool not found: {args.name}")
+            self._suggest_tool(args.name)
+            return 1
         except Exception as e:
             self.print_error(f"Error getting tool info: {e}")
+            return 1
+
+        self.print_header(f"Tool: {metadata.name}")
+        self.print(f"\n[bold]Description:[/bold] {metadata.description}" if self.console else f"\nDescription: {metadata.description}")
+        self.print(f"[bold]Category:[/bold] {metadata.category.value}" if self.console else f"Category: {metadata.category.value}")
+        self.print(f"[bold]Version:[/bold] {metadata.version}" if self.console else f"Version: {metadata.version}")
+
+        if metadata.tags:
+            self.print(f"[bold]Tags:[/bold] {', '.join(metadata.tags)}" if self.console else f"Tags: {', '.join(metadata.tags)}")
+
+        # Selector aliases, if this tool accepts natural operation names.
+        tool = None
+        try:
+            tool = self.tool_registry.get_tool_sync(args.name, initialize=False)
+        except Exception:
+            tool = None
+        aliases = getattr(tool, "operation_aliases", {}) if tool else {}
+        if aliases:
+            alias_str = ", ".join(f"{a} -> {c}" for a, c in sorted(aliases.items()))
+            self.print(f"[bold]Operation aliases:[/bold] {alias_str}" if self.console else f"Operation aliases: {alias_str}")
+
+        # Show parameters
+        if metadata.parameters:
+            self.print("\n[bold]Parameters:[/bold]" if self.console else "\nParameters:")
+            schema = metadata.to_json_schema()
+            if self.console:
+                self.console.print(Syntax(json.dumps(schema, indent=2), "json", theme="monokai"))
+            else:
+                print(json.dumps(schema, indent=2))
+
+        # Show a runnable example.
+        example = self._example_input(metadata, tool)
+        if example:
+            cmd = f"effgen tools test {metadata.name} -i '{json.dumps(example)}'"
+            self.print("\n[bold]Example:[/bold]" if self.console else "\nExample:")
+            self.print(f"  {cmd}")
+
+        return 0
 
     def _tools_test(self, args):
         """Test a tool with sample input."""
         if not args.name:
             self.print_error("Tool name required")
-            return
+            return 1
 
         try:
-            tool = asyncio.run(self.tool_registry.get_tool(args.name))
-
-            self.print_header(f"Testing Tool: {args.name}")
-
-            # Parse input
-            if args.input:
-                try:
-                    input_data = json.loads(args.input)
-                except json.JSONDecodeError:
-                    input_data = {"input": args.input}
-            else:
-                input_data = {}
-
-            # Execute tool
-            self.print(f"Input: {input_data}\n")
-            result = asyncio.run(tool.execute(**input_data))
-
-            self.print("[bold]Result:[/bold]" if self.console else "Result:")
-            if self.console:
-                self.console.print(Panel(str(result), border_style="green"))
-            else:
-                print(result)
-
+            # Synchronous accessor: no asyncio.run boilerplate, and it auto-
+            # discovers built-ins so 'test' works without a prior 'list'.
+            tool = self.tool_registry.get_tool_sync(args.name)
         except KeyError:
-            self.print_error(f"Tool not found: {args.name}")
+            self._suggest_tool(args.name)
+            return 1
+        except Exception as e:
+            self.print_error(f"Error loading tool: {e}")
+            return 1
+
+        metadata = tool.metadata
+
+        # No input? Show the schema and a runnable example instead of guessing.
+        if not args.input:
+            self.print_header(f"Tool: {metadata.name}")
+            self.print_warning("No input provided. Supply one with -i/--input as JSON.")
+            self._print_tool_usage(metadata, tool)
+            return 1
+
+        # Parse input — must be a JSON object of parameters.
+        try:
+            input_data = json.loads(args.input)
+        except json.JSONDecodeError as e:
+            self.print_error(f"Input must be valid JSON: {e}")
+            self._print_tool_usage(metadata, tool)
+            return 1
+        if not isinstance(input_data, dict):
+            self.print_error("Input must be a JSON object of parameters, e.g. '{\"expression\": \"2+2\"}'.")
+            self._print_tool_usage(metadata, tool)
+            return 1
+
+        self.print_header(f"Testing Tool: {metadata.name}")
+        self.print(f"Input: {input_data}\n")
+        try:
+            result = asyncio.run(tool.execute(**input_data))
         except Exception as e:
             self.print_error(f"Error testing tool: {e}")
-            if args.verbose:
+            if getattr(args, "verbose", False):
                 import traceback
                 traceback.print_exc()
+            return 1
+
+        self.print("[bold]Result:[/bold]" if self.console else "Result:")
+        border = "green" if result.success else "red"
+        if self.console:
+            self.console.print(Panel(str(result), border_style=border))
+        else:
+            print(result)
+        return 0 if result.success else 1
 
     def models_commands(self, args):
         """
@@ -2186,100 +2277,67 @@ Examples:
     return parser
 
 
+def _render_plugin_template(filename: str, replacements: dict[str, str]) -> str:
+    """Load a scaffold template from package data and substitute placeholders.
+
+    Templates live in ``effgen/cli/_templates/plugin/`` (shipped as package data)
+    rather than being embedded here, so the generated plugin stays in sync with
+    BaseTool and is covered by a create→install→import→run test.
+    """
+    from importlib import resources
+
+    # Anchor on the real ``effgen.cli`` package and traverse into the data dir,
+    # which works for both editable checkouts and installed wheels.
+    text = (
+        resources.files("effgen.cli")
+        .joinpath("_templates", "plugin", filename)
+        .read_text(encoding="utf-8")
+    )
+    for token, value in replacements.items():
+        text = text.replace(token, value)
+    return text
+
+
 def _create_plugin_scaffold(plugin_name: str, output_dir: str = ".") -> int:
     """Generate a plugin project scaffold."""
-    base = Path(output_dir) / f"effgen-plugin-{plugin_name}"
-    pkg = base / plugin_name
+    # Normalize to a valid Python package name (entry points + imports need it).
+    pkg_name = plugin_name.replace("-", "_")
+    if not pkg_name.isidentifier():
+        print(
+            f"Error: '{plugin_name}' is not a valid plugin name. Use letters, "
+            "digits and underscores (must start with a letter)."
+        )
+        return 1
+
+    plugin_class = pkg_name.title().replace("_", "")
+    replacements = {
+        "__PLUGIN_NAME__": pkg_name,
+        "__PLUGIN_CLASS__": plugin_class,
+    }
+
+    base = Path(output_dir) / f"effgen-plugin-{pkg_name}"
+    pkg = base / pkg_name
     try:
         pkg.mkdir(parents=True, exist_ok=False)
     except FileExistsError:
         print(f"Error: Directory {base} already exists.")
         return 1
 
-    (pkg / "__init__.py").write_text(
-        f'"""effGen plugin: {plugin_name}"""\n'
-    )
-
-    (pkg / "tools.py").write_text(
-        f'''"""Custom tools for the {plugin_name} plugin."""
-
-from effgen.tools.base_tool import (
-    BaseTool, ToolMetadata, ToolCategory, ParameterSpec, ParameterType,
-)
-
-
-class ExampleTool(BaseTool):
-    """An example custom tool — replace with your implementation."""
-
-    @property
-    def metadata(self) -> ToolMetadata:
-        return ToolMetadata(
-            name="example_tool",
-            description="An example tool that echoes input.",
-            category=ToolCategory.DATA_PROCESSING,
-            parameters=[
-                ParameterSpec(
-                    name="text",
-                    type=ParameterType.STRING,
-                    description="Text to echo",
-                    required=True,
-                ),
-            ],
-            returns={{"type": "object", "properties": {{"echo": {{"type": "string"}}}}}},
-        )
-
-    async def _execute(self, **kwargs):
-        text = kwargs.get("text", "")
-        return {{"echo": text}}
-'''
-    )
-
-    (pkg / "plugin.py").write_text(
-        f'''"""Plugin registration for {plugin_name}."""
-
-from effgen.tools.plugin import ToolPlugin
-from {plugin_name}.tools import ExampleTool
-
-
-class {plugin_name.title().replace("_", "")}Plugin(ToolPlugin):
-    name = "{plugin_name}"
-    version = "{__version__}"
-    description = "A custom effGen tool plugin."
-    tools = [ExampleTool]
-'''
-    )
-
-    (base / "pyproject.toml").write_text(
-        f'''[build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "effgen-plugin-{plugin_name}"
-version = "{__version__}"
-description = "An effGen tool plugin"
-requires-python = ">=3.9"
-dependencies = ["effgen"]
-
-[project.entry-points."effgen.plugins"]
-{plugin_name} = "{plugin_name}.plugin:{plugin_name.title().replace("_", "")}Plugin"
-'''
-    )
-
-    (base / "README.md").write_text(
-        f"# effgen-plugin-{plugin_name}\\n\\n"
-        f"An effGen tool plugin.\\n\\n"
-        "## Install\\n\\n"
-        "```bash\\n"
-        f"pip install -e .\\n"
-        "```\\n\\n"
-        "The plugin will be auto-discovered by effGen via entry points.\\n"
-    )
+    try:
+        (pkg / "__init__.py").write_text(_render_plugin_template("init.py.tmpl", replacements))
+        (pkg / "tools.py").write_text(_render_plugin_template("tools.py.tmpl", replacements))
+        (pkg / "plugin.py").write_text(_render_plugin_template("plugin.py.tmpl", replacements))
+        (base / "pyproject.toml").write_text(_render_plugin_template("pyproject.toml.tmpl", replacements))
+        (base / "README.md").write_text(_render_plugin_template("README.md.tmpl", replacements))
+    except Exception as e:
+        print(f"Error: failed to write scaffold files: {e}")
+        return 1
 
     print(f"Created plugin scaffold at {base}/")
-    print(f"  {pkg / 'tools.py':}       — add your custom tools here")
+    print(f"  {pkg / 'tools.py'}       — add your custom tools here")
     print(f"  {pkg / 'plugin.py'}     — register tools in the plugin class")
     print(f"  {base / 'pyproject.toml'} — package metadata & entry point")
+    print("\nNext: cd into it and `pip install -e .` to register the plugin.")
     return 0
 
 

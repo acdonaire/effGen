@@ -60,6 +60,24 @@ class ToolRegistry:
         self._plugins: dict[str, Path] = {}
         self._initialized_tools: set[str] = set()
         self._lock = asyncio.Lock()
+        # Whether the built-in catalog has been auto-discovered yet. Discovery is
+        # deferred until first access so importing the package stays cheap, but a
+        # programmatic caller never sees a surprisingly empty registry.
+        self._builtins_discovered = False
+
+    def _ensure_builtins(self) -> None:
+        """Lazily discover built-in tools on first access.
+
+        Programmatic users expect ``get_registry().list_tools()`` to be
+        populated without first calling :meth:`discover_builtin_tools`. We run
+        discovery once, the first time the registry is queried, and remember it
+        so repeated lookups stay cheap and quiet (no re-import, no log spam).
+        """
+        if self._builtins_discovered:
+            return
+        # Mark first to avoid re-entry if discovery itself queries the registry.
+        self._builtins_discovered = True
+        self.discover_builtin_tools()
 
     def register_tool(
         self,
@@ -110,7 +128,7 @@ class ToolRegistry:
         if temp_instance.dependencies:
             self._dependencies[name] = set(temp_instance.dependencies)
 
-        logger.info(f"Registered tool: {name} (v{metadata.version})")
+        logger.debug(f"Registered tool: {name} (v{metadata.version})")
 
     def unregister_tool(self, name: str) -> None:
         """
@@ -145,7 +163,7 @@ class ToolRegistry:
             del self._dependencies[name]
         self._initialized_tools.discard(name)
 
-        logger.info(f"Unregistered tool: {name}")
+        logger.debug(f"Unregistered tool: {name}")
 
     async def get_tool(self, name: str, initialize: bool = True) -> BaseTool:
         """
@@ -164,6 +182,7 @@ class ToolRegistry:
             KeyError: If tool is not registered
             ToolDependencyError: If tool dependencies cannot be satisfied
         """
+        self._ensure_builtins()
         if name not in self._tools:
             raise KeyError(f"Tool '{name}' is not registered")
 
@@ -192,6 +211,24 @@ class ToolRegistry:
 
             logger.debug(f"Loaded tool: {name}")
             return tool
+
+    def get_tool_sync(self, name: str, initialize: bool = True) -> BaseTool:
+        """Synchronous accessor for a tool instance.
+
+        ``get_tool`` is a coroutine; calling it without ``await`` silently
+        yields a coroutine object (the source of ``'coroutine' object has no
+        attribute 'name'`` errors). This convenience wrapper drives the async
+        loader to completion whether or not an event loop is already running,
+        so synchronous callers (CLI, scripts, notebooks) get the real instance.
+
+        Args:
+            name: Name of the tool to get.
+            initialize: Whether to initialize the tool if not already initialized.
+
+        Returns:
+            BaseTool: The tool instance.
+        """
+        return run_coroutine_sync(self.get_tool(name, initialize=initialize))
 
     async def _resolve_dependencies(self, tool_name: str) -> None:
         """
@@ -257,6 +294,7 @@ class ToolRegistry:
         Returns:
             List[str]: List of tool names matching the filters
         """
+        self._ensure_builtins()
         tools = set(self._tools.keys())
 
         # Filter by category
@@ -292,6 +330,7 @@ class ToolRegistry:
         Raises:
             KeyError: If tool is not registered
         """
+        self._ensure_builtins()
         if name not in self._metadata_cache:
             raise KeyError(f"Tool '{name}' is not registered")
         return self._metadata_cache[name]
@@ -303,6 +342,7 @@ class ToolRegistry:
         Returns:
             Dict[str, ToolMetadata]: Mapping of tool names to metadata
         """
+        self._ensure_builtins()
         return self._metadata_cache.copy()
 
     def get_tools_by_category(self, category: ToolCategory) -> list[str]:
@@ -315,6 +355,7 @@ class ToolRegistry:
         Returns:
             List[str]: List of tool names in the category
         """
+        self._ensure_builtins()
         return sorted(self._categories.get(category, set()))
 
     def is_registered(self, name: str) -> bool:
@@ -327,6 +368,7 @@ class ToolRegistry:
         Returns:
             bool: True if registered, False otherwise
         """
+        self._ensure_builtins()
         return name in self._tools
 
     def get_dependency_graph(self) -> dict[str, list[str]]:
@@ -397,6 +439,9 @@ class ToolRegistry:
 
         Scans the effgen.tools.builtin package for tool classes.
         """
+        # Calling this directly also satisfies the lazy-discovery guard so a
+        # later read access does not re-scan the package.
+        self._builtins_discovered = True
         try:
             from . import builtin
             builtin_path = Path(builtin.__file__).parent
@@ -437,6 +482,7 @@ class ToolRegistry:
         Returns:
             Dict[str, Any]: Tool schemas
         """
+        self._ensure_builtins()
         schemas = {}
 
         for name, metadata in self._metadata_cache.items():
@@ -449,10 +495,12 @@ class ToolRegistry:
 
     def __len__(self) -> int:
         """Return number of registered tools."""
+        self._ensure_builtins()
         return len(self._tools)
 
     def __contains__(self, name: str) -> bool:
         """Check if tool is registered."""
+        self._ensure_builtins()
         return name in self._tools
 
     def __repr__(self) -> str:
