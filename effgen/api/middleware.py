@@ -43,7 +43,6 @@ def install_production_middleware(
     by browsers), so credentials are enabled only for an explicit origin list.
     """
     try:
-        from fastapi import Request
         from starlette.middleware.cors import CORSMiddleware
         from starlette.middleware.gzip import GZipMiddleware
     except Exception:  # pragma: no cover
@@ -84,23 +83,57 @@ def install_production_middleware(
     if enable_gzip:
         app.add_middleware(GZipMiddleware, minimum_size=gzip_min_size)
 
-    # 3. Request ID injection (ASGI-level middleware so it runs before route).
+    # 3. Request ID injection. Implemented as a *pure-ASGI* middleware (not the
+    # @app.middleware("http") / BaseHTTPMiddleware form) because
+    # BaseHTTPMiddleware buffers the whole response body before forwarding it,
+    # which breaks server-sent-event streaming (the /v1 SSE responses) — it
+    # would hang or raise "No response returned." Pure-ASGI middleware forwards
+    # each chunk as it is produced, so streaming stays truly incremental.
     if enable_request_id:
-
-        @app.middleware("http")
-        async def request_id_middleware(request: Request, call_next):  # type: ignore
-            req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
-            request.state.request_id = req_id
-            try:
-                response = await call_next(request)
-            except Exception:
-                logger.exception("request %s failed", req_id)
-                raise
-            response.headers["X-Request-ID"] = req_id
-            return response
+        app.add_middleware(RequestIDMiddleware)  # type: ignore[arg-type]
 
     # 4. Graceful shutdown
     _install_graceful_shutdown(app, shutdown_timeout)
+
+
+class RequestIDMiddleware:
+    """Pure-ASGI middleware that stamps every request/response with an id.
+
+    Reads an inbound ``X-Request-ID`` (or generates one), exposes it on
+    ``scope["state"]["request_id"]``, and echoes it on the response. Unlike a
+    ``BaseHTTPMiddleware`` it never buffers the response body, so streaming
+    (SSE) responses are forwarded chunk-by-chunk.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        inbound = headers.get(b"x-request-id")
+        req_id = inbound.decode("latin-1", errors="replace") if inbound else uuid.uuid4().hex
+        scope.setdefault("state", {})["request_id"] = req_id
+        req_id_bytes = req_id.encode("latin-1", errors="replace")
+
+        async def _send(message: dict) -> None:
+            if message.get("type") == "http.response.start":
+                hdrs = [
+                    (k, v) for k, v in message.get("headers", [])
+                    if k.lower() != b"x-request-id"
+                ]
+                hdrs.append((b"x-request-id", req_id_bytes))
+                message = {**message, "headers": hdrs}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, _send)
+        except Exception:
+            logger.exception("request %s failed", req_id)
+            raise
 
 
 def _install_graceful_shutdown(app: Any, timeout: float) -> None:
@@ -108,27 +141,40 @@ def _install_graceful_shutdown(app: Any, timeout: float) -> None:
     inflight: set = set()
     shutting_down = {"value": False}
 
-    try:
-        from fastapi import Request
-    except Exception:  # pragma: no cover
-        return
+    class _InflightMiddleware:
+        """Pure-ASGI in-flight tracker (no response buffering — SSE-safe)."""
 
-    @app.middleware("http")
-    async def track_inflight(request: Request, call_next):  # type: ignore
-        if shutting_down["value"]:
-            from starlette.responses import JSONResponse
+        def __init__(self, asgi_app: Any) -> None:
+            self.app = asgi_app
 
-            return JSONResponse(
-                {"error": "server is shutting down"}, status_code=503
-            )
-        task = asyncio.current_task()
-        if task is not None:
-            inflight.add(task)
-        try:
-            return await call_next(request)
-        finally:
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            if scope.get("type") != "http":
+                await self.app(scope, receive, send)
+                return
+            if shutting_down["value"]:
+                import json as _json
+
+                body = _json.dumps({"error": "server is shutting down"}).encode()
+                await send({
+                    "type": "http.response.start",
+                    "status": 503,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode()),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
+            task = asyncio.current_task()
             if task is not None:
-                inflight.discard(task)
+                inflight.add(task)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                if task is not None:
+                    inflight.discard(task)
+
+    app.add_middleware(_InflightMiddleware)  # type: ignore[arg-type]
 
     @app.on_event("shutdown")
     async def _drain() -> None:

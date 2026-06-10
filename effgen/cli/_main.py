@@ -87,6 +87,72 @@ except ImportError:
     sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# Server request models + types — defined at MODULE level (not inside serve_api).
+#
+# FastAPI resolves a route's parameter types from the handler's *module* globals
+# via get_type_hints(); a function-local class/type is invisible there (acute
+# under `from __future__ import annotations`, where every annotation is a
+# string). A function-local body model made FastAPI treat the body as a query
+# param (422 on a JSON POST); a function-local ``WebSocket`` annotation made it
+# treat ``ws`` as a required query param and reject the handshake (1008). Keeping
+# both ``TaskRequest`` and ``WebSocket`` at module scope makes `/run` and `/ws`
+# work and lets `/openapi.json` build.
+# ---------------------------------------------------------------------------
+try:
+    from fastapi import WebSocket  # noqa: F401 - module-level for annotation resolution
+except Exception:  # pragma: no cover - fastapi present only with [server]
+    WebSocket = None  # type: ignore[assignment,misc]
+
+try:
+    from pydantic import BaseModel as _PydanticBaseModel
+    from pydantic import ConfigDict as _PydanticConfigDict
+
+    class TaskRequest(_PydanticBaseModel):
+        model_config = _PydanticConfigDict(extra="ignore")
+
+        task: str
+        model: str | None = "Qwen/Qwen2.5-3B-Instruct"
+        tools: list[str] | None = None
+        preset: str | None = None
+        temperature: float | None = 0.7
+        max_iterations: int | None = 10
+        stream: bool = False
+
+    class TaskResponse(_PydanticBaseModel):
+        model_config = _PydanticConfigDict(extra="ignore")
+
+        output: str
+        success: bool
+        metadata: dict[str, Any]
+except Exception:  # pragma: no cover - pydantic always present with [server]
+    TaskRequest = None  # type: ignore[assignment,misc]
+    TaskResponse = None  # type: ignore[assignment,misc]
+
+
+def _general_purpose_tool_names(registry: Any, limit: int = 5) -> list:
+    """Pick up to *limit* model-agnostic tool names for the convenience routes.
+
+    The ``/run`` and ``/ws`` endpoints attach a small default tool set so a bare
+    task can still use tools. Provider-*native* tools (tagged ``*-native``, e.g.
+    Anthropic computer-use, OpenAI/Gemini built-ins) are executed server-side by
+    a specific provider and raise "incompatible with model" on any other model,
+    so they must be excluded from a generic, any-model default set.
+    """
+    names = []
+    for name in registry.list_tools():
+        try:
+            tags = getattr(registry.get_metadata(name), "tags", None) or []
+            if any("native" in str(t).lower() for t in tags):
+                continue
+        except Exception:  # noqa: BLE001 - if metadata is unavailable, keep the tool
+            pass
+        names.append(name)
+        if len(names) >= limit:
+            break
+    return names
+
+
 # Configure logging
 def setup_logging(verbose: bool = False, log_file: str | None = None):
     """
@@ -975,359 +1041,266 @@ class CLIInterface:
 
     def serve_api(self, args):
         """
-        Start API server.
+        Start the effGen API server.
 
-        Args:
-            args: Parsed command-line arguments
+        ``effgen serve`` and the ``effgen.server.app:create_app`` factory now
+        converge on **one** secure application: the OpenAI-compatible ``/v1/*``
+        endpoints (with SSE streaming), auth, RBAC/budget, audit, metrics, and
+        the dashboard all come from :func:`effgen.server.app.create_app`. This
+        method layers a few convenience routes (``/run``, ``/tools``, ``/``,
+        ``/slo``, ``/ws``) on top.
+
+        Auth posture (fail-closed by default):
+          * ``EFFGEN_API_KEY`` set  → static API-key auth (Bearer or X-API-Key).
+          * ``EFFGEN_DEV_MODE=1``   → auth disabled (loud warning; dev only).
+          * OIDC env vars set       → JWT auth.
+          * none of the above       → an **ephemeral** API key is generated and
+            printed once, so the server is never unauthenticated by default.
         """
         self.print_header(f"effGen v{__version__} - API Server")
 
         try:
-            import time as _time
-            from contextlib import asynccontextmanager
-
             import uvicorn
-            from fastapi import (
-                Depends,
-                FastAPI,
-                HTTPException,
-                Request,
-                WebSocket,
-                WebSocketDisconnect,
-            )
-            from fastapi.middleware.cors import CORSMiddleware
-            from fastapi.responses import JSONResponse
-            from fastapi.security import APIKeyHeader
-            from pydantic import BaseModel as PydanticBaseModel
-            from pydantic import ConfigDict
         except ImportError:
             self.print_error("FastAPI and uvicorn are required for server mode.")
-            self.print("Install with: pip install fastapi uvicorn")
+            self.print("Install with: pip install 'effgen[server]'")
             return 1
 
         try:
-            # Define request/response models with Pydantic v2 style
-            class TaskRequest(PydanticBaseModel):
-                model_config = ConfigDict(extra="ignore")
+            import secrets
 
-                task: str
-                model: str | None = "Qwen/Qwen2.5-3B-Instruct"
-                tools: list[str] | None = None
-                preset: str | None = None
-                temperature: float | None = 0.7
-                max_iterations: int | None = 10
-                stream: bool = False
+            host = args.host
+            port = args.port
+            loopback = host in ("127.0.0.1", "localhost", "::1", "")
+            verbose = getattr(args, "verbose", False)
 
-            class TaskResponse(PydanticBaseModel):
-                model_config = ConfigDict(extra="ignore")
-
-                output: str
-                success: bool
-                metadata: dict[str, Any]
-
-            # Store reference to self for use in lifespan
-            cli_instance = self
-
-            # --- Rate limiter (simple in-memory token bucket) ---
-            _rate_buckets: dict[str, list] = {}
-            _rate_limit = int(os.environ.get("EFFGEN_RATE_LIMIT", "60"))  # requests/min
-
-            def _check_rate(client_ip: str) -> bool:
-                now = _time.time()
-                bucket = _rate_buckets.setdefault(client_ip, [])
-                # Remove entries older than 60s
-                _rate_buckets[client_ip] = bucket = [t for t in bucket if now - t < 60]
-                if len(bucket) >= _rate_limit:
-                    return False
-                bucket.append(now)
-                return True
-
-            # --- API key auth (optional) ---
-            api_key_name = "X-API-Key"
-            api_key_header = APIKeyHeader(name=api_key_name, auto_error=False)
-            expected_key = os.environ.get("EFFGEN_API_KEY")  # None = auth disabled
-
-            async def verify_api_key(key: str | None = Depends(api_key_header)):
-                if expected_key and key != expected_key:
-                    raise HTTPException(status_code=401, detail="Invalid or missing API key")
-
-            # --- Metrics state ---
-            _metrics = {"requests": 0, "errors": 0, "total_time": 0.0}
-
-            @asynccontextmanager
-            async def lifespan(app: FastAPI):
-                """Lifespan context manager for startup/shutdown."""
-                cli_instance.print_success("Server starting up...")
-                cli_instance.tool_registry.discover_builtin_tools()
-                cli_instance.print_success(f"Discovered {len(cli_instance.tool_registry.list_tools())} tools")
-                if expected_key:
-                    cli_instance.print("API key auth enabled (set via EFFGEN_API_KEY)")
-                cli_instance.print(f"Rate limit: {_rate_limit} req/min (set via EFFGEN_RATE_LIMIT)")
-                yield
-                cli_instance.print("Server shutting down...")
-
-            # Create FastAPI app with lifespan
-            app = FastAPI(
-                title="effGen API",
-                description="API server for effGen framework. "
-                            "Set EFFGEN_API_KEY to enable authentication. "
-                            "Set EFFGEN_RATE_LIMIT to configure rate limiting (default 60 req/min).",
-                version=__version__,
-                lifespan=lifespan
+            dev_mode = os.environ.get("EFFGEN_DEV_MODE", "0").strip() == "1"
+            api_key = (os.environ.get("EFFGEN_API_KEY", "") or "").strip()
+            oidc = bool(
+                os.environ.get("EFFGEN_OIDC_ISSUER")
+                or os.environ.get("EFFGEN_OIDC_JWKS_URI")
             )
 
-            # Add CORS middleware (fail-closed: cross-origin disabled unless
-            # EFFGEN_CORS_ORIGINS is set; never wildcard + credentials).
-            _cors_env = os.environ.get("EFFGEN_CORS_ORIGINS", "").strip()
-            _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
-            if _cors_origins:
-                _wildcard = "*" in _cors_origins
-                app.add_middleware(
-                    CORSMiddleware,
-                    allow_origins=_cors_origins,
-                    allow_credentials=not _wildcard,
-                    allow_methods=["*"],
-                    allow_headers=["*"],
-                )
+            ephemeral_key = False
+            if not api_key and not dev_mode and not oidc:
+                # Secure by default: rather than serving unauthenticated, mint a
+                # one-off key and print it. The operator copies it into their
+                # client. Set EFFGEN_API_KEY (or EFFGEN_DEV_MODE=1) to override.
+                api_key = secrets.token_urlsafe(24)
+                os.environ["EFFGEN_API_KEY"] = api_key
+                ephemeral_key = True
 
-            # --- Request logging & rate limiting middleware ---
-            @app.middleware("http")
-            async def request_middleware(request: Request, call_next):
-                start = _time.time()
-                client_ip = request.client.host if request.client else "unknown"
-
-                if not _check_rate(client_ip):
-                    return JSONResponse(
-                        status_code=429,
-                        content={"detail": "Rate limit exceeded. Try again later."}
-                    )
-
-                _metrics["requests"] += 1
-                logging.info("API %s %s from %s", request.method, request.url.path, client_ip)
-
-                try:
-                    response = await call_next(request)
-                except Exception:
-                    _metrics["errors"] += 1
-                    raise
-                finally:
-                    elapsed = _time.time() - start
-                    _metrics["total_time"] += elapsed
-                    logging.info("API %s %s completed in %.3fs", request.method, request.url.path, elapsed)
-
-                return response
-
-            # Store state in app
-            app.state.cli = cli_instance
-
-            @app.post("/run", dependencies=[Depends(verify_api_key)])
-            async def run_task(request: TaskRequest):
-                """Run a task with an agent."""
-                try:
-                    # Use preset if specified
-                    if request.preset:
-                        from effgen.presets import create_agent as _create_preset_agent
-                        agent_instance = _create_preset_agent(
-                            request.preset,
-                            request.model,
-                            temperature=request.temperature,
-                            max_iterations=request.max_iterations,
-                        )
-                    else:
-                        # Create agent for each request to handle different models
-                        tools = []
-                        tool_names = app.state.cli.tool_registry.list_tools()[:5]
-                        for name in tool_names:
-                            try:
-                                tool = await app.state.cli.tool_registry.get_tool(name)
-                                tools.append(tool)
-                            except Exception as tool_err:
-                                logging.debug(f"Failed to load tool {name}: {tool_err}")
-
-                        agent_config = AgentConfig(
-                            name="api-agent",
-                            model=request.model,
-                            tools=tools,
-                            temperature=request.temperature,
-                            max_iterations=request.max_iterations
-                        )
-                        agent_instance = Agent(agent_config)
-
-                    # Run task
-                    response = agent_instance.run(request.task)
-
-                    return JSONResponse(content={
-                        "output": response.output,
-                        "success": response.success,
-                        "metadata": {
-                            "mode": response.mode.value if hasattr(response.mode, 'value') else str(response.mode),
-                            "iterations": response.iterations,
-                            "tool_calls": response.tool_calls,
-                            "execution_time": response.execution_time
-                        }
-                    })
-
-                except Exception as e:
-                    _metrics["errors"] += 1
-                    logging.exception("Error running task")
-                    raise HTTPException(status_code=500, detail=str(e))
-
-            @app.websocket("/ws")
-            async def websocket_stream(ws: WebSocket):
-                """WebSocket endpoint for streaming agent responses."""
-                await ws.accept()
-                try:
-                    while True:
-                        data = await ws.receive_json()
-                        task = data.get("task", "")
-                        model_id = data.get("model", "Qwen/Qwen2.5-3B-Instruct")
-                        preset_name = data.get("preset")
-
-                        if preset_name:
-                            from effgen.presets import create_agent as _create_preset_agent
-                            agent_instance = _create_preset_agent(preset_name, model_id)
-                        else:
-                            tools = []
-                            for name in app.state.cli.tool_registry.list_tools()[:5]:
-                                try:
-                                    tool = await app.state.cli.tool_registry.get_tool(name)
-                                    tools.append(tool)
-                                except Exception:
-                                    pass
-                            agent_instance = Agent(AgentConfig(
-                                name="ws-agent", model=model_id, tools=tools,
-                                enable_streaming=True,
-                            ))
-
-                        await ws.send_json({"type": "start", "task": task})
-
-                        try:
-                            for token in agent_instance.stream(task):
-                                await ws.send_json({"type": "token", "content": token})
-                            await ws.send_json({"type": "done"})
-                        except Exception as e:
-                            await ws.send_json({"type": "error", "detail": str(e)})
-
-                except WebSocketDisconnect:
-                    logging.info("WebSocket client disconnected")
-
-            @app.get("/health")
-            async def health():
-                """Health check endpoint."""
-                return {"status": "healthy", "version": __version__}
-
-            @app.get("/metrics", dependencies=[Depends(verify_api_key)])
-            async def metrics_endpoint():
-                """Prometheus text-format metrics endpoint (histograms + counters)."""
-                from effgen.observability.metrics import export_metrics as _export_obs
-                try:
-                    obs_text = _export_obs()
-                except Exception:  # pragma: no cover
-                    obs_text = ""
-                # Also emit legacy per-request counters from in-process dict
-                avg_time = (_metrics["total_time"] / _metrics["requests"]
-                            if _metrics["requests"] > 0 else 0)
-                legacy_text = (
-                    "# HELP effgen_server_requests_total Total HTTP requests handled\n"
-                    "# TYPE effgen_server_requests_total counter\n"
-                    f"effgen_server_requests_total {_metrics['requests']}\n"
-                    "# HELP effgen_server_errors_total Total HTTP errors\n"
-                    "# TYPE effgen_server_errors_total counter\n"
-                    f"effgen_server_errors_total {_metrics['errors']}\n"
-                    "# HELP effgen_server_avg_response_seconds Average response latency\n"
-                    "# TYPE effgen_server_avg_response_seconds gauge\n"
-                    f"effgen_server_avg_response_seconds {round(avg_time, 6)}\n"
-                )
-                body = obs_text + "\n" + legacy_text
-                from fastapi.responses import PlainTextResponse
-                return PlainTextResponse(
-                    content=body,
-                    media_type="text/plain; version=0.0.4; charset=utf-8",
-                )
-
-            @app.get("/slo", dependencies=[Depends(verify_api_key)])
-            async def slo_endpoint():
-                """SLO burn-rate status for all registered SLOs."""
-                try:
-                    from effgen.observability.slo import get_tracker as _get_tracker
-                    tracker = _get_tracker()
-                    return {"slos": tracker.all_statuses()}
-                except Exception as exc:  # pragma: no cover
-                    return {"slos": [], "error": str(exc)}
-
-            @app.get("/tools")
-            async def list_tools_endpoint():
-                """List available tools."""
-                tools = app.state.cli.tool_registry.list_tools()
-                tool_info = []
-                for tool_name in tools:
-                    try:
-                        metadata = app.state.cli.tool_registry.get_metadata(tool_name)
-                        tool_info.append({
-                            "name": tool_name,
-                            "description": metadata.description,
-                            "category": metadata.category.value if hasattr(metadata.category, 'value') else str(metadata.category)
-                        })
-                    except Exception:
-                        tool_info.append({"name": tool_name, "description": "N/A", "category": "unknown"})
-                return {"tools": tool_info, "count": len(tools)}
-
-            @app.get("/")
-            async def root():
-                """Root endpoint with API information."""
-                return {
-                    "name": "effGen API",
-                    "version": __version__,
-                    "endpoints": {
-                        "POST /run": "Run a task with an agent",
-                        "WS /ws": "WebSocket streaming",
-                        "GET /health": "Health check",
-                        "GET /metrics": "Prometheus text-format metrics",
-                        "GET /slo": "SLO burn-rate status",
-                        "GET /tools": "List available tools",
-                        "GET /docs": "OpenAPI documentation"
-                    }
-                }
-
-            # Mount the local dashboard SPA (/dashboard, /dashboard/data.json,
-            # /dashboard/spans). Public, no auth — matches the documented
-            # `effgen serve` → http://host:port/dashboard workflow.
-            try:
-                from effgen.server.app import _mount_dashboard
-                _mount_dashboard(app)
-                self.print_success("Dashboard available at /dashboard")
-            except Exception as exc:  # noqa: BLE001 - dashboard is optional
-                logging.warning("Dashboard not mounted: %s", exc)
-
-            # Warn loudly when exposing the server beyond loopback without auth.
-            _loopback = args.host in ("127.0.0.1", "localhost", "::1", "")
-            if not _loopback and not expected_key:
+            if not loopback and not api_key and not oidc and dev_mode:
                 self.print_error(
-                    f"Binding to {args.host} exposes this server on all interfaces "
-                    "with NO API-key auth. Set EFFGEN_API_KEY to require a key, or "
-                    "bind to 127.0.0.1 (the default)."
+                    f"Binding to {host} exposes this server on all interfaces "
+                    "with auth DISABLED (EFFGEN_DEV_MODE=1). Unset dev mode and "
+                    "set EFFGEN_API_KEY, or bind to 127.0.0.1 (the default)."
                 )
 
-            # Start server
-            self.print(f"Starting server on {args.host}:{args.port}")
-            self.print(f"API docs available at http://{args.host}:{args.port}/docs")
+            cors_env = os.environ.get("EFFGEN_CORS_ORIGINS", "").strip()
+            cors_origins = [o.strip() for o in cors_env.split(",") if o.strip()] or None
+
+            from effgen.server.app import create_app
+
+            app = create_app(
+                api_key=api_key or None,
+                cors_origins=cors_origins,
+                dev_mode=dev_mode,
+            )
+
+            # Discover tools for the /run + /tools convenience routes and stash
+            # the CLI instance on the app for those handlers to reach.
+            self.tool_registry.discover_builtin_tools()
+            app.state.cli = self
+
+            self._register_convenience_routes(app)
+
+            # --- Auth posture banner ---
+            if dev_mode:
+                self.print("Auth: DISABLED (EFFGEN_DEV_MODE=1) — do not use in production")
+            elif ephemeral_key:
+                self.print_success("Auth: ephemeral API key (set EFFGEN_API_KEY to pin one)")
+                self.print(f"  API key: {api_key}")
+                self.print(f'  Example: curl -H "Authorization: Bearer {api_key}" '
+                           f"http://{host}:{port}/v1/models")
+            elif api_key:
+                self.print_success("Auth: static API key (EFFGEN_API_KEY)")
+            elif oidc:
+                self.print_success("Auth: OIDC / JWT")
+
+            self.print(f"Starting server on {host}:{port}")
+            self.print(f"  OpenAI-compatible API : http://{host}:{port}/v1")
+            self.print(f"  Interactive docs      : http://{host}:{port}/docs")
+            self.print(f"  Dashboard             : http://{host}:{port}/dashboard")
             self.print()
 
             uvicorn.run(
                 app,
-                host=args.host,
-                port=args.port,
-                log_level="info" if getattr(args, 'verbose', False) else "warning"
+                host=host,
+                port=port,
+                log_level="info" if verbose else "warning",
             )
-
             return 0
 
         except Exception as e:
             self.print_error(f"Error starting server: {e}")
-            if getattr(args, 'verbose', False):
+            if getattr(args, "verbose", False):
                 import traceback
                 traceback.print_exc()
             return 1
+
+    def _register_convenience_routes(self, app: Any) -> None:
+        """Attach the legacy ``/run``, ``/tools``, ``/``, ``/slo``, ``/ws``
+        routes onto the secure app from ``create_app``.
+
+        Auth for these is provided by the app's ``AuthMiddleware`` (so they
+        honor the same static-key / OIDC / dev posture as ``/v1``); they do not
+        re-implement their own auth dependency.
+        """
+        # WebSocket is imported at module level (above) so FastAPI can resolve
+        # the ``ws: WebSocket`` annotation under ``from __future__ import
+        # annotations``; importing it only here would leave the annotation
+        # unresolvable and break the /ws handshake.
+        from fastapi import HTTPException, WebSocketDisconnect
+        from fastapi.responses import JSONResponse
+
+        from effgen.server.app import _normalize_model_id
+
+        @app.post("/run")
+        async def run_task(request: TaskRequest) -> Any:
+            """Run a task with an agent (convenience endpoint)."""
+            try:
+                # Normalize OpenAI-style ``provider/model`` ids to effGen's
+                # ``provider:model`` routing, matching the /v1 endpoints — so a
+                # ``groq/…`` id loads the provider adapter instead of falling
+                # through to the local Transformers path and 500-ing.
+                model_id = _normalize_model_id(request.model) if request.model else request.model
+                if request.preset:
+                    from effgen.presets import create_agent as _create_preset_agent
+
+                    agent_instance = _create_preset_agent(
+                        request.preset,
+                        model_id,
+                        temperature=request.temperature,
+                        max_iterations=request.max_iterations,
+                    )
+                else:
+                    tools = []
+                    for name in _general_purpose_tool_names(app.state.cli.tool_registry):
+                        try:
+                            tools.append(await app.state.cli.tool_registry.get_tool(name))
+                        except Exception as tool_err:  # noqa: BLE001
+                            logging.debug("Failed to load tool %s: %s", name, tool_err)
+                    agent_instance = Agent(AgentConfig(
+                        name="api-agent",
+                        model=model_id,
+                        tools=tools,
+                        temperature=request.temperature,
+                        max_iterations=request.max_iterations,
+                    ))
+
+                try:
+                    response = agent_instance.run(request.task)
+                finally:
+                    agent_instance.close()  # release per-request agent resources
+                return JSONResponse(content={
+                    "output": response.output,
+                    "success": response.success,
+                    "metadata": {
+                        "mode": response.mode.value if hasattr(response.mode, "value") else str(response.mode),
+                        "iterations": response.iterations,
+                        "tool_calls": response.tool_calls,
+                        "execution_time": response.execution_time,
+                    },
+                })
+            except Exception as e:  # noqa: BLE001
+                logging.exception("Error running task")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.get("/slo")
+        async def slo_endpoint() -> Any:
+            """SLO burn-rate status for all registered SLOs."""
+            try:
+                from effgen.observability.slo import get_tracker as _get_tracker
+
+                return {"slos": _get_tracker().all_statuses()}
+            except Exception as exc:  # noqa: BLE001
+                return {"slos": [], "error": str(exc)}
+
+        @app.get("/tools")
+        async def list_tools_endpoint() -> Any:
+            """List available tools."""
+            tools = app.state.cli.tool_registry.list_tools()
+            tool_info = []
+            for tool_name in tools:
+                try:
+                    metadata = app.state.cli.tool_registry.get_metadata(tool_name)
+                    tool_info.append({
+                        "name": tool_name,
+                        "description": metadata.description,
+                        "category": metadata.category.value
+                        if hasattr(metadata.category, "value") else str(metadata.category),
+                    })
+                except Exception:  # noqa: BLE001
+                    tool_info.append({"name": tool_name, "description": "N/A", "category": "unknown"})
+            return {"tools": tool_info, "count": len(tools)}
+
+        @app.get("/")
+        async def root() -> Any:
+            """Root endpoint with API information."""
+            return {
+                "name": "effGen API",
+                "version": __version__,
+                "endpoints": {
+                    "POST /v1/chat/completions": "OpenAI-compatible chat (SSE streaming)",
+                    "POST /v1/completions": "OpenAI-compatible text completion",
+                    "GET /v1/models": "List available model aliases",
+                    "POST /run": "Run a task with an agent",
+                    "WS /ws": "WebSocket streaming",
+                    "GET /health": "Health check",
+                    "GET /metrics": "Prometheus metrics (auth)",
+                    "GET /tools": "List available tools",
+                    "GET /docs": "OpenAPI documentation",
+                    "GET /dashboard": "Local metrics dashboard",
+                },
+            }
+
+        @app.websocket("/ws")
+        async def websocket_stream(ws: WebSocket) -> None:
+            """WebSocket endpoint for streaming agent responses."""
+            await ws.accept()
+            try:
+                while True:
+                    data = await ws.receive_json()
+                    task = data.get("task", "")
+                    model_id = _normalize_model_id(data.get("model", "Qwen/Qwen2.5-3B-Instruct"))
+                    preset_name = data.get("preset")
+                    if preset_name:
+                        from effgen.presets import create_agent as _create_preset_agent
+
+                        agent_instance = _create_preset_agent(preset_name, model_id)
+                    else:
+                        tools = []
+                        for name in _general_purpose_tool_names(app.state.cli.tool_registry):
+                            try:
+                                tools.append(await app.state.cli.tool_registry.get_tool(name))
+                            except Exception:  # noqa: BLE001
+                                pass
+                        agent_instance = Agent(AgentConfig(
+                            name="ws-agent", model=model_id, tools=tools,
+                            enable_streaming=True,
+                        ))
+                    await ws.send_json({"type": "start", "task": task})
+                    try:
+                        for token in agent_instance.stream(task):
+                            await ws.send_json({"type": "token", "content": token})
+                        await ws.send_json({"type": "done"})
+                    except Exception as e:  # noqa: BLE001
+                        await ws.send_json({"type": "error", "detail": str(e)})
+                    finally:
+                        agent_instance.close()  # release per-turn agent resources
+            except WebSocketDisconnect:
+                logging.info("WebSocket client disconnected")
 
     def config_commands(self, args):
         """

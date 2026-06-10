@@ -13,15 +13,35 @@ Azure AD, etc.).
 | `EFFGEN_OIDC_ISSUER` | *(required in prod)* | Token issuer URL, e.g. `https://your-tenant.auth0.com/` |
 | `EFFGEN_OIDC_CLIENT_ID` | *(required in prod)* | Expected `aud` claim in JWTs |
 | `EFFGEN_OIDC_JWKS_URI` | auto-discovered | JWKS endpoint; omit to use OIDC discovery |
+| `EFFGEN_API_KEY` | *(unset)* | Static API key — a simpler shared-secret alternative to OIDC |
+| `EFFGEN_API_KEY_ROLES` | `admin` | Comma-separated RBAC roles granted to a valid API key |
 | `EFFGEN_DEV_MODE` | `0` | Set to `1` to disable auth with a loud warning |
 | `EFFGEN_METRICS_AUTH` | `0` | Set to `1` to require auth on `/metrics` |
+
+---
+
+## Static API key
+
+For deployments that don't run an OIDC provider, set `EFFGEN_API_KEY` to a
+shared secret. Clients then present it as either header:
+
+```bash
+curl -H "Authorization: Bearer $EFFGEN_API_KEY" http://127.0.0.1:8000/v1/models
+curl -H "X-API-Key: $EFFGEN_API_KEY"            http://127.0.0.1:8000/v1/models
+```
+
+The key is compared in constant time and maps to the roles in
+`EFFGEN_API_KEY_ROLES` (default `admin`). When neither `EFFGEN_API_KEY`, OIDC,
+nor `EFFGEN_DEV_MODE=1` is set, `effgen serve` mints and prints an **ephemeral**
+key at startup, so the server is never unauthenticated by default.
 
 ---
 
 ## Public endpoints (no auth required)
 
 - `/health`
-- `/healthz`, `/ready`, `/livez`
+- `/healthz`, `/ready`, `/livez`, `/readyz`
+- `/openapi.json`, `/docs`, `/redoc` (API schema only — no data)
 - `/metrics` (unless `EFFGEN_METRICS_AUTH=1`)
 
 ---

@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
+from collections import OrderedDict
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -90,6 +92,7 @@ def create_app(
     oidc_issuer: str | None = None,
     oidc_client_id: str | None = None,
     oidc_jwks_uri: str | None = None,
+    api_key: str | None = None,
     metrics_auth: bool = False,
     public_metrics: bool | None = None,
     public_dashboard: bool | None = None,
@@ -156,6 +159,7 @@ def create_app(
         issuer=oidc_issuer,
         client_id=oidc_client_id,
         jwks_uri=oidc_jwks_uri,
+        api_key=api_key,
         public_metrics=public_metrics,
         public_dashboard=public_dashboard,
         dev_mode=_dev,
@@ -255,27 +259,158 @@ def create_app(
     return app
 
 
+# ---------------------------------------------------------------------------
+# Model pool — reuse loaded models across requests (Audit-2 #25)
+# ---------------------------------------------------------------------------
+#
+# Constructing a fresh Agent per request is cheap, but each Agent used to spin
+# up its own ModelLoader and *reload the model* every call — catastrophic for
+# local GPU models and wasteful for cloud adapters. We instead pool the loaded
+# *model* (the heavy object) keyed by its resolved id, bounded by an LRU, and
+# build a lightweight, fresh-memory Agent around the pooled model per request.
+# A fresh Agent per call keeps the endpoint stateless (no conversation bleed
+# between unrelated API requests) while paying the model-load cost only once.
+
+_MODEL_POOL: "OrderedDict[str, Any]" = OrderedDict()
+_MODEL_POOL_LOCK = threading.Lock()
+_LOADING_LOCKS: dict[str, Any] = {}
+
+
+def _model_pool_max() -> int:
+    try:
+        return max(1, int(os.getenv("EFFGEN_MODEL_POOL_SIZE", "4")))
+    except ValueError:
+        return 4
+
+
+def _get_pooled_model(resolved_model: str) -> Any:
+    """Return a loaded model for *resolved_model*, reusing a pooled instance.
+
+    Thread-safe with a bounded LRU. The (potentially slow) load happens outside
+    the pool lock, serialized per-model so two concurrent first requests don't
+    both load the same model.
+    """
+    with _MODEL_POOL_LOCK:
+        model = _MODEL_POOL.get(resolved_model)
+        if model is not None:
+            _MODEL_POOL.move_to_end(resolved_model)
+            return model
+        load_lock = _LOADING_LOCKS.setdefault(resolved_model, threading.Lock())
+
+    with load_lock:
+        # Re-check: another thread may have loaded it while we waited.
+        with _MODEL_POOL_LOCK:
+            model = _MODEL_POOL.get(resolved_model)
+            if model is not None:
+                _MODEL_POOL.move_to_end(resolved_model)
+                return model
+
+        from effgen.models.model_loader import load_model as _load_model
+
+        model = _load_model(resolved_model)
+
+        evicted: list[Any] = []
+        with _MODEL_POOL_LOCK:
+            _MODEL_POOL[resolved_model] = model
+            _MODEL_POOL.move_to_end(resolved_model)
+            while len(_MODEL_POOL) > _model_pool_max():
+                _, old = _MODEL_POOL.popitem(last=False)
+                evicted.append(old)
+            _LOADING_LOCKS.pop(resolved_model, None)
+
+    for old in evicted:
+        for closer in ("close", "unload", "shutdown"):
+            fn = getattr(old, closer, None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:  # noqa: BLE001
+                    logger.debug("Error closing evicted model", exc_info=True)
+                break
+    return model
+
+
+def _extract_usage(response: Any) -> tuple[int | None, int | None]:
+    """Pull (prompt_tokens, completion_tokens) from an AgentResponse.
+
+    Prefers provider/tokenizer counts the agent recorded in metadata; falls
+    back to the aggregate ``tokens_used`` for completion tokens.
+    """
+    meta = getattr(response, "metadata", None) or {}
+
+    def _int_or_none(v: Any) -> int | None:
+        try:
+            return int(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    prompt = _int_or_none(meta.get("input_tokens", meta.get("prompt_tokens")))
+    completion = _int_or_none(meta.get("output_tokens", meta.get("completion_tokens")))
+    if completion is None:
+        completion = _int_or_none(getattr(response, "tokens_used", None)) or None
+    return prompt, completion
+
+
 def _build_default_runner() -> Any:
     """Construct an agent-backed runner for the OpenAI-compatible endpoints.
 
     Returns a callable ``runner(prompt, *, model, tools, stream, **kw)`` that
-    drives an :class:`~effgen.core.agent.Agent`. The agent (and its model) is
-    created lazily per call from the requested model id so the server can serve
-    any provider the host environment is configured for.
+    drives an :class:`~effgen.core.agent.Agent` around a *pooled* model. For
+    ``stream=True`` it returns a lazy token generator (so the route can begin
+    flushing SSE immediately); otherwise it returns a
+    :class:`~effgen.api.openai_compat.RunnerResult` carrying real usage and the
+    resolved model id.
     """
-    def _runner(prompt: str, *, model: str, tools: Any = None, stream: bool = False, **_: Any) -> str:
+    def _runner(
+        prompt: str,
+        *,
+        model: str,
+        tools: Any = None,
+        stream: bool = False,
+        temperature: float | None = None,
+        **_: Any,
+    ) -> Any:
+        from effgen.api.openai_compat import RunnerResult
         from effgen.core.agent import Agent, AgentConfig
 
+        resolved_model = _normalize_model_id(model)
+        pooled_model = _get_pooled_model(resolved_model)
         resolved_tools = _resolve_tools(tools)
         config = AgentConfig(
             name="api",
-            model=_normalize_model_id(model),
+            model=pooled_model,  # pre-loaded instance → no per-request reload
             tools=resolved_tools,
+            temperature=temperature if temperature is not None else 0.7,
             require_model=True,
         )
         agent = Agent(config)
-        response = agent.run(prompt)
-        return getattr(response, "output", str(response))
+
+        if stream:
+            # Close the ephemeral agent once the stream is exhausted. ``close()``
+            # releases the agent's own resources (memory handles, circuit
+            # breakers) but NOT the pooled model, which is shared and stays
+            # loaded — and it silences the "garbage-collected without close()"
+            # warning that would otherwise fire per streamed request.
+            def _stream_then_close() -> Any:
+                try:
+                    yield from agent.stream(prompt)
+                finally:
+                    agent.close()
+
+            return _stream_then_close()
+
+        try:
+            response = agent.run(prompt)
+            prompt_tokens, completion_tokens = _extract_usage(response)
+            return RunnerResult(
+                text=getattr(response, "output", "") or "",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                resolved_model=resolved_model,
+                finish_reason="stop" if getattr(response, "success", True) else "error",
+            )
+        finally:
+            agent.close()
 
     return _runner
 
@@ -444,8 +579,25 @@ class RBACBudgetMiddleware:
             more = msg.get("more_body", False)
         raw = b"".join(chunks)
 
+        # Replay the buffered body to the route once. A StreamingResponse runs
+        # a disconnect-listener concurrently with the body generator, looping on
+        # receive(); if we kept handing it the request body it would spin
+        # forever and starve the SSE generator (the /v1 streaming hang). After
+        # the single replay we *park* — exactly as a real ASGI server's
+        # receive() blocks until the client actually sends something — so the
+        # disconnect-listener waits quietly and is cancelled when the response
+        # finishes, instead of busy-looping or being told the client vanished.
+        import asyncio as _asyncio
+
+        _replay_state = {"sent": False}
+        _parked = _asyncio.Event()
+
         async def _replay() -> dict[str, Any]:
-            return {"type": "http.request", "body": raw, "more_body": False}
+            if not _replay_state["sent"]:
+                _replay_state["sent"] = True
+                return {"type": "http.request", "body": raw, "more_body": False}
+            await _parked.wait()  # cancelled when the route's response completes
+            return {"type": "http.disconnect"}
 
         body: Any = {}
         if raw:

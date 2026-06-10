@@ -14,6 +14,7 @@ Public endpoints (no JWT required by default):
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -316,6 +317,12 @@ _PUBLIC_PATHS: frozenset[str] = frozenset({
     "/ready",
     "/readyz",
     "/livez",
+    # API schema / interactive docs carry no data (just the API shape) and need
+    # to load before a token is available, like the health probes.
+    "/openapi.json",
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/redoc",
 })
 
 # Dashboard *data* endpoints expose operational metrics/traces. They are
@@ -424,6 +431,8 @@ class AuthMiddleware:
         issuer: str | None = None,
         client_id: str | None = None,
         jwks_uri: str | None = None,
+        api_key: str | None = None,
+        api_key_roles: list[str] | None = None,
         public_paths: frozenset[str] | None = None,
         metrics_auth: bool = False,
         public_metrics: bool | None = None,
@@ -434,6 +443,15 @@ class AuthMiddleware:
         self.issuer = issuer or os.getenv("EFFGEN_OIDC_ISSUER", "")
         self.client_id = client_id or os.getenv("EFFGEN_OIDC_CLIENT_ID", "")
         self.jwks_uri = jwks_uri or os.getenv("EFFGEN_OIDC_JWKS_URI", "")
+        # Static API-key auth: a shared-secret middle ground between full OIDC
+        # and dev mode. When configured, a request authenticates by presenting
+        # the key as ``Authorization: Bearer <key>`` or ``X-API-Key: <key>``.
+        self.api_key = api_key if api_key is not None else os.getenv("EFFGEN_API_KEY", "")
+        if api_key_roles is not None:
+            self.api_key_roles = list(api_key_roles)
+        else:
+            _roles_env = os.getenv("EFFGEN_API_KEY_ROLES", "admin").strip()
+            self.api_key_roles = [r.strip() for r in _roles_env.split(",") if r.strip()] or ["admin"]
         # dev_mode: explicit bool overrides the env var; None means "read env at call time"
         self._dev_mode_override: bool | None = dev_mode
 
@@ -510,8 +528,41 @@ class AuthMiddleware:
         auth_bytes: bytes = headers.get(b"authorization", b"")
         auth_str = auth_bytes.decode("latin-1", errors="replace")
 
+        # Static API-key path (when EFFGEN_API_KEY / api_key is configured).
+        # Accept the key as a bearer token or via the X-API-Key header. A
+        # configured key is REQUIRED on protected routes — there is no fallthrough
+        # to unauthenticated access (fail closed).
+        if self.api_key:
+            x_api_key = headers.get(b"x-api-key", b"").decode("latin-1", errors="replace")
+            presented = (
+                auth_str.removeprefix("Bearer ").strip()
+                if auth_str.startswith("Bearer ")
+                else x_api_key.strip()
+            )
+            if not presented:
+                await self._reject(
+                    scope, send, 401,
+                    "Missing API key (send 'Authorization: Bearer <key>' or "
+                    "'X-API-Key: <key>')",
+                )
+                return
+            if not hmac.compare_digest(presented, self.api_key):
+                await self._reject(scope, send, 401, "Invalid API key")
+                return
+            scope.setdefault("state", {})["user"] = TokenPayload(
+                sub="api-key",
+                iss="static-api-key",
+                aud="effgen",
+                exp=int(time.time()) + 86400,
+                iat=int(time.time()),
+                roles=list(self.api_key_roles),
+                email="",
+            )
+            await self.app(scope, receive, send)
+            return
+
         if not auth_str.startswith("Bearer "):
-            await self._reject(send, 401, "Missing or invalid Authorization header")
+            await self._reject(scope, send, 401, "Missing or invalid Authorization header")
             return
 
         raw_token = auth_str.removeprefix("Bearer ").strip()
@@ -523,14 +574,20 @@ class AuthMiddleware:
                 jwks_uri=self.jwks_uri or None,
             )
         except AuthError as exc:
-            await self._reject(send, exc.status_code, str(exc))
+            await self._reject(scope, send, exc.status_code, str(exc))
             return
 
         scope.setdefault("state", {})["user"] = payload
         await self.app(scope, receive, send)
 
-    @staticmethod
-    async def _reject(send: Any, status: int, detail: str) -> None:
+    async def _reject(self, scope: Any, send: Any, status: int, detail: str) -> None:
+        # WebSocket handshakes cannot be denied with an HTTP response message
+        # (uvicorn raises "Expected 'websocket.accept'/'websocket.close'…"); the
+        # ASGI way to refuse one before accepting is ``websocket.close``, which
+        # the server surfaces to the client as an HTTP 403.
+        if scope.get("type") == "websocket":
+            await send({"type": "websocket.close", "code": 1008})  # policy violation
+            return
         body = json.dumps({"detail": detail}).encode()
         await send({
             "type": "http.response.start",
