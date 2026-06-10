@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shlex
+import signal
 from typing import Any
 
 from ..base_tool import (
@@ -24,6 +25,14 @@ from ..base_tool import (
 )
 
 logger = logging.getLogger(__name__)
+
+_POSIX = os.name == "posix"
+
+# Shell metacharacters that require a real shell to interpret (pipes,
+# redirects, substitution, globbing, etc.). Commands without any of these are
+# executed via argv (no shell), which is safer and avoids shell-injection
+# surprises.
+_SHELL_METACHARS = re.compile(r"[|&;<>$`(){}\[\]*?~!\n\\]")
 
 # Default blocked commands/patterns that are dangerous
 DEFAULT_BLOCKED_COMMANDS = {
@@ -254,6 +263,60 @@ class BashTool(BaseTool):
             env.pop(var, None)
         return env
 
+    @staticmethod
+    def _needs_shell(command: str) -> bool:
+        """True when the command uses shell features (pipes/globs/redirects)."""
+        return bool(_SHELL_METACHARS.search(command))
+
+    async def _spawn(self, command: str, cwd: str, env: dict[str, str]):
+        """Spawn the command, preferring argv execution over a shell.
+
+        A new session is created so the whole process group (including any
+        children the command spawns) can be killed together on timeout.
+        """
+        kwargs: dict[str, Any] = {
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "cwd": cwd,
+            "env": env,
+        }
+        if _POSIX:
+            kwargs["start_new_session"] = True
+
+        if not self._needs_shell(command):
+            try:
+                argv = shlex.split(command)
+            except ValueError:
+                argv = []
+            if argv:
+                return await asyncio.create_subprocess_exec(*argv, **kwargs)
+        # Shell features present (or argv parse failed): use the shell. The
+        # safety checks in ``_is_command_safe`` already blocked the dangerous
+        # substitution/redirect patterns.
+        return await asyncio.create_subprocess_shell(command, **kwargs)
+
+    @staticmethod
+    async def _kill_process_group(proc) -> None:
+        """Hard-kill the process group and reap the child."""
+        if proc.returncode is not None:
+            return
+        killed = False
+        if _POSIX:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                killed = True
+            except (ProcessLookupError, PermissionError, OSError):
+                killed = False
+        if not killed:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
     async def _execute(self, command: str, **kwargs) -> dict[str, Any]:
         """
         Execute a shell command.
@@ -277,16 +340,17 @@ class BashTool(BaseTool):
         env = self._get_safe_env()
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                env=env,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=self.timeout
-            )
+            proc = await self._spawn(command, cwd, env)
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=self.timeout
+                )
+            except asyncio.TimeoutError:  # noqa: UP041 - distinct class on py3.10
+                # Kill the whole process group so backgrounded children die too.
+                await self._kill_process_group(proc)
+                raise TimeoutError(
+                    f"Command timed out after {self.timeout}s: {command}"
+                )
 
             stdout_str = stdout.decode("utf-8", errors="replace").strip()
             stderr_str = stderr.decode("utf-8", errors="replace").strip()
@@ -313,9 +377,7 @@ class BashTool(BaseTool):
                 result["error_info"] = f"Command exited with code {proc.returncode}"
                 return result
 
-        except asyncio.TimeoutError:
-            raise TimeoutError(
-                f"Command timed out after {self.timeout}s: {command}"
-            )
+        except TimeoutError:
+            raise
         except Exception as e:
             raise RuntimeError(f"Failed to execute command: {e}")

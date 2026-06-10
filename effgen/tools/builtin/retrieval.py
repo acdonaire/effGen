@@ -574,6 +574,7 @@ class Retrieval(BaseTool):
         knowledge_base_path: str | None = None,
         enable_hybrid_search: bool = True,
         hybrid_alpha: float = 0.7,
+        allow_pickle: bool = False,
     ):
         """
         Initialize the retrieval tool.
@@ -587,6 +588,11 @@ class Retrieval(BaseTool):
             knowledge_base_path: Path to a directory to auto-load documents from
             enable_hybrid_search: Combine vector + BM25 search (default True)
             hybrid_alpha: Weight for vector score in hybrid (0=BM25 only, 1=vector only)
+            allow_pickle: Permit loading a *legacy* pickle index. Default
+                ``False``: indexes are stored/loaded as JSON, and an untrusted
+                pickle file is refused (unpickling arbitrary data is remote code
+                execution). Only set ``True`` for index files you created and
+                trust.
         """
         super().__init__(
             metadata=ToolMetadata(
@@ -674,6 +680,7 @@ class Retrieval(BaseTool):
         self.index_path = index_path
         self.enable_hybrid_search = enable_hybrid_search
         self.hybrid_alpha = hybrid_alpha
+        self.allow_pickle = allow_pickle
 
         # Initialize chunker
         if chunking_strategy in self.CHUNKING_STRATEGIES:
@@ -949,13 +956,23 @@ class Retrieval(BaseTool):
             "query": query,
         }
 
+    # Magic header so a loader can recognise an effGen JSON index regardless of
+    # file extension.
+    _JSON_INDEX_MARKER = "effgen-retrieval-index-v1"
+
     def save_index(self, path: str | None = None):
-        """Save the index to disk."""
+        """Save the index to disk as JSON (safe to load anywhere).
+
+        The previous format was a Python pickle, which is unsafe to load from an
+        untrusted source. JSON carries the same data (embeddings are stored as
+        plain number lists) without the arbitrary-code-execution risk.
+        """
         path = path or self.index_path
         if not path:
             raise ValueError("No index path specified")
 
         data = {
+            "format": self._JSON_INDEX_MARKER,
             "documents": {
                 doc_id: {
                     "id": doc.id,
@@ -970,23 +987,52 @@ class Retrieval(BaseTool):
             "chunk_overlap": self.chunk_overlap,
         }
 
-        with open(path, "wb") as f:
-            pickle.dump(data, f)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
 
         logger.info(f"Saved index to {path}")
 
     def _load_index(self, path: str):
-        """Load the index from disk."""
-        with open(path, "rb") as f:
-            data = pickle.load(f)
+        """Load the index from disk.
+
+        Prefers the safe JSON format. A legacy pickle file is only loaded when
+        ``allow_pickle=True`` was passed, and then with a loud warning — loading
+        an untrusted pickle is arbitrary code execution.
+        """
+        data = None
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            data = None  # not JSON — likely a legacy pickle
+
+        if data is None:
+            if not self.allow_pickle:
+                raise ValueError(
+                    f"Index file '{path}' is not a JSON index and may be a legacy "
+                    "pickle. Loading a pickle can execute arbitrary code, so it is "
+                    "refused by default. If you created this file and trust it, "
+                    "re-create it with save_index() (JSON), or pass "
+                    "allow_pickle=True to load it once."
+                )
+            logger.warning(
+                "⚠️  Loading a LEGACY PICKLE index from '%s'. Unpickling "
+                "untrusted data can execute arbitrary code; only do this for files "
+                "you created and trust. Re-save with save_index() to migrate to the "
+                "safe JSON format.",
+                path,
+            )
+            with open(path, "rb") as f:
+                data = pickle.load(f)  # noqa: S301 - explicitly gated by allow_pickle
 
         self.documents = {}
         for doc_id, doc_data in data["documents"].items():
+            embedding = doc_data.get("embedding")
             self.documents[doc_id] = Document(
                 id=doc_data["id"],
                 content=doc_data["content"],
                 metadata=doc_data["metadata"],
-                embedding=np.array(doc_data["embedding"]) if doc_data["embedding"] else None,
+                embedding=np.array(embedding) if embedding is not None else None,
             )
 
         self.doc_ids = data["doc_ids"]

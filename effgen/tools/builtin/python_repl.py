@@ -3,16 +3,28 @@ Python REPL tool with persistent sessions.
 
 This module provides a Python REPL (Read-Eval-Print Loop) tool with
 persistent session state, safe evaluation, and comprehensive error handling.
+
+User code never runs in the host process. Each session is backed by a
+dedicated **worker subprocess** (:mod:`effgen.tools.builtin._repl_worker`)
+started in its own process group. The advertised timeout is enforced by the
+parent with a wall-clock deadline and a hard ``SIGKILL`` of the worker's
+process group, so a runaway such as ``while True: pass`` is killed on time
+instead of pinning a CPU. Memory and output caps are likewise enforced from
+outside the executed code.
 """
 
 from __future__ import annotations
 
 import ast
-import builtins
-import io
+import asyncio
+import json
 import logging
-import traceback
-from contextlib import redirect_stderr, redirect_stdout
+import os
+import select
+import subprocess
+import sys
+import threading
+import time
 from typing import Any
 
 from ..base_tool import (
@@ -24,6 +36,52 @@ from ..base_tool import (
 )
 
 logger = logging.getLogger(__name__)
+
+_WORKER_PATH = os.path.join(os.path.dirname(__file__), "_repl_worker.py")
+
+
+class _Worker:
+    """Handle to a single persistent REPL worker subprocess."""
+
+    __slots__ = ("proc", "resp_fd", "lock")
+
+    def __init__(self, proc: subprocess.Popen, resp_fd: int):
+        self.proc = proc
+        self.resp_fd = resp_fd
+        self.lock = threading.Lock()
+
+    def kill(self) -> None:
+        """Hard-kill the worker's whole process group and release its fds."""
+        proc = self.proc
+        try:
+            if proc.poll() is None:
+                if hasattr(os, "killpg"):
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal_SIGKILL())
+                    except (ProcessLookupError, PermissionError, OSError):
+                        proc.kill()
+                else:  # pragma: no cover - non-POSIX
+                    proc.kill()
+        except Exception:  # pragma: no cover - defensive
+            pass
+        for closer in (
+            lambda: proc.stdin and proc.stdin.close(),
+            lambda: os.close(self.resp_fd),
+        ):
+            try:
+                closer()
+            except Exception:  # pragma: no cover
+                pass
+        try:
+            proc.wait(timeout=5)
+        except Exception:  # pragma: no cover
+            pass
+
+
+def signal_SIGKILL() -> int:
+    import signal
+
+    return signal.SIGKILL
 
 
 class PythonREPL(BaseTool):
@@ -40,15 +98,20 @@ class PythonREPL(BaseTool):
     - Session management (reset, save, restore)
 
     Security:
+    - User code runs in an isolated worker subprocess (its own process group)
+    - Wall-clock timeout enforced by the parent with a hard process-group kill
+    - Address-space (memory) limit applied to the worker via RLIMIT_AS
+    - stdout/stderr output capped outside the executed code
     - Restricted builtins (no file operations, eval, exec by default)
     - Configurable allowed imports
-    - Timeout protection (inherited from base)
-    - Memory limits (via base class)
     """
 
     # Standardized resource limits
     DEFAULT_TIMEOUT = 30          # seconds (matches ToolMetadata.timeout_seconds)
     DEFAULT_MAX_OUTPUT = 102400   # 100 KB
+    DEFAULT_MAX_MEMORY_MB = 1024  # per-worker address-space cap (RLIMIT_AS)
+    # Hard ceiling on bytes read back from a worker for a single request.
+    _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
     # Dangerous builtins to restrict
     RESTRICTED_BUILTINS = {
@@ -77,8 +140,20 @@ class PythonREPL(BaseTool):
         "fractions",
     }
 
-    def __init__(self):
-        """Initialize the Python REPL."""
+    def __init__(
+        self,
+        timeout: int = DEFAULT_TIMEOUT,
+        max_output: int = DEFAULT_MAX_OUTPUT,
+        max_memory_mb: int | None = DEFAULT_MAX_MEMORY_MB,
+    ):
+        """Initialize the Python REPL.
+
+        Args:
+            timeout: Wall-clock seconds before a runaway worker is killed.
+            max_output: Maximum captured stdout/stderr bytes per execution.
+            max_memory_mb: Per-worker address-space cap in MiB (``None`` disables
+                the RLIMIT_AS limit; the timeout kill still applies).
+        """
         super().__init__(
             metadata=ToolMetadata(
                 name="python_repl",
@@ -153,51 +228,149 @@ class PythonREPL(BaseTool):
                 ],
             )
         )
-        self._sessions: dict[str, dict[str, Any]] = {}
+        self._timeout = int(timeout)
+        self._max_output = int(max_output)
+        self._max_memory_bytes = (
+            int(max_memory_mb) * 1024 * 1024 if max_memory_mb else None
+        )
         self._allowed_imports = self.DEFAULT_ALLOWED_IMPORTS.copy()
+        # session_id -> _Worker (live worker subprocess holding the namespace)
+        self._workers: dict[str, _Worker] = {}
+        self._workers_lock = threading.Lock()
 
     async def initialize(self) -> None:
-        """Initialize the REPL."""
+        """Initialize the REPL (workers are spawned lazily on first use)."""
         await super().initialize()
-        # Create default session
-        self._create_session("default")
 
-    def _create_session(self, session_id: str) -> None:
-        """Create a new session with clean namespace.
+    # ------------------------------------------------------------------
+    # Worker lifecycle
+    # ------------------------------------------------------------------
+    def _spawn_worker(self) -> _Worker:
+        """Start a fresh worker subprocess in its own process group."""
+        resp_r, resp_w = os.pipe()
+        env = os.environ.copy()
+        env["EFFGEN_REPL_RESP_FD"] = str(resp_w)
+        env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
 
-        Note: We use the same dict for both globals and locals to ensure
-        that functions defined in exec() can access themselves for recursion.
-        """
-        namespace = {}
-        self._sessions[session_id] = {
-            "globals": namespace,
-            "locals": namespace,  # Same dict for proper function recursion
+        max_mem = self._max_memory_bytes
+
+        def _preexec() -> None:  # pragma: no cover - runs in the child
+            # New session => new process group, so the parent can kill the
+            # whole tree (including grandchildren) with a single signal.
+            os.setsid()
+            if max_mem:
+                try:
+                    import resource
+
+                    resource.setrlimit(resource.RLIMIT_AS, (max_mem, max_mem))
+                except Exception:
+                    pass
+
+        popen_kwargs: dict[str, Any] = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "pass_fds": (resp_w,),
+            "env": env,
         }
+        if hasattr(os, "setsid"):
+            popen_kwargs["preexec_fn"] = _preexec
+        try:
+            proc = subprocess.Popen([sys.executable, _WORKER_PATH], **popen_kwargs)
+        finally:
+            os.close(resp_w)  # the child owns its copy now
+        return _Worker(proc, resp_r)
 
-    def _get_session(self, session_id: str) -> dict[str, Any]:
-        """Get or create a session."""
-        if session_id not in self._sessions:
-            self._create_session(session_id)
-        return self._sessions[session_id]
+    def _get_worker(self, session_id: str) -> _Worker:
+        """Return the live worker for a session, spawning one if needed."""
+        with self._workers_lock:
+            worker = self._workers.get(session_id)
+            if worker is None or worker.proc.poll() is not None:
+                if worker is not None:
+                    worker.kill()
+                worker = self._spawn_worker()
+                self._workers[session_id] = worker
+            return worker
 
-    def _get_restricted_builtins(self) -> dict[str, Any]:
-        """Get restricted builtins dictionary."""
-        safe_builtins = {}
-        for name in dir(builtins):
-            if name not in self.RESTRICTED_BUILTINS:
-                safe_builtins[name] = getattr(builtins, name)
+    def _kill_worker(self, session_id: str) -> None:
+        with self._workers_lock:
+            worker = self._workers.pop(session_id, None)
+        if worker is not None:
+            worker.kill()
 
-        # Add a safe __import__ that only allows whitelisted modules
-        original_import = builtins.__import__
+    def _request(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send one request to a session worker and read its response.
 
-        def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
-            """Safe import that only allows whitelisted modules."""
-            if not self._is_import_allowed(name):
-                raise ImportError(f"Import of '{name}' is not allowed")
-            return original_import(name, globals, locals, fromlist, level)
+        Enforces the wall-clock timeout: if the worker does not answer within
+        ``self._timeout`` seconds it is hard-killed (process group) and a typed
+        timeout failure is returned. Runs blocking I/O — call via a thread.
+        """
+        worker = self._get_worker(session_id)
+        line = (json.dumps(payload) + "\n").encode("utf-8")
+        with worker.lock:
+            try:
+                worker.proc.stdin.write(line)
+                worker.proc.stdin.flush()
+            except (BrokenPipeError, ValueError, OSError):
+                # Worker died between requests — respawn once and retry.
+                self._kill_worker(session_id)
+                worker = self._get_worker(session_id)
+                try:
+                    worker.proc.stdin.write(line)
+                    worker.proc.stdin.flush()
+                except Exception as e:
+                    return self._failure(f"REPL worker unavailable: {e}")
 
-        safe_builtins['__import__'] = safe_import
-        return safe_builtins
+            deadline = time.monotonic() + self._timeout
+            buf = b""
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._kill_worker(session_id)
+                    return self._failure(
+                        f"Execution timed out after {self._timeout}s "
+                        "(worker process killed)",
+                        timeout=True,
+                    )
+                try:
+                    ready, _, _ = select.select([worker.resp_fd], [], [], remaining)
+                except OSError:
+                    self._kill_worker(session_id)
+                    return self._failure("REPL worker channel closed")
+                if not ready:
+                    continue
+                try:
+                    chunk = os.read(worker.resp_fd, 65536)
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    self._kill_worker(session_id)
+                    return self._failure("REPL worker exited unexpectedly")
+                buf += chunk
+                if len(buf) > self._MAX_RESPONSE_BYTES:
+                    self._kill_worker(session_id)
+                    return self._failure("REPL produced too much output")
+                nl = buf.find(b"\n")
+                if nl != -1:
+                    try:
+                        return json.loads(buf[:nl].decode("utf-8", "replace"))
+                    except Exception as e:
+                        self._kill_worker(session_id)
+                        return self._failure(f"REPL protocol error: {e}")
+
+    @staticmethod
+    def _failure(message: str, timeout: bool = False) -> dict[str, Any]:
+        result = {
+            "success": False,
+            "result": None,
+            "stdout": "",
+            "stderr": "",
+            "error": message,
+        }
+        if timeout:
+            result["timeout"] = True
+        return result
 
     def _is_import_allowed(self, module_name: str) -> bool:
         """Check if an import is allowed."""
@@ -308,120 +481,39 @@ class PythonREPL(BaseTool):
         Returns:
             Dict containing result, stdout, stderr, error, and optionally variables
         """
-        # Reset session if requested
-        if reset_session:
-            self._create_session(session_id)
-
-        # Get session
-        session = self._get_session(session_id)
-
-        # Check imports and security in restricted mode
+        # Check imports and security in restricted mode (cheap parent-side
+        # gate that rejects obvious escapes before any subprocess work).
         if restricted_mode:
             import_error = self._check_imports(code)
             if import_error:
-                return {
-                    "success": False,
-                    "result": None,
-                    "stdout": "",
-                    "stderr": "",
-                    "error": import_error,
-                    "variables": {} if return_variables else None,
-                }
+                resp = self._failure(import_error)
+                if return_variables:
+                    resp["variables"] = {}
+                return resp
             security_error = self._check_security(code)
             if security_error:
-                return {
-                    "success": False,
-                    "result": None,
-                    "stdout": "",
-                    "stderr": "",
-                    "error": security_error,
-                    "variables": {} if return_variables else None,
-                }
+                resp = self._failure(security_error)
+                if return_variables:
+                    resp["variables"] = {}
+                return resp
 
-        # Set up restricted builtins if needed
-        if restricted_mode:
-            session["globals"]["__builtins__"] = self._get_restricted_builtins()
-
-        # Capture stdout and stderr
-        stdout_capture = io.StringIO()
-        stderr_capture = io.StringIO()
-
-        result = None
-        error = None
-
-        try:
-            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                # Try to parse as expression first
-                try:
-                    tree = ast.parse(code, mode="eval")
-                    compiled = compile(tree, "<repl>", mode="eval")
-                    result = eval(
-                        compiled,
-                        session["globals"],
-                        session["locals"],
-                    )
-                except SyntaxError:
-                    # Not an expression, try as statements
-                    tree = ast.parse(code, mode="exec")
-                    compiled = compile(tree, "<repl>", mode="exec")
-                    exec(
-                        compiled,
-                        session["globals"],
-                        session["locals"],
-                    )
-
-                    # Check if last statement was a bare expression (not a
-                    # function call).  Re-evaluating Call nodes like print()
-                    # would execute the call a second time, producing
-                    # duplicate output — BUG-011.
-                    if (
-                        tree.body
-                        and isinstance(tree.body[-1], ast.Expr)
-                        and not isinstance(tree.body[-1].value, ast.Call)
-                    ):
-                        last_expr = tree.body[-1].value
-                        result = eval(
-                            compile(
-                                ast.Expression(body=last_expr),
-                                "<repl>",
-                                mode="eval",
-                            ),
-                            session["globals"],
-                            session["locals"],
-                        )
-
-        except Exception as e:
-            error = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            logger.debug(f"REPL execution error: {error}")
-
-        # Get output (truncate to max_output_size)
-        stdout_value = stdout_capture.getvalue()
-        stderr_value = stderr_capture.getvalue()
-        if len(stdout_value) > self.DEFAULT_MAX_OUTPUT:
-            stdout_value = stdout_value[:self.DEFAULT_MAX_OUTPUT] + "\n... (output truncated)"
-        if len(stderr_value) > self.DEFAULT_MAX_OUTPUT:
-            stderr_value = stderr_value[:self.DEFAULT_MAX_OUTPUT] + "\n... (output truncated)"
-
-        # Prepare response. ``success`` mirrors the actual outcome so the tool
-        # envelope never claims success while carrying an execution error.
-        response = {
-            "success": error is None,
-            "result": result,
-            "stdout": stdout_value,
-            "stderr": stderr_value,
-            "error": error,
+        payload = {
+            "code": code,
+            "restricted_mode": restricted_mode,
+            "allowed_imports": sorted(self._allowed_imports),
+            "return_variables": return_variables,
+            "reset": reset_session,
+            "max_output": self._max_output,
         }
 
-        # Include variables if requested
-        if return_variables:
-            # Filter out private variables and builtins
-            variables = {
-                k: repr(v)
-                for k, v in {**session["globals"], **session["locals"]}.items()
-                if not k.startswith("_") and k != "__builtins__"
-            }
-            response["variables"] = variables
+        # The worker runs user code; do the blocking request off the event loop
+        # so a slow (or killed-on-timeout) worker never stalls the caller.
+        response = await asyncio.to_thread(self._request, session_id, payload)
 
+        if response.get("error"):
+            logger.debug("REPL execution error: %s", response["error"])
+        if return_variables and "variables" not in response:
+            response["variables"] = {}
         return response
 
     def add_allowed_import(self, module_name: str) -> None:
@@ -444,13 +536,15 @@ class PythonREPL(BaseTool):
 
     def reset_session(self, session_id: str) -> None:
         """
-        Reset a session to clean state.
+        Reset a session to clean state by terminating its worker.
+
+        The next execution for this session spawns a fresh worker with an empty
+        namespace.
 
         Args:
             session_id: Session to reset
         """
-        if session_id in self._sessions:
-            self._create_session(session_id)
+        self._kill_worker(session_id)
 
     def get_session_variables(self, session_id: str) -> dict[str, str]:
         """
@@ -462,17 +556,28 @@ class PythonREPL(BaseTool):
         Returns:
             Dict mapping variable names to their string representations
         """
-        if session_id not in self._sessions:
+        with self._workers_lock:
+            live = session_id in self._workers
+        if not live:
             return {}
-
-        session = self._sessions[session_id]
-        return {
-            k: repr(v)
-            for k, v in {**session["globals"], **session["locals"]}.items()
-            if not k.startswith("_") and k != "__builtins__"
-        }
+        response = self._request(
+            session_id,
+            {
+                "code": "",
+                "restricted_mode": False,
+                "allowed_imports": sorted(self._allowed_imports),
+                "return_variables": True,
+                "reset": False,
+                "max_output": self._max_output,
+            },
+        )
+        return response.get("variables") or {}
 
     async def cleanup(self) -> None:
-        """Clean up all sessions."""
-        self._sessions.clear()
+        """Terminate every worker subprocess and clear state."""
+        with self._workers_lock:
+            workers = list(self._workers.values())
+            self._workers.clear()
+        for worker in workers:
+            worker.kill()
         await super().cleanup()
