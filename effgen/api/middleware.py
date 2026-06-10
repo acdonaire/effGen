@@ -25,6 +25,8 @@ def install_production_middleware(
     app: Any,
     *,
     cors_origins: Iterable[str] | None = None,
+    dev_mode: bool = False,
+    allow_credentials: bool | None = None,
     enable_gzip: bool = True,
     gzip_min_size: int = 500,
     enable_request_id: bool = True,
@@ -33,6 +35,12 @@ def install_production_middleware(
     """Install production-grade middleware on a FastAPI ``app``.
 
     Safe to call even if FastAPI/Starlette is not importable (no-op).
+
+    CORS is fail-closed: when ``cors_origins`` is not provided, cross-origin
+    access is **disabled** in production (no CORS middleware is installed) and
+    only opened to ``*`` in dev mode. A wildcard origin is never combined with
+    ``allow_credentials=True`` (that combination is both insecure and rejected
+    by browsers), so credentials are enabled only for an explicit origin list.
     """
     try:
         from fastapi import Request
@@ -43,15 +51,34 @@ def install_production_middleware(
         return
 
     # 1. CORS
-    origins = list(cors_origins) if cors_origins else ["*"]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["X-Request-ID"],
-    )
+    origins = list(cors_origins or [])
+    if not origins and dev_mode:
+        origins = ["*"]
+    wildcard = "*" in origins
+    if allow_credentials is None:
+        # Credentials only for an explicit, non-wildcard origin allow-list.
+        allow_credentials = bool(origins) and not wildcard
+    if wildcard and allow_credentials:
+        logger.warning(
+            "CORS: refusing to combine wildcard origin with credentials; "
+            "disabling allow_credentials."
+        )
+        allow_credentials = False
+
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=allow_credentials,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["X-Request-ID"],
+        )
+    else:
+        logger.info(
+            "CORS: no cross-origin access configured (set EFFGEN_CORS_ORIGINS "
+            "or pass cors_origins to enable)."
+        )
 
     # 2. gzip compression
     if enable_gzip:

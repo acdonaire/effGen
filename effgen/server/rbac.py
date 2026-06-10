@@ -17,12 +17,22 @@ Environment configuration:
 
 Built-in roles shipped with effGen:
 
-  admin      — all tools, all models, no cost cap
-  researcher — all tools, all models, $50/day cap
-  viewer     — all tools, all models, $5/day cap
-  reader     — NO tools (deny_tools), all models, $1/day cap
+  admin        — all tools, all models, no cost cap
+  researcher   — all tools, all models, $50/day cap
+  limited_user — all tools, all models, $5/day cap (low-budget tool user)
+  viewer       — NO tools (deny_tools), all models, $5/day cap (read-only)
+  reader       — NO tools (deny_tools), all models, $1/day cap (read-only)
+
+``viewer`` is read-only despite the cost cap: it cannot execute tools (a
+"viewer" should not be able to spend budget by invoking tools). Use
+``limited_user`` for a low-budget role that *can* run tools.
 
 These are overridden if a policy file is present.
+
+Unknown roles: by default (outside dev mode) an unrecognized role is rejected
+(:class:`PolicyDenied`) so identity-provider mapping mistakes fail loudly. Set
+``EFFGEN_RBAC_STRICT_ROLES=0`` to fall back to the lenient "skip unknown roles"
+behavior; dev mode is lenient unless ``EFFGEN_RBAC_STRICT_ROLES=1``.
 """
 from __future__ import annotations
 
@@ -97,11 +107,18 @@ _BUILTIN_ROLES: dict[str, Role] = {
         allowed_models=frozenset(),
         max_cost_per_day=50.0,
     ),
-    "viewer": Role(
-        name="viewer",
-        allowed_tools=frozenset(),  # all tools
+    "limited_user": Role(
+        name="limited_user",
+        allowed_tools=frozenset(),  # empty = all tools
         allowed_models=frozenset(),
         max_cost_per_day=5.0,
+    ),
+    "viewer": Role(
+        name="viewer",
+        allowed_tools=frozenset(),
+        allowed_models=frozenset(),
+        max_cost_per_day=5.0,
+        deny_tools=True,  # read-only: a "viewer" must not execute tools
     ),
     "reader": Role(
         name="reader",
@@ -214,17 +231,42 @@ class EffectivePolicy:
             )
 
 
-def resolve_policy(role_names: list[str]) -> EffectivePolicy:
+def _strict_roles() -> bool:
+    """Return whether unknown roles should be rejected (strict mode).
+
+    Strict by default outside dev mode; lenient in dev mode. Overridable with
+    ``EFFGEN_RBAC_STRICT_ROLES`` (``1``/``0``).
+    """
+    raw = os.getenv("EFFGEN_RBAC_STRICT_ROLES", "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    # Unset: strict unless dev mode.
+    return os.getenv("EFFGEN_DEV_MODE", "0").strip() != "1"
+
+
+def resolve_policy(
+    role_names: list[str], *, strict: bool | None = None
+) -> EffectivePolicy:
     """Build an :class:`EffectivePolicy` from a list of role name strings.
 
-    Unknown role names are logged and silently ignored (fail-open for
-    extensibility; the caller decides whether to deny unknown roles).
+    In strict mode (default outside dev mode) an unrecognized role raises
+    :class:`PolicyDenied` so identity-provider mapping mistakes fail loudly.
+    In lenient mode unknown roles are logged and skipped.
     """
+    if strict is None:
+        strict = _strict_roles()
     registry = _load_registry()
     roles: list[Role] = []
     for name in role_names:
         role = registry.get(name)
         if role is None:
+            if strict:
+                raise PolicyDenied(
+                    f"unknown role {name!r}; known roles: "
+                    f"{sorted(registry)!r}"
+                )
             logger.warning("Unknown role %r — skipping", name)
         else:
             roles.append(role)
@@ -302,7 +344,10 @@ def get_rbac_dependency(
         if user is not None:
             roles = getattr(user, "roles", [])
 
-        policy = resolve_policy(roles)
+        try:
+            policy = resolve_policy(roles)
+        except PolicyDenied as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
         if require_tool and not policy.allows_tool(require_tool):
             raise HTTPException(

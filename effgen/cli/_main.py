@@ -1076,14 +1076,19 @@ class CLIInterface:
                 lifespan=lifespan
             )
 
-            # Add CORS middleware
-            app.add_middleware(
-                CORSMiddleware,
-                allow_origins=["*"],
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
-            )
+            # Add CORS middleware (fail-closed: cross-origin disabled unless
+            # EFFGEN_CORS_ORIGINS is set; never wildcard + credentials).
+            _cors_env = os.environ.get("EFFGEN_CORS_ORIGINS", "").strip()
+            _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+            if _cors_origins:
+                _wildcard = "*" in _cors_origins
+                app.add_middleware(
+                    CORSMiddleware,
+                    allow_origins=_cors_origins,
+                    allow_credentials=not _wildcard,
+                    allow_methods=["*"],
+                    allow_headers=["*"],
+                )
 
             # --- Request logging & rate limiting middleware ---
             @app.middleware("http")
@@ -1293,6 +1298,15 @@ class CLIInterface:
                 self.print_success("Dashboard available at /dashboard")
             except Exception as exc:  # noqa: BLE001 - dashboard is optional
                 logging.warning("Dashboard not mounted: %s", exc)
+
+            # Warn loudly when exposing the server beyond loopback without auth.
+            _loopback = args.host in ("127.0.0.1", "localhost", "::1", "")
+            if not _loopback and not expected_key:
+                self.print_error(
+                    f"Binding to {args.host} exposes this server on all interfaces "
+                    "with NO API-key auth. Set EFFGEN_API_KEY to require a key, or "
+                    "bind to 127.0.0.1 (the default)."
+                )
 
             # Start server
             self.print(f"Starting server on {args.host}:{args.port}")
@@ -2070,7 +2084,11 @@ Examples:
 
     # Serve command
     serve_parser = subparsers.add_parser('serve', help='Start API server')
-    serve_parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
+    serve_parser.add_argument(
+        '--host', default='127.0.0.1',
+        help='Host to bind to (default 127.0.0.1, loopback-only). '
+             'Pass --host 0.0.0.0 to expose on all interfaces (set EFFGEN_API_KEY first).',
+    )
     serve_parser.add_argument('-p', '--port', type=int, default=8000, help='Port to bind to')
 
     # Config commands

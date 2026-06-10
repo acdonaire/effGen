@@ -141,11 +141,19 @@ class TestPolicyResolutionSingle:
         assert policy.allows_tool("any_tool") is True  # all tools allowed
         assert policy.max_cost_per_day == 50.0
 
-    def test_unknown_role_falls_back_to_viewer(self):
-        """Unknown role strings should not crash; fallback to restricted default."""
-        policy = resolve_policy(["unknown-role"])
-        # Should still be usable (viewer-equivalent)
+    def test_unknown_role_strict_by_default(self):
+        """Unknown roles are rejected in strict mode (the default)."""
+        from effgen.server.rbac import PolicyDenied
+
+        with pytest.raises(PolicyDenied):
+            resolve_policy(["unknown-role"])
+
+    def test_unknown_role_lenient_falls_back(self):
+        """In lenient mode, unknown roles are skipped → read-only fallback."""
+        policy = resolve_policy(["unknown-role"], strict=False)
         assert isinstance(policy, EffectivePolicy)
+        # No recognized roles → read-only default (no tools).
+        assert policy.allows_tool("web_search") is False
 
     def test_empty_roles_list_falls_back_to_viewer(self):
         policy = resolve_policy([])
@@ -240,8 +248,8 @@ class TestPolicyChecks:
         assert policy.allows_tool("web_search") is True
 
     def test_unknown_role_defaults_to_read_only(self):
-        """Unknown roles fall back to a read-only (no-tool) policy."""
-        policy = resolve_policy(["does-not-exist"])
+        """In lenient mode, unknown roles fall back to a read-only policy."""
+        policy = resolve_policy(["does-not-exist"], strict=False)
         assert policy.allows_tool("web_search") is False
 
 

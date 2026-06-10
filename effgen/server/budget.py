@@ -44,6 +44,10 @@ class BudgetExceeded(Exception):
 _lock = threading.Lock()
 # {day -> {principal -> spend_usd}}
 _ledger: dict[str, dict[str, float]] = {}
+# In-flight reservations: {day -> {principal -> {reservation_id -> amount}}}.
+# Reserved (but not yet committed) amounts count against the cap so concurrent
+# requests cannot all slip past the check before any of them is charged.
+_reservations: dict[str, dict[str, dict[str, float]]] = {}
 _BUDGET_DIR: Path | None = None
 
 
@@ -150,15 +154,91 @@ def charge(
         return ledger[principal]
 
 
+def _reserved_total(principal: str, day: str) -> float:
+    """Sum of in-flight reservations for *principal* on *day* (lock held)."""
+    return sum(_reservations.get(day, {}).get(principal, {}).values())
+
+
+def reserve(
+    principal: str,
+    amount: float,
+    *,
+    cap: float = 0.0,
+    day: str | None = None,
+) -> str:
+    """Reserve *amount* USD against *principal*'s budget and return a token.
+
+    The reservation counts against the cap immediately (alongside already
+    committed spend) so an over-budget or concurrently-bursting principal is
+    rejected *before* the request runs. Nothing is permanently charged until
+    :func:`reconcile` is called; :func:`release` discards the reservation
+    without charging (used when the underlying call fails).
+
+    Raises :class:`BudgetExceeded` if committed + reserved spend has already met
+    or exceeded a positive *cap*.
+    """
+    import uuid
+
+    day = day or _today()
+    with _lock:
+        committed = _load_day(day).get(principal, 0.0)
+        reserved = _reserved_total(principal, day)
+        if cap > 0.0 and (committed + reserved) >= cap:
+            raise BudgetExceeded(
+                f"BudgetExceeded: principal {principal!r} has spent/reserved "
+                f"${committed + reserved:.4f} of its ${cap:.2f}/day cap"
+            )
+        token = uuid.uuid4().hex
+        _reservations.setdefault(day, {}).setdefault(principal, {})[token] = max(0.0, amount)
+        return token
+
+
+def _pop_reservation(principal: str, token: str, day: str) -> float:
+    """Remove and return a reservation amount (lock held); 0.0 if missing."""
+    by_principal = _reservations.get(day, {}).get(principal, {})
+    return by_principal.pop(token, 0.0)
+
+
+def reconcile(
+    principal: str,
+    token: str,
+    actual_amount: float | None = None,
+    *,
+    day: str | None = None,
+) -> float:
+    """Commit a reservation, charging *actual_amount* (default = reserved).
+
+    Returns the principal's new committed total. Pass ``actual_amount`` when the
+    real provider usage/cost is known after the call completes; otherwise the
+    originally reserved estimate is charged.
+    """
+    day = day or _today()
+    with _lock:
+        reserved = _pop_reservation(principal, token, day)
+        charge_amount = reserved if actual_amount is None else max(0.0, actual_amount)
+        ledger = _load_day(day)
+        ledger[principal] = ledger.get(principal, 0.0) + charge_amount
+        _save_day(day)
+        return ledger[principal]
+
+
+def release(principal: str, token: str, *, day: str | None = None) -> None:
+    """Discard a reservation without charging (e.g. the call failed)."""
+    day = day or _today()
+    with _lock:
+        _pop_reservation(principal, token, day)
+
+
 def reset(principal: str | None = None, *, day: str | None = None) -> None:
     """Reset spend. With no args, clears the entire in-memory ledger.
 
     Primarily for tests and admin tooling.
     """
-    global _ledger, _BUDGET_DIR
+    global _ledger, _BUDGET_DIR, _reservations
     with _lock:
         if principal is None and day is None:
             _ledger = {}
+            _reservations = {}
             return
         d = day or _today()
         ledger = _load_day(d)

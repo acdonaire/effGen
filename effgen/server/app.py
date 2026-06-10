@@ -51,6 +51,34 @@ except ImportError:  # pragma: no cover
     _FastAPIRequest = None  # type: ignore[assignment,misc]
 
 
+def _server_version() -> str:
+    """Return the effGen package version without paying for a heavy import.
+
+    Reads the installed distribution metadata first (cheap; does not import the
+    ``effgen`` package). Falls back to the package attribute, then a sentinel.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version("effgen")
+        except PackageNotFoundError:
+            pass
+    except Exception:  # noqa: BLE001 - importlib.metadata always present on 3.11
+        pass
+    try:
+        from effgen import __version__
+
+        return __version__
+    except Exception:  # noqa: BLE001
+        return "0.0.0"
+
+
+def _truthy_env(name: str) -> bool:
+    """Return True when env var *name* is set to a truthy value."""
+    return os.getenv(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
@@ -63,6 +91,8 @@ def create_app(
     oidc_client_id: str | None = None,
     oidc_jwks_uri: str | None = None,
     metrics_auth: bool = False,
+    public_metrics: bool | None = None,
+    public_dashboard: bool | None = None,
     cors_origins: list[str] | None = None,
     runner: Any = None,
 ) -> Any:
@@ -85,10 +115,21 @@ def create_app(
 
     _dev = dev_mode if dev_mode is not None else (os.getenv("EFFGEN_DEV_MODE", "0") == "1")
 
+    # Observability endpoints are protected by default. They become public only
+    # in dev mode or when an operator explicitly opts in (constructor flag or
+    # EFFGEN_PUBLIC_METRICS / EFFGEN_PUBLIC_DASHBOARD). The legacy
+    # ``metrics_auth`` flag (and EFFGEN_METRICS_AUTH) still force metrics auth on.
+    if public_metrics is None:
+        public_metrics = _dev or _truthy_env("EFFGEN_PUBLIC_METRICS")
+    if metrics_auth or _truthy_env("EFFGEN_METRICS_AUTH"):
+        public_metrics = False
+    if public_dashboard is None:
+        public_dashboard = _dev or _truthy_env("EFFGEN_PUBLIC_DASHBOARD")
+
     app = FastAPI(
         title="effGen API",
         description="effGen — Efficient Agent Framework API",
-        version="0.2.10",
+        version=_server_version(),
         docs_url="/docs",
         redoc_url="/redoc",
     )
@@ -115,7 +156,8 @@ def create_app(
         issuer=oidc_issuer,
         client_id=oidc_client_id,
         jwks_uri=oidc_jwks_uri,
-        metrics_auth=metrics_auth,
+        public_metrics=public_metrics,
+        public_dashboard=public_dashboard,
         dev_mode=_dev,
     )
 
@@ -124,11 +166,17 @@ def create_app(
 
     app.add_middleware(AuditMiddleware)  # type: ignore[arg-type]
 
-    # 4. Production middleware (CORS, gzip, request-ID) — outermost
+    # 4. Production middleware (CORS, gzip, request-ID) — outermost.
+    # CORS is fail-closed: outside dev mode, cross-origin access is disabled
+    # unless ``cors_origins`` (or EFFGEN_CORS_ORIGINS) is explicitly configured.
+    if cors_origins is None:
+        _env_origins = os.getenv("EFFGEN_CORS_ORIGINS", "").strip()
+        if _env_origins:
+            cors_origins = [o.strip() for o in _env_origins.split(",") if o.strip()]
     try:
         from effgen.api.middleware import install_production_middleware
 
-        install_production_middleware(app, cors_origins=cors_origins or ["*"])
+        install_production_middleware(app, cors_origins=cors_origins, dev_mode=_dev)
     except ImportError:
         logger.warning("Production middleware not available")
 
@@ -139,11 +187,11 @@ def create_app(
     @app.get("/health", tags=["ops"])
     async def health() -> dict[str, str]:
         """Health probe — always public."""
-        return {"status": "ok", "version": "0.2.10"}
+        return {"status": "ok", "version": _server_version()}
 
     @app.get("/metrics", tags=["ops"])
     async def metrics(request: _FastAPIRequest) -> Any:  # type: ignore[valid-type]
-        """Prometheus metrics (public by default; set EFFGEN_METRICS_AUTH=1 to protect)."""
+        """Prometheus metrics (requires auth by default; opt out via --public-metrics)."""
         try:
             from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
             from starlette.responses import Response
@@ -175,11 +223,14 @@ def create_app(
     @app.get("/rbac/policy", tags=["auth"])
     async def rbac_policy(request: _FastAPIRequest) -> dict[str, Any]:  # type: ignore[valid-type]
         """Return the effective RBAC policy for the current principal."""
-        from effgen.server.rbac import resolve_policy
+        from effgen.server.rbac import PolicyDenied, resolve_policy
 
         user = getattr(request.state, "user", None)
         roles: list[str] = getattr(user, "roles", []) if user else []
-        policy = resolve_policy(roles)
+        try:
+            policy = resolve_policy(roles)
+        except PolicyDenied as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
         return {
             "roles": [r.name for r in policy.roles],
             "allowed_tools": sorted(policy.allowed_tools) or ["*"],
@@ -329,8 +380,16 @@ class RBACBudgetMiddleware:
       * 403 ``role X does not permit model Y`` — disallowed model,
       * 429 ``BudgetExceeded`` — daily cost cap already met.
 
-    On a permitted request a small per-call estimate (``EFFGEN_PER_CALL_COST_USD``,
-    default ``0.01``) is charged against the principal's daily budget.
+    Budget handling is reserve-then-reconcile: a per-call estimate
+    (``EFFGEN_PER_CALL_COST_USD``, default ``0.01``) is *reserved* before the
+    route runs (rejecting an over-cap principal with 429) and committed only if
+    the call succeeds. Failed calls (HTTP >= 400 or an exception) release the
+    reservation and are **not** charged.
+
+    Request bodies are bounded by ``EFFGEN_MAX_BODY_BYTES`` (default 10 MiB)
+    before buffering; oversized bodies are rejected with 413. Bodies are read
+    only for the enforced ``/v1`` routes — all other paths pass straight
+    through without touching the body.
     """
 
     _ENFORCED_PATHS = ("/v1/chat/completions", "/v1/completions")
@@ -338,27 +397,50 @@ class RBACBudgetMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
         self.per_call_cost = float(os.getenv("EFFGEN_PER_CALL_COST_USD", "0.01"))
+        self.max_body_bytes = int(os.getenv("EFFGEN_MAX_BODY_BYTES", str(10 * 1024 * 1024)))
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        # Skip body reads entirely for routes that don't need RBAC/budget.
         if scope.get("type") != "http" or scope.get("path") not in self._ENFORCED_PATHS:
             await self.app(scope, receive, send)
             return
 
         from effgen.server import budget as _budget
-        from effgen.server.rbac import resolve_policy
+        from effgen.server.rbac import PolicyDenied, resolve_policy
 
         user = scope.get("state", {}).get("user")
         principal = getattr(user, "sub", "anonymous") if user else "anonymous"
         roles: list[str] = list(getattr(user, "roles", []) if user else [])
-        policy = resolve_policy(roles)
+        try:
+            policy = resolve_policy(roles)
+        except PolicyDenied as exc:
+            await _reject_json(send, exc.status_code, str(exc))
+            return
         primary_role = roles[0] if roles else (policy.roles[0].name if policy.roles else "anonymous")
 
-        # Buffer the full request body, then replay it to the route.
+        # Reject early on an oversized declared Content-Length.
+        headers = dict(scope.get("headers", []))
+        declared = headers.get(b"content-length")
+        if declared is not None:
+            try:
+                if int(declared) > self.max_body_bytes:
+                    await _reject_json(send, 413, "Request body too large")
+                    return
+            except ValueError:
+                pass
+
+        # Buffer the request body (bounded), then replay it to the route.
         chunks: list[bytes] = []
+        total = 0
         more = True
         while more:
             msg = await receive()
-            chunks.append(msg.get("body", b""))
+            chunk = msg.get("body", b"")
+            total += len(chunk)
+            if total > self.max_body_bytes:
+                await _reject_json(send, 413, "Request body too large")
+                return
+            chunks.append(chunk)
             more = msg.get("more_body", False)
         raw = b"".join(chunks)
 
@@ -390,13 +472,34 @@ class RBACBudgetMiddleware:
                 )
                 return
 
+        # Reserve budget before the call; commit only on success.
         try:
-            _budget.charge(principal, self.per_call_cost, cap=policy.max_cost_per_day)
+            token = _budget.reserve(
+                principal, self.per_call_cost, cap=policy.max_cost_per_day
+            )
         except _budget.BudgetExceeded as exc:
             await _reject_json(send, exc.status_code, str(exc))
             return
 
-        await self.app(scope, _replay, send)
+        status_holder: dict[str, int] = {"status": 500}
+
+        async def _send_wrapper(message: dict[str, Any]) -> None:
+            if message.get("type") == "http.response.start":
+                status_holder["status"] = int(message.get("status", 200))
+            await send(message)
+
+        committed = False
+        try:
+            await self.app(scope, _replay, _send_wrapper)
+            if status_holder["status"] < 400:
+                _budget.reconcile(principal, token)  # charge the reserved estimate
+            else:
+                _budget.release(principal, token)  # failed call → no charge
+            committed = True
+        finally:
+            if not committed:
+                # The route raised before we could settle the reservation.
+                _budget.release(principal, token)
 
 
 async def _reject_json(send: Any, status: int, detail: str) -> None:

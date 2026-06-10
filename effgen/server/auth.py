@@ -29,10 +29,35 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _DEV_MODE_WARNED = False  # module-level flag so we warn only once per process
+_AUTH_UNCONFIGURED_WARNED = False
+_UNVERIFIED_DECODE_WARNED = False
 
 
 def _is_dev_mode() -> bool:
     return os.getenv("EFFGEN_DEV_MODE", "0").strip() == "1"
+
+
+def _warn_auth_unconfigured() -> None:
+    """Warn once when a bearer token is rejected for missing OIDC config."""
+    global _AUTH_UNCONFIGURED_WARNED
+    if not _AUTH_UNCONFIGURED_WARNED:
+        logger.error(
+            "Bearer token rejected: no OIDC issuer/JWKS configured and not in "
+            "dev mode. Set EFFGEN_OIDC_ISSUER/EFFGEN_OIDC_JWKS_URI to enable "
+            "JWT auth, or EFFGEN_DEV_MODE=1 for local development."
+        )
+        _AUTH_UNCONFIGURED_WARNED = True
+
+
+def _warn_unverified_decode() -> None:
+    """Warn once when a token is decoded without signature verification."""
+    global _UNVERIFIED_DECODE_WARNED
+    if not _UNVERIFIED_DECODE_WARNED:
+        logger.warning(
+            "JWT decoded WITHOUT signature verification (dev mode / explicit "
+            "opt-in). Never do this in production."
+        )
+        _UNVERIFIED_DECODE_WARNED = True
 
 
 def _warn_dev_mode() -> None:
@@ -167,6 +192,7 @@ def verify_jwt(
     issuer: str | None = None,
     client_id: str | None = None,
     jwks_uri: str | None = None,
+    allow_unverified: bool = False,
 ) -> TokenPayload:
     """Validate a Bearer JWT and return its decoded payload.
 
@@ -181,6 +207,12 @@ def verify_jwt(
     jwks_uri:
         JWKS endpoint.  Falls back to ``EFFGEN_OIDC_JWKS_URI`` or OIDC
         discovery via ``issuer``.
+    allow_unverified:
+        When ``True`` *and* no issuer/JWKS is configured, decode the token
+        **without** signature verification. This is intended only for explicit
+        local development (``EFFGEN_DEV_MODE=1``); it is **never** enabled on a
+        normal request path. With the default ``False`` an unconfigured server
+        rejects every bearer token instead of trusting it (fail closed).
     """
     issuer = issuer or os.getenv("EFFGEN_OIDC_ISSUER", "")
     client_id = client_id or os.getenv("EFFGEN_OIDC_CLIENT_ID", "")
@@ -242,12 +274,11 @@ def verify_jwt(
             client_id=client_id,
             jwks_uri=discovered_jwks_uri,
         )
-    else:
-        # No JWKS URI and no issuer — decode without signature verification
-        # (only allowed in dev mode; callers should check _is_dev_mode() first)
-        logger.warning(
-            "No JWKS URI or issuer configured — JWT decoded without signature verification"
-        )
+    elif allow_unverified:
+        # No JWKS URI and no issuer, and the caller explicitly opted in to
+        # signature-free decoding (dev mode only). This trusts the token as-is
+        # and must NEVER be reachable on a production request path.
+        _warn_unverified_decode()
         try:
             claims = pyjwt.decode(
                 token,
@@ -256,6 +287,19 @@ def verify_jwt(
             )
         except pyjwt.PyJWTError as exc:
             raise AuthError(f"JWT decode failed: {exc}") from exc
+    else:
+        # FAIL CLOSED: no issuer and no JWKS configured, and signature-free
+        # decoding was not explicitly permitted. Refuse the token rather than
+        # trusting an attacker-supplied signature. A production server that
+        # forgets its OIDC env vars therefore rejects all bearer tokens instead
+        # of silently accepting forged ones.
+        _warn_auth_unconfigured()
+        raise AuthError(
+            "Server authentication is not configured: no OIDC issuer or JWKS "
+            "URI is set, so bearer tokens cannot be verified. Configure "
+            "EFFGEN_OIDC_ISSUER (and/or EFFGEN_OIDC_JWKS_URI), or set "
+            "EFFGEN_DEV_MODE=1 for local development."
+        )
 
     return TokenPayload.from_claims(claims)
 
@@ -264,23 +308,38 @@ def verify_jwt(
 # FastAPI dependency
 # ---------------------------------------------------------------------------
 
-# Public endpoints that never require auth
+# Health/liveness/readiness probes — always public (no sensitive data, needed
+# by load balancers and K8s probes before any token is available).
 _PUBLIC_PATHS: frozenset[str] = frozenset({
     "/health",
     "/healthz",
     "/ready",
+    "/readyz",
     "/livez",
-    # Local dashboard - served for local developer use; no sensitive data in the
-    # dashboard UI itself. The API endpoints it reads (/metrics, /dashboard/data.json)
-    # are also public-by-default so the SPA works without token injection.
-    "/dashboard",
-    "/dashboard/",
+})
+
+# Dashboard *data* endpoints expose operational metrics/traces. They are
+# protected by default and only become public in dev mode or when an operator
+# opts in (``public_dashboard``). The static SPA shell (HTML/JS/CSS) carries no
+# data and stays public so the page can load and prompt for a token.
+_DASHBOARD_DATA_PATHS: frozenset[str] = frozenset({
     "/dashboard/data.json",
     "/dashboard/spans",
-    "/dashboard/app.js",
-    "/dashboard/style.css",
-    "/dashboard/index.html",
 })
+
+# File extensions treated as inert static dashboard assets.
+_STATIC_ASSET_SUFFIXES: tuple[str, ...] = (
+    ".js", ".css", ".html", ".png", ".svg", ".ico", ".map", ".woff", ".woff2",
+)
+
+
+def _is_dashboard_static(path: str) -> bool:
+    """Return True for inert static dashboard assets (never data endpoints)."""
+    if path in ("/dashboard", "/dashboard/"):
+        return True
+    if path in _DASHBOARD_DATA_PATHS:
+        return False
+    return path.startswith("/dashboard/") and path.endswith(_STATIC_ASSET_SUFFIXES)
 
 
 def get_auth_dependency():  # noqa: ANN201
@@ -367,18 +426,37 @@ class AuthMiddleware:
         jwks_uri: str | None = None,
         public_paths: frozenset[str] | None = None,
         metrics_auth: bool = False,
+        public_metrics: bool | None = None,
+        public_dashboard: bool | None = None,
         dev_mode: bool | None = None,
     ) -> None:
         self.app = app
         self.issuer = issuer or os.getenv("EFFGEN_OIDC_ISSUER", "")
         self.client_id = client_id or os.getenv("EFFGEN_OIDC_CLIENT_ID", "")
         self.jwks_uri = jwks_uri or os.getenv("EFFGEN_OIDC_JWKS_URI", "")
-        self.metrics_auth = metrics_auth or os.getenv("EFFGEN_METRICS_AUTH", "0") == "1"
         # dev_mode: explicit bool overrides the env var; None means "read env at call time"
         self._dev_mode_override: bool | None = dev_mode
+
+        # /metrics is protected by default. It is public only when explicitly
+        # opted in (constructor flag / EFFGEN_PUBLIC_METRICS) and never when the
+        # legacy EFFGEN_METRICS_AUTH=1 forces auth on.
+        _force_metrics_auth = metrics_auth or os.getenv("EFFGEN_METRICS_AUTH", "0") == "1"
+        if public_metrics is None:
+            public_metrics = (not _force_metrics_auth) and (
+                self._effective_dev_mode()
+                or os.getenv("EFFGEN_PUBLIC_METRICS", "0").strip() == "1"
+            )
+        self.public_metrics: bool = bool(public_metrics) and not _force_metrics_auth
+
+        if public_dashboard is None:
+            public_dashboard = self._effective_dev_mode() or (
+                os.getenv("EFFGEN_PUBLIC_DASHBOARD", "0").strip() == "1"
+            )
+        self.public_dashboard: bool = bool(public_dashboard)
+
         _extra = set(public_paths or set())
         _default_public = set(_PUBLIC_PATHS)
-        if not self.metrics_auth:
+        if self.public_metrics:
             _default_public.add("/metrics")
         self.public_paths: frozenset[str] = frozenset(_default_public | _extra)
 
@@ -403,9 +481,15 @@ class AuthMiddleware:
 
         path: str = scope.get("path", "/")
 
-        # Also exempt /dashboard and /dashboard/* static assets, but not
-        # lookalike paths such as /dashboardevil.
-        _is_dashboard = path == "/dashboard" or path.startswith("/dashboard/")
+        # Dashboard exemption: inert static assets (the SPA shell) are public so
+        # the page can load, but the data endpoints (/dashboard/data.json,
+        # /dashboard/spans) require auth unless the operator opted into a public
+        # dashboard. This closes the broad ``startswith("/dashboard/")`` hole
+        # that would otherwise make any future dashboard API public.
+        _is_dashboard_public = self.public_dashboard and (
+            path == "/dashboard" or path.startswith("/dashboard/")
+        )
+        _is_dashboard = _is_dashboard_public or _is_dashboard_static(path)
         _dev = self._effective_dev_mode()
         if path in self.public_paths or _is_dashboard or _dev:
             if _dev:
