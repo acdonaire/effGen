@@ -2,8 +2,8 @@
 effGen Domains — Knowledge domain definitions with keyword expansion.
 
 Provides domain-specific configurations (keywords, prompts, tools, guardrails)
-and a KeywordExpander that grows N seed keywords to 10N+ using WordNet,
-templates, and optional LLM-based expansion.
+and a KeywordExpander that grows N seed keywords to 10N+ using templates,
+optional LLM-based expansion, and opt-in WordNet synonyms.
 
 Usage:
     from effgen.domains import TechDomain, KeywordExpander, Domain

@@ -106,10 +106,34 @@ class PIIGuardrail(Guardrail):
         r"\b(?:\d[ -]*?){13,19}\b"
     )
 
-    # IPv4 address
+    # IPv4 address. The surrounding ``(?<![\w.])``/``(?![\w.])`` guards ensure the
+    # dotted-quad is not part of a longer token (e.g. ``v1.2.3.4`` or ``1.2.3.4.5``),
+    # which keeps version/build numbers from masquerading as addresses.
     _IPV4_PATTERN = re.compile(
-        r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
+        r"(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+        r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
     )
+
+    # Words that, when they immediately precede a dotted-quad, mark it as a version
+    # or build number rather than an IP address (avoids over-redacting release notes).
+    _VERSION_CUE_BEFORE = re.compile(
+        r"(?i)\b(?:v|ver|version|versions|release|released|rev|revision|build|"
+        r"patch|update|firmware|driver|sdk|api|schema|spec|protocol)\b\W*$"
+    )
+    # Version cues that follow a dotted-quad (e.g. "1.2.3.4 release").
+    _VERSION_CUE_AFTER = re.compile(
+        r"(?i)^\W*(?:release|released|rc\d|beta|alpha|stable|lts|build|patch)\b"
+    )
+
+    @classmethod
+    def _is_version_string(cls, text: str, start: int, end: int) -> bool:
+        """Return True if the dotted-quad at ``text[start:end]`` reads as a version."""
+        before = text[:start]
+        after = text[end:]
+        return bool(
+            cls._VERSION_CUE_BEFORE.search(before)
+            or cls._VERSION_CUE_AFTER.search(after)
+        )
 
     def __init__(
         self,
@@ -182,9 +206,19 @@ class PIIGuardrail(Guardrail):
                     redacted = redacted.replace(match.group(), "[CC REDACTED]")
                     break  # one detection is enough
 
-        if self.detect_ip and self._IPV4_PATTERN.search(content):
-            detections.append("IP_address")
-            redacted = self._IPV4_PATTERN.sub("[IP REDACTED]", redacted)
+        if self.detect_ip:
+            found_ip = False
+
+            def _ip_repl(match: re.Match[str]) -> str:
+                nonlocal found_ip
+                if self._is_version_string(match.string, match.start(), match.end()):
+                    return match.group()  # leave version/build numbers untouched
+                found_ip = True
+                return "[IP REDACTED]"
+
+            redacted = self._IPV4_PATTERN.sub(_ip_repl, redacted)
+            if found_ip:
+                detections.append("IP_address")
 
         if not detections:
             return GuardrailResult(passed=True)

@@ -2,17 +2,23 @@
 Keyword Expander for effGen domains.
 
 Expands N seed keywords to 10N+ using three strategies:
-1. **WordNet synonyms** — free, offline (requires ``nltk``; optional).
-2. **Template-based** — deterministic pattern expansion.
-3. **LLM-based** — uses the agent's own model to generate related terms.
+1. **Template-based** — deterministic pattern expansion (on by default).
+2. **LLM-based** — uses the agent's own model to generate related terms.
+3. **WordNet synonyms** — free, offline (requires ``nltk``; **opt-in**).
 
-All strategies are combined and deduplicated to produce the final list.
+WordNet is off by default: it has no word-sense disambiguation, so polysemous
+seeds drift off-domain (e.g. ``"python"`` expands toward snakes, not code). Turn
+it on with ``use_wordnet=True`` when that trade-off is acceptable.
+
+All enabled strategies are combined and deduplicated to produce the final list.
 
 Usage:
     from effgen.domains.expander import KeywordExpander
 
     expander = KeywordExpander()
     expanded = expander.expand(["Python", "machine learning"], factor=10)
+    # A bare string is treated as a single keyword (not iterated char-by-char):
+    expanded = expander.expand("python")
 """
 
 from __future__ import annotations
@@ -39,16 +45,17 @@ _DEFAULT_TEMPLATES: list[str] = [
 class KeywordExpander:
     """Expand seed keywords using multiple strategies.
 
-    All three strategies are enabled by default but gracefully degrade:
-    - WordNet: skipped with a warning if ``nltk`` is not installed.
-    - Templates: always available.
+    Strategies gracefully degrade:
+    - Templates: always available; the sensible, on-domain default.
     - LLM: skipped if no model is provided.
+    - WordNet: opt-in (``use_wordnet=True``); skipped with a note if ``nltk``
+      is not installed.
     """
 
     def __init__(
         self,
         *,
-        use_wordnet: bool = True,
+        use_wordnet: bool = False,
         use_templates: bool = True,
         use_llm: bool = False,
         model: Any = None,
@@ -64,12 +71,48 @@ class KeywordExpander:
     # Public API
     # ------------------------------------------------------------------
 
-    def expand(self, keywords: list[str], factor: int = 10) -> list[str]:
+    @staticmethod
+    def _normalize_keywords(keywords: list[str] | str) -> list[str]:
+        """Coerce input to a clean ``list[str]`` of seed keywords.
+
+        A bare ``str`` is wrapped as a single keyword (the most common mistake,
+        which previously char-iterated into nonsense). Other types raise a clear
+        ``TypeError`` instead of silently producing garbage.
+        """
+        if isinstance(keywords, str):
+            keywords = [keywords]
+        elif isinstance(keywords, list | tuple | set):
+            keywords = list(keywords)
+        else:
+            raise TypeError(
+                "KeywordExpander.expand() expects a list of keyword strings "
+                f"(or a single string), got {type(keywords).__name__}."
+            )
+        cleaned: list[str] = []
+        for kw in keywords:
+            if not isinstance(kw, str):
+                raise TypeError(
+                    "Each keyword must be a string, got "
+                    f"{type(kw).__name__}: {kw!r}."
+                )
+            kw = kw.strip()
+            if kw:
+                cleaned.append(kw)
+        return cleaned
+
+    def expand(self, keywords: list[str] | str, factor: int = 10) -> list[str]:
         """Expand *keywords* aiming for ``len(keywords) * factor`` terms.
+
+        Args:
+            keywords: A list of seed keywords, or a single keyword string. A
+                bare string is treated as **one** keyword — it is *not* iterated
+                character by character.
+            factor: Target multiplier (aim for ``len(keywords) * factor`` terms).
 
         Returns a deduplicated, sorted list of expanded terms.
         The original seed keywords are always included.
         """
+        keywords = self._normalize_keywords(keywords)
         if not keywords:
             return []
 
@@ -144,6 +187,10 @@ class KeywordExpander:
         terms: set[str] = set()
         for kw in keywords:
             for word in kw.split():
+                # Skip 1-2 char / non-alphabetic tokens: WordNet maps them to
+                # off-domain noise (single letters -> chemical elements, etc.).
+                if len(word) < 3 or not word.isalpha():
+                    continue
                 for syn in wordnet.synsets(word.lower()):
                     for lemma in syn.lemmas():
                         name = lemma.name().replace("_", " ")
@@ -196,7 +243,7 @@ class KeywordExpander:
                 result = self.model.generate(
                     prompt,
                     config=GenerationConfig(
-                        max_new_tokens=256,
+                        max_tokens=256,
                         temperature=0.7,
                     ),
                 )

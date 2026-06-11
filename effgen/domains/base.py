@@ -67,20 +67,22 @@ class Domain:
         self,
         factor: int = 10,
         *,
-        use_wordnet: bool = True,
+        use_wordnet: bool = False,
         use_templates: bool = True,
         use_llm: bool = False,
         model: Any = None,
     ) -> list[str]:
         """Expand seed keywords by the given factor.
 
-        Combines multiple strategies (WordNet synonyms, templates,
-        optional LLM-based generation) and deduplicates.
+        Combines multiple strategies (templates, optional LLM-based
+        generation, optional WordNet synonyms) and deduplicates.
 
         Args:
             factor: Target multiplier — aim for ``len(keywords) * factor``
                 expanded terms.
             use_wordnet: Enable WordNet synonym expansion (requires nltk).
+                Off by default — it has no word-sense disambiguation and
+                drifts off-domain for polysemous seeds.
             use_templates: Enable template-based expansion.
             use_llm: Enable LLM-based expansion (requires *model*).
             model: An effgen BaseModel instance for LLM expansion.

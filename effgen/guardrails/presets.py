@@ -82,18 +82,31 @@ _PRESET_FACTORIES = {
     NONE: no_guardrails,
 }
 
+# Friendly aliases for the canonical preset names. ``"default"`` is the name most
+# users reach for first, so it maps to the balanced "standard" preset.
+_PRESET_ALIASES = {
+    "default": STANDARD,
+    "balanced": STANDARD,
+    "off": NONE,
+    "disabled": NONE,
+}
+
 
 def get_guardrail_preset(name: str, **kwargs) -> GuardrailChain:
     """Get a guardrail chain by preset name.
 
     Args:
-        name: One of "strict", "standard", "minimal", "none".
+        name: One of "strict", "standard", "minimal", "none". The aliases
+            "default"/"balanced" map to "standard" and "off"/"disabled" map
+            to "none".
         **kwargs: Passed to the preset factory function.
 
     Returns:
         Configured GuardrailChain.
     """
-    factory = _PRESET_FACTORIES.get(name.lower())
+    key = name.lower()
+    key = _PRESET_ALIASES.get(key, key)
+    factory = _PRESET_FACTORIES.get(key)
     if factory is None:
         available = ", ".join(_PRESET_FACTORIES.keys())
         raise ValueError(f"Unknown guardrail preset: {name!r}. Available: {available}")
