@@ -8,6 +8,7 @@ lazy loading, and dependency management.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import inspect
 import logging
@@ -19,6 +20,26 @@ from ..utils.async_bridge import run_coroutine_sync
 from .base_tool import BaseTool, ToolCategory, ToolMetadata
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _quiet_discovery():
+    """Silence library log noise while merely *listing* tools.
+
+    Discovery imports every built-in module and instantiates each tool class
+    once to read its metadata. A few tools log at construction time (e.g. a
+    missing optional key or an unavailable backend). Listing the catalog should
+    never behave like activating a tool, so we pin the package logger to ERROR
+    for the duration of discovery. Genuine errors still surface; the per-tool
+    informational chatter does not. The previous level is always restored.
+    """
+    pkg_logger = logging.getLogger("effgen")
+    previous = pkg_logger.level
+    pkg_logger.setLevel(logging.ERROR)
+    try:
+        yield
+    finally:
+        pkg_logger.setLevel(previous)
 
 
 class ToolDependencyError(Exception):
@@ -428,7 +449,7 @@ class ToolRegistry:
                         self.register_tool(obj)
 
                 self._plugins[plugin_path.name] = plugin_path
-                logger.info(f"Registered plugin: {plugin_path.name}")
+                logger.debug(f"Registered plugin: {plugin_path.name}")
 
         except Exception as e:
             raise ToolRegistrationError(f"Failed to load plugin {plugin_path}: {e}")
@@ -446,28 +467,31 @@ class ToolRegistry:
             from . import builtin
             builtin_path = Path(builtin.__file__).parent
 
-            # Import all Python files in builtin directory
-            for file_path in builtin_path.glob("*.py"):
-                if file_path.name.startswith("_"):
-                    continue
+            # Import all Python files in builtin directory. Listing the catalog
+            # must stay quiet — a tool that logs while constructing its metadata
+            # probe should not spam the user (Audit-2 #44).
+            with _quiet_discovery():
+                for file_path in builtin_path.glob("*.py"):
+                    if file_path.name.startswith("_"):
+                        continue
 
-                module_name = f"effgen.tools.builtin.{file_path.stem}"
-                try:
-                    module = importlib.import_module(module_name)
+                    module_name = f"effgen.tools.builtin.{file_path.stem}"
+                    try:
+                        module = importlib.import_module(module_name)
 
-                    # Find all BaseTool subclasses
-                    for name, obj in inspect.getmembers(module, inspect.isclass):
-                        if (issubclass(obj, BaseTool) and
-                            obj is not BaseTool and
-                            obj.__module__ == module_name):
-                            try:
-                                self.register_tool(obj)
-                            except ToolRegistrationError as e:
-                                # Tool registration errors are already handled, just debug log
-                                logger.debug(f"Skipping {name}: {e}")
+                        # Find all BaseTool subclasses
+                        for name, obj in inspect.getmembers(module, inspect.isclass):
+                            if (issubclass(obj, BaseTool) and
+                                obj is not BaseTool and
+                                obj.__module__ == module_name):
+                                try:
+                                    self.register_tool(obj)
+                                except ToolRegistrationError as e:
+                                    # Already handled — just debug log
+                                    logger.debug(f"Skipping {name}: {e}")
 
-                except ImportError as e:
-                    logger.warning(f"Failed to import {module_name}: {e}")
+                    except ImportError as e:
+                        logger.warning(f"Failed to import {module_name}: {e}")
 
         except Exception as e:
             logger.error(f"Failed to discover builtin tools: {e}")

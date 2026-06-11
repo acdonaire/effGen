@@ -1,6 +1,13 @@
 """
 Performance metrics and monitoring utilities for effGen framework.
 
+.. note::
+   ``effgen.observability`` is the canonical home for telemetry. For Prometheus
+   counters/histograms use ``effgen.observability.metrics``; for span/trace
+   export use ``effgen.observability.tracing``. This module is the
+   execution-timing and cost-accounting collector (``MetricsCollector``); it
+   stays available for backwards compatibility and is used by the cost tracker.
+
 This module provides comprehensive performance tracking including execution time,
 token usage, cost calculation, throughput metrics, resource monitoring, and metrics
 export capabilities.

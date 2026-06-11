@@ -1,6 +1,12 @@
 """
 Structured logging for effGen framework.
 
+.. note::
+   ``effgen.observability.logs`` (``get_logger`` / ``configure_logging`` /
+   ``EffGenLogger``) is the canonical structured-logging home and shares this
+   module's thread-local run context. This module stays available for backwards
+   compatibility; prefer ``effgen.observability`` in new code.
+
 Provides JSON-formatted log output with consistent fields for agent execution,
 tool calls, and model inference. Each Agent.run() gets a unique run_id;
 multi-agent runs share a workflow_id.

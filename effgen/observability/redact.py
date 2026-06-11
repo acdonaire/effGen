@@ -8,15 +8,23 @@ labelled placeholder like ``<REDACTED:openai_key>``.
 
 Built-in patterns
 -----------------
-- ``openai_key``    — ``sk-[a-zA-Z0-9]{20,}``
-- ``anthropic_key`` — ``sk-ant-[a-zA-Z0-9]{20,}``
-- ``cerebras_key``  — ``csk-[a-zA-Z0-9]{20,}``
-- ``google_key``    — ``AIza[0-9A-Za-z_-]{35}``
-- ``hf_key``        — ``hf_[a-zA-Z0-9]{20,}``
-- ``groq_key``      — ``gsk_[a-zA-Z0-9]{20,}``
-- ``bearer_token``  — ``Bearer [^\\s]+``
-- ``slack_webhook`` — Slack/Discord webhook URLs (host kept, path replaced)
+- ``openai_key``     — ``sk-[a-zA-Z0-9]{20,}``
+- ``anthropic_key``  — ``sk-ant-[a-zA-Z0-9]{20,}``
+- ``cerebras_key``   — ``csk-[a-zA-Z0-9]{20,}``
+- ``google_key``     — ``AIza[0-9A-Za-z_-]{35}``
+- ``hf_key``         — ``hf_[a-zA-Z0-9]{20,}``
+- ``groq_key``       — ``gsk_[a-zA-Z0-9]{20,}``
+- ``replicate_key``  — ``r8_[A-Za-z0-9]{30,}``
+- ``fireworks_key``  — ``fw_[A-Za-z0-9]{20,}``
+- ``aws_access_key`` — ``(AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[0-9A-Z]{16}``
+- ``bearer_token``   — ``Bearer [^\\s]+``
+- ``slack_webhook``  — Slack incoming webhook URLs (host kept, path replaced)
 - ``discord_webhook`` — Discord webhook path
+- ``env_secret``     — generic ``*_API_KEY=…`` / ``*SECRET…=…`` / ``*TOKEN=…`` /
+  ``*PASSWORD=…`` env-style assignments (the variable name is kept, only the
+  value is replaced).  This is the catch-all that covers providers without a
+  distinctive key prefix — Together, Azure, AWS secret keys, etc. — whenever
+  they appear as ``VAR=value`` (e.g. an environment dump in a stack trace).
 
 User-extensible via ``Redactor.add_pattern(name, regex)``.
 
@@ -42,23 +50,56 @@ from typing import Any
 # Pattern registry
 # ---------------------------------------------------------------------------
 
+# Each entry is (name, regex, replacement-template).  The template is fed to
+# ``re.Pattern.sub`` so it may reference capture groups (``\g<1>`` etc.).  Most
+# patterns redact the whole match; ``env_secret`` keeps the variable name and
+# separator and replaces only the value.
+#
 # Ordered so that more-specific patterns are applied before less-specific ones
-# (e.g. anthropic_key before openai_key because both start with "sk-")
-_BUILTIN_PATTERNS: list[tuple[str, str]] = [
+# (e.g. anthropic_key before openai_key because both start with "sk-"; every
+# prefixed provider key before the generic ``env_secret`` catch-all).
+_REDACT = "<REDACTED:{}>"
+
+_BUILTIN_PATTERNS: list[tuple[str, str, str]] = [
     # More-specific first
-    ("anthropic_key", r"sk-ant-[a-zA-Z0-9_\-]{20,}"),
-    ("cerebras_key",  r"csk-[a-zA-Z0-9_\-]{20,}"),
-    ("google_key",    r"AIza[0-9A-Za-z_\-]{35}"),
-    ("hf_key",        r"hf_[a-zA-Z0-9]{20,}"),
-    ("groq_key",      r"gsk_[a-zA-Z0-9_\-]{20,}"),
+    ("anthropic_key", r"sk-ant-[a-zA-Z0-9_\-]{20,}", _REDACT.format("anthropic_key")),
+    ("cerebras_key",  r"csk-[a-zA-Z0-9_\-]{20,}",    _REDACT.format("cerebras_key")),
+    ("google_key",    r"AIza[0-9A-Za-z_\-]{35}",     _REDACT.format("google_key")),
+    ("hf_key",        r"hf_[a-zA-Z0-9]{20,}",         _REDACT.format("hf_key")),
+    ("groq_key",      r"gsk_[a-zA-Z0-9_\-]{20,}",     _REDACT.format("groq_key")),
+    # Replicate API tokens: ``r8_`` + 30+ url-safe chars.
+    ("replicate_key", r"r8_[A-Za-z0-9]{30,}",         _REDACT.format("replicate_key")),
+    # Fireworks API keys: ``fw_`` + 20+ chars.
+    ("fireworks_key", r"fw_[A-Za-z0-9]{20,}",         _REDACT.format("fireworks_key")),
+    # AWS access key IDs: a fixed 4-letter type prefix + 16 upper/digits.
+    ("aws_access_key", r"(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[0-9A-Z]{16}",
+     _REDACT.format("aws_access_key")),
     # openai key AFTER more-specific sk-ant- / csk- patterns
-    ("openai_key",    r"sk-[a-zA-Z0-9_\-]{20,}"),
+    ("openai_key",    r"sk-[a-zA-Z0-9_\-]{20,}",      _REDACT.format("openai_key")),
     # Bearer token — matches "Bearer <anything non-whitespace>"
-    ("bearer_token",  r"Bearer [^\s]{6,}"),
+    ("bearer_token",  r"Bearer [^\s]{6,}",            _REDACT.format("bearer_token")),
     # Slack incoming webhook: keep host, mask path
-    ("slack_webhook", r"https://hooks\.slack\.com/services/[A-Za-z0-9/]+"),
+    ("slack_webhook", r"https://hooks\.slack\.com/services/[A-Za-z0-9/]+",
+     _REDACT.format("slack_webhook")),
     # Discord webhook: keep host, mask path
-    ("discord_webhook", r"https://discord(?:app)?\.com/api/webhooks/[0-9/A-Za-z_\-]+"),
+    ("discord_webhook", r"https://discord(?:app)?\.com/api/webhooks/[0-9/A-Za-z_\-]+",
+     _REDACT.format("discord_webhook")),
+]
+
+# Last-resort generic patterns, applied AFTER every specific pattern *and* every
+# user-added pattern. The env-style secret assignment is the catch-all for
+# providers without a distinctive key prefix (Together, Azure, AWS secret access
+# keys, …) and for accidental environment dumps. It keeps the variable name +
+# separator and redacts only the value. The value lookahead avoids re-redacting
+# a value a more-specific pattern already replaced. Running it last means a
+# user's own ``add_pattern`` still wins on the same span.
+_FALLBACK_PATTERNS: list[tuple[str, str, str]] = [
+    ("env_secret",
+     r"(?i)(\b[A-Za-z0-9_]*"
+     r"(?:API[_\-]?KEY|APIKEY|SECRET[_\-]?ACCESS[_\-]?KEY|ACCESS[_\-]?KEY|"
+     r"SECRET[_\-]?KEY|AUTH[_\-]?TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|TOKEN))"
+     r"([\"']?\s*[:=]\s*[\"']?)(?!<REDACTED)[^\s\"',]{4,}",
+     r"\g<1>\g<2>" + _REDACT.format("env_secret")),
 ]
 
 
@@ -72,31 +113,43 @@ class Redactor:
     """
 
     def __init__(self) -> None:
-        # List of (name, compiled_regex) pairs — order matters (first match wins
-        # when the same span is covered by multiple patterns, though that is rare)
-        self._patterns: list[tuple[str, re.Pattern[str]]] = []
-        for name, pattern in _BUILTIN_PATTERNS:
-            self._patterns.append((name, re.compile(pattern)))
+        # List of (name, compiled_regex, replacement) triples — order matters
+        # (first match wins when the same span is covered by multiple patterns,
+        # though that is rare).  ``replacement`` is a ``re.sub`` template and may
+        # reference capture groups (used by ``env_secret`` to keep the var name).
+        self._patterns: list[tuple[str, re.Pattern[str], str]] = []
+        for name, pattern, replacement in _BUILTIN_PATTERNS:
+            self._patterns.append((name, re.compile(pattern), replacement))
+        # Generic last-resort patterns, always applied after self._patterns
+        # (including any user-added ones) so a caller's own pattern wins.
+        self._fallback_patterns: list[tuple[str, re.Pattern[str], str]] = [
+            (name, re.compile(pattern), replacement)
+            for name, pattern, replacement in _FALLBACK_PATTERNS
+        ]
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def add_pattern(self, name: str, regex: str) -> None:
+    def add_pattern(self, name: str, regex: str, replacement: str | None = None) -> None:
         """
         Register a custom redaction pattern.
 
         Args:
             name:  Label used in the placeholder, e.g. ``"my_secret"``.
-            regex: Python regex string.  The entire match is replaced by
-                   ``<REDACTED:{name}>``.
+            regex: Python regex string.
+            replacement: Optional ``re.sub`` template.  When omitted the entire
+                   match is replaced by ``<REDACTED:{name}>``.  Provide a custom
+                   template (with ``\\g<1>`` group references) to keep part of
+                   the match, e.g. an assignment's variable name.
 
         Example::
 
             r = get_redactor()
             r.add_pattern("custom_token", r"tok-[A-Za-z0-9]{32}")
         """
-        self._patterns.append((name, re.compile(regex)))
+        repl = replacement if replacement is not None else _REDACT.format(name)
+        self._patterns.append((name, re.compile(regex), repl))
 
     def scrub(self, text: str) -> str:
         """
@@ -109,8 +162,11 @@ class Redactor:
             Copy of *text* with every matched secret replaced by a labelled
             placeholder (e.g. ``<REDACTED:openai_key>``).
         """
-        for name, pattern in self._patterns:
-            text = pattern.sub(f"<REDACTED:{name}>", text)
+        for _name, pattern, replacement in self._patterns:
+            text = pattern.sub(replacement, text)
+        # Generic catch-all patterns run last so a user's add_pattern wins.
+        for _name, pattern, replacement in self._fallback_patterns:
+            text = pattern.sub(replacement, text)
         return text
 
     def scrub_value(self, value: Any) -> Any:
@@ -151,7 +207,7 @@ class Redactor:
 
     def pattern_names(self) -> list[str]:
         """Return the names of all registered redaction patterns."""
-        return [name for name, _ in self._patterns]
+        return [name for name, _pat, _repl in (*self._patterns, *self._fallback_patterns)]
 
 
 # ---------------------------------------------------------------------------

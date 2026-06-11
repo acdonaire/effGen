@@ -29,6 +29,11 @@ if _sys.version_info < (3, 10):  # noqa: UP036 — intentional guard for source-
         "environment) and reinstall effGen.".format(*_sys.version_info[:3])
     )
 
+# Library logging hygiene (NullHandler on the package logger; quiet faiss). This
+# is an import-only module whose side effects run first, before any submodule is
+# imported, so importing effGen never emits log records on its own.
+from effgen import _logging_setup as _logging_setup  # noqa: F401
+
 # Core imports
 # Configuration imports
 from effgen.config import Config, ConfigLoader, ConfigValidator

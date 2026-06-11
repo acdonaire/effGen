@@ -1,6 +1,12 @@
 """
 Logging utilities for effGen framework.
 
+.. note::
+   ``effgen.observability.logs`` is the canonical structured-logging home
+   (``get_logger`` / ``configure_logging``). This module provides the rich
+   console formatters and ``LoggerManager`` helpers and stays available for
+   backwards compatibility; prefer ``effgen.observability`` in new code.
+
 This module provides comprehensive logging capabilities with rich formatting,
 multiple log levels, file and console handlers, structured logging, and log rotation.
 

@@ -1,6 +1,13 @@
 """
 OpenTelemetry tracing integration for effGen.
 
+.. note::
+   ``effgen.observability.tracing`` is the canonical tracing home and what the
+   provider adapters use (OTel samplers + ``start_agent_run`` / ``start_model_call``
+   / ``start_tool_call`` span context managers). This module provides the older
+   ``setup_tracing`` / ``get_tracer`` helpers and stays available for backwards
+   compatibility; prefer ``effgen.observability`` in new code.
+
 Provides distributed tracing with span hierarchy for agent execution,
 tool calls, model inference, and ReAct iterations. Uses no-op tracer
 if OpenTelemetry is not installed.

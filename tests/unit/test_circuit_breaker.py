@@ -117,3 +117,34 @@ class TestCircuitBreakerMultipleTools:
         assert cb.get_state("a") == CircuitState.OPEN
         assert cb.get_state("b") == CircuitState.CLOSED
         assert cb.is_available("b") is True
+
+
+class TestCircuitBreakerPersistence:
+    """Test save/restore of circuit state across instances (persist_path)."""
+
+    def test_open_state_round_trips(self, tmp_path):
+        path = str(tmp_path / "circuits.json")
+        cb = CircuitBreaker(failure_threshold=2, cooldown_seconds=60, persist_path=path)
+        cb.record_failure("t")
+        cb.record_failure("t")
+        assert cb.get_state("t") == CircuitState.OPEN
+
+        # A fresh instance (simulating a process restart) restores the OPEN state.
+        cb2 = CircuitBreaker(failure_threshold=2, cooldown_seconds=60, persist_path=path)
+        assert cb2.get_state("t") == CircuitState.OPEN
+        assert cb2.is_available("t") is False
+
+    def test_restored_open_circuit_recovers_not_stuck(self, tmp_path):
+        # Regression: persisted recovery timestamps are monotonic-clock based and
+        # meaningless across restarts. A restored OPEN circuit must still cool
+        # down to HALF_OPEN rather than getting stuck open forever.
+        path = str(tmp_path / "circuits.json")
+        cb = CircuitBreaker(failure_threshold=1, cooldown_seconds=0.1, persist_path=path)
+        cb.record_failure("t")
+        assert cb.get_state("t") == CircuitState.OPEN
+
+        cb2 = CircuitBreaker(failure_threshold=1, cooldown_seconds=0.1, persist_path=path)
+        assert cb2.is_available("t") is False  # still cooling down right after load
+        time.sleep(0.15)
+        assert cb2.is_available("t") is True
+        assert cb2.get_state("t") == CircuitState.HALF_OPEN

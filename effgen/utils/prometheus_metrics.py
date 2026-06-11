@@ -1,6 +1,12 @@
 """
 Prometheus-compatible metrics collection for effGen.
 
+.. note::
+   This is the low-level Prometheus backend. The canonical metrics facade is
+   ``effgen.observability.metrics`` (``record_model_call`` / ``record_tokens`` /
+   ``export_metrics``), which wraps these counters so one scrape endpoint covers
+   everything. Prefer the observability facade in new code.
+
 Provides counters, histograms, and gauges for agent monitoring.
 Uses a simple in-memory implementation that can export to Prometheus
 text format. No external dependencies required.

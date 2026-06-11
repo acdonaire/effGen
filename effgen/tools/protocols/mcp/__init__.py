@@ -3,6 +3,19 @@ Model Context Protocol (MCP) implementation for effGen.
 
 This module provides MCP client and server implementations for tool
 and resource communication.
+
+Two MCP stacks ship intentionally, for different needs:
+
+- ``effgen.tools.protocols.mcp`` (this package) is a self-contained
+  implementation of the MCP wire protocol with **no external SDK dependency**.
+  Use it when you cannot install the official ``mcp`` package.
+- ``effgen.tools.protocols.mcp_official`` is built on the official MCP Python
+  SDK (FastMCP) and is the **recommended** stack for standards-compliant
+  interop with other MCP tooling. Prefer it when ``pip install "mcp[cli]"`` is
+  available.
+
+Both expose effGen tools over MCP; pick the one that matches your dependency
+constraints.
 """
 
 from .client import (
