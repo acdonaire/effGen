@@ -201,9 +201,11 @@ class URLFetchTool(BaseTool):
         self.allow_private = allow_private
         self.max_redirects = max_redirects
 
-        logger.info(
-            "\u2139\ufe0f  URL Fetch tool makes HTTP requests to external websites.\n"
-            "    Private/loopback/link-local/metadata addresses are blocked by "
+        # Construction-time note only \u2014 tool discovery instantiates every tool,
+        # so keep this at DEBUG to avoid polluting `tools list` and agent setup.
+        logger.debug(
+            "URL Fetch tool makes HTTP requests to external websites. "
+            "Private/loopback/link-local/metadata addresses are blocked by "
             "default; set allow_private=True to override."
         )
 

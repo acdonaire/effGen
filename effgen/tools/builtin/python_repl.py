@@ -299,12 +299,19 @@ class PythonREPL(BaseTool):
         if worker is not None:
             worker.kill()
 
-    def _request(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _request(
+        self, session_id: str, payload: dict[str, Any], _attempt: int = 0
+    ) -> dict[str, Any]:
         """Send one request to a session worker and read its response.
 
         Enforces the wall-clock timeout: if the worker does not answer within
         ``self._timeout`` seconds it is hard-killed (process group) and a typed
         timeout failure is returned. Runs blocking I/O — call via a thread.
+
+        If a *reused* worker has exited between requests before producing any
+        output, the request is transparently retried once on a fresh worker —
+        this is safe (no output was emitted, so nothing double-runs) and fixes a
+        rare race where a worker died after the previous request.
         """
         worker = self._get_worker(session_id)
         line = (json.dumps(payload) + "\n").encode("utf-8")
@@ -346,6 +353,11 @@ class PythonREPL(BaseTool):
                     chunk = b""
                 if not chunk:
                     self._kill_worker(session_id)
+                    # Worker died before answering. If it produced no partial
+                    # output and we haven't retried yet, respawn and retry once
+                    # (safe: nothing was emitted for this request).
+                    if buf == b"" and _attempt == 0:
+                        return self._request(session_id, payload, _attempt=1)
                     return self._failure("REPL worker exited unexpectedly")
                 buf += chunk
                 if len(buf) > self._MAX_RESPONSE_BYTES:

@@ -255,8 +255,11 @@ class WolframAlphaTool(BaseTool):
         )
         self.app_id = app_id or os.environ.get("WOLFRAM_ALPHA_APPID")
         if not self.app_id:
-            logger.warning(
-                "\u26a0\ufe0f WolframAlphaTool has no API key. Set WOLFRAM_ALPHA_APPID "
+            # Construction-time note only \u2014 listing/discovery instantiates every
+            # tool, so this must not log at WARNING (it would spam clean tables).
+            # The missing key is reported as an actionable error at execution.
+            logger.debug(
+                "WolframAlphaTool has no API key. Set WOLFRAM_ALPHA_APPID "
                 "or pass app_id=... to the constructor. Get a free key at "
                 "https://developer.wolframalpha.com/"
             )

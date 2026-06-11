@@ -154,24 +154,95 @@ def _general_purpose_tool_names(registry: Any, limit: int = 5) -> list:
 
 
 # Configure logging
-def setup_logging(verbose: bool = False, log_file: str | None = None):
+def setup_logging(
+    verbose: bool = False,
+    log_file: str | None = None,
+    quiet: bool = False,
+):
     """
     Configure logging for CLI.
 
-    Args:
-        verbose: Enable verbose logging
-        log_file: Optional log file path
-    """
-    level = logging.DEBUG if verbose else logging.INFO
+    The CLI is quiet by default so command output (tables, answers) stays clean
+    and copy-pasteable: library diagnostics are kept at WARNING and above, and
+    informational chatter from tool discovery / config loading is hidden. Use
+    ``--verbose`` to surface DEBUG/INFO, or ``--quiet`` to show errors only.
 
-    handlers = [logging.StreamHandler()]
+    Args:
+        verbose: Show DEBUG/INFO diagnostics.
+        log_file: Optional log file path (always captures full DEBUG detail).
+        quiet: Show errors only (suppress warnings).
+    """
+    if verbose:
+        level = logging.DEBUG
+    elif quiet:
+        level = logging.ERROR
+    else:
+        # Default: quiet, professional CLI output — warnings and errors only.
+        level = logging.WARNING
+
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     if log_file:
-        handlers.append(logging.FileHandler(log_file))
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.DEBUG)
+        handlers.append(file_handler)
 
     logging.basicConfig(
         level=level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=handlers
+        handlers=handlers,
+        force=True,
+    )
+    # Route library logs to stderr so they never interleave with stdout tables,
+    # and keep the console at the requested level even if a log file is attached.
+    logging.getLogger().setLevel(min(level, logging.DEBUG) if log_file else level)
+    for h in logging.getLogger().handlers:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            h.setLevel(level)
+
+
+# Providers effGen can route a bare model id to. Keep in sync with the model
+# loader / ProviderRegistry; aliases map common spellings to the canonical name.
+KNOWN_PROVIDERS = (
+    "openai", "anthropic", "gemini", "cerebras", "groq",
+    "together", "fireworks", "replicate", "hf",
+)
+PROVIDER_ALIASES = {
+    "google": "gemini",
+    "googleai": "gemini",
+    "huggingface": "hf",
+    "hf_inference": "hf",
+    "claude": "anthropic",
+    "gpt": "openai",
+    "openai-compat": "openai",
+}
+
+
+def resolve_provider_name(provider: str | None) -> tuple[str | None, str | None]:
+    """Validate/normalize a user-supplied provider name.
+
+    Returns ``(canonical_provider, error_message)``. On success the error is
+    ``None``; on a typo (e.g. ``grok``) the canonical name is ``None`` and the
+    error carries a fuzzy "did you mean" suggestion so the CLI never silently
+    falls through to a local model download.
+    """
+    if provider is None:
+        return None, None
+    raw = provider.strip()
+    lower = raw.lower()
+    if lower in KNOWN_PROVIDERS:
+        return lower, None
+    if lower in PROVIDER_ALIASES:
+        return PROVIDER_ALIASES[lower], None
+    import difflib
+    pool = list(KNOWN_PROVIDERS) + list(PROVIDER_ALIASES)
+    close = difflib.get_close_matches(lower, pool, n=1, cutoff=0.5)
+    hint = ""
+    if close:
+        suggestion = PROVIDER_ALIASES.get(close[0], close[0])
+        hint = f" Did you mean '{suggestion}'?"
+    return None, (
+        f"Unknown provider '{raw}'.{hint} "
+        f"Known providers: {', '.join(KNOWN_PROVIDERS)}."
     )
 
 
@@ -255,18 +326,21 @@ class CLIInterface:
             print("=" * 60)
 
         try:
-            # Step 1: Agent Type Selection
-            self.print_header("Step 1: Select Agent Type")
+            # Step 1: Reasoning style. effGen has ONE Agent class whose behavior
+            # adapts to the task; this picks the tool-using strategy (not a
+            # separate agent class).
+            self.print_header("Step 1: Select Reasoning Style")
             agent_types = [
-                ("1", "CodeAgent", "Agent that generates and executes code (recommended)"),
-                ("2", "ToolCallingAgent", "Agent that calls tools via structured outputs"),
-                ("3", "ReActAgent", "Agent using Reason+Act pattern (default)")
+                ("1", "auto", "Let effGen choose: native tool-calling when the model "
+                              "supports it, else ReAct (recommended)"),
+                ("2", "react", "Explicit Reason → Act → Observe loop with tools"),
+                ("3", "single", "One model call, no tool loop (plain Q&A)"),
             ]
 
             if self.console:
-                table = Table(title="Available Agent Types")
+                table = Table(title="Reasoning Styles (one Agent, different strategies)")
                 table.add_column("#", style="cyan", width=3)
-                table.add_column("Type", style="magenta")
+                table.add_column("Style", style="magenta")
                 table.add_column("Description", style="white")
                 for num, name, desc in agent_types:
                     table.add_row(num, name, desc)
@@ -275,9 +349,9 @@ class CLIInterface:
                 for num, name, desc in agent_types:
                     print(f"  [{num}] {name}: {desc}")
 
-            agent_type_input = input("\nSelect agent type [3]: ").strip() or "3"
-            agent_type_map = {"1": "code", "2": "tool_calling", "3": "react"}
-            agent_type = agent_type_map.get(agent_type_input, "react")
+            agent_type_input = input("\nSelect reasoning style [1]: ").strip() or "1"
+            agent_type_map = {"1": "auto", "2": "react", "3": "single"}
+            agent_type = agent_type_map.get(agent_type_input, "auto")
             self.print_success(f"Selected: {agent_type}")
 
             # Step 2: Tool Selection
@@ -424,7 +498,7 @@ class CLIInterface:
             self.print_header("Configuration Summary")
 
             summary = {
-                "Agent Type": agent_type,
+                "Reasoning Style": agent_type,
                 "Model": model_id,
                 "Tools": len(selected_tools),
                 "Temperature": temperature,
@@ -579,8 +653,17 @@ class CLIInterface:
         if args.task is None:
             return self.interactive_wizard(args)
 
+        # Validate an explicit --provider before doing any work, so a typo
+        # (e.g. "grok") fails fast with a suggestion instead of falling through
+        # to a multi-gigabyte local model download.
+        provider, prov_err = resolve_provider_name(getattr(args, 'provider', None))
+        if prov_err:
+            self.print_error(prov_err)
+            return 1
+
         self.print_header(f"effGen v{__version__} - Running Task")
 
+        agent = None
         try:
             # Load configuration if provided
             config = {}
@@ -599,6 +682,7 @@ class CLIInterface:
                 from effgen.presets import create_agent as _create_preset_agent
                 model_id = args.model or "Qwen/Qwen2.5-3B-Instruct"
                 self.print(f"Using preset: {args.preset}")
+                _preset_overrides = {"provider": provider} if provider else {}
                 agent = _create_preset_agent(
                     args.preset,
                     model_id,
@@ -607,6 +691,7 @@ class CLIInterface:
                     max_iterations=args.max_iterations,
                     temperature=args.temperature,
                     enable_streaming=args.stream,
+                    **_preset_overrides,
                 )
                 self.print_success(f"Created {args.preset} preset agent")
                 self.print(f"Model: {model_id}")
@@ -618,53 +703,33 @@ class CLIInterface:
                     self.print(f"Loading tools: {', '.join(args.tools)}")
                     for tool_name in args.tools:
                         try:
-                            tool = asyncio.run(self.tool_registry.get_tool(tool_name))
+                            tool = self.tool_registry.get_tool_sync(tool_name)
                             tools.append(tool)
                             self.print_success(f"Loaded tool: {tool_name}")
                         except KeyError:
-                            self.print_error(f"Tool not found: {tool_name}")
+                            self._suggest_tool(tool_name)
                             return 1
                 else:
-                    # Load a default set of provider-neutral builtin tools.
-                    # Anthropic-native tools require an AnthropicAdapter; skip them
-                    # automatically when the selected model is not a claude model.
-                    _default_safe_tools = [
-                        "web_search", "calculator", "weather", "datetime", "text_processor",
-                    ]
-                    _model_for_filter = args.model or "Qwen/Qwen2.5-3B-Instruct"
-                    _is_claude = _model_for_filter.startswith("claude") or "anthropic" in _model_for_filter.lower()
+                    # Conservative default tool set: a single deterministic
+                    # utility tool that rarely fires on general questions.
+                    # (web_search/weather used to be defaults and triggered bogus
+                    # calls like weather("Paris") for "capital of France?".) Users
+                    # who want more tools pass --tools explicitly.
+                    _default_safe_tools = ["calculator"]
                     self.tool_registry.discover_builtin_tools()
                     all_tool_names = self.tool_registry.list_tools()
-                    for name in all_tool_names:
-                        # Always skip Anthropic native tools unless claude model
-                        if not _is_claude and name in ("anthropic_bash", "anthropic_text_editor", "anthropic_computer"):
-                            logging.debug(f"Skipping Anthropic native tool '{name}' for non-claude model")
-                            continue
-                        if name in _default_safe_tools:
+                    for name in _default_safe_tools:
+                        if name in all_tool_names:
                             try:
-                                tool = asyncio.run(self.tool_registry.get_tool(name))
-                                tools.append(tool)
+                                tools.append(self.tool_registry.get_tool_sync(name))
                             except Exception as e:
-                                logging.debug(f"Failed to load tool {name}: {e}")
-                    if not tools:
-                        # Fallback: take the first 5 non-Anthropic-native tools
-                        count = 0
-                        for name in all_tool_names:
-                            if not _is_claude and name in ("anthropic_bash", "anthropic_text_editor", "anthropic_computer"):
-                                continue
-                            try:
-                                tool = asyncio.run(self.tool_registry.get_tool(name))
-                                tools.append(tool)
-                                count += 1
-                                if count >= 5:
-                                    break
-                            except Exception as e:
-                                logging.debug(f"Failed to load tool {name}: {e}")
+                                logging.debug(f"Failed to load default tool {name}: {e}")
 
                 # Create agent configuration
                 agent_config = AgentConfig(
                     name=args.name or "cli-agent",
                     model=args.model or "Qwen/Qwen2.5-3B-Instruct",
+                    provider=provider,
                     tools=tools,
                     system_prompt=args.system_prompt or config.get("system_prompt",
                         "You are a helpful AI assistant."),
@@ -694,6 +759,7 @@ class CLIInterface:
             self.print(f"\n[bold]Task:[/bold] {args.task}" if self.console else f"\nTask: {args.task}")
             self.print()
 
+            exit_code = 0
             if args.stream:
                 # Streaming output
                 self.print("[italic]Streaming response...[/italic]\n" if self.console else "Streaming response...\n")
@@ -713,6 +779,10 @@ class CLIInterface:
                 else:
                     self.print("Thinking...")
                     response = agent.run(args.task, mode=mode)
+
+                # Surface failure in the process exit code (Audit-2 #61).
+                if not response.success:
+                    exit_code = 1
 
                 # Display response
                 self.print_header("Response")
@@ -785,14 +855,22 @@ class CLIInterface:
                         json.dump(response.to_dict(), f, indent=2)
                     self.print_success(f"Response saved to {output_path}")
 
-            return 0
+            return exit_code
 
         except Exception as e:
             self.print_error(f"Error running agent: {e}")
-            if args.verbose:
+            if getattr(args, 'verbose', False):
                 import traceback
                 traceback.print_exc()
             return 1
+        finally:
+            # Release the agent explicitly so the CLI never emits the
+            # "Agent was garbage-collected without calling close()" warning.
+            if agent is not None:
+                try:
+                    agent.close()
+                except Exception as e:
+                    logging.debug(f"Agent close failed: {e}")
 
     def _create_stats_table(self, stats: dict[str, Any]) -> Any:
         """Create statistics table."""
@@ -1458,14 +1536,46 @@ class CLIInterface:
 
     def _tools_list(self, args):
         """List available tools."""
-        self.print_header("Available Tools")
-
         # Get tools (the registry auto-discovers built-ins on first access)
         tools = self.tool_registry.list_tools()
+        category_filter = getattr(args, "category", None)
+
+        def _meta(name):
+            try:
+                return self.tool_registry.get_metadata(name)
+            except Exception as e:
+                logging.debug(f"Error getting metadata for {name}: {e}")
+                return None
+
+        if category_filter:
+            kept = []
+            for name in tools:
+                m = _meta(name)
+                if m and m.category.value == category_filter:
+                    kept.append(name)
+            tools = kept
+
+        # JSON output — machine-readable, no decorative header/table.
+        if getattr(args, "output_json", False):
+            out = []
+            for name in tools:
+                m = _meta(name)
+                if m is None:
+                    continue
+                out.append({
+                    "name": m.name,
+                    "category": m.category.value,
+                    "description": m.description,
+                    "version": getattr(m, "version", None),
+                })
+            print(json.dumps(out, indent=2))
+            return 0
+
+        self.print_header("Available Tools")
 
         if not tools:
             self.print_warning("No tools registered")
-            return
+            return 0
 
         if self.console:
             table = Table(title=f"Registered Tools ({len(tools)})")
@@ -1488,6 +1598,7 @@ class CLIInterface:
         else:
             for tool_name in tools:
                 print(f"- {tool_name}")
+        return 0
 
     def _example_input(self, metadata, tool=None) -> dict:
         """Build a runnable example input for a tool from its metadata."""
@@ -1653,9 +1764,9 @@ class CLIInterface:
             args: Parsed command-line arguments
         """
         if args.model_command == 'list':
-            self._models_list(args)
+            return self._models_list(args) or 0
         elif args.model_command == 'info':
-            self._models_info(args)
+            return self._models_info(args) or 0
         elif args.model_command == 'load':
             self._models_load(args)
         elif args.model_command == 'unload':
@@ -1670,64 +1781,274 @@ class CLIInterface:
 
         return 0
 
+    @staticmethod
+    def _price_cell(rec) -> str:
+        """Format a model's input/output price per 1M tokens for a table cell."""
+        if rec.free_tier and rec.price_in_per_1m in (None, 0) and rec.price_out_per_1m in (None, 0):
+            return "free"
+        pin, pout = rec.price_in_per_1m, rec.price_out_per_1m
+        if pin is None and pout is None:
+            return "—"
+        fmt = lambda v: ("?" if v is None else (f"${v:g}" if v else "$0"))  # noqa: E731
+        return f"{fmt(pin)}/{fmt(pout)}"
+
+    def _local_cached_models(self) -> list[dict]:
+        """Models actually downloaded in the local HuggingFace cache (on disk)."""
+        out: list[dict] = []
+        try:
+            from huggingface_hub import scan_cache_dir
+            info = scan_cache_dir()
+            for repo in sorted(info.repos, key=lambda r: r.repo_id):
+                if repo.repo_type == "model":
+                    out.append({
+                        "id": repo.repo_id,
+                        "size_gb": repo.size_on_disk / (1024 ** 3),
+                        "path": str(repo.repo_path),
+                    })
+        except Exception as e:  # noqa: BLE001 - cache scan is best-effort
+            logging.debug(f"HF cache scan failed: {e}")
+        return out
+
     def _models_list(self, args):
-        """List available models."""
+        """List models from the drift-aware registry (not a static yaml).
+
+        Shows three views — the provider registry (the bundled, refreshable
+        catalog), the local HuggingFace cache (what's actually downloaded), and
+        a per-provider summary with auth readiness and the snapshot's
+        "verified on" date so users can tell when the data was last confirmed.
+        """
+        from effgen.models import _catalog, _refresh
+
+        provider_filter, prov_err = resolve_provider_name(getattr(args, "provider", None))
+        if prov_err:
+            self.print_error(prov_err)
+            return 1
+        free_only = bool(getattr(args, "free", False))
+        tools_only = bool(getattr(args, "tools", False))
+
+        providers = [provider_filter] if provider_filter else list(_catalog.known_providers())
+
+        def _records(prov: str):
+            recs = _catalog.list_models(prov)
+            if free_only:
+                recs = [r for r in recs if r.free_tier]
+            if tools_only:
+                recs = [r for r in recs if r.supports_tools]
+            return recs
+
+        # ---- JSON output ----------------------------------------------------
+        if getattr(args, "output_json", False):
+            payload: dict[str, Any] = {"providers": {}, "local_cache": self._local_cached_models()}
+            for prov in providers:
+                meta = _catalog.snapshot_meta(prov)
+                payload["providers"][prov] = {
+                    "verified_on": meta.get("verified_on"),
+                    "count": len(_catalog.list_models(prov)),
+                    "default_model": _catalog.default_model(prov),
+                    "auth_ready": _refresh.has_credentials(prov),
+                    "models": [
+                        {
+                            "id": r.id, "context_window": r.context_window,
+                            "max_output": r.max_output,
+                            "price_in_per_1m": r.price_in_per_1m,
+                            "price_out_per_1m": r.price_out_per_1m,
+                            "supports_tools": r.supports_tools,
+                            "supports_vision": r.supports_vision,
+                            "free_tier": r.free_tier, "deprecated": r.deprecated,
+                            "price_source": r.price_source,
+                        }
+                        for r in _records(prov)
+                    ],
+                }
+            print(json.dumps(payload, indent=2))
+            return 0
+
+        # ---- Provider registry view ----------------------------------------
         self.print_header("Available Models")
 
-        # Load models from config if available
-        config_dir = Path("configs")
-        models_config = config_dir / "models.yaml"
-
-        if models_config.exists():
-            config = self.config_loader.load_config(models_config)
-            models = config.get("models", {})
-
+        if provider_filter:
+            # Full per-model detail for one provider.
+            recs = _records(provider_filter)
+            meta = _catalog.snapshot_meta(provider_filter)
+            auth = "ready" if _refresh.has_credentials(provider_filter) else "no key"
+            verified = meta.get("verified_on") or "unknown"
+            default_id = _catalog.default_model(provider_filter)
             if self.console:
-                table = Table(title="Configured Models")
-                table.add_column("Name", style="cyan")
-                table.add_column("Path/API", style="magenta")
-                table.add_column("Type", style="white")
+                title = (f"{provider_filter} — {len(recs)} models "
+                         f"(auth: {auth}, verified: {verified})")
+                table = Table(title=title)
+                table.add_column("Model ID", style="cyan", overflow="fold")
+                table.add_column("Context", style="white", justify="right")
+                table.add_column("Max Out", style="white", justify="right")
+                table.add_column("$/1M in/out", style="green")
+                table.add_column("Tools", justify="center")
+                table.add_column("Vision", justify="center")
+                table.add_column("Free", justify="center")
+                table.add_column("Status", style="yellow")
+                for r in recs:
+                    status = "deprecated" if r.deprecated else ("default" if r.id == default_id else "")
+                    table.add_row(
+                        r.id,
+                        f"{r.context_window:,}" if r.context_window else "—",
+                        f"{r.max_output:,}" if r.max_output else "—",
+                        self._price_cell(r),
+                        "✓" if r.supports_tools else "",
+                        "✓" if r.supports_vision else "",
+                        "✓" if r.free_tier else "",
+                        status,
+                    )
+                self.console.print(table)
+                self.console.print(
+                    f"\n[dim]Pricing source: catalog snapshot. "
+                    f"Run [cyan]effgen models refresh --provider {provider_filter}[/cyan] "
+                    f"to update from the live API.[/dim]"
+                )
+            else:
+                for r in recs:
+                    print(f"- {r.id}  ctx={r.context_window}  {self._price_cell(r)}")
+            return 0
 
-                for name, model_config in models.items():
-                    if isinstance(model_config, dict):
+        # Overview: per-provider summary + filtered flat table when filtering.
+        if free_only or tools_only:
+            label = "free-tier" if free_only else "tool-capable"
+            if tools_only and free_only:
+                label = "free + tool-capable"
+            if self.console:
+                table = Table(title=f"{label.capitalize()} models (all providers)")
+                table.add_column("Model ID", style="cyan", overflow="fold")
+                table.add_column("Provider", style="magenta")
+                table.add_column("Context", justify="right")
+                table.add_column("$/1M in/out", style="green")
+                table.add_column("Tools", justify="center")
+                table.add_column("Free", justify="center")
+                for prov in providers:
+                    for r in _records(prov):
                         table.add_row(
-                            name,
-                            model_config.get(
-                                "model_path",
-                                model_config.get(
-                                    "model_id",
-                                    model_config.get(
-                                        "model_name", model_config.get("api", "N/A")
-                                    ),
-                                ),
-                            ),
-                            model_config.get("type", "unknown")
+                            r.id, prov,
+                            f"{r.context_window:,}" if r.context_window else "—",
+                            self._price_cell(r),
+                            "✓" if r.supports_tools else "",
+                            "✓" if r.free_tier else "",
                         )
-
                 self.console.print(table)
             else:
-                for name in models.keys():
-                    print(f"- {name}")
+                for prov in providers:
+                    for r in _records(prov):
+                        print(f"- {prov}:{r.id}")
+            return 0
+
+        # Default overview: one row per provider.
+        stale = set(_catalog.stale_providers())
+        if self.console:
+            table = Table(title="Provider Registry (bundled catalog)")
+            table.add_column("Provider", style="cyan")
+            table.add_column("Models", justify="right")
+            table.add_column("Default", style="magenta", overflow="fold")
+            table.add_column("Auth", justify="center")
+            table.add_column("Verified", style="dim")
+            for prov in providers:
+                meta = _catalog.snapshot_meta(prov)
+                n = len(_catalog.list_models(prov))
+                auth = "[green]key[/green]" if _refresh.has_credentials(prov) else "[dim]—[/dim]"
+                verified = meta.get("verified_on") or "?"
+                if prov in stale:
+                    verified += " (stale)"
+                table.add_row(prov, str(n), _catalog.default_model(prov) or "—", auth, verified)
+            self.console.print(table)
+            self.console.print(
+                "\n[dim]Detail: [cyan]effgen models list --provider <name>[/cyan]  ·  "
+                "Filter: [cyan]--free[/cyan] / [cyan]--tools[/cyan]  ·  "
+                "Update: [cyan]effgen models refresh[/cyan][/dim]"
+            )
         else:
-            self.print_warning("No models configuration found")
-            self.print("Common models:")
-            common_models = [
-                "Qwen/Qwen2.5-3B-Instruct",
-                "mistral-7b",
-                "llama-2-7b",
-                "gemma-7b"
-            ]
-            for model in common_models:
-                print(f"- {model}")
+            for prov in providers:
+                n = len(_catalog.list_models(prov))
+                auth = "key" if _refresh.has_credentials(prov) else "-"
+                print(f"{prov:12s} {n:>4} models  default={_catalog.default_model(prov)}  auth={auth}")
+
+        # ---- Local HuggingFace cache view ----------------------------------
+        local = self._local_cached_models()
+        if local:
+            if self.console:
+                ltable = Table(title=f"Local HuggingFace cache ({len(local)} downloaded)")
+                ltable.add_column("Model", style="cyan", overflow="fold")
+                ltable.add_column("Size", justify="right", style="white")
+                for m in local:
+                    ltable.add_row(m["id"], f"{m['size_gb']:.1f} GB")
+                self.console.print(ltable)
+            else:
+                print("\nLocal HuggingFace cache:")
+                for m in local:
+                    print(f"  {m['id']}  ({m['size_gb']:.1f} GB)")
+        return 0
 
     def _models_info(self, args):
-        """Show model information."""
+        """Show detailed information for one model from the registry."""
         if not args.name:
             self.print_error("Model name required")
-            return
+            return 1
 
-        self.print_header(f"Model: {args.name}")
-        self.print("Model information coming soon...")
+        from effgen.models import _catalog, _refresh
+
+        rec = _catalog.lookup(args.name)
+        if rec is None:
+            # Helpful not-found: suggest the nearest catalog ids + provider:id form.
+            self.print_error(f"Model not found in catalog: {args.name}")
+            alts = _catalog.nearest_alternatives(args.name, n=5)
+            if alts:
+                self.print("Did you mean:")
+                for a in alts:
+                    self.print(f"  {a.provider}:{a.id}")
+            self.print("\nRun 'effgen models list' to browse the catalog, or "
+                       "'effgen models refresh' to update it.")
+            return 1
+
+        if getattr(args, "output_json", False):
+            print(json.dumps({
+                "id": rec.id, "provider": rec.provider, "display_name": rec.display_name,
+                "family": rec.family, "context_window": rec.context_window,
+                "max_output": rec.max_output, "price_in_per_1m": rec.price_in_per_1m,
+                "price_out_per_1m": rec.price_out_per_1m, "supports_tools": rec.supports_tools,
+                "supports_vision": rec.supports_vision, "supports_audio": rec.supports_audio,
+                "free_tier": rec.free_tier, "deprecated": rec.deprecated,
+                "rpm": rec.rpm, "tpm": rec.tpm, "rpd": rec.rpd,
+                "price_source": rec.price_source, "verified_on": rec.verified_on,
+                "notes": rec.notes,
+            }, indent=2))
+            return 0
+
+        self.print_header(f"Model: {rec.provider}:{rec.id}")
+        meta = _catalog.snapshot_meta(rec.provider)
+        rows = {
+            "Provider": rec.provider,
+            "Display name": rec.display_name or rec.id,
+            "Family": rec.family or "—",
+            "Context window": f"{rec.context_window:,}" if rec.context_window else "—",
+            "Max output": f"{rec.max_output:,}" if rec.max_output else "—",
+            "Price ($/1M in / out)": self._price_cell(rec),
+            "Tool calling": "yes" if rec.supports_tools else "no",
+            "Vision": "yes" if rec.supports_vision else "no",
+            "Audio": "yes" if rec.supports_audio else "no",
+            "Free tier": "yes" if rec.free_tier else "no",
+            "Rate limits (rpm/tpm/rpd)": f"{rec.rpm or '—'} / {rec.tpm or '—'} / {rec.rpd or '—'}",
+            "Deprecated": "yes" if rec.deprecated else "no",
+            "Price source": rec.price_source,
+            "Verified on": rec.verified_on or meta.get("verified_on") or "unknown",
+            "Auth ready": "yes" if _refresh.has_credentials(rec.provider) else "no (set key)",
+        }
+        if self.console:
+            table = Table(show_header=False)
+            table.add_column("Field", style="cyan")
+            table.add_column("Value", style="white", overflow="fold")
+            for k, v in rows.items():
+                table.add_row(k, str(v))
+            self.console.print(table)
+            self.console.print(f"\n[dim]Use: [cyan]effgen run --provider {rec.provider} "
+                               f"-m {rec.id} \"...\"[/cyan][/dim]")
+        else:
+            for k, v in rows.items():
+                print(f"  {k}: {v}")
+        return 0
 
     def _models_load(self, args):
         """Pre-load a model into the model pool."""
@@ -1904,39 +2225,60 @@ class CLIInterface:
             args: Parsed command-line arguments
         """
         if args.example_command == 'list':
-            self._examples_list(args)
+            return self._examples_list(args) or 0
         elif args.example_command == 'run':
-            self._examples_run(args)
+            return self._examples_run(args) or 0
         else:
             self.print_error(f"Unknown examples command: {args.example_command}")
             return 1
 
-        return 0
+    @staticmethod
+    def _find_examples_dir() -> "Path | None":
+        """Locate the bundled `examples/` directory.
+
+        Examples ship with the source tree (repo root), not inside the installed
+        `effgen` package, so probe several real locations rather than the old
+        package-relative path that was broken for every pip-installed user (F23).
+        """
+        candidates = []
+        env_dir = os.environ.get("EFFGEN_EXAMPLES_DIR")
+        if env_dir:
+            candidates.append(Path(env_dir))
+        # repo root: effgen/cli/_main.py -> <repo>/examples
+        candidates.append(Path(__file__).resolve().parent.parent.parent / "examples")
+        # current working directory (running from a checkout)
+        candidates.append(Path.cwd() / "examples")
+        for c in candidates:
+            if c.is_dir() and any(c.rglob("*.py")):
+                return c
+        return None
 
     def _examples_list(self, args):
         """List available examples."""
         self.print_header("Available Examples")
 
-        examples_dir = Path(__file__).parent.parent / "examples"
+        examples_dir = self._find_examples_dir()
 
-        if not examples_dir.exists():
-            self.print_warning("Examples directory not found")
-            return
+        if examples_dir is None:
+            self.print_warning("No examples directory found.")
+            self.print(
+                "Examples ship with the source repository, not the installed wheel.\n"
+                "Run from a cloned checkout (repo root), or set "
+                "EFFGEN_EXAMPLES_DIR=/path/to/examples."
+            )
+            return 0
 
+        # Examples are grouped into subdirectories (basic/, advanced/, …), so
+        # walk the tree and present each as its path relative to examples/.
         examples = []
-        for file in examples_dir.glob("*.py"):
-            if not file.name.startswith("_"):
-                examples.append(file.stem)
-
-        # Also check agents subdirectory
-        agents_dir = examples_dir / "agents"
-        if agents_dir.exists():
-            for file in agents_dir.glob("*.py"):
-                if not file.name.startswith("_"):
-                    examples.append(f"agents/{file.stem}")
+        for file in examples_dir.rglob("*.py"):
+            if file.name.startswith("_"):
+                continue
+            rel = file.relative_to(examples_dir).with_suffix("")
+            examples.append(rel.as_posix())
 
         if self.console:
-            table = Table(title="Example Scripts")
+            table = Table(title=f"Example Scripts ({len(examples)})")
             table.add_column("Name", style="cyan")
             table.add_column("Command", style="magenta")
 
@@ -1952,14 +2294,37 @@ class CLIInterface:
         """Run an example script."""
         if not args.name:
             self.print_error("Example name required")
-            return
+            return 1
 
-        examples_dir = Path(__file__).parent.parent / "examples"
-        example_path = examples_dir / f"{args.name}.py"
+        examples_dir = self._find_examples_dir()
+        if examples_dir is None:
+            self.print_error(
+                "No examples directory found. Run from a source checkout or set "
+                "EFFGEN_EXAMPLES_DIR=/path/to/examples."
+            )
+            return 1
+        # Accept either a bare name or a subdir path (e.g. "basic/quickstart").
+        name = args.name[:-3] if args.name.endswith(".py") else args.name
+        example_path = (examples_dir / f"{name}.py").resolve()
+        # Path-traversal guard: stay within the examples directory.
+        try:
+            example_path.relative_to(examples_dir.resolve())
+        except ValueError:
+            self.print_error(f"Invalid example path: {args.name}")
+            return 1
 
         if not example_path.exists():
-            self.print_error(f"Example not found: {args.name}")
-            return
+            # Try to match by basename across subdirectories for convenience.
+            matches = list(examples_dir.rglob(f"{Path(name).name}.py"))
+            if len(matches) == 1:
+                example_path = matches[0]
+            else:
+                self.print_error(f"Example not found: {args.name}")
+                if matches:
+                    self.print("Did you mean one of:")
+                    for m in matches:
+                        self.print(f"  {m.relative_to(examples_dir).with_suffix('').as_posix()}")
+                return 1
 
         self.print_header(f"Running Example: {args.name}")
         self.print()
@@ -1978,29 +2343,49 @@ class CLIInterface:
 
         except Exception as e:
             self.print_error(f"Error running example: {e}")
-            if args.verbose:
+            if getattr(args, 'verbose', False):
                 import traceback
                 traceback.print_exc()
+            return 1
+        return 0
 
 
 def create_parser():
     """Create argument parser for CLI."""
+    # Drive --preset choices from the preset registry so all 9 presets are
+    # accepted (rag/media/multimodal/notify were previously rejected — F24).
+    try:
+        from effgen.presets import list_presets as _list_presets
+        _preset_choices = sorted(_list_presets().keys())
+    except Exception:
+        _preset_choices = ['math', 'research', 'coding', 'general', 'minimal']
+
     parser = argparse.ArgumentParser(
         description=f"effGen v{__version__} - CLI for agent framework",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  effgen run "What is the weather in Paris?" --model Qwen/Qwen2.5-3B-Instruct
-  effgen chat --model Qwen/Qwen2.5-3B-Instruct --temperature 0.8
-  effgen serve --port 8000
-  effgen config show --file configs/models.yaml
+  effgen run "What is 25 * 17?" --model Qwen/Qwen2.5-1.5B-Instruct
+  effgen run "Summarize quantum computing" -m gpt-5-nano --provider openai
+  effgen run "Tell me a joke" -m groq:llama-3.1-8b-instant
+  effgen chat -m gpt-5-nano --provider openai
+  effgen models list                 # provider registry overview
+  effgen models list --provider groq # full per-model detail
+  effgen doctor --live --cheap       # confirm providers are actually usable
   effgen tools list
-  effgen examples run basic_agent
+
+Model id formats:
+  - Local HuggingFace repo:   Qwen/Qwen2.5-1.5B-Instruct
+  - Provider-prefixed:        openai:gpt-5-nano   groq:llama-3.1-8b-instant
+  - Bare id + --provider:     -m gpt-5-nano --provider openai
+  Providers: openai, anthropic, gemini, cerebras, groq, together,
+             fireworks, replicate, hf
         """
     )
 
     parser.add_argument('--version', action='version', version=f'effGen {__version__}')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output (show DEBUG/INFO logs)')
+    parser.add_argument('-q', '--quiet', action='store_true', help='Quiet output (errors only)')
     parser.add_argument('--log-file', help='Log file path')
     parser.add_argument('--completion', choices=['bash', 'zsh', 'fish'],
                         help='Print shell completion script and exit')
@@ -2011,6 +2396,16 @@ Examples:
     run_parser = subparsers.add_parser('run', help='Run an agent with a task')
     run_parser.add_argument('task', nargs='?', default=None, help='Task description (launches interactive wizard if not provided)')
     run_parser.add_argument('-m', '--model', help='Model to use')
+    run_parser.add_argument(
+        '--provider',
+        help='Provider for a bare model id (e.g. openai, groq, cerebras, gemini, '
+             'together, fireworks, replicate, anthropic, hf). '
+             'Equivalent to the "provider:model" prefix.',
+    )
+    run_parser.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS,
+                            help='Verbose output (show DEBUG/INFO logs)')
+    run_parser.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
+                            help='Quiet output (errors only)')
     run_parser.add_argument('-n', '--name', help='Agent name')
     run_parser.add_argument('-t', '--tools', nargs='+', help='Tools to enable')
     run_parser.add_argument('-c', '--config', help='Configuration file')
@@ -2021,7 +2416,7 @@ Examples:
     run_parser.add_argument('--no-sub-agents', action='store_true', help='Disable sub-agents')
     run_parser.add_argument('--stream', action='store_true', help='Stream output')
     run_parser.add_argument('-o', '--output', help='Output file for response')
-    run_parser.add_argument('--preset', choices=['math', 'research', 'coding', 'general', 'minimal'],
+    run_parser.add_argument('--preset', choices=_preset_choices,
                             help='Use a preset agent configuration')
     run_parser.add_argument('--explain', action='store_true',
                             help='Show why the agent chose each tool')
@@ -2035,7 +2430,7 @@ Examples:
     resume_parser.add_argument('--checkpoint', required=True,
                                help='Checkpoint id, JSON path, or directory (uses latest)')
     resume_parser.add_argument('-m', '--model', help='Model to use')
-    resume_parser.add_argument('--preset', choices=['math', 'research', 'coding', 'general', 'minimal'])
+    resume_parser.add_argument('--preset', choices=_preset_choices)
 
     # Sessions commands
     sessions_parser = subparsers.add_parser('sessions', help='Manage persistent sessions')
@@ -2052,8 +2447,17 @@ Examples:
     # Chat command
     chat_parser = subparsers.add_parser('chat', help='Interactive chat mode')
     chat_parser.add_argument('-m', '--model', help='Model to use')
+    chat_parser.add_argument(
+        '--provider',
+        help='Provider for a bare model id (e.g. openai, groq, cerebras, gemini). '
+             'Equivalent to the "provider:model" prefix.',
+    )
     chat_parser.add_argument('--temperature', type=float, help='Temperature')
     chat_parser.add_argument('--no-sub-agents', action='store_true', help='Disable sub-agents')
+    chat_parser.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS,
+                             help='Verbose output (show DEBUG/INFO logs)')
+    chat_parser.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
+                             help='Quiet output (errors only)')
 
     # Serve command
     serve_parser = subparsers.add_parser('serve', help='Start API server')
@@ -2086,7 +2490,9 @@ Examples:
     tools_parser = subparsers.add_parser('tools', help='Tool management')
     tools_subparsers = tools_parser.add_subparsers(dest='tool_command', help='Tools command')
 
-    tools_subparsers.add_parser('list', help='List tools')
+    tools_list = tools_subparsers.add_parser('list', help='List tools')
+    tools_list.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
+    tools_list.add_argument('--category', help='Filter by category')
 
     tools_info = tools_subparsers.add_parser('info', help='Show tool information')
     tools_info.add_argument('name', help='Tool name')
@@ -2099,10 +2505,15 @@ Examples:
     models_parser = subparsers.add_parser('models', help='Model management')
     models_subparsers = models_parser.add_subparsers(dest='model_command', help='Models command')
 
-    models_subparsers.add_parser('list', help='List models')
+    models_list = models_subparsers.add_parser('list', help='List models')
+    models_list.add_argument('--provider', help='Show only this provider\'s models (full detail)')
+    models_list.add_argument('--free', action='store_true', help='Show only free-tier models')
+    models_list.add_argument('--tools', action='store_true', help='Show only tool-capable models')
+    models_list.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
 
     models_info = models_subparsers.add_parser('info', help='Show model information')
-    models_info.add_argument('name', help='Model name')
+    models_info.add_argument('name', help='Model name (e.g. gpt-5-nano or openai:gpt-5-nano)')
+    models_info.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
 
     models_load = models_subparsers.add_parser('load', help='Pre-load a model into memory')
     models_load.add_argument('name', help='Model name (e.g. Qwen/Qwen2.5-1.5B-Instruct)')
@@ -2132,7 +2543,12 @@ Examples:
     examples_run.add_argument('name', help='Example name')
 
     # Health check command
-    subparsers.add_parser('health', help='Check effGen infrastructure health')
+    health_parser = subparsers.add_parser(
+        'health', help='Check effGen infrastructure health (contacts external services)')
+    health_parser.add_argument(
+        '--remote', '--online', dest='health_remote', action='store_true',
+        help='Opt in to network checks (effgen.org / PyPI). Without this, health '
+             'does not contact any external service. EFFGEN_HEALTH_REMOTE=1 also enables it.')
 
     # Doctor command — API key availability check
     doctor_parser = subparsers.add_parser('doctor', help='Check provider API key availability')
@@ -2140,6 +2556,11 @@ Examples:
                                help='Output as JSON')
     doctor_parser.add_argument('--provider', dest='doctor_provider',
                                help='Check a specific provider only')
+    doctor_parser.add_argument('--live', action='store_true',
+                               help='Make a tiny live call per keyed provider to confirm the '
+                                    'default model is actually usable (not just that a key exists)')
+    doctor_parser.add_argument('--cheap', action='store_true',
+                               help='With --live, use the cheapest/default model and minimal tokens')
 
     # Plugin commands
     plugin_parser = subparsers.add_parser('create-plugin', help='Generate a plugin project scaffold')
@@ -2171,7 +2592,7 @@ Examples:
     batch_parser.add_argument('--timeout', type=float, default=120.0, help='Timeout per query in seconds')
     batch_parser.add_argument('--retries', type=int, default=1, help='Retries for failed queries')
     batch_parser.add_argument('-m', '--model', help='Model to use')
-    batch_parser.add_argument('--preset', choices=['math', 'research', 'coding', 'general', 'minimal'],
+    batch_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
     batch_parser.add_argument('--query-field', default='query', help='Field name for queries in JSONL/CSV (default: query)')
 
@@ -2180,7 +2601,7 @@ Examples:
     eval_parser.add_argument('--suite', required=True,
                               help='Test suite name (math, tool_use, reasoning, safety, conversation)')
     eval_parser.add_argument('-m', '--model', help='Model to use')
-    eval_parser.add_argument('--preset', choices=['math', 'research', 'coding', 'general', 'minimal'],
+    eval_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
     eval_parser.add_argument('--scoring', choices=['exact_match', 'contains', 'regex', 'semantic_similarity', 'llm_judge'],
                               default='contains', help='Scoring mode (default: contains)')
@@ -2205,23 +2626,27 @@ Examples:
     compare_parser.add_argument('--threshold', type=float, default=0.5,
                                  help='Pass threshold (default: 0.5)')
     compare_parser.add_argument('-o', '--output', help='Output file for results (JSON or Markdown)')
-    compare_parser.add_argument('--preset', choices=['math', 'research', 'coding', 'general', 'minimal'],
+    compare_parser.add_argument('--preset', choices=_preset_choices,
                                  help='Use a preset agent configuration')
 
     # Debug command
     debug_parser = subparsers.add_parser('debug', help='Run an agent in interactive debug mode')
     debug_parser.add_argument('task', help='Task to execute')
     debug_parser.add_argument('-m', '--model', help='Model to use')
-    debug_parser.add_argument('--preset', choices=['math', 'research', 'coding', 'general', 'minimal'],
+    debug_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
     debug_parser.add_argument('--step', action='store_true', help='Step through each iteration')
 
     # Cost command — spend dashboard + budget management
     cost_parser = subparsers.add_parser('cost', help='View cost spend and manage budgets')
+    cost_parser.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
     cost_subparsers = cost_parser.add_subparsers(dest='cost_command', help='Cost command')
-    cost_subparsers.add_parser('today', help='Show per-provider/model spend for the last 24 hours')
-    cost_subparsers.add_parser('week', help='Show rolling 7-day spend summary')
-    cost_subparsers.add_parser('by-provider', help='Show lifetime totals grouped by provider')
+    _cost_today = cost_subparsers.add_parser('today', help='Show per-provider/model spend for the last 24 hours')
+    _cost_today.add_argument('--json', dest='output_json', action='store_true', default=argparse.SUPPRESS, help='Output as JSON')
+    _cost_week = cost_subparsers.add_parser('week', help='Show rolling 7-day spend summary')
+    _cost_week.add_argument('--json', dest='output_json', action='store_true', default=argparse.SUPPRESS, help='Output as JSON')
+    _cost_byprov = cost_subparsers.add_parser('by-provider', help='Show lifetime totals grouped by provider')
+    _cost_byprov.add_argument('--json', dest='output_json', action='store_true', default=argparse.SUPPRESS, help='Output as JSON')
     cost_set_budget = cost_subparsers.add_parser('set-budget', help='Set a daily spend budget')
     cost_set_budget.add_argument('amount', type=float, help='Daily budget in USD (e.g. 1.0)')
     cost_subparsers.add_parser('clear-budget', help='Remove configured budget limits')
@@ -2443,6 +2868,28 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
             pass
     daily_budget = budget_cfg.get('daily')
 
+    # JSON output — machine-readable spend report.
+    if getattr(args, 'output_json', False):
+        print(_json.dumps({
+            "period": period_label,
+            "total_requests": total_requests,
+            "total_cost_usd": round(total_cost, 8),
+            "daily_budget_usd": daily_budget,
+            "rows": [
+                {
+                    "provider": r["provider"],
+                    "model": r["model"],
+                    "requests": r["requests"],
+                    "prompt_tokens": r["prompt_tokens"],
+                    "completion_tokens": r["completion_tokens"],
+                    "cost_usd": round(r["cost_usd"], 8),
+                    "cost_label": _cost_label(r),
+                }
+                for r in rows
+            ],
+        }, indent=2))
+        return 0
+
     if RICH_AVAILABLE and cli.console:
         table = Table(title=f"effGen Cost Summary — {period_label}", show_footer=True)
         table.add_column("Provider", style="cyan", no_wrap=True)
@@ -2509,18 +2956,8 @@ def _handle_doctor_command(args) -> int:
     """Handle the 'effgen doctor' subcommand — check API key availability."""
     import json as _json
 
-    # Load .env from standard locations before checking keys (all, non-overriding)
-    try:
-        from dotenv import load_dotenv
-        for _env_path in [
-            Path.home() / ".effgen" / ".env",
-            Path(".env"),
-            Path(__file__).parent.parent / ".env",
-        ]:
-            if _env_path.exists():
-                load_dotenv(_env_path, override=False)
-    except ImportError:
-        pass
+    # Load .env from the documented search paths before checking keys.
+    load_env_files()
 
     from effgen.models.auth import check_keys
     from effgen.models.registry import ProviderRegistry
@@ -2544,31 +2981,79 @@ def _handle_doctor_command(args) -> int:
 
     results = check_keys(providers_to_check)
 
+    live = bool(getattr(args, 'live', False))
+
+    # Optional live usability probe: a tiny call per keyed provider that tells
+    # "key present" apart from "default model actually callable".
+    live_results: dict[str, dict] = {}
+    if live:
+        live_results = _doctor_live_probe(
+            [p for p in results if results[p].get("available")]
+        )
+        for prov, lr in live_results.items():
+            results[prov]["live"] = lr
+
+    # System / CUDA / vLLM / pip-check report.
+    system_report = _doctor_system_report(include_pip_check=live)
+
+    # Exit nonzero if a live probe was requested and a keyed provider failed.
+    # Computed once so every output format (JSON and human) agrees (Audit-2 #61).
+    exit_code = _doctor_exit_code(results, live)
+
     if getattr(args, 'output_json', False):
-        print(_json.dumps(results, indent=2))
-        return 0
+        print(_json.dumps({"providers": results, "system": system_report}, indent=2))
+        return exit_code
 
     # Pretty-print
     if RICH_AVAILABLE:
         console = Console()
-        table = Table(title="effgen doctor — Provider API Key Status")
+        table = Table(title="effgen doctor — Provider Status")
         table.add_column("Provider", style="cyan", no_wrap=True)
-        table.add_column("Status", style="white")
-        table.add_column("Env Key Found", style="dim")
+        table.add_column("Key", style="white")
+        table.add_column("Env Var", style="dim")
         table.add_column("Models", style="dim", justify="right")
+        if live:
+            table.add_column("Live", style="white")
+            table.add_column("Default Model", style="magenta", overflow="fold")
 
         for prov in sorted(results):
             info = results[prov]
             available = info.get("available", False)
             env_key = info.get("env_key") or "—"
-            status = "[green]READY[/green]" if available else "[red]MISSING KEY[/red]"
+            status = "[green]present[/green]" if available else "[red]missing[/red]"
             try:
                 n_models = str(len(ProviderRegistry.list_models(prov)))
             except Exception:
                 n_models = "?"
-            table.add_row(prov, status, env_key, n_models)
+            row = [prov, status, env_key, n_models]
+            if live:
+                lr = info.get("live", {})
+                if not available:
+                    row += ["[dim]—[/dim]", "—"]
+                elif lr.get("ok"):
+                    row += ["[green]usable[/green]", lr.get("model", "—")]
+                else:
+                    row += [f"[red]{lr.get('status', 'fail')}[/red]", lr.get("model", "—")]
+            table.add_row(*row)
 
         console.print(table)
+
+        if live:
+            console.print("\n[bold]Live probe[/bold] — a tiny call confirms the default "
+                          "model is callable (not just that a key is set).")
+            for prov in sorted(live_results):
+                lr = live_results[prov]
+                if not lr.get("ok") and lr.get("detail"):
+                    console.print(f"  [yellow]{prov}[/yellow]: {lr['detail']}")
+
+        # System section
+        console.print("\n[bold cyan]System[/bold cyan]")
+        sys_table = Table(show_header=False)
+        sys_table.add_column("Check", style="cyan")
+        sys_table.add_column("Value", style="white", overflow="fold")
+        for k, v in system_report.items():
+            sys_table.add_row(k, str(v))
+        console.print(sys_table)
 
         # Print hints for missing keys
         missing = [p for p, i in results.items() if not i.get("available")]
@@ -2578,17 +3063,22 @@ def _handle_doctor_command(args) -> int:
                 keys = results[prov].get("env_keys_checked", [])
                 key_str = " or ".join(keys) if keys else f"{prov.upper()}_API_KEY"
                 console.print(f"  export {key_str}=<your-key>")
-        else:
-            console.print("\n[green]All providers ready![/green]")
     else:
-        print("effgen doctor — Provider API Key Status")
+        print("effgen doctor — Provider Status")
         print("-" * 50)
         for prov in sorted(results):
             info = results[prov]
             available = info.get("available", False)
             env_key = info.get("env_key") or "not set"
-            status = "READY" if available else "MISSING KEY"
-            print(f"  {prov:15s} {status:12s}  (key: {env_key})")
+            status = "key present" if available else "key missing"
+            line = f"  {prov:12s} {status:12s}  (env: {env_key})"
+            if live and available:
+                lr = info.get("live", {})
+                line += f"  live={'usable' if lr.get('ok') else lr.get('status', 'fail')}"
+            print(line)
+        print("\nSystem:")
+        for k, v in system_report.items():
+            print(f"  {k}: {v}")
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
             print("\nMissing keys — set in ~/.effgen/.env or export:")
@@ -2597,7 +3087,135 @@ def _handle_doctor_command(args) -> int:
                 key_str = " or ".join(keys) if keys else f"{prov.upper()}_API_KEY"
                 print(f"  export {key_str}=<your-key>")
 
+    return exit_code
+
+
+def _doctor_exit_code(results: dict[str, dict], live: bool) -> int:
+    """Exit code for `effgen doctor`: nonzero iff a live probe was requested and
+    a keyed (key-present) provider's default model was not actually usable.
+
+    Kept format-independent so `--json` and the human table return the same code
+    for the same provider state (Audit-2 #61).
+    """
+    if live and any(
+        results[p].get("available") and not results[p].get("live", {}).get("ok")
+        for p in results
+    ):
+        return 1
     return 0
+
+
+def _doctor_system_report(*, include_pip_check: bool = False) -> dict[str, Any]:
+    """Collect a CUDA / torch / vLLM / pip-check diagnostic snapshot."""
+    report: dict[str, Any] = {}
+    try:
+        from effgen.gpu import cuda_compat
+        status = cuda_compat.get_cuda_status()
+        report["Physical GPUs (NVML)"] = status.physical_gpus
+        report["Driver CUDA"] = status.driver_cuda or "n/a"
+        report["torch CUDA build"] = status.torch_cuda or "cpu-only"
+        report["torch.cuda.is_available()"] = status.usable
+        if status.mismatch:
+            report["CUDA mismatch"] = "YES — GPUs present but torch runs on CPU"
+    except Exception as e:  # noqa: BLE001
+        report["CUDA"] = f"unavailable ({e})"
+
+    # torch version
+    try:
+        import torch
+        report["torch"] = torch.__version__
+    except Exception:
+        report["torch"] = "not installed"
+
+    # vLLM import status (a frequent ABI casualty)
+    try:
+        import importlib.util
+        if importlib.util.find_spec("vllm") is None:
+            report["vLLM"] = "not installed"
+        else:
+            try:
+                import vllm  # noqa: F401
+                report["vLLM"] = f"importable ({getattr(vllm, '__version__', '?')})"
+            except Exception as e:  # noqa: BLE001
+                report["vLLM"] = f"installed but import failed ({type(e).__name__})"
+    except Exception:
+        report["vLLM"] = "unknown"
+
+    if include_pip_check:
+        try:
+            import subprocess
+            proc = subprocess.run(
+                [sys.executable, "-m", "pip", "check"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if proc.returncode == 0:
+                report["pip check"] = "no broken requirements"
+            else:
+                lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+                report["pip check"] = f"{len(lines)} issue(s): " + "; ".join(lines[:3])
+        except Exception as e:  # noqa: BLE001
+            report["pip check"] = f"could not run ({e})"
+
+    return report
+
+
+def _doctor_live_probe(providers: list[str], *, timeout: float = 30.0) -> dict[str, dict]:
+    """Make a tiny live call per provider to confirm its default model is usable.
+
+    Returns ``{provider: {"ok": bool, "model": str, "status": str, "detail": str}}``.
+    Runs providers concurrently with a bounded wall-clock budget so the command
+    stays responsive even if one provider hangs.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from effgen.models import _catalog
+
+    def _probe_one(prov: str) -> dict:
+        model_id = _catalog.default_model(prov)
+        out = {"ok": False, "model": model_id or "—", "status": "no-default", "detail": ""}
+        if not model_id:
+            out["detail"] = "no default model in catalog"
+            return out
+        try:
+            from effgen import load_model
+            model = load_model(model_id, provider=prov)
+            model.load()
+            # Keep it minimal but DON'T force max_tokens: newer reasoning models
+            # (e.g. OpenAI gpt-5.x) reject max_tokens and need a token budget for
+            # reasoning, so a hard cap of 1 produces a false "error". A one-word
+            # reply to "Reply with: ok" is already negligibly cheap.
+            resp = model.generate("Reply with the single word: ok", temperature=0.0)
+            text = getattr(resp, "content", None) or getattr(resp, "text", "") or str(resp)
+            out["ok"] = True
+            out["status"] = "usable"
+            out["detail"] = (text or "").strip()[:40]
+        except Exception as e:  # noqa: BLE001 - classify for a friendly status
+            from effgen.models.errors import (
+                ModelAuthError,
+                ModelNotFoundError,
+            )
+            if isinstance(e, ModelAuthError):
+                out["status"] = "auth-failed"
+            elif isinstance(e, ModelNotFoundError):
+                out["status"] = "model-404"
+            else:
+                out["status"] = "error"
+            # Message is already redacted by the typed errors / adapters.
+            out["detail"] = str(e)[:160]
+        return out
+
+    results: dict[str, dict] = {}
+    if not providers:
+        return results
+    with ThreadPoolExecutor(max_workers=min(len(providers), 6)) as pool:
+        futs = {pool.submit(_probe_one, p): p for p in providers}
+        for fut in as_completed(futs, timeout=timeout + 5):
+            prov = futs[fut]
+            try:
+                results[prov] = fut.result()
+            except Exception as e:  # noqa: BLE001
+                results[prov] = {"ok": False, "model": "—", "status": "timeout", "detail": str(e)[:120]}
+    return results
 
 
 def _handle_workflow_command(args, cli) -> int:
@@ -3130,20 +3748,59 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
     return 1
 
 
-def main():
-    """Main entry point for CLI."""
-    # Load .env early so all subcommands see API keys
+def _env_search_paths() -> list[Path]:
+    """The ordered list of ``.env`` locations the CLI loads (earliest wins).
+
+    Search order (documented so pip-installed users aren't surprised):
+      1. ``$EFFGEN_DOTENV`` — explicit override, if set.
+      2. ``~/.effgen/.env`` — per-user effGen config.
+      3. ``./.env`` and each parent directory up to the filesystem root — the
+         nearest project ``.env`` to the current working directory.
+    Values are loaded non-overriding, so a real environment variable always
+    wins over a file, and earlier files win over later ones.
+    """
+    paths: list[Path] = []
+    override = os.environ.get("EFFGEN_DOTENV")
+    if override:
+        paths.append(Path(override))
+    paths.append(Path.home() / ".effgen" / ".env")
+    # Walk up from the cwd to find the nearest project .env (a checkout's repo
+    # root, for example) instead of a confusing package-relative path.
+    cwd = Path.cwd()
+    for d in [cwd, *cwd.parents]:
+        paths.append(d / ".env")
+    return paths
+
+
+def load_env_files() -> list[str]:
+    """Load ``.env`` files from the documented search paths (non-overriding).
+
+    Returns the list of paths actually loaded (for diagnostics).
+    """
+    loaded: list[str] = []
     try:
         from dotenv import load_dotenv as _load_dotenv
-        for _ep in [
-            Path.home() / ".effgen" / ".env",
-            Path(".env"),
-            Path(__file__).parent.parent / ".env",
-        ]:
-            if _ep.exists():
-                _load_dotenv(_ep, override=False)
     except ImportError:
-        pass
+        return loaded
+    seen: set[Path] = set()
+    for ep in _env_search_paths():
+        try:
+            rp = ep.resolve()
+        except Exception:
+            rp = ep
+        if rp in seen:
+            continue
+        seen.add(rp)
+        if ep.exists():
+            _load_dotenv(ep, override=False)
+            loaded.append(str(ep))
+    return loaded
+
+
+def main():
+    """Main entry point for CLI."""
+    # Load .env early so all subcommands see API keys (see load_env_files).
+    load_env_files()
 
     parser = create_parser()
     args = parser.parse_args()
@@ -3154,8 +3811,13 @@ def main():
         print(get_completion(args.completion))
         sys.exit(0)
 
-    # Setup logging
-    setup_logging(getattr(args, 'verbose', False), getattr(args, 'log_file', None))
+    # Setup logging. --verbose / --quiet may appear either before the
+    # subcommand (global) or after it (per-command); honor whichever is set.
+    setup_logging(
+        verbose=getattr(args, 'verbose', False),
+        log_file=getattr(args, 'log_file', None),
+        quiet=getattr(args, 'quiet', False),
+    )
 
     # Create CLI interface
     cli = CLIInterface()
@@ -3177,10 +3839,22 @@ def main():
         elif args.command == 'examples':
             exit_code = cli.examples_commands(args)
         elif args.command == 'health':
-            from effgen.utils.health import HealthChecker
-            checker = HealthChecker()
-            all_passed = checker.print_results()
-            exit_code = 0 if all_passed else 1
+            # Fail-closed on privacy: contacting effgen.org / PyPI is opt-in.
+            remote = (
+                getattr(args, 'health_remote', False)
+                or os.environ.get("EFFGEN_HEALTH_REMOTE", "").strip().lower() in ("1", "true", "yes")
+            )
+            if not remote:
+                print("effgen health performs network checks against external services "
+                      "(effgen.org, docs.effgen.org, PyPI).")
+                print("These are not run without consent. Re-run with --remote (or set "
+                      "EFFGEN_HEALTH_REMOTE=1) to enable them.")
+                exit_code = 0
+            else:
+                from effgen.utils.health import HealthChecker
+                checker = HealthChecker()
+                all_passed = checker.print_results()
+                exit_code = 0 if all_passed else 1
         elif args.command == 'doctor':
             exit_code = _handle_doctor_command(args)
         elif args.command == 'resume':
@@ -3273,7 +3947,7 @@ def agent_main():
         effgen-agent
 
     Interactive mode guides you through:
-        - Agent type selection (CodeAgent vs ToolCallingAgent)
+        - Reasoning style (auto / react / single — one Agent, different strategies)
         - Tool selection from available toolbox
         - Model configuration (type, ID, API settings)
         - Advanced options like additional imports

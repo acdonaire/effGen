@@ -183,6 +183,27 @@ class ModelLoader:
         # Explicit provider routing (e.g. provider="cerebras", provider="openai")
         provider = kwargs.pop("provider", None)
 
+        # An explicit but unknown provider (e.g. a typo'd "grok") must fail
+        # fast and loud rather than silently falling through to a local
+        # HuggingFace download.  Normalize common aliases (google -> gemini).
+        if provider is not None:
+            _known = {
+                "openai", "anthropic", "gemini", "cerebras", "groq",
+                "together", "fireworks", "replicate", "hf", "hf_inference",
+            }
+            _aliases = {"google": "gemini", "huggingface": "hf", "claude": "anthropic"}
+            _p = str(provider).strip().lower()
+            _p = _aliases.get(_p, _p)
+            if _p not in _known:
+                import difflib
+                _close = difflib.get_close_matches(_p, sorted(_known), n=1, cutoff=0.5)
+                _hint = f" Did you mean '{_close[0]}'?" if _close else ""
+                raise ValueError(
+                    f"Unknown provider '{provider}'.{_hint} "
+                    f"Known providers: {', '.join(sorted(_known - {'hf_inference'}))}."
+                )
+            provider = _p
+
         # Support "provider:model_id" prefix syntax via ProviderRegistry
         if provider is None and isinstance(model_name, str) and ":" in model_name:
             _prefix, _rest = model_name.split(":", 1)
