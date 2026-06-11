@@ -8,7 +8,14 @@ models/configurations.
 from __future__ import annotations
 
 from .comparison import ModelComparison
-from .evaluator import AgentEvaluator, EvalResult, SuiteResults, TestCase
+from .evaluator import (
+    AgentEvaluator,
+    Difficulty,
+    EvalResult,
+    ScoringMode,
+    SuiteResults,
+    TestCase,
+)
 from .regression import RegressionTracker
 from .suites import (
     ConversationSuite,
@@ -23,7 +30,9 @@ from .suites import (
 
 __all__ = [
     "AgentEvaluator",
+    "Difficulty",
     "EvalResult",
+    "ScoringMode",
     "SuiteResults",
     "TestCase",
     "TestSuite",

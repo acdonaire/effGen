@@ -111,11 +111,22 @@ class OptimizationResult:
 
 class PromptOptimizer:
     """
-    Optimizes prompts for Small Language Models with techniques:
-    - Prompt compression (remove redundancy, use shorter synonyms)
-    - Instruction clarity (explicit, structured format)
-    - Context management (fit within token limits)
-    - Format optimization (bullet points, structured outputs)
+    Optimizes prompts for Small Language Models.
+
+    **Front door:** call :meth:`optimize` — it is the single canonical entry
+    point and applies the full pipeline (compression, instruction clarity,
+    context management, and format optimization) according to the configured
+    :class:`OptimizationConfig`, returning an :class:`OptimizationResult`.
+
+    Example:
+        >>> optimizer = PromptOptimizer()
+        >>> result = optimizer.optimize("Could you please summarize this text?")
+        >>> result.optimized_prompt   # shorter, SLM-friendly prompt
+        >>> result.get_compression_percentage()
+
+    The individual stage methods (``compress_prompt``, ``optimize_chain_depth``,
+    ``format_as_bullet_points``, …) remain available for fine-grained control,
+    but most callers only need :meth:`optimize`.
     """
 
     # Synonym replacements for compression
@@ -175,7 +186,7 @@ class PromptOptimizer:
             config: Optimization configuration
         """
         self.config = config or OptimizationConfig()
-        logger.info(f"PromptOptimizer initialized for {self.config.model_size.value} models")
+        logger.debug(f"PromptOptimizer initialized for {self.config.model_size.value} models")
 
     def optimize(
         self,

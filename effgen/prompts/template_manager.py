@@ -157,12 +157,17 @@ class TemplateManager:
     - Variable extraction and validation
     """
 
-    def __init__(self, template_dir: str | None = None):
+    def __init__(self, template_dir: str | None = None, load_defaults: bool = True):
         """
         Initialize template manager
 
         Args:
-            template_dir: Directory containing template files
+            template_dir: Directory containing template files. Defaults to the
+                bundled template library shipped with effGen.
+            load_defaults: When True (the default), the bundled templates in
+                ``template_dir`` are loaded immediately, so a freshly built
+                ``TemplateManager()`` is ready to use. Pass ``load_defaults=False``
+                to start with an empty manager you populate yourself.
         """
         self.templates: dict[str, PromptTemplate] = {}
         self.examples: dict[str, list[FewShotExample]] = {}
@@ -182,7 +187,15 @@ class TemplateManager:
             lstrip_blocks=True
         )
 
-        logger.info(f"TemplateManager initialized with directory: {self.template_dir}")
+        logger.debug(f"TemplateManager initialized with directory: {self.template_dir}")
+
+        # Populate the bundled template library by default so the obvious
+        # ``TemplateManager()`` call is immediately usable.
+        if load_defaults and self.template_dir.exists():
+            try:
+                self.load_from_directory()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"Could not load bundled templates: {e}")
 
     def load_from_yaml(self, filepath: str | Path) -> None:
         """
@@ -293,6 +306,10 @@ class TemplateManager:
             return current
 
         return None
+
+    def get(self, name: str, version: str | None = None) -> PromptTemplate | None:
+        """Alias for :meth:`get_template` (the obvious short name)."""
+        return self.get_template(name, version)
 
     def list_templates(self, tag: str | None = None) -> list[str]:
         """
@@ -631,13 +648,9 @@ class TemplateManager:
 
 
 def create_default_template_manager() -> TemplateManager:
-    """Create template manager with default templates loaded"""
-    manager = TemplateManager()
+    """Create a template manager with the bundled default templates loaded.
 
-    # Try to load templates from default directory
-    try:
-        manager.load_from_directory()
-    except Exception as e:
-        logger.warning(f"Could not load default templates: {e}")
-
-    return manager
+    Retained for backward compatibility; ``TemplateManager()`` now loads the
+    bundled library by default, so the two are equivalent.
+    """
+    return TemplateManager(load_defaults=True)

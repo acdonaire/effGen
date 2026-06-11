@@ -54,8 +54,17 @@ class TestSuite:
     description: str = ""
     filename: str = ""  # JSONL file under data/
 
-    def __init__(self) -> None:
-        self.test_cases: list[TestCase] = self._load()
+    def __init__(self, test_cases: list[TestCase] | None = None) -> None:
+        """Create a suite.
+
+        Args:
+            test_cases: Explicit test cases to use. When omitted, the suite's
+                bundled cases are loaded from its JSONL data file. Supplying
+                ``test_cases`` lets you build an ad-hoc suite without a data file.
+        """
+        self.test_cases: list[TestCase] = (
+            list(test_cases) if test_cases is not None else self._load()
+        )
 
     def _load(self) -> list[TestCase]:
         path = _DATA_DIR / self.filename

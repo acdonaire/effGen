@@ -275,7 +275,7 @@ class ConfigLoader:
         """
         with self._lock:
             # Handle multiple config files
-            if isinstance(config_path, (list, tuple)):
+            if isinstance(config_path, list | tuple):
                 configs = []
                 for path in config_path:
                     configs.append(self._load_single_config(path))
@@ -309,6 +309,19 @@ class ConfigLoader:
                 self._setup_hot_reload()
 
             return self.config
+
+    def load(
+        self,
+        config_path: str | Path | list[str | Path],
+        merge: bool = True,
+        validate: bool = True,
+    ) -> Config:
+        """Alias for :meth:`load_config`.
+
+        Provided because ``load`` is the more obvious method name; it forwards
+        directly to :meth:`load_config`.
+        """
+        return self.load_config(config_path, merge=merge, validate=validate)
 
     def _load_single_config(self, config_path: str | Path) -> Config:
         """

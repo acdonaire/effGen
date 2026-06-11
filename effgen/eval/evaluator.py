@@ -40,19 +40,33 @@ class TestCase:
     """A single evaluation test case.
 
     Attributes:
-        query: The input query for the agent.
+        query: The input query for the agent. ``input=`` is accepted as an
+            ergonomic alias when constructing a TestCase.
         expected_output: Expected output text (used for exact/contains/regex).
         expected_tools: Tool names the agent should invoke.
         tags: Arbitrary tags for filtering / grouping.
-        difficulty: Difficulty level.
+        difficulty: Difficulty level (a plain string like ``"easy"`` is coerced).
         metadata: Extra data (e.g. multi-turn conversation history).
     """
-    query: str
+    query: str = ""
     expected_output: str = ""
     expected_tools: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     difficulty: Difficulty = Difficulty.MEDIUM
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Ergonomic alias for ``query``; never stored, reconciled in __post_init__.
+    input: str | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.input is not None and not self.query:
+            self.query = self.input
+        self.input = None
+        if isinstance(self.difficulty, str):
+            self.difficulty = Difficulty(self.difficulty)
+        if not self.query:
+            raise ValueError(
+                "TestCase requires a non-empty 'query' (or 'input=' alias)."
+            )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TestCase:

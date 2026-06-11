@@ -235,6 +235,18 @@ class ShortTermMemory:
             return list(self.messages)
         return list(self.messages)[-n:]
 
+    def get_messages(self, n: int | None = None) -> list[Message]:
+        """
+        Get stored messages (the plain counterpart to :meth:`add_message`).
+
+        Args:
+            n: Number of most-recent messages to return (None = all).
+
+        Returns:
+            List of messages, oldest first.
+        """
+        return self.get_recent_messages(n)
+
     def get_messages_by_role(self, role: MessageRole) -> list[Message]:
         """
         Get all messages by a specific role.

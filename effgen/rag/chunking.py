@@ -18,10 +18,35 @@ from effgen.tools.builtin.retrieval import (
     ChunkingStrategy,
     Document,
     FixedSizeChunker,
+    RecursiveChunker,
     SentenceChunker,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Friendly default chunker
+# ---------------------------------------------------------------------------
+
+class TextChunker(RecursiveChunker):
+    """
+    General-purpose plain-text chunker — the friendly default.
+
+    Splits text recursively on paragraph, line, sentence, and word boundaries
+    so chunks stay close to ``chunk_size`` characters while respecting natural
+    breaks. This is the obvious chunker to reach for when you just have text and
+    don't need code/table/semantic awareness.
+
+    Example:
+        >>> chunker = TextChunker(chunk_size=500, overlap=50)
+        >>> pieces = chunker.split_text(long_document)        # list[str]
+        >>> docs = chunker.chunk(long_document, doc_id="doc1")  # list[Document]
+    """
+
+    def split_text(self, text: str) -> list[str]:
+        """Split ``text`` and return the chunk contents as plain strings."""
+        return [doc.content for doc in self.chunk(text, doc_id="text")]
 
 
 # ---------------------------------------------------------------------------
