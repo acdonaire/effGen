@@ -28,7 +28,11 @@ class Reranker:
         results: list[SearchResult],
         top_k: int | None = None,
     ) -> list[SearchResult]:
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement rerank(). Use one of the "
+            "concrete rerankers (CrossEncoderReranker, LLMReranker, "
+            "RuleBasedReranker) or subclass Reranker and override rerank()."
+        )
 
 
 # ---------------------------------------------------------------------------

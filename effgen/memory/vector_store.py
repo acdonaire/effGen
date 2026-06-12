@@ -8,6 +8,7 @@ supporting semantic search, similarity retrieval, and periodic consolidation.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Optional imports for vector backends
 try:
@@ -156,7 +159,13 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
             )
 
         self.model = SentenceTransformer(model_name)
-        self._embedding_dim = self.model.get_sentence_embedding_dimension()
+        # `get_sentence_embedding_dimension()` was renamed to
+        # `get_embedding_dimension()` in newer sentence-transformers; prefer the
+        # new name and fall back for older installs.
+        if hasattr(self.model, "get_embedding_dimension"):
+            self._embedding_dim = self.model.get_embedding_dimension()
+        else:
+            self._embedding_dim = self.model.get_sentence_embedding_dimension()
 
     def embed(self, text: str) -> np.ndarray:
         """Generate embedding for text."""
@@ -773,17 +782,26 @@ class VectorMemoryStore:
         if not self.persist_directory or not self.persist_directory.exists():
             return
 
-        # Load backend
+        # Load backend (may legitimately have no data yet on first run).
         try:
             self.backend.load(self.persist_directory)
-        except Exception:
-            pass  # Backend might not have data yet
+        except FileNotFoundError:
+            logger.debug("Vector backend has no saved index yet at %s", self.persist_directory)
+        except Exception as exc:
+            logger.warning("Failed to load vector backend index from %s: %s", self.persist_directory, exc)
 
         # Load entries
         entries_file = self.persist_directory / "entries.json"
         if entries_file.exists():
-            with open(entries_file) as f:
-                entries_data = json.load(f)
+            try:
+                with open(entries_file) as f:
+                    entries_data = json.load(f)
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+                raise ValueError(
+                    f"Vector memory file '{entries_file}' is corrupt or not valid "
+                    f"JSON ({exc}). Move or delete it to start fresh, or restore a "
+                    "known-good backup."
+                ) from exc
 
             for entry_data in entries_data.values():
                 entry = VectorMemoryEntry(

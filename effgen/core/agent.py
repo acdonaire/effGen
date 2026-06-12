@@ -600,6 +600,11 @@ Question: {task}
         # State management
         self.state = AgentState(agent_id=self.name)
 
+        # Per-run accumulator of retrieved evidence (RAG/search). Populated by
+        # _execute_tool_once when a retrieval/search tool returns ranked passages,
+        # then surfaced on AgentResponse.sources / .citations at the end of run().
+        self._collected_citations: list[dict[str, Any]] = []
+
         # Sub-agent components
         self._current_depth = 0
         self.router = None
@@ -883,6 +888,7 @@ Question: {task}
         if inputs is not None:
             kwargs["inputs"] = inputs
         self._current_depth = 0  # Reset depth at the start of each top-level run()
+        self._collected_citations = []  # Reset retrieved-evidence accumulator
         debug = kwargs.pop("debug", False)
         run_id = generate_run_id()
         # Capture checkpoint args here so the outer run() can use
@@ -960,6 +966,11 @@ Question: {task}
                 # assembly sites also sanitize so direct callers stay clean.
                 if response.success and isinstance(response.output, str):
                     response.output = sanitize_final_answer(response.output)
+                    # If this run used a retrieval tool and the model echoed the
+                    # raw result dict as its answer (small models sometimes paste
+                    # the tool observation), render it as readable passage text.
+                    if self._collected_citations:
+                        response.output = self._humanize_observation(response.output)
 
                 # Apply structured output constraint if requested
                 if effective_schema and response.success and response.output:
@@ -984,6 +995,11 @@ Question: {task}
                 response.execution_trace = self.execution_tracker.get_trace()
                 response.execution_tree = self.execution_tracker.generate_execution_tree()
                 response.metadata["run_id"] = run_id
+
+                # Surface retrieved evidence: if the run consulted a knowledge
+                # base / search tool, expose its passages as sources + inline
+                # citations on the response (fills only what's still empty).
+                self._attach_citations(response)
 
                 # Track completion
                 self.execution_tracker.track_event(ExecutionEvent(
@@ -1841,6 +1857,55 @@ Question: {task}
             metadata=meta_fail,
         )
 
+    def _humanize_observation(self, obs: str) -> str:
+        """
+        Render a retrieval/search tool observation as readable passage text.
+
+        When a knowledge-base tool's raw result (a ``{'results': [...]}`` dict)
+        ends up being used as a fallback answer — e.g. a model that loops on the
+        retrieval tool instead of synthesizing — dumping the Python dict repr is
+        unreadable. Extract and join the passage ``content`` instead so the
+        degraded answer is at least the retrieved evidence (citations are still
+        attached separately to the response).
+        """
+        s = obs.strip()
+        brace = s.find("{")
+        if brace == -1 or "results" not in s:
+            return obs
+        # Extract a single balanced-brace object starting at the first '{' so
+        # trailing scaffolding (e.g. an appended "[Tool results computed…]" nudge
+        # or a following "Thought:") doesn't defeat the parse.
+        depth = 0
+        end = -1
+        for i in range(brace, len(s)):
+            if s[i] == "{":
+                depth += 1
+            elif s[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        candidate = s[brace:end] if end != -1 else s[brace:]
+        data: Any = None
+        try:
+            import ast
+            data = ast.literal_eval(candidate)
+        except (ValueError, SyntaxError):
+            try:
+                data = json.loads(candidate)
+            except (json.JSONDecodeError, TypeError):
+                return obs
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            passages: list[str] = []
+            for item in data["results"]:
+                if isinstance(item, dict):
+                    content = item.get("content") or item.get("text") or item.get("snippet")
+                    if content:
+                        passages.append(str(content).strip())
+            if passages:
+                return "\n\n".join(passages)
+        return obs
+
     def _extract_partial_answer(self, scratchpad: str) -> str | None:
         """
         Extract the best partial answer from the scratchpad when max iterations is reached.
@@ -1877,11 +1942,26 @@ Question: {task}
             # Strip tool-echo prefixes ("[tool(args)] → result") so only the
             # results are joined, not the scaffolding.
             valid_obs = [
-                _TOOL_ECHO_RE.sub("", o.strip())
+                self._humanize_observation(_TOOL_ECHO_RE.sub("", o.strip()))
                 for o in observations
                 if o.strip() and not o.strip().lower().startswith("error")
             ]
-            valid_obs = [o for o in valid_obs if o]
+            # Drop any segment that is pure ReAct scaffolding (a stray
+            # "Thought:/Action:" that slipped past the boundary regex).
+            valid_obs = [
+                o for o in valid_obs
+                if o and not re.match(r"^(thought|action|observation|final answer)\b", o.strip(), re.IGNORECASE)
+            ]
+            # Deduplicate while preserving order — a model that loops on the same
+            # retrieval/search tool produces the same passage repeatedly, and
+            # joining the duplicates yields a messy answer.
+            seen_obs: set[str] = set()
+            deduped_obs: list[str] = []
+            for o in valid_obs:
+                if o and o not in seen_obs:
+                    seen_obs.add(o)
+                    deduped_obs.append(o)
+            valid_obs = deduped_obs
             if len(valid_obs) > 1:
                 return sanitize_final_answer(" | ".join(valid_obs))
             elif valid_obs:
@@ -2724,6 +2804,131 @@ Question: {task}
             sanitized = sanitized[:max_length]
         return sanitized
 
+    # Tool tags / categories whose results carry retrievable evidence we can
+    # turn into AgentResponse sources + inline citations.
+    _RETRIEVAL_TOOL_TAGS = frozenset({
+        "retrieval", "rag", "knowledge-base", "search", "web-search",
+        "wikipedia", "documents", "semantic",
+    })
+
+    def _is_retrieval_tool(self, tool: Any, tool_name: str) -> bool:
+        """True if a tool's results should be mined for sources/citations."""
+        meta = getattr(tool, "metadata", None)
+        if meta is not None:
+            category = getattr(meta, "category", None)
+            cat_val = getattr(category, "value", category)
+            if isinstance(cat_val, str) and "retrieval" in cat_val.lower():
+                return True
+            tags = getattr(meta, "tags", None) or []
+            if any(str(t).lower() in self._RETRIEVAL_TOOL_TAGS for t in tags):
+                return True
+        return tool_name.lower() in {"retrieval", "rag", "knowledge_base"}
+
+    def _collect_citations(self, tool: Any, tool_name: str, result: Any) -> None:
+        """
+        Mine a retrieval/search tool result for source passages and stash them
+        on the per-run accumulator. The actual ``Citation`` objects and the
+        deduplicated source list are assembled in :meth:`_attach_citations`.
+        """
+        if not self._is_retrieval_tool(tool, tool_name):
+            return
+
+        # Unwrap ToolResult → output dict (skip failed calls).
+        output = result
+        if hasattr(result, "output"):
+            if hasattr(result, "success") and not result.success:
+                return
+            output = result.output
+        if not isinstance(output, dict):
+            return
+
+        items = None
+        for key in ("results", "documents", "chunks", "matches", "passages", "sources"):
+            val = output.get(key)
+            if isinstance(val, list) and val:
+                items = val
+                break
+        if not items:
+            return
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            content = (
+                item.get("content")
+                or item.get("text")
+                or item.get("snippet")
+                or item.get("summary")
+                or ""
+            )
+            source = (
+                meta.get("source")
+                or meta.get("url")
+                or meta.get("file_path")
+                or meta.get("file")
+                or meta.get("title")
+                or item.get("source")
+                or item.get("url")
+                or item.get("title")
+                or item.get("id")
+                or tool_name
+            )
+            quote = str(content).strip().replace("\n", " ")
+            if len(quote) > 200:
+                quote = quote[:197].rstrip() + "..."
+            try:
+                score = float(item.get("score", meta.get("score", 0.0)) or 0.0)
+            except (TypeError, ValueError):
+                score = 0.0
+            self._collected_citations.append({
+                "source": str(source),
+                "chunk_id": str(item.get("id") or meta.get("chunk_id") or ""),
+                "score": score,
+                "quote": quote,
+                "page": meta.get("page"),
+                "section": meta.get("section"),
+            })
+
+    def _attach_citations(self, response: "AgentResponse") -> None:
+        """
+        Populate ``response.sources`` / ``response.citations`` from the evidence
+        collected during the run (deduplicated, 1-based citation indices). Only
+        fills fields the assembly path left empty, so explicit callers win.
+        """
+        raw = getattr(self, "_collected_citations", None)
+        if not raw:
+            return
+
+        from ..rag.attribution import Citation
+
+        seen: set[tuple[str, str, str]] = set()
+        citations: list[Citation] = []
+        sources: list[str] = []
+        seen_sources: set[str] = set()
+        for entry in raw:
+            key = (entry["source"], entry["chunk_id"], entry["quote"][:80])
+            if key in seen:
+                continue
+            seen.add(key)
+            citations.append(Citation(
+                index=len(citations) + 1,
+                source=entry["source"],
+                chunk_id=entry["chunk_id"],
+                relevance_score=entry["score"],
+                quote=entry["quote"],
+                page=entry["page"],
+                section=entry["section"],
+            ))
+            if entry["source"] not in seen_sources:
+                seen_sources.add(entry["source"])
+                sources.append(entry["source"])
+
+        if not response.citations:
+            response.citations = citations
+        if not response.sources:
+            response.sources = sources
+
     def _execute_tool(self, tool_name: str, tool_input: str) -> str:
         """
         Execute a tool with circuit breaker, fallback support, and input sanitization.
@@ -2906,6 +3111,14 @@ Question: {task}
                     f"Tool '{tool_name}' parameter error: {str(e)}. "
                     f"Input provided: {input_dict}"
                 )
+
+            # Capture retrieved evidence (RAG/search) so the final answer can
+            # surface its sources and inline citations (AgentResponse.sources /
+            # .citations). Best-effort: never let bookkeeping break tool output.
+            try:
+                self._collect_citations(tool, tool_name, result)
+            except Exception as _cite_err:  # pragma: no cover - defensive
+                logger.debug("Citation capture skipped for %s: %s", tool_name, _cite_err)
 
             # Convert result to string safely
             if result is None:

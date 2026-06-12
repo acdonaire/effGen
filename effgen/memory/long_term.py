@@ -194,8 +194,24 @@ class JSONStorageBackend(StorageBackend):
     def _load_or_create(self) -> None:
         """Load existing data or create new file."""
         if self.filepath.exists():
-            with open(self.filepath) as f:
-                self.data = json.load(f)
+            try:
+                with open(self.filepath) as f:
+                    self.data = json.load(f)
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+                raise ValueError(
+                    f"Memory store '{self.filepath}' is corrupt or not valid JSON "
+                    f"({exc}). Move or delete the file to start fresh, or restore a "
+                    "known-good backup."
+                ) from exc
+            if not isinstance(self.data, dict):
+                raise ValueError(
+                    f"Memory store '{self.filepath}' has an unexpected format "
+                    f"(expected a JSON object, got {type(self.data).__name__}). "
+                    "Move or delete the file to start fresh."
+                )
+            # Tolerate older/partial files by filling in missing top-level keys.
+            self.data.setdefault("memories", {})
+            self.data.setdefault("sessions", {})
         else:
             self.data = {"memories": {}, "sessions": {}}
             self._save()
@@ -305,6 +321,16 @@ class SQLiteStorageBackend(StorageBackend):
 
     def _init_db(self) -> None:
         """Initialize database schema."""
+        try:
+            self._init_db_unguarded()
+        except sqlite3.DatabaseError as exc:
+            raise ValueError(
+                f"Memory database '{self.db_path}' could not be opened "
+                f"({exc}). The file may be corrupt or not a SQLite database. "
+                "Move or delete it to start fresh, or restore a backup."
+            ) from exc
+
+    def _init_db_unguarded(self) -> None:
         conn = sqlite3.connect(str(self.db_path))
         cursor = conn.cursor()
 
