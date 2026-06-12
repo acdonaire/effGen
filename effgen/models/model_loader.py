@@ -13,16 +13,24 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import torch
-
-from effgen.models.anthropic_adapter import AnthropicAdapter
 from effgen.models.base import BaseModel, ModelType
-from effgen.models.gemini_adapter import GeminiAdapter
-from effgen.models.openai_adapter import OpenAIAdapter
-from effgen.models.transformers_engine import TransformersEngine
-from effgen.models.vllm_engine import VLLMEngine
+
+if TYPE_CHECKING:
+    # Cloud adapters and the heavy local-inference deps (torch, the
+    # Transformers/vLLM engines) are imported lazily inside the ``_load_*``
+    # methods that actually construct them. This matches the six other adapters
+    # (HF/Replicate/Cerebras/Groq/Together/Fireworks) and — importantly — breaks
+    # the import cycle that arises when ``effgen.models`` is imported before
+    # ``effgen.core.agent`` (anthropic_adapter -> core.messages -> core.agent ->
+    # model_loader). It also keeps `from effgen import Agent` / the CLI from
+    # pulling torch or transformers for a pure cloud-API workflow.
+    from effgen.models.anthropic_adapter import AnthropicAdapter
+    from effgen.models.gemini_adapter import GeminiAdapter
+    from effgen.models.openai_adapter import OpenAIAdapter
+    from effgen.models.transformers_engine import TransformersEngine
+    from effgen.models.vllm_engine import VLLMEngine
 
 # Cerebras import is deferred to avoid hard dependency when cerebras extra is absent.
 _CerebrasAdapter = None
@@ -455,6 +463,8 @@ class ModelLoader:
         Returns:
             OpenAIAdapter instance
         """
+        from effgen.models.openai_adapter import OpenAIAdapter
+
         logger.info(f"Loading OpenAI model: {model_name}")
 
         params = config or {}
@@ -482,6 +492,8 @@ class ModelLoader:
         Returns:
             AnthropicAdapter instance
         """
+        from effgen.models.anthropic_adapter import AnthropicAdapter
+
         logger.info(f"Loading Anthropic model: {model_name}")
 
         params = config or {}
@@ -508,6 +520,8 @@ class ModelLoader:
         Returns:
             GeminiAdapter instance
         """
+        from effgen.models.gemini_adapter import GeminiAdapter
+
         logger.info(f"Loading Gemini model: {model_name}")
 
         params = config or {}
@@ -590,6 +604,8 @@ class ModelLoader:
         # Auto-detection: prefer MLX on Apple Silicon when no CUDA available
         if self.force_engine is None:
             try:
+                import torch
+
                 from effgen.hardware.platform import is_apple_silicon, is_mlx_available
                 if is_apple_silicon() and is_mlx_available() and not torch.cuda.is_available():
                     logger.info("Apple Silicon detected with MLX available, using MLX engine")
@@ -612,6 +628,8 @@ class ModelLoader:
         the opt-in ``engine="auto-fast"`` path to decide vLLM vs Transformers
         without ever raising.
         """
+        import torch
+
         if not torch.cuda.is_available():
             return False
         try:
@@ -648,6 +666,10 @@ class ModelLoader:
         Raises:
             RuntimeError: If vLLM is unavailable or loading fails
         """
+        import torch
+
+        from effgen.models.vllm_engine import VLLMEngine
+
         logger.info(f"Attempting to load with vLLM: {model_name}")
 
         # Check CUDA availability
@@ -756,6 +778,10 @@ class ModelLoader:
         Returns:
             TransformersEngine instance
         """
+        import torch
+
+        from effgen.models.transformers_engine import TransformersEngine
+
         logger.info(f"Loading with Transformers: {model_name}")
 
         # Convert shorthand quantization="4bit"/"8bit"/"awq"/"gptq" to engine params.
@@ -815,6 +841,8 @@ class ModelLoader:
         Returns:
             Quantization method or None
         """
+        import torch
+
         if not torch.cuda.is_available():
             return None
 
@@ -846,6 +874,8 @@ class ModelLoader:
         Returns:
             Quantization bits (4, 8) or None
         """
+        import torch
+
         if not torch.cuda.is_available():
             return None
 
@@ -876,6 +906,8 @@ class ModelLoader:
         Returns:
             Number of GPUs to use for tensor parallelism
         """
+        import torch
+
         if not torch.cuda.is_available():
             return 1
 

@@ -5,8 +5,6 @@ This module provides the tool integration system including base classes,
 registry, built-in tools, and protocol implementations.
 """
 
-# Import protocol submodules
-from . import protocols
 from .base_tool import (
     BaseTool,
     ParameterSpec,
@@ -42,3 +40,16 @@ __all__ = [
     # Protocols
     "protocols",
 ]
+
+
+def __getattr__(name: str):
+    # The protocol subpackage (MCP/A2A/ACP interop) pulls heavy optional SDKs
+    # (the official `mcp` SDK, jsonschema). Most agent runs never touch it, so
+    # it is imported lazily on first access — `effgen.tools.protocols` and
+    # `from effgen.tools import protocols` keep working unchanged.
+    if name == "protocols":
+        from importlib import import_module
+        module = import_module("effgen.tools.protocols")
+        globals()["protocols"] = module
+        return module
+    raise AttributeError(f"module 'effgen.tools' has no attribute {name!r}")

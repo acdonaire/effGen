@@ -133,25 +133,45 @@ from effgen.models.routing.latency import LatencyBasedPolicy
 from effgen.models.routing.retry import RetryPolicy
 from effgen.models.together_adapter import TogetherAdapter
 from effgen.models.together_models import TOGETHER_MODELS
-from effgen.models.transformers_engine import TransformersEngine
-from effgen.models.vllm_engine import VLLMEngine
 
-# MLX engines (Apple Silicon only, lazy import)
-try:
-    from effgen.models.mlx_engine import MLXEngine
-except ImportError:
-    pass
+# Local-inference engines (Transformers, vLLM, MLX) are resolved lazily by the
+# ``__getattr__`` below: they pull torch / transformers / vLLM, so importing
+# ``effgen.models`` (which happens transitively whenever any model submodule is
+# imported, e.g. via ``from effgen import Agent``) must not load them. They are
+# imported only when the engine class itself is accessed or a local model is
+# loaded. MLX engines are additionally Apple-Silicon-only.
+_LAZY_ENGINES: dict[str, tuple[str, str]] = {
+    "TransformersEngine": ("effgen.models.transformers_engine", "TransformersEngine"),
+    "VLLMEngine": ("effgen.models.vllm_engine", "VLLMEngine"),
+    "MLXEngine": ("effgen.models.mlx_engine", "MLXEngine"),
+    "MLXVLMEngine": ("effgen.models.mlx_vlm_engine", "MLXVLMEngine"),
+    "MLXVLMAdapter": ("effgen.models.mlx_vlm", "MLXVLMAdapter"),
+    "MLX_VLM_MODELS": ("effgen.models.mlx_vlm", "RECOMMENDED_MODELS"),
+}
 
-try:
-    from effgen.models.mlx_vlm_engine import MLXVLMEngine
-except ImportError:
-    pass
 
-try:
-    from effgen.models.mlx_vlm import RECOMMENDED_MODELS as MLX_VLM_MODELS
-    from effgen.models.mlx_vlm import MLXVLMAdapter
-except ImportError:
-    pass
+def __getattr__(name: str):
+    target = _LAZY_ENGINES.get(name)
+    if target is None:
+        raise AttributeError(f"module 'effgen.models' has no attribute {name!r}")
+    module_path, attr = target
+    from importlib import import_module
+    try:
+        value = getattr(import_module(module_path), attr)
+    except ImportError as exc:
+        # MLX is Apple-only; surface as a normal missing attribute on other
+        # platforms rather than crashing the import.
+        raise AttributeError(
+            f"module 'effgen.models' has no attribute {name!r} "
+            f"(optional engine '{module_path}' is unavailable: {exc})"
+        ) from exc
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(__all__) | set(_LAZY_ENGINES) | set(globals()))
+
 
 __all__ = [
     # Base classes

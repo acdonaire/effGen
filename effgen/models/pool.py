@@ -23,11 +23,14 @@ from effgen.models.model_loader import ModelLoader
 logger = logging.getLogger(__name__)
 
 
-try:
-    import torch
-    _TORCH_AVAILABLE = True
-except ImportError:
-    _TORCH_AVAILABLE = False
+def _load_torch():
+    """Import torch lazily so importing the pool (and `effgen.models`) never pulls
+    torch. Returns the module, or ``None`` if torch is unavailable."""
+    try:
+        import torch
+        return torch
+    except ImportError:
+        return None
 
 
 @dataclass
@@ -349,7 +352,8 @@ class ModelPool:
 
     def _get_gpu_memory_free_gb(self) -> float:
         """Return total free GPU memory in GB across all visible devices."""
-        if not _TORCH_AVAILABLE or not torch.cuda.is_available():
+        torch = _load_torch()
+        if torch is None or not torch.cuda.is_available():
             return float("inf")
         free_total = 0.0
         for i in range(torch.cuda.device_count()):

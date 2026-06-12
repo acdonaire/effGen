@@ -31,6 +31,7 @@ Example:
 
 from __future__ import annotations
 
+import importlib.util as _importlib_util
 import json
 import os
 import re
@@ -40,13 +41,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-try:
-    from jsonschema import Draft7Validator  # noqa: F401
-    from jsonschema import ValidationError as JSONSchemaValidationError
-    from jsonschema import validate as json_validate
-    JSONSCHEMA_AVAILABLE = True
-except ImportError:
-    JSONSCHEMA_AVAILABLE = False
+# jsonschema is surprisingly heavy to import (it pulls rfc3987 / referencing),
+# so we only probe availability here via find_spec (which does not execute the
+# module) and import it lazily inside validate_json_schema(). This keeps
+# importing effgen.utils — and therefore `from effgen import Agent` — cheap.
+JSONSCHEMA_AVAILABLE = _importlib_util.find_spec("jsonschema") is not None
 
 try:
     from pydantic import BaseModel
@@ -571,6 +570,9 @@ def validate_json_schema(data: Any, schema: dict[str, Any]) -> bool:
         raise ValidationError(
             "jsonschema package not available. Install with: pip install jsonschema"
         )
+
+    from jsonschema import ValidationError as JSONSchemaValidationError
+    from jsonschema import validate as json_validate
 
     try:
         json_validate(instance=data, schema=schema)

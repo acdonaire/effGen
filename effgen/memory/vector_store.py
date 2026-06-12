@@ -7,6 +7,7 @@ supporting semantic search, similarity retrieval, and periodic consolidation.
 
 from __future__ import annotations
 
+import importlib.util as _importlib_util
 import json
 import logging
 import time
@@ -28,13 +29,12 @@ except ImportError:
     FAISS_AVAILABLE = False
     faiss = None
 
-try:
-    import chromadb
-    from chromadb.config import Settings
-    CHROMA_AVAILABLE = True
-except ImportError:
-    CHROMA_AVAILABLE = False
-    chromadb = None
+# chromadb is heavy (it pulls jsonschema and more), so we only probe whether it
+# is installed here — via find_spec, which does not execute the module — and
+# import it lazily inside ChromaBackend. This keeps importing the memory layer
+# (and therefore `from effgen import Agent`) from paying chromadb's import cost.
+CHROMA_AVAILABLE = _importlib_util.find_spec("chromadb") is not None
+chromadb = None  # populated lazily by ChromaBackend when first used
 
 
 class EmbeddingModel(Enum):
@@ -401,6 +401,10 @@ class ChromaBackend(VectorStoreBackend):
         """
         if not CHROMA_AVAILABLE:
             raise ImportError("Chroma not available. Install with: pip install chromadb")
+
+        global chromadb
+        import chromadb as chromadb
+        from chromadb.config import Settings
 
         self.embedding_dim = embedding_dim
 

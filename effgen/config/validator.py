@@ -18,20 +18,18 @@ Features:
 
 from __future__ import annotations
 
+import importlib.util as _importlib_util
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-try:
-    import jsonschema  # noqa: F401
-    from jsonschema import Draft7Validator, validators
-    JSONSCHEMA_AVAILABLE = True
-except ImportError:
-    JSONSCHEMA_AVAILABLE = False
-    Draft7Validator = None
-    validators = None
+# jsonschema is heavy to import (it pulls rfc3987 / referencing). We only probe
+# availability here via find_spec — which does not execute the module — and
+# import Draft7Validator lazily at the single call site below. This keeps the
+# config layer (and the CLI, which loads config on startup) cheap to import.
+JSONSCHEMA_AVAILABLE = _importlib_util.find_spec("jsonschema") is not None
 
 logger = logging.getLogger(__name__)
 
@@ -592,6 +590,8 @@ class ConfigValidator:
             return []
 
         errors = []
+
+        from jsonschema import Draft7Validator
 
         try:
             validator = Draft7Validator(schema)

@@ -7,6 +7,13 @@ This framework enables SLMs to function as powerful agentic systems through:
 - Smart sub-agent decomposition for complex tasks
 - Multi-GPU support with vLLM and Transformers
 - Comprehensive configuration management
+
+The public surface (``effgen.__all__``) is resolved **lazily**: importing
+``effgen`` only sets up version metadata and logging hygiene, and the first
+access of a name (``effgen.Agent``, ``from effgen import load_model``) imports
+just the submodule that defines it. This keeps ``import effgen`` and a bare
+version check cheap, and defers heavy/optional dependencies (torch,
+transformers, vLLM, provider SDKs) until something that needs them is used.
 """
 
 # ruff: noqa: I001
@@ -20,7 +27,10 @@ __license__ = "Apache-2.0"
 # run via PYTHONPATH skips that gate — and effGen's submodules use 3.10+ syntax,
 # so without this guard the user would hit a cryptic SyntaxError instead. Keep
 # this block free of any 3.10-only syntax so it runs on the wrong interpreter.
+import os as _os
 import sys as _sys
+from importlib import import_module as _import_module
+from typing import TYPE_CHECKING, Any
 
 if _sys.version_info < (3, 10):  # noqa: UP036 — intentional guard for source-checkout runs on < 3.10
     raise RuntimeError(
@@ -31,267 +41,256 @@ if _sys.version_info < (3, 10):  # noqa: UP036 — intentional guard for source-
 
 # Library logging hygiene (NullHandler on the package logger; quiet faiss). This
 # is an import-only module whose side effects run first, before any submodule is
-# imported, so importing effGen never emits log records on its own.
+# imported, so importing effGen never emits log records on its own. It is
+# intentionally cheap (stdlib logging only).
 from effgen import _logging_setup as _logging_setup  # noqa: F401
 
-# Core imports
-# Configuration imports
-from effgen.config import Config, ConfigLoader, ConfigValidator
-from effgen.core.agent import Agent, AgentConfig
+# ---------------------------------------------------------------------------
+# Lazy public surface.
+#
+# Each entry maps a public name to ``(module, attribute)``. ``__getattr__``
+# imports the module on first access, binds the resolved object into this
+# module's globals (so subsequent accesses are a plain dict lookup), and returns
+# it. An attribute of ``None`` means the name *is* the submodule itself
+# (e.g. ``gpu_utils``).
+#
+# This mapping is the single source of truth for both ``__getattr__`` and
+# ``__dir__``. ``__all__`` (the documented 170-name surface) is derived from it
+# below; the extra entries (provider-native tool classes, MLX engines) are
+# historically importable but were never in ``__all__``, so they stay out of it.
+# ---------------------------------------------------------------------------
+_LAZY: dict[str, tuple[str, str | None]] = {
+    "Agent": ("effgen.core.agent", "Agent"),
+    "AgentConfig": ("effgen.core.agent", "AgentConfig"),
+    "AgentEvaluator": ("effgen.eval.evaluator", "AgentEvaluator"),
+    "AgentState": ("effgen.core.state", "AgentState"),
+    "AgentSystemPromptBuilder": ("effgen.prompts.agent_system_prompt", "AgentSystemPromptBuilder"),
+    "AllCandidatesExhaustedError": ("effgen.models.errors", "AllCandidatesExhaustedError"),
+    "AmbiguousModelError": ("effgen.models.errors", "AmbiguousModelError"),
+    "AnthropicAdapter": ("effgen.models.anthropic_adapter", "AnthropicAdapter"),
+    "AudioPart": ("effgen.core.messages", "AudioPart"),
+    "BaseModel": ("effgen.models.base", "BaseModel"),
+    "BaseTool": ("effgen.tools.base_tool", "BaseTool"),
+    "BatchConfig": ("effgen.core.batch", "BatchConfig"),
+    "BatchResult": ("effgen.core.batch", "BatchResult"),
+    "BatchRunner": ("effgen.core.batch", "BatchRunner"),
+    "BudgetExceededError": ("effgen.models.errors", "BudgetExceededError"),
+    "CapabilityNotSupportedError": ("effgen.errors", "CapabilityNotSupportedError"),
+    "CerebrasAdapter": ("effgen.models.cerebras_adapter", "CerebrasAdapter"),
+    "ChainManager": ("effgen.prompts.chain_manager", "ChainManager"),
+    "CircuitBreaker": ("effgen.utils.circuit_breaker", "CircuitBreaker"),
+    "CodeExecutor": ("effgen.execution.sandbox", "CodeExecutor"),
+    "CodeValidator": ("effgen.execution.validators", "CodeValidator"),
+    "Config": ("effgen.config.loader", "Config"),
+    "ConfigLoader": ("effgen.config.loader", "ConfigLoader"),
+    "ConfigValidator": ("effgen.config.validator", "ConfigValidator"),
+    "ContentPart": ("effgen.core.messages", "ContentPart"),
+    "CostBasedPolicy": ("effgen.models.routing.cost", "CostBasedPolicy"),
+    "CostTracker": ("effgen.models._cost", "CostTracker"),
+    "Domain": ("effgen.domains.base", "Domain"),
+    "EvalResult": ("effgen.eval.evaluator", "EvalResult"),
+    "ExecutionResult": ("effgen.execution.sandbox", "ExecutionResult"),
+    "ExecutionStatus": ("effgen.execution.sandbox", "ExecutionStatus"),
+    "FinanceDomain": ("effgen.domains.presets", "FinanceDomain"),
+    "FireworksAdapter": ("effgen.models.fireworks_adapter", "FireworksAdapter"),
+    "FirstAvailablePolicy": ("effgen.models.routing.first_available", "FirstAvailablePolicy"),
+    "GPUAllocator": ("effgen.gpu.allocator", "GPUAllocator"),
+    "GPUMonitor": ("effgen.gpu.monitor", "GPUMonitor"),
+    "GeminiAdapter": ("effgen.models.gemini_adapter", "GeminiAdapter"),
+    "GeminiCodeExecutionTool": ("effgen.tools.builtin.gemini_native", "GeminiCodeExecutionTool"),
+    "GeminiNativeTool": ("effgen.tools.builtin.gemini_native", "GeminiNativeTool"),
+    "GeminiUrlContextTool": ("effgen.tools.builtin.gemini_native", "GeminiUrlContextTool"),
+    "GenerationConfig": ("effgen.models.base", "GenerationConfig"),
+    "GenerationResult": ("effgen.models.base", "GenerationResult"),
+    "GoogleSearchTool": ("effgen.tools.builtin.gemini_native", "GoogleSearchTool"),
+    "GroqAdapter": ("effgen.models.groq_adapter", "GroqAdapter"),
+    "HFInferenceAdapter": ("effgen.models.hf_inference_adapter", "HFInferenceAdapter"),
+    "HashDriftWarning": ("effgen.security.supply_chain", "HashDriftWarning"),
+    "HealthDomain": ("effgen.domains.presets", "HealthDomain"),
+    "ImagePart": ("effgen.core.messages", "ImagePart"),
+    "ImportanceLevel": ("effgen.memory.long_term", "ImportanceLevel"),
+    "InvalidMultimodalContent": ("effgen.errors", "InvalidMultimodalContent"),
+    "InvalidRequestError": ("effgen.models.errors", "InvalidRequestError"),
+    "JSONStorageBackend": ("effgen.memory.long_term", "JSONStorageBackend"),
+    "KeywordExpander": ("effgen.domains.expander", "KeywordExpander"),
+    "LatencyBasedPolicy": ("effgen.models.routing.latency", "LatencyBasedPolicy"),
+    "LatencyTracker": ("effgen.models.latency_tracker", "LatencyTracker"),
+    "LegalDomain": ("effgen.domains.presets", "LegalDomain"),
+    "LongTermMemory": ("effgen.memory.long_term", "LongTermMemory"),
+    "MLXEngine": ("effgen.models.mlx_engine", "MLXEngine"),
+    "MLXVLMEngine": ("effgen.models.mlx_vlm_engine", "MLXVLMEngine"),
+    "MemoryEntry": ("effgen.memory.long_term", "MemoryEntry"),
+    "MemoryType": ("effgen.memory.long_term", "MemoryType"),
+    "Message": ("effgen.memory.short_term", "Message"),
+    "MessageRole": ("effgen.memory.short_term", "MessageRole"),
+    "ModelAuthError": ("effgen.models.errors", "ModelAuthError"),
+    "ModelComparison": ("effgen.eval.comparison", "ModelComparison"),
+    "ModelLoader": ("effgen.models.model_loader", "ModelLoader"),
+    "ModelNotFoundError": ("effgen.models.errors", "ModelNotFoundError"),
+    "ModelRefusalError": ("effgen.models.errors", "ModelRefusalError"),
+    "ModelTimeoutError": ("effgen.models.errors", "ModelTimeoutError"),
+    "ModelUnavailableError": ("effgen.models.errors", "ModelUnavailableError"),
+    "MultimodalMessage": ("effgen.core.messages", "Message"),
+    "NoCandidateWithinBudgetError": ("effgen.models.errors", "NoCandidateWithinBudgetError"),
+    "OpenAIAdapter": ("effgen.models.openai_adapter", "OpenAIAdapter"),
+    "OpenAICodeInterpreterTool": ("effgen.tools.builtin.openai_native", "OpenAICodeInterpreterTool"),
+    "OpenAIFileSearchTool": ("effgen.tools.builtin.openai_native", "OpenAIFileSearchTool"),
+    "OpenAINativeTool": ("effgen.tools.builtin.openai_native", "OpenAINativeTool"),
+    "OpenAIWebSearchTool": ("effgen.tools.builtin.openai_native", "OpenAIWebSearchTool"),
+    "PolicyBasedRouter": ("effgen.models.router", "PolicyBasedRouter"),
+    "PromptOptimizer": ("effgen.prompts.optimizer", "PromptOptimizer"),
+    "ProviderModelPair": ("effgen.models.router", "ProviderModelPair"),
+    "ProviderRegistry": ("effgen.models.registry", "ProviderRegistry"),
+    "ProviderTransientError": ("effgen.models.errors", "ProviderTransientError"),
+    "RateLimitCoordinator": ("effgen.models._rate_limit", "RateLimitCoordinator"),
+    "RateLimitExceeded": ("effgen.models._rate_limit", "RateLimitExceeded"),
+    "RegressionTracker": ("effgen.eval.regression", "RegressionTracker"),
+    "ReplicateAdapter": ("effgen.models.replicate_adapter", "ReplicateAdapter"),
+    "ResultAggregator": ("effgen.core.aggregation", "ResultAggregator"),
+    "RetryPolicy": ("effgen.models.routing.retry", "RetryPolicy"),
+    "Role": ("effgen.core.messages", "Role"),
+    "RouterDecision": ("effgen.models.router", "RouterDecision"),
+    "RouterEvent": ("effgen.models.router", "RouterEvent"),
+    "RoutingContext": ("effgen.models.router", "RoutingContext"),
+    "RoutingPolicy": ("effgen.models.router", "RoutingPolicy"),
+    "SQLiteCostStore": ("effgen.models._cost_store", "SQLiteCostStore"),
+    "SQLiteRateLimitStore": ("effgen.models._rate_limit_store", "SQLiteRateLimitStore"),
+    "SQLiteStorageBackend": ("effgen.memory.long_term", "SQLiteStorageBackend"),
+    "SandboxConfig": ("effgen.execution.sandbox", "SandboxConfig"),
+    "ScienceDomain": ("effgen.domains.presets", "ScienceDomain"),
+    "ShortTermMemory": ("effgen.memory.short_term", "ShortTermMemory"),
+    "StreamChunk": ("effgen.models.anthropic_adapter", "StreamChunk"),
+    "SubTask": ("effgen.core.task", "SubTask"),
+    "SuiteResults": ("effgen.eval.evaluator", "SuiteResults"),
+    "Task": ("effgen.core.task", "Task"),
+    "TaskPriority": ("effgen.core.task", "TaskPriority"),
+    "TaskStatus": ("effgen.core.task", "TaskStatus"),
+    "TechDomain": ("effgen.domains.presets", "TechDomain"),
+    "TemplateManager": ("effgen.prompts.template_manager", "TemplateManager"),
+    "TestCase": ("effgen.eval.evaluator", "TestCase"),
+    "TestSuite": ("effgen.eval.suites", "TestSuite"),
+    "TextPart": ("effgen.core.messages", "TextPart"),
+    "TogetherAdapter": ("effgen.models.together_adapter", "TogetherAdapter"),
+    "ToolCallPart": ("effgen.core.messages", "ToolCallPart"),
+    "ToolFallbackChain": ("effgen.tools.fallback", "ToolFallbackChain"),
+    "ToolIncompatibleError": ("effgen.models.errors", "ToolIncompatibleError"),
+    "ToolPromptGenerator": ("effgen.prompts.tool_prompt_generator", "ToolPromptGenerator"),
+    "ToolRegistry": ("effgen.tools.registry", "ToolRegistry"),
+    "ToolResultPart": ("effgen.core.messages", "ToolResultPart"),
+    "TransformersEngine": ("effgen.models.transformers_engine", "TransformersEngine"),
+    "VLLMEngine": ("effgen.models.vllm_engine", "VLLMEngine"),
+    "ValidationResult": ("effgen.execution.validators", "ValidationResult"),
+    "ValidationSeverity": ("effgen.execution.validators", "ValidationSeverity"),
+    "VectorMemoryStore": ("effgen.memory.vector_store", "VectorMemoryStore"),
+    "VerificationResult": ("effgen.security.supply_chain", "VerificationResult"),
+    "VideoPart": ("effgen.core.messages", "VideoPart"),
+    "audio_from": ("effgen.core.multimodal", "audio_from"),
+    "cerebras_available_models": ("effgen.models.cerebras_models", "available_models"),
+    "cerebras_free_tier_models": ("effgen.models.cerebras_models", "free_tier_models"),
+    "cerebras_model_info": ("effgen.models.cerebras_models", "model_info"),
+    "check_keys": ("effgen.models.auth", "check_keys"),
+    "create_agent": ("effgen.presets.registry", "create_agent"),
+    "fireworks_available_models": ("effgen.models.fireworks_models", "available_models"),
+    "fireworks_chat_models": ("effgen.models.fireworks_models", "chat_models"),
+    "fireworks_pricing_table": ("effgen.models.fireworks_models", "pricing_table"),
+    "fireworks_refresh_models": ("effgen.models.fireworks_models", "refresh_models"),
+    "fireworks_tool_capable_models": ("effgen.models.fireworks_models", "tool_capable_models"),
+    "gemini_available_models": ("effgen.models.gemini_models", "available_models"),
+    "gemini_free_tier_models": ("effgen.models.gemini_models", "free_tier_models"),
+    "gemini_model_info": ("effgen.models.gemini_models", "model_info"),
+    "gemini_recommended_models": ("effgen.models.gemini_models", "recommended_models"),
+    "get_guardrail_preset": ("effgen.guardrails", "get_guardrail_preset"),
+    "get_tool_registry": ("effgen.tools.registry", "get_registry"),
+    "gpu_utils": ("effgen.gpu.utils", None),
+    "groq_available_models": ("effgen.models.groq_models", "available_models"),
+    "groq_chat_models": ("effgen.models.groq_models", "chat_models"),
+    "groq_tool_capable_models": ("effgen.models.groq_models", "tool_capable_models"),
+    "hf_available_models": ("effgen.models.hf_inference_models", "available_models"),
+    "hf_catalog_summary": ("effgen.models.hf_inference_models", "catalog_summary"),
+    "hf_chat_models": ("effgen.models.hf_inference_models", "chat_models"),
+    "hf_cheapest_provider": ("effgen.models.hf_inference_models", "cheapest_provider"),
+    "hf_check_drift": ("effgen.models.hf_inference_models", "check_drift"),
+    "hf_get_model_info": ("effgen.models.hf_inference_models", "get_model_info"),
+    "hf_list_providers_for": ("effgen.models.hf_inference_models", "list_providers_for"),
+    "hf_refresh_models": ("effgen.models.hf_inference_models", "refresh_models"),
+    "hf_serverless_models": ("effgen.models.hf_inference_models", "serverless_models"),
+    "hf_suggest_alternatives": ("effgen.models.hf_inference_models", "suggest_alternatives"),
+    "hf_tool_capable_models": ("effgen.models.hf_inference_models", "tool_capable_models"),
+    "image_from": ("effgen.core.multimodal", "image_from"),
+    "list_models": ("effgen.models.registry", "list_models"),
+    "list_presets": ("effgen.presets.registry", "list_presets"),
+    "list_providers": ("effgen.models.registry", "list_providers"),
+    "load_model": ("effgen.models.model_loader", "load_model"),
+    "lookup": ("effgen.models.registry", "lookup"),
+    "openai_available_models": ("effgen.models.openai_models", "available_models"),
+    "openai_chat_models": ("effgen.models.openai_models", "chat_models"),
+    "openai_model_info": ("effgen.models.openai_models", "model_info"),
+    "openai_reasoning_models": ("effgen.models.openai_models", "reasoning_models"),
+    "replicate_available_models": ("effgen.models.replicate_models", "available_models"),
+    "replicate_get_model_info": ("effgen.models.replicate_models", "get_model_info"),
+    "replicate_refresh_models": ("effgen.models.replicate_models", "refresh_models"),
+    "replicate_streaming_models": ("effgen.models.replicate_models", "streaming_models"),
+    "replicate_tool_capable_models": ("effgen.models.replicate_models", "tool_capable_models"),
+    "to_openai_schema": ("effgen.models.openai_schema", "to_openai_schema"),
+    "together_available_models": ("effgen.models.together_models", "available_models"),
+    "together_chat_models": ("effgen.models.together_models", "chat_models"),
+    "together_pricing_table": ("effgen.models.together_models", "pricing_table"),
+    "together_refresh_models": ("effgen.models.together_models", "refresh_models"),
+    "together_serverless_models": ("effgen.models.together_models", "serverless_models"),
+    "together_tool_capable_models": ("effgen.models.together_models", "tool_capable_models"),
+    "verify_installed_hashes": ("effgen.security.supply_chain", "verify_installed_hashes"),
+    "verify_on_startup": ("effgen.security.supply_chain", "verify_on_startup"),
+    "video_from": ("effgen.core.multimodal", "video_from"),
+}
 
-# Multimodal message schema
-from effgen.core.messages import (
-    AudioPart,
-    ContentPart,
-    ImagePart,
-    Message as MultimodalMessage,
-    Role,
-    TextPart,
-    ToolCallPart,
-    ToolResultPart,
-    VideoPart,
-)
-from effgen.core.multimodal import audio_from, image_from, video_from
-from effgen.errors import CapabilityNotSupportedError, InvalidMultimodalContent
-from effgen.core.aggregation import ResultAggregator
+# Guardrail classes share one home; group them so the mapping above stays a flat
+# name -> (module, attr) table.
+for _name in (
+    "Guardrail",
+    "GuardrailChain",
+    "GuardrailPosition",
+    "GuardrailResult",
+    "LengthGuardrail",
+    "PIIGuardrail",
+    "PromptInjectionGuardrail",
+    "ToolInputGuardrail",
+    "ToolOutputGuardrail",
+    "ToolPermissionGuardrail",
+    "TopicGuardrail",
+    "ToxicityGuardrail",
+):
+    _LAZY[_name] = ("effgen.guardrails", _name)
+del _name
 
-# Batch & Aggregation imports
-from effgen.core.batch import BatchConfig, BatchResult, BatchRunner
-from effgen.core.state import AgentState
-from effgen.core.task import SubTask, Task, TaskPriority, TaskStatus
 
-# Domain imports
-from effgen.domains import (
-    Domain,
-    FinanceDomain,
-    HealthDomain,
-    KeywordExpander,
-    LegalDomain,
-    ScienceDomain,
-    TechDomain,
-)
+def __getattr__(name: str) -> Any:
+    """Resolve a public name on first access (PEP 562 lazy import)."""
+    target = _LAZY.get(name)
+    if target is None:
+        raise AttributeError(f"module 'effgen' has no attribute {name!r}")
+    module_path, attr = target
+    try:
+        module = _import_module(module_path)
+    except ImportError as exc:
+        # Optional extras (provider-native tools, MLX, eval) may be missing in a
+        # lean install — surface as a normal missing attribute, not an import
+        # crash, mirroring the historical try/except import behaviour.
+        raise AttributeError(
+            f"module 'effgen' has no attribute {name!r} "
+            f"(optional component '{module_path}' is not installed: {exc})"
+        ) from exc
+    value = module if attr is None else getattr(module, attr)
+    globals()[name] = value  # cache: subsequent access is a plain dict lookup
+    return value
 
-# GPU imports
-from effgen.gpu import GPUAllocator, GPUMonitor, gpu_utils
 
-# Guardrails imports
-from effgen.guardrails import (
-    Guardrail,
-    GuardrailChain,
-    GuardrailPosition,
-    GuardrailResult,
-    LengthGuardrail,
-    PIIGuardrail,
-    PromptInjectionGuardrail,
-    ToolInputGuardrail,
-    ToolOutputGuardrail,
-    ToolPermissionGuardrail,
-    TopicGuardrail,
-    ToxicityGuardrail,
-    get_guardrail_preset,
-)
+def __dir__() -> list[str]:
+    return sorted(set(__all__) | set(_LAZY) | set(globals()))
 
-# Memory imports
-from effgen.memory import (
-    ImportanceLevel,
-    JSONStorageBackend,
-    LongTermMemory,
-    MemoryEntry,
-    MemoryType,
-    Message,
-    MessageRole,
-    ShortTermMemory,
-    SQLiteStorageBackend,
-    VectorMemoryStore,
-)
 
-# Model imports
-from effgen.models import (
-    AnthropicAdapter,
-    BaseModel,
-    CerebrasAdapter,
-    CostBasedPolicy,
-    CostTracker,
-    FireworksAdapter,
-    FirstAvailablePolicy,
-    GeminiAdapter,
-    GenerationConfig,
-    GenerationResult,
-    GroqAdapter,
-    HFInferenceAdapter,
-    LatencyBasedPolicy,
-    LatencyTracker,
-    ModelLoader,
-    OpenAIAdapter,
-    PolicyBasedRouter,
-    ProviderModelPair,
-    ReplicateAdapter,
-    RetryPolicy,
-    RouterDecision,
-    RouterEvent,
-    RoutingContext,
-    RoutingPolicy,
-    SQLiteCostStore,
-    StreamChunk,
-    TogetherAdapter,
-    TransformersEngine,
-    VLLMEngine,
-    load_model,
-)
-from effgen.models._rate_limit import RateLimitCoordinator, RateLimitExceeded  # noqa: I001
-from effgen.models._rate_limit_store import SQLiteRateLimitStore  # noqa: I001
-from effgen.models.auth import check_keys
-from effgen.models.cerebras_models import available_models as cerebras_available_models
-from effgen.models.cerebras_models import free_tier_models as cerebras_free_tier_models
-from effgen.models.cerebras_models import model_info as cerebras_model_info
-from effgen.models.errors import (  # noqa: I001
-    AllCandidatesExhaustedError,
-    AmbiguousModelError,
-    BudgetExceededError,
-    InvalidRequestError,
-    ModelAuthError,
-    ModelNotFoundError,
-    ModelRefusalError,
-    ModelTimeoutError,
-    ModelUnavailableError,
-    NoCandidateWithinBudgetError,
-    ProviderTransientError,
-    ToolIncompatibleError,
-)
-from effgen.models.fireworks_models import available_models as fireworks_available_models
-from effgen.models.fireworks_models import chat_models as fireworks_chat_models
-from effgen.models.fireworks_models import pricing_table as fireworks_pricing_table
-from effgen.models.fireworks_models import refresh_models as fireworks_refresh_models
-from effgen.models.fireworks_models import tool_capable_models as fireworks_tool_capable_models
-from effgen.models.gemini_models import available_models as gemini_available_models
-from effgen.models.gemini_models import free_tier_models as gemini_free_tier_models
-from effgen.models.gemini_models import model_info as gemini_model_info
-from effgen.models.gemini_models import recommended_models as gemini_recommended_models
-from effgen.models.groq_models import available_models as groq_available_models
-from effgen.models.groq_models import chat_models as groq_chat_models
-from effgen.models.groq_models import tool_capable_models as groq_tool_capable_models
-from effgen.models.hf_inference_models import available_models as hf_available_models
-from effgen.models.hf_inference_models import catalog_summary as hf_catalog_summary
-from effgen.models.hf_inference_models import chat_models as hf_chat_models
-from effgen.models.hf_inference_models import cheapest_provider as hf_cheapest_provider
-from effgen.models.hf_inference_models import check_drift as hf_check_drift
-from effgen.models.hf_inference_models import get_model_info as hf_get_model_info
-from effgen.models.hf_inference_models import list_providers_for as hf_list_providers_for
-from effgen.models.hf_inference_models import refresh_models as hf_refresh_models
-from effgen.models.hf_inference_models import serverless_models as hf_serverless_models
-from effgen.models.hf_inference_models import suggest_alternatives as hf_suggest_alternatives
-from effgen.models.hf_inference_models import tool_capable_models as hf_tool_capable_models
-from effgen.models.openai_models import available_models as openai_available_models
-from effgen.models.openai_models import chat_models as openai_chat_models
-from effgen.models.openai_models import model_info as openai_model_info
-from effgen.models.openai_models import reasoning_models as openai_reasoning_models  # noqa: I001
-from effgen.models.openai_schema import to_openai_schema
-from effgen.models.registry import ProviderRegistry, list_models, list_providers, lookup
-from effgen.models.replicate_models import available_models as replicate_available_models
-from effgen.models.replicate_models import get_model_info as replicate_get_model_info
-from effgen.models.replicate_models import refresh_models as replicate_refresh_models
-from effgen.models.replicate_models import streaming_models as replicate_streaming_models
-from effgen.models.replicate_models import tool_capable_models as replicate_tool_capable_models
-from effgen.models.together_models import available_models as together_available_models
-from effgen.models.together_models import chat_models as together_chat_models
-from effgen.models.together_models import pricing_table as together_pricing_table
-from effgen.models.together_models import refresh_models as together_refresh_models
-from effgen.models.together_models import serverless_models as together_serverless_models
-from effgen.models.together_models import tool_capable_models as together_tool_capable_models
-
-# Preset imports
-from effgen.presets import create_agent, list_presets
-
-# Prompt imports
-from effgen.prompts import ChainManager, PromptOptimizer, TemplateManager
-
-# Tool imports
-from effgen.tools import BaseTool, ToolRegistry
-from effgen.tools import get_registry as get_tool_registry
-
-# OpenAI native tool imports
-try:
-    from effgen.tools.builtin.openai_native import (
-        OpenAICodeInterpreterTool,
-        OpenAIFileSearchTool,
-        OpenAINativeTool,
-        OpenAIWebSearchTool,
-    )
-except ImportError:
-    pass
-
-# Gemini native tool imports
-try:
-    from effgen.tools.builtin.gemini_native import (
-        GeminiCodeExecutionTool,
-        GeminiNativeTool,
-        GeminiUrlContextTool,
-        GoogleSearchTool,
-    )
-except ImportError:
-    pass
-
-# MLX engine imports (Apple Silicon only)
-try:
-    from effgen.models.mlx_engine import MLXEngine
-    from effgen.models.mlx_vlm_engine import MLXVLMEngine
-except ImportError:
-    pass
-
-# Additional convenience imports
-try:
-    from effgen.tools.fallback import ToolFallbackChain
-except ImportError:
-    pass
-
-try:
-    from effgen.utils.circuit_breaker import CircuitBreaker
-except ImportError:
-    pass
-
-try:
-    from effgen.prompts.tool_prompt_generator import ToolPromptGenerator
-except ImportError:
-    pass
-
-try:
-    from effgen.prompts.agent_system_prompt import AgentSystemPromptBuilder
-except ImportError:
-    pass
-
-# Eval imports
-try:
-    from effgen.eval import (
-        AgentEvaluator,
-        EvalResult,
-        ModelComparison,
-        RegressionTracker,
-        SuiteResults,
-        TestCase,
-        TestSuite,
-    )
-except ImportError:
-    pass
-
-# Execution imports
-from effgen.execution import (
-    CodeExecutor,
-    CodeValidator,
-    ExecutionResult,
-    ExecutionStatus,
-    SandboxConfig,
-    ValidationResult,
-    ValidationSeverity,
-)
-
-# Security / supply-chain exports
-from effgen.security import (
-    HashDriftWarning,
-    VerificationResult,
-    verify_installed_hashes,
-    verify_on_startup,
-)
-
+# The documented public surface. Kept as an explicit literal (not derived from
+# ``_LAZY``) so it is greppable and stable; the provider-native/MLX extras in
+# ``_LAZY`` are intentionally excluded, matching prior releases.
 __all__ = [
     # Multimodal message schema
     "Role",
@@ -506,8 +505,18 @@ __all__ = [
     "verify_on_startup",
 ]
 
-# Supply-chain integrity check — runs only when EFFGEN_VERIFY_HASHES=1.
-# Invoked at the end of package init so it executes once on `import effgen`
-# without interrupting the import block; it only reads installed metadata and
-# never initialises model adapters or makes network calls.
-verify_on_startup()
+if TYPE_CHECKING:
+    # Make the lazy names visible to type checkers and IDEs without paying the
+    # import cost at runtime.
+    from effgen.config import Config, ConfigLoader, ConfigValidator
+    from effgen.core.agent import Agent, AgentConfig
+    from effgen.models import BaseModel, load_model
+    from effgen.tools import BaseTool
+
+# Supply-chain integrity check — runs only when EFFGEN_VERIFY_HASHES=1. The
+# env-var gate is replicated here so a normal `import effgen` never imports the
+# security module (keeping startup cheap); behaviour is unchanged when opted in.
+if _os.environ.get("EFFGEN_VERIFY_HASHES", "0") == "1":
+    from effgen.security.supply_chain import verify_on_startup as _verify_on_startup
+
+    _verify_on_startup()

@@ -634,7 +634,13 @@ class ChainManager:
         Returns:
             Final ChainState
         """
-        return asyncio.run(self.execute_chain(chain, initial_state, callbacks))
+        # Use the centralized bridge so this documented sync facade also works
+        # from inside a running event loop (Jupyter/FastAPI) instead of raising
+        # "asyncio.run() cannot be called from a running event loop" and leaking
+        # a "coroutine was never awaited" warning.
+        from ..utils.async_bridge import run_coroutine_sync
+
+        return run_coroutine_sync(self.execute_chain(chain, initial_state, callbacks))
 
     def create_sequential_chain(
         self,

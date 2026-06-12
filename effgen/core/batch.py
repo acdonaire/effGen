@@ -199,23 +199,16 @@ class BatchRunner:
         config: BatchConfig,
         run_kwargs: dict[str, Any],
     ) -> BatchResult:
-        """Bridge sync -> async execution."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+        """Bridge sync -> async execution via the centralized helper so the
+        behaviour (direct run vs. worker-thread when a loop is already running)
+        is identical everywhere and never silently skips the work."""
+        from ..utils.async_bridge import run_coroutine_sync
 
-        if loop is not None and loop.is_running():
-            # Already inside an event loop — run in a new thread.
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    self._run_async(queries, config, run_kwargs),
-                )
-                return future.result()
-        else:
-            return asyncio.run(self._run_async(queries, config, run_kwargs))
+        # Batch jobs can legitimately run long; give the worker-thread bridge a
+        # generous ceiling rather than the 120s default.
+        return run_coroutine_sync(
+            self._run_async(queries, config, run_kwargs), timeout=86400.0
+        )
 
     async def _run_async(
         self,
