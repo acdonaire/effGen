@@ -275,14 +275,38 @@ def knowledge_base_dir(fixtures_dir):
 #      GPU tests and streaming tests coexist.
 
 
+# Directory -> marker auto-application. Keeps the marker surface authoritative
+# (so `-m security` / `-m deployment` actually select the right suites and map to
+# CI jobs) without sprinkling `pytestmark` into dozens of files. Explicit markers
+# on individual tests still apply and stack on top of these.
+_DIR_MARKERS = {
+    "/tests/security/": "security",
+    "/tests/deploy/": "deployment",
+}
+
+
+def _norm_path(item) -> str:
+    return str(item.fspath).replace("\\", "/")
+
+
 def pytest_collection_modifyitems(config, items):
-    """Run tests/e2e/* last so bitsandbytes CUDA state cannot leak forward."""
+    """Auto-mark by directory and run tests/e2e/* last.
+
+    e2e tests load models with bitsandbytes 4-bit quantization; their CUDA state
+    historically deadlocked the integration streaming tests when they ran first,
+    so e2e is sorted to the end of the session.
+    """
+    for item in items:
+        p = _norm_path(item)
+        for needle, marker in _DIR_MARKERS.items():
+            if needle in p and marker not in {m.name for m in item.iter_markers()}:
+                item.add_marker(getattr(pytest.mark, marker))
 
     def _bucket(item):
-        p = str(item.fspath)
-        if "/tests/e2e/" in p or "\\tests\\e2e\\" in p:
+        p = _norm_path(item)
+        if "/tests/e2e/" in p:
             return 2
-        if "/tests/integration/" in p or "\\tests\\integration\\" in p:
+        if "/tests/integration/" in p:
             return 1
         return 0
 

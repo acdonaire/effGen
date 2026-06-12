@@ -77,10 +77,13 @@ jobs:
           "
 
       - name: Run unit + benchmark tests
+        # Coverage is opt-in (default config has no --cov, so collect-only and
+        # parallel runs don't corrupt the data file); this job enables it
+        # explicitly. Deselect the lanes that belong to dedicated jobs below.
         run: |
           pytest tests/unit/ tests/benchmarks/ -v \
             --cov=effgen --cov-report=xml --cov-report=term-missing \
-            -m "not gpu and not api and not docker" \
+            -m "not gpu and not api and not live and not docker and not expensive" \
             --tb=short --no-header
 
       - name: Upload coverage
@@ -108,7 +111,7 @@ jobs:
 
       - name: Run integration tests (no GPU, no API)
         run: |
-          pytest tests/integration/ -v -m "not gpu and not api and not docker" \
+          pytest tests/integration/ -v -m "not gpu and not api and not live and not docker" \
             --ignore=tests/e2e \
             --tb=short --no-header
 
@@ -127,9 +130,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install bandit safety
+          pip install -e ".[dev]"
 
       - name: Run bandit security linter
         run: bandit -r effgen/ -c pyproject.toml --exit-zero -f json -o bandit-report.json
+
+      - name: Run security test suite (-m security)
+        # The `security` marker is applied by directory (tests/security/) in
+        # tests/conftest.py. Docker/gitleaks-gated cases skip with clear reasons
+        # on this runner; the full CI image runs them as required checks.
+        run: |
+          pytest -m "security and not docker and not live" \
+            --tb=short --no-header
 
       - name: Check dependency vulnerabilities
         run: pip install -r requirements.txt && safety check --output json || true

@@ -532,24 +532,29 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# NOTE: Coverage is intentionally NOT enabled in the default addopts. Enabling
+# `--cov` globally made `pytest --collect-only` spin up the coverage machinery
+# and, worse, made two parallel pytest shards race the single default `.coverage`
+# SQLite file ("no such table: meta"). Coverage is now opt-in: pass `--cov=effgen
+# --cov-report=...` on the jobs that want it, or use `scripts/run_coverage.sh`
+# (unique COVERAGE_FILE per shard + `coverage combine`). See docs/guides/testing.md.
 addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
     "--tb=short",
-    "--cov=effgen",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
-    "gpu: marks tests that require GPU",
+    "gpu: marks tests that require a GPU",
     "api: marks tests that require API keys",
     "docker: marks tests that require Docker",
     "live: marks tests that make live API calls (deselect with '-m \"not live\"')",
+    "deployment: marks deployment-recipe tests (Docker/Helm/Lambda/Cloudflare/probes)",
+    "security: marks security tests (sandbox, SSRF, secret-scan, vuln-audit, supply-chain)",
+    "expensive: marks long/heavy tests (soak, stress, large GPU runs) — deselect by default in CI",
     "cookbook: marks cookbook snippet tests",
     "reliability: marks reliability-primitive tests (timeouts, retry, circuit, bulkhead)",
     "fuzz: marks fuzz-harness tests (hypothesis-driven)",
@@ -573,6 +578,12 @@ omit = [
     "*/examples/*",
 ]
 branch = true
+# parallel=true makes each process write a uniquely-suffixed data file
+# (.coverage.<host>.<pid>.<rand>) so concurrent shards never clobber a shared
+# SQLite DB; combine them with `coverage combine` before reporting. relative_files
+# keeps paths portable across the per-shard temp envs used by the install matrix.
+parallel = true
+relative_files = true
 
 [tool.coverage.report]
 precision = 2
