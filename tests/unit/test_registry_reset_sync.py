@@ -20,6 +20,22 @@ from effgen.tools import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _restore_global_registry():
+    """Keep these tests from leaking global-registry state into the suite.
+
+    Several tests here mutate the process-wide registry (``unregister_tool``,
+    instantiating tools). Under selective collection (``-k``), test sharding, or
+    randomized order the sibling tests that would happen to restore it may not
+    run, leaving downstream tests with a registry that is missing ``calculator``.
+    Drop the global registry before and after each test so the next access
+    rebuilds a fresh, fully-discovered one.
+    """
+    reset_registry()
+    yield
+    reset_registry()
+
+
 def _fresh_registry_with_instance():
     reset_registry()
     reg = get_registry()
