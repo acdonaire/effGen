@@ -69,11 +69,15 @@ class AgentState:
             with open(filepath) as f:
                 data = json.load(f)
             # Convert ISO strings back to datetime
-            if "created_at" in data:
+            if isinstance(data.get("created_at"), str):
                 data["created_at"] = datetime.fromisoformat(data["created_at"])
-            if "updated_at" in data:
+            if isinstance(data.get("updated_at"), str):
                 data["updated_at"] = datetime.fromisoformat(data["updated_at"])
-            return cls(**data)
+            # Load forgivingly: state files saved by a different effGen build may carry
+            # since-removed fields; drop them (with one warning) rather than crashing.
+            from ._compat import load_from_dict
+
+            return load_from_dict(cls, data, label="AgentState")
         elif format == "pickle":
             with open(filepath, "rb") as f:
                 return pickle.load(f)

@@ -63,7 +63,12 @@ class Session:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Session":
-        return cls(**data)
+        # Load forgivingly so sessions saved by older/newer effGen builds (which may
+        # carry since-renamed fields) still reload instead of raising a cryptic
+        # TypeError. See effgen.core._compat.load_from_dict.
+        from ._compat import load_from_dict
+
+        return load_from_dict(cls, data, label="Session")
 
     def save(self, sessions_dir: str = DEFAULT_SESSION_DIR) -> str:
         os.makedirs(sessions_dir, exist_ok=True)

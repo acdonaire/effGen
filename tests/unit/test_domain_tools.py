@@ -83,9 +83,17 @@ def _ok_from_result(result: ToolResult):
 
 @needs_net
 def test_currency_converter_usd_to_eur():
-    out = _ok(_run(CurrencyConverterTool().execute(
+    result = _run(CurrencyConverterTool().execute(
         amount=100.0, from_currency="USD", to_currency="EUR",
-    )))
+    ))
+    if not result.success:
+        err = str(result.error or "")
+        # frankfurter.app occasionally returns transient upstream errors (Cloudflare
+        # 5xx like HTTP 521, 429 rate-limits, timeouts). Treat those as a skip, not a
+        # failure — same pattern as the crypto test above.
+        if "HTTP" in err or "429" in err or "timed out" in err.lower():
+            pytest.skip(f"frankfurter.app transient error: {err[:100]}")
+    out = _ok(result)
     assert out["from"] == "USD"
     assert out["to"] == "EUR"
     assert isinstance(out["converted"], float) and out["converted"] > 0

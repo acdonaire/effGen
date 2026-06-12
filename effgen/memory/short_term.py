@@ -101,8 +101,10 @@ class ConversationSummary:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConversationSummary":
-        """Create summary from dictionary."""
-        return cls(**data)
+        """Create summary from dictionary (tolerant of older/newer field sets)."""
+        from ..core._compat import load_from_dict
+
+        return load_from_dict(cls, data, label="ConversationSummary")
 
 
 class ShortTermMemory:
@@ -527,7 +529,11 @@ class ShortTermMemory:
         Returns:
             ShortTermMemory instance
         """
-        config = data.get("config", {})
+        from ..core._compat import coerce_kwargs
+
+        # Drop any config keys this build no longer accepts (older/newer snapshot)
+        # instead of raising; one quiet warning is emitted on drift.
+        config = coerce_kwargs(cls, data.get("config", {}), label="ShortTermMemory")
         memory = cls(**config)
 
         # Restore messages

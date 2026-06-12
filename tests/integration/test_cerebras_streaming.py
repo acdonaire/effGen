@@ -103,10 +103,13 @@ class TestCerebrasStreaming:
         adapter = CerebrasAdapter("gpt-oss-120b", enable_rate_limiting=False)
         adapter.load()
         try:
-            config = GenerationConfig(max_tokens=20)
+            # gpt-oss is a reasoning model: a very small token budget is consumed
+            # entirely by hidden reasoning and emits no visible content. Use a budget
+            # that leaves room for visible tokens so we can verify the config plumbs
+            # through and the stream yields real content.
+            config = GenerationConfig(max_tokens=256)
             chunks = list(adapter.generate_stream("Count to 100.", config=config))
             text = "".join(chunks)
-            # max_tokens=20 should stop the stream early
             assert len(text) > 0
         except (RuntimeError, RateLimitExceeded) as exc:
             if "429" in str(exc) or "queue_exceeded" in str(exc) or "high traffic" in str(exc).lower() or "rate limit" in str(exc).lower():

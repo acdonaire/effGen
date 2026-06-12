@@ -122,8 +122,10 @@ class Session:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Session":
-        """Create from dictionary."""
-        return cls(**data)
+        """Create from dictionary (tolerant of older/newer field sets)."""
+        from ..core._compat import load_from_dict
+
+        return load_from_dict(cls, data, label="Session")
 
     @property
     def is_active(self) -> bool:

@@ -45,7 +45,12 @@ class Checkpoint:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Checkpoint":
-        return cls(**data)
+        # Load forgivingly so checkpoints written by a different effGen build (which
+        # may carry since-renamed fields) still resume instead of raising a cryptic
+        # TypeError. See effgen.core._compat.load_from_dict.
+        from ._compat import load_from_dict
+
+        return load_from_dict(cls, data, label="Checkpoint")
 
 
 class CheckpointManager:
