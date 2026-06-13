@@ -31,7 +31,11 @@ def test_documented_imports_resolve():
         load_model,
     )
 
-    cfg = AgentConfig(name="demo", model="Qwen/Qwen2.5-1.5B-Instruct")
+    # Construction must work without downloading a model, so this import-surface
+    # smoke stays fast and offline (no network in CI). A model id string would
+    # eagerly load weights here; ``model=None`` + ``require_model=False`` defers
+    # loading while still exercising the documented AgentConfig/Agent surface.
+    cfg = AgentConfig(name="demo", model=None, require_model=False)
     assert Agent(config=cfg) is not None
 
 

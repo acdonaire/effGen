@@ -190,7 +190,20 @@ class DockerSandbox(SandboxBase):
         try:
             # Write code to temp dir
             fname = self._code_filename(language)
-            (tmp_dir / fname).write_text(code, encoding="utf-8")
+            script_path = tmp_dir / fname
+            script_path.write_text(code, encoding="utf-8")
+
+            # The container process may run under a *different* uid than this
+            # process — e.g. a Docker daemon with userns-remap, or an image whose
+            # default USER is non-root. ``mkdtemp`` makes the dir 0700 and the
+            # file 0600 (owner-only), so that uid cannot traverse the dir or read
+            # the bind-mounted script and Python aborts with "[Errno 13]
+            # Permission denied". Make the ephemeral, read-only-mounted code dir
+            # and file world-readable/traversable so any container uid can read
+            # them. Safe: the dir is a per-run temp holding only the user's own
+            # code, is mounted read-only, and is removed in the finally below.
+            os.chmod(tmp_dir, 0o755)
+            os.chmod(script_path, 0o644)
 
             # Decide image
             image = await self._resolve_image(language, config)
