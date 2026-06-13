@@ -297,7 +297,7 @@ class AgentGenerationMixin:
                     # Only retry errors that could plausibly succeed on retry
                     # (transient/timeout/rate-limited/unknown). Auth, not-found,
                     # refusal and invalid-request errors fail fast — no retry
-                    # storm and no wasted latency (C5).
+                    # storm and no wasted latency.
                     if not err_class.should_retry:
                         logger.error(
                             "Generation failed with non-retryable %s error on '%s': %s",
@@ -566,7 +566,7 @@ class AgentGenerationMixin:
             tokens_used = response.get("tokens_used", 0)
 
             # Mirror the tool-loop's check: a generation error must NOT be
-            # reported as success=True with empty output (A1/N3). Both paths
+            # reported as success=True with empty output. Both paths
             # return the identical failure shape via _generation_failure_response.
             if response.get("finish_reason") == "error":
                 return self._generation_failure_response(

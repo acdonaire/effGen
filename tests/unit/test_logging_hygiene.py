@@ -4,8 +4,7 @@ Library logging-hygiene tests.
 A library must never emit log records or configure logging on import. These
 tests assert the package logger carries a NullHandler, that importing effGen and
 listing tools produce no log records even when the *root* logger is configured
-at INFO, and that third-party faiss INFO noise is pinned to WARNING (RA N17,
-I8, Audit-2 #44).
+at INFO, and that third-party faiss INFO noise is pinned to WARNING.
 """
 
 from __future__ import annotations

@@ -8,8 +8,7 @@ Durability tests for the RAG / memory stack:
   ``JSONDecodeError`` / ``DatabaseError``.
 
 Model behaviour is scripted with the shared mock so the *wiring* is what is
-under test; the same behaviour is proven against real models in
-``build_plan/outputs/25-*``.
+under test; the same behaviour is proven against real models in the integration suite.
 """
 
 from __future__ import annotations

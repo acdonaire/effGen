@@ -479,7 +479,7 @@ _CREATE_AGENT_DOC_TEMPLATE = create_agent.__doc__ or ""
 
 
 def _refresh_create_agent_doc() -> None:
-    """Regenerate ``create_agent``'s preset list from the live registry (U1-12).
+    """Regenerate ``create_agent``'s preset list from the live registry.
 
     Idempotent and safe to call repeatedly; the preset list can never drift from
     the actual presets. Called once here and again after the bundled extra

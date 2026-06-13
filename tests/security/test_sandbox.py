@@ -1,5 +1,5 @@
 """
-tests/security/test_sandbox.py — Sandbox backend tests for Phase 3.
+Sandbox backend tests.
 
 Test coverage:
   - SandboxConfig: defaults and env-var overrides
@@ -273,9 +273,8 @@ class TestDockerSandbox:
     @docker_required
     def test_network_block(self):
         """
-        Core network-block test (Phase 3 exit criterion):
+        Core network-block test:
         urllib.request.urlopen inside --network=none container must fail.
-        This output is saved to outputs/3-sandbox-network-block.txt.
         """
         sb = DockerSandbox()
         cfg = SandboxConfig(

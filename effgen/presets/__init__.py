@@ -31,7 +31,7 @@ from effgen.presets.registry import (
 )
 
 # All bundled presets (including the side-effect ones above) are now registered;
-# regenerate create_agent's docstring so it lists every preset (U1-12).
+# regenerate create_agent's docstring so it lists every preset.
 _refresh_create_agent_doc()
 
 __all__ = [

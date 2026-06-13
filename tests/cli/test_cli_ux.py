@@ -18,7 +18,7 @@ from effgen.cli import _main
 
 
 # --------------------------------------------------------------------------- #
-# Provider validation (F17, Audit-2 #62)
+# Provider validation
 # --------------------------------------------------------------------------- #
 def test_resolve_provider_valid():
     assert _main.resolve_provider_name("groq") == ("groq", None)
@@ -49,7 +49,7 @@ def test_loader_rejects_unknown_provider():
 
 
 # --------------------------------------------------------------------------- #
-# Quiet-by-default logging (F1/F27, Audit-2 #29)
+# Quiet-by-default logging
 # --------------------------------------------------------------------------- #
 def test_setup_logging_default_is_warning():
     _main.setup_logging(verbose=False, quiet=False)
@@ -69,7 +69,7 @@ def test_setup_logging_quiet_is_error():
 
 
 # --------------------------------------------------------------------------- #
-# Registry-backed models list / info (B6, Audit-2 #28/#39, RA-N9)
+# Registry-backed models list / info
 # --------------------------------------------------------------------------- #
 def _cli():
     return _main.CLIInterface()
@@ -88,7 +88,7 @@ def test_models_list_json_is_registry_backed(capsys):
 
 
 def test_models_list_no_bogus_empty_config_ids(capsys):
-    # RA-N9 / F28: the old empty-config fallback printed mistral-7b/llama-2-7b/
+    # The old empty-config fallback printed mistral-7b/llama-2-7b/
     # gemma-7b. Those must never appear now.
     args = SimpleNamespace(provider=None, free=False, tools=False, output_json=False)
     _cli()._models_list(args)
@@ -116,7 +116,7 @@ def test_models_info_unknown_suggests_and_exits_nonzero(capsys):
 
 
 # --------------------------------------------------------------------------- #
-# --json outputs (F7, RA-N18)
+# --json outputs
 # --------------------------------------------------------------------------- #
 def test_tools_list_json(capsys):
     args = SimpleNamespace(output_json=True, category=None)
@@ -129,7 +129,7 @@ def test_tools_list_json(capsys):
 
 
 # --------------------------------------------------------------------------- #
-# Doctor system report (Audit-2 #65)
+# Doctor system report
 # --------------------------------------------------------------------------- #
 def test_doctor_system_report_has_cuda_and_vllm():
     report = _main._doctor_system_report(include_pip_check=False)
@@ -140,7 +140,7 @@ def test_doctor_system_report_has_cuda_and_vllm():
 
 def test_doctor_exit_code_is_format_independent():
     # A keyed provider whose live probe failed must yield exit 1 regardless of
-    # whether output is JSON or the human table (Audit-2 #61).
+    # whether output is JSON or the human table.
     failed = {"openai": {"available": True, "live": {"ok": False}}}
     assert _main._doctor_exit_code(failed, live=True) == 1
     # No live probe requested → always 0 even if a key is missing.
@@ -154,7 +154,7 @@ def test_doctor_exit_code_is_format_independent():
 
 
 # --------------------------------------------------------------------------- #
-# Examples directory discovery (F23)
+# Examples directory discovery
 # --------------------------------------------------------------------------- #
 def test_find_examples_dir_via_env(tmp_path, monkeypatch):
     ex = tmp_path / "examples"
@@ -166,7 +166,7 @@ def test_find_examples_dir_via_env(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# All 9 presets accepted (F24)
+# All 9 presets accepted
 # --------------------------------------------------------------------------- #
 def test_all_presets_accepted_by_run_parser():
     from effgen.presets import list_presets
@@ -180,7 +180,7 @@ def test_all_presets_accepted_by_run_parser():
 
 
 # --------------------------------------------------------------------------- #
-# .env discovery is centralized + documented (F55)
+# .env discovery is centralized + documented
 # --------------------------------------------------------------------------- #
 def test_env_search_paths_include_override_and_home(monkeypatch):
     monkeypatch.setenv("EFFGEN_DOTENV", "/tmp/custom.env")

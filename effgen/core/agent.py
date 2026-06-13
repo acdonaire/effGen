@@ -1388,9 +1388,9 @@ Provide a well-structured, comprehensive response that integrates all findings."
         ``_run_direct_inference`` so streamed and non-streamed answers match.
         Tokens are yielded as they arrive (true incrementality); the assembled
         answer is sanitized before it is stored in memory and handed to
-        ``on_answer`` (Phase-2 hygiene). A mid-stream provider error is raised
+        ``on_answer``. A mid-stream provider error is raised
         (typed + redacted) rather than yielded as a chunk, so a consumer can
-        tell success from failure (C3).
+        tell success from failure.
         """
         conversation_history = self._format_conversation_history()
         if conversation_history:
@@ -1590,7 +1590,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
                 # Fail honestly: raise the typed (already-redacted) provider error
                 # at the iterator boundary so a consumer iterating stream() can tell
                 # success from failure, instead of receiving the error text as a
-                # normal chunk that looks like model output (C3).
+                # normal chunk that looks like model output.
                 logger.debug("Streaming generation failed", exc_info=True)
                 raise
             finally:

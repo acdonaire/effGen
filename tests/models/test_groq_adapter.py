@@ -1,5 +1,5 @@
 """
-Unit tests for GroqAdapter (mocks OK per build plan).
+Unit tests for GroqAdapter (mocks OK for adapter plumbing).
 """
 
 from __future__ import annotations

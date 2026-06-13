@@ -286,7 +286,7 @@ def build_usage_chunk(
     Per the OpenAI streaming spec, when ``stream_options.include_usage`` is set
     the server emits one extra chunk after the content chunks whose ``choices``
     is empty and which carries the ``usage`` totals so clients can reconcile
-    billing for streamed requests (Audit-2 #47).
+    billing for streamed requests.
     """
     return {
         "id": chat_id or _chat_id(),
@@ -404,7 +404,7 @@ def _effgen_meta(requested: str, resolved: str) -> dict[str, Any]:
     via :data:`MODEL_ALIASES`. Rather than silently swapping the model, every
     response carries an ``effgen`` object naming the requested alias and the
     model that actually ran so clients can tell when a compatibility shim was
-    applied (Audit-2 #27). OpenAI clients ignore unknown top-level keys.
+    applied. OpenAI clients ignore unknown top-level keys.
     """
     return {
         "requested_model": requested,
@@ -562,7 +562,7 @@ def create_openai_router(runner: Runner) -> Any:
                 yield f"data: {json.dumps(final)}\n\n"
                 # Emit a final usage-only chunk when the client opts in via
                 # stream_options.include_usage so streamed requests can be
-                # reconciled for billing (Audit-2 #47).
+                # reconciled for billing.
                 if include_usage:
                     completion_tokens = (
                         provider_completion_tokens

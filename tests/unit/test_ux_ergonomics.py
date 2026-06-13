@@ -13,7 +13,7 @@ import pytest
 
 
 # --------------------------------------------------------------------------- #
-# Result ergonomics (U1-7, U2-8)
+# Result ergonomics
 # --------------------------------------------------------------------------- #
 def test_agent_response_str_is_the_answer():
     from effgen.core.agent import AgentResponse
@@ -42,7 +42,7 @@ def test_agent_response_str_handles_none_output():
 
 
 # --------------------------------------------------------------------------- #
-# @tool / Tool.from_function (U1-10)
+# @tool / Tool.from_function
 # --------------------------------------------------------------------------- #
 def test_tool_decorator_derives_schema_from_signature_and_docstring():
     from effgen import FunctionTool, tool
@@ -162,7 +162,7 @@ def test_tool_usable_in_agent_config():
 
 
 # --------------------------------------------------------------------------- #
-# Preset errors + zero-config guidance (U1-4, U1-5, U1-12, U2-16)
+# Preset errors + zero-config guidance
 # --------------------------------------------------------------------------- #
 def test_unknown_preset_is_typed_with_fuzzy_suggestion():
     from effgen.presets import UnknownPresetError, get_preset
@@ -205,7 +205,7 @@ def test_create_agent_docstring_lists_all_presets():
 
 
 # --------------------------------------------------------------------------- #
-# Model-less agent fails at construction (U2-6)
+# Model-less agent fails at construction
 # --------------------------------------------------------------------------- #
 def test_modelless_agent_raises_at_construction():
     from effgen.core.agent import Agent, AgentConfig
@@ -222,7 +222,7 @@ def test_modelless_agent_allowed_when_require_model_false():
 
 
 # --------------------------------------------------------------------------- #
-# Centralized "did you mean" model suggestion (U1-3)
+# Centralized "did you mean" model suggestion
 # --------------------------------------------------------------------------- #
 def test_not_found_error_appends_live_suggestion():
     from effgen.models._adapter_utils import provider_runtime_error

@@ -1,6 +1,6 @@
 """Offline tests for the provider catalog refresh / drift / routing contract.
 
-These exercise the Phase-8 additions on top of the catalog spine without any
+These exercise the catalog-refresh additions on top of the catalog spine without any
 network I/O: the live-refresh fetcher registry and record construction, the
 once-per-process drift fallback, registry-driven bare-id routing, and the
 "did you mean / available now" suggestion helper.
@@ -16,7 +16,7 @@ from effgen.models import _catalog as C
 from effgen.models import _refresh as R
 
 # ---------------------------------------------------------------------------
-# Cerebras catalog correctness (A4 / B3): dead defaults removed, live default set
+# Cerebras catalog correctness: dead defaults removed, live default set
 # ---------------------------------------------------------------------------
 
 
@@ -31,7 +31,7 @@ def test_cerebras_catalog_only_live_models():
 
 
 def test_committed_snapshots_match_catalog():
-    # Phase-7 invariant preserved: every bundled snapshot still mirrors the
+    # Invariant preserved: every bundled snapshot still mirrors the
     # in-package catalog the adapters use (no silent drift in the repo).
     for prov in C.known_providers():
         diff = C.check_drift_against_snapshot(prov)
@@ -47,7 +47,7 @@ def test_cerebras_snapshot_count_is_two():
 
 
 # ---------------------------------------------------------------------------
-# providers_for — registry-driven routing input (I6 / Audit-2 #13)
+# providers_for — registry-driven routing input
 # ---------------------------------------------------------------------------
 
 
@@ -76,7 +76,7 @@ def test_routing_skips_org_slash_ids():
 
 
 # ---------------------------------------------------------------------------
-# suggest_for_missing — B8 / Audit-2 #63
+# suggest_for_missing
 # ---------------------------------------------------------------------------
 
 

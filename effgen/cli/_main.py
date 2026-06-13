@@ -780,7 +780,7 @@ class CLIInterface:
                     self.print("Thinking...")
                     response = agent.run(args.task, mode=mode)
 
-                # Surface failure in the process exit code (Audit-2 #61).
+                # Surface failure in the process exit code.
                 if not response.success:
                     exit_code = 1
 
@@ -2238,7 +2238,7 @@ class CLIInterface:
 
         Examples ship with the source tree (repo root), not inside the installed
         `effgen` package, so probe several real locations rather than the old
-        package-relative path that was broken for every pip-installed user (F23).
+        package-relative path that was broken for every pip-installed user.
         """
         candidates = []
         env_dir = os.environ.get("EFFGEN_EXAMPLES_DIR")
@@ -2353,7 +2353,7 @@ class CLIInterface:
 def create_parser():
     """Create argument parser for CLI."""
     # Drive --preset choices from the preset registry so all 9 presets are
-    # accepted (rag/media/multimodal/notify were previously rejected — F24).
+    # accepted (rag/media/multimodal/notify were previously rejected).
     try:
         from effgen.presets import list_presets as _list_presets
         _preset_choices = sorted(_list_presets().keys())
@@ -2997,7 +2997,7 @@ def _handle_doctor_command(args) -> int:
     system_report = _doctor_system_report(include_pip_check=live)
 
     # Exit nonzero if a live probe was requested and a keyed provider failed.
-    # Computed once so every output format (JSON and human) agrees (Audit-2 #61).
+    # Computed once so every output format (JSON and human) agrees.
     exit_code = _doctor_exit_code(results, live)
 
     if getattr(args, 'output_json', False):
@@ -3095,7 +3095,7 @@ def _doctor_exit_code(results: dict[str, dict], live: bool) -> int:
     a keyed (key-present) provider's default model was not actually usable.
 
     Kept format-independent so `--json` and the human table return the same code
-    for the same provider state (Audit-2 #61).
+    for the same provider state.
     """
     if live and any(
         results[p].get("available") and not results[p].get("live", {}).get("ok")

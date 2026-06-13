@@ -226,7 +226,7 @@ def test_require_model_true_fails_fast_on_bad_string_model():
 
 
 # ---------------------------------------------------------------------------
-# Engine import-error distinction (Audit-2 #42)
+# Engine import-error distinction
 # ---------------------------------------------------------------------------
 
 

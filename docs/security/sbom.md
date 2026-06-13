@@ -146,4 +146,4 @@ Every effGen release includes:
 - `sbom.cdx.json` — Full CycloneDX JSON SBOM (attached to GitHub Release)
 - Uploaded as CI artifact for every main-branch build
 
-Future: wheel signing with Sigstore/cosign for supply chain integrity (Phase 2).
+Future: wheel signing with Sigstore/cosign for supply chain integrity.

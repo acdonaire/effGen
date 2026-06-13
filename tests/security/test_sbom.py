@@ -210,7 +210,7 @@ class TestSBOMSchemaCompliance:
 
         Field-presence checks are not enough — this runs the SBOM through the
         strict CycloneDX JSON schema validator bundled with cyclonedx-python-lib
-        (a dependency of cyclonedx-bom). This is the Phase 1 exit criterion:
+        (a dependency of cyclonedx-bom). This is the exit criterion:
         "SBOM generates and validates against CycloneDX schema."
         """
         try:

@@ -1,4 +1,4 @@
-"""Unit tests for ``sanitize_final_answer`` — scaffolding-leak elimination (A5).
+"""Unit tests for ``sanitize_final_answer`` — scaffolding-leak elimination.
 
 The fixtures here are the real messy strings captured from small models (groq
 ``llama-3.1-8b``, OpenAI native web-search) plus the literal loop-bookkeeping
@@ -11,7 +11,7 @@ import pytest
 
 from effgen.core.agent import sanitize_final_answer as sanitize
 
-# --- Real leaked strings from the audit (A5) ---------------------------------
+# --- Real leaked strings from the audit ------------------------------------
 
 @pytest.mark.parametrize(
     "leaked, expected",

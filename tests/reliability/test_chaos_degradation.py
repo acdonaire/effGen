@@ -3,7 +3,7 @@ Real (non-mocked) chaos-degradation tests.
 
 The deterministic ``test_chaos.py`` harness covers network-shaped failures
 (5xx/429/timeout/all-providers-fail) at the router/retry layer. This file
-covers the *other* chaos axes Phase-0 honesty promises hold for, using **real**
+covers the *other* chaos axes the honesty guarantees hold for, using **real**
 subprocess/tool execution — no mocks:
 
   * runaway code (CPU + memory) is hard-killed at its budget, not the host;

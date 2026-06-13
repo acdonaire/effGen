@@ -1,6 +1,4 @@
 """
-effgen/security/supply_chain.py
-
 Runtime supply-chain integrity verification.
 
 When the environment variable ``EFFGEN_VERIFY_HASHES=1`` is set, effGen

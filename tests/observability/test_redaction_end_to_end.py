@@ -51,7 +51,7 @@ def _assert_no_leak(text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 1. Redactor covers every provider key shape (RA N10)
+# 1. Redactor covers every provider key shape
 # ---------------------------------------------------------------------------
 
 class TestProviderKeyShapes:

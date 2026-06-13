@@ -1,4 +1,4 @@
-"""Phase 15 — native + effGen tool interop, no-network unit coverage.
+"""Native + effGen tool interop, no-network unit coverage.
 
 Covers the hardening done for native/custom tool interop:
   * provider-native abstract spec methods raise an *actionable* NotImplementedError

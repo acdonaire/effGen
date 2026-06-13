@@ -1,4 +1,4 @@
-"""Tool-registry teardown must be event-loop-safe (audit Audit-2 #18).
+"""Tool-registry teardown must be event-loop-safe.
 
 ``reset_registry()`` and ``unregister_tool()`` used ``asyncio.create_task(...)``
 which raised ``RuntimeError: no running event loop`` from synchronous code (and

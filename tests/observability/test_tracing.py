@@ -1,5 +1,5 @@
 """
-Tests for effgen.observability.tracing — Phase 3.
+Tests for effgen.observability.tracing.
 
 Coverage:
 - Sampler correctness: AlwaysOn/Off, TraceIdRatio, RateLimited, ParentBased

@@ -4,7 +4,7 @@
 #
 # It reads nvidia-smi to find idle GPUs, splits the selected tests into one shard
 # per GPU, pins each shard with CUDA_VISIBLE_DEVICES, runs them in parallel with a
-# UNIQUE per-shard COVERAGE_FILE (so coverage never corrupts — see Audit-2 #33),
+# UNIQUE per-shard COVERAGE_FILE (so coverage never corrupts),
 # optionally combines coverage, and kills any orphan GPU processes it spawned.
 #
 # Usage:

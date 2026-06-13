@@ -4,7 +4,7 @@ Bounded concurrency / volume stress tests (no live API, no GPU).
 These exercise the hot in-process paths under concurrency and high call volume
 to flush out shared-state races, unbounded growth, and resource leaks. They are
 deliberately bounded (seconds, not hours) and marked ``expensive`` + ``slow`` so
-CI can deselect them; the unbounded soak/GPU stress lives in the Phase-30
+CI can deselect them; the unbounded soak/GPU stress lives in the dedicated
 driver scripts, not in the test suite.
 
 Covered:

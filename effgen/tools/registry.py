@@ -469,7 +469,7 @@ class ToolRegistry:
 
             # Import all Python files in builtin directory. Listing the catalog
             # must stay quiet — a tool that logs while constructing its metadata
-            # probe should not spam the user (Audit-2 #44).
+            # probe should not spam the user.
             with _quiet_discovery():
                 for file_path in builtin_path.glob("*.py"):
                     if file_path.name.startswith("_"):

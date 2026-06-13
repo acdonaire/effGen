@@ -13,7 +13,7 @@
 #   scripts/run_coverage.sh --shards 4 tests/unit tests/integration
 #
 # Each shard writes to a unique data file, so concurrent shards never race the
-# shared `.coverage` SQLite DB (the Audit-2 #33 corruption). Outputs coverage.xml
+# shared `.coverage` SQLite DB (concurrent-write corruption). Outputs coverage.xml
 # + htmlcov + a terminal report at the repo root.
 ################################################################################
 set -euo pipefail

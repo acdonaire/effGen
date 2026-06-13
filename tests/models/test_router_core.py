@@ -334,7 +334,7 @@ def test_policy_based_router_raises_when_all_fail(monkeypatch):
 
 
 def test_model_router_policy_constructor_routes(monkeypatch):
-    """ModelRouter must expose the policy-based routing surface from the build plan."""
+    """ModelRouter must expose the policy-based routing surface."""
     ProviderRegistry.reset()
 
     class _DummyAdapter:

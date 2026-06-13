@@ -3,7 +3,7 @@
 These lock in the fix that makes the cost tracker read pricing from the
 normalized model catalog (the single source of truth shared with the adapters)
 instead of a stale hand-maintained rate table.  The headline regression is that
-priced providers like Groq must no longer report ``$0.000000`` (B5), and the
+priced providers like Groq must no longer report ``$0.000000``, and the
 per-token rates must match the catalog the CLI shows.
 """
 
@@ -29,7 +29,7 @@ def _reset_tracker():
 
 class TestCatalogDrivenRates:
     def test_groq_is_priced_not_free(self):
-        """B5: a priced Groq model must report a real per-token rate, not $0."""
+        """A priced Groq model must report a real per-token rate, not $0."""
         rin, rout = _rate("groq", "llama-3.1-8b-instant")
         assert rin > 0 and rout > 0
         assert pricing_status("groq", "llama-3.1-8b-instant") == "priced"
@@ -69,7 +69,7 @@ class TestPricingStatus:
 
     def test_unknown_id_on_priced_provider_never_silently_zero(self):
         # A model absent from the catalog but on a known priced provider falls
-        # back to the provider estimate — it must NOT silently report $0 (B5).
+        # back to the provider estimate — it must NOT silently report $0.
         rin, rout = _rate("openai", "totally-made-up-model-xyz")
         assert rin > 0 and rout > 0
         assert pricing_status("openai", "totally-made-up-model-xyz") == "priced"

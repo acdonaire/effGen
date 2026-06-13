@@ -1,4 +1,4 @@
-"""Phase 20 — server liveness/readiness probe aliases + opt-in request rate limit.
+"""Server liveness/readiness probe aliases + opt-in request rate limit.
 
 These exercise the converged secure app (``create_app``) directly with
 Starlette's TestClient — no live provider needed.
@@ -24,7 +24,7 @@ def _client(**kw):
 
 
 # ---------------------------------------------------------------------------
-# Probe aliases — RA-N7 / F6: /healthz,/livez,/readyz,/ready were allowlisted
+# Probe aliases: /healthz,/livez,/readyz,/ready were allowlisted
 # but had no route (404). They must all respond 200 and stay public (no token).
 # ---------------------------------------------------------------------------
 

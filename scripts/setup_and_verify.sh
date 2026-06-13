@@ -352,7 +352,7 @@ main() {
         VERIFY_ARGS="$VERIFY_ARGS --verbose"
     fi
 
-    # Phase 1: Installation
+    # Step 1: Installation
     if [ "$SKIP_INSTALL" = false ]; then
         print_phase_header "PHASE 1: INSTALLATION"
 
@@ -375,7 +375,7 @@ main() {
         fi
     fi
 
-    # Phase 2: Verification
+    # Step 2: Verification
     if [ "$SKIP_VERIFY" = false ]; then
         print_phase_header "PHASE 2: VERIFICATION"
 

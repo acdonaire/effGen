@@ -3,7 +3,7 @@
 # Release artifact collector.
 #
 # Captures the dependency + environment diagnostics that should accompany every
-# release of effGen (Audit-2 #69): pip freeze, pip check, pip-audit, nvidia-smi,
+# release of effGen: pip freeze, pip check, pip-audit, nvidia-smi,
 # torch CUDA diagnostics, and a provider-readiness summary. Everything is written
 # under an output directory; nothing is uploaded and no secrets are printed.
 #

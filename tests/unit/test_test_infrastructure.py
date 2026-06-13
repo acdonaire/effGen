@@ -1,6 +1,6 @@
 """Regression tests for the test/CI infrastructure itself.
 
-These guard the Phase-29 fixes so they cannot silently regress:
+These guard the test-infrastructure fixes so they cannot silently regress:
   * coverage must NOT be wired into the default pytest addopts (otherwise
     `--collect-only` and parallel shards corrupt the coverage DB),
   * coverage.run must be parallel-safe,

@@ -27,7 +27,7 @@ def _run(coro):
 
 
 # --------------------------------------------------------------------------
-# Lazy discovery + sync accessor (E2, RA-N5)
+# Lazy discovery + sync accessor
 # --------------------------------------------------------------------------
 
 def test_fresh_registry_auto_discovers_builtins():
@@ -55,7 +55,7 @@ def test_get_metadata_discovers():
 
 
 # --------------------------------------------------------------------------
-# Honest envelopes — no double-wrapped success/failure (F20)
+# Honest envelopes — no double-wrapped success/failure
 # --------------------------------------------------------------------------
 
 def test_inner_status_helper():
@@ -98,7 +98,7 @@ def test_json_validate_invalid_is_not_a_tool_failure():
 
 
 # --------------------------------------------------------------------------
-# Operation aliases (E3, Audit-2 #36)
+# Operation aliases
 # --------------------------------------------------------------------------
 
 def test_datetime_value_alias():
@@ -156,7 +156,7 @@ def test_selector_alias_never_consumes_a_real_distinct_param():
 
 
 # --------------------------------------------------------------------------
-# Plugin scaffold renders, imports, and runs (Audit-2 #12, #49, #50)
+# Plugin scaffold renders, imports, and runs
 # --------------------------------------------------------------------------
 
 def test_plugin_scaffold_round_trip(tmp_path):
@@ -216,7 +216,7 @@ def test_plugin_scaffold_normalizes_hyphen(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# CLI exit codes for tools info/test (Audit-2 #11, #56, #61)
+# CLI exit codes for tools info/test
 # --------------------------------------------------------------------------
 
 def _cli():

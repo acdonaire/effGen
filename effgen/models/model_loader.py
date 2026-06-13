@@ -224,7 +224,7 @@ class ModelLoader:
                 logger.debug("Provider-prefix registry lookup failed", exc_info=True)
 
         # Route / disambiguate bare cloud model ids by consulting the model
-        # catalog directly (I6, Audit-2 #13).  Without this, a documented
+        # catalog directly.  Without this, a documented
         # provider id such as ``gpt-oss-120b`` or ``llama-3.3-70b-versatile``
         # falls through to the local HuggingFace path and fails with a confusing
         # download error instead of calling the provider.  Bare ids that no cloud

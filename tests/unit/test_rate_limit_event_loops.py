@@ -1,4 +1,4 @@
-"""Rate-limit acquire must engage under a running event loop (audit A7/C4).
+"""Rate-limit acquire must engage under a running event loop.
 
 Adapters used to do ``loop = asyncio.get_event_loop(); if loop.is_running():
 <skip acquire>`` which silently disabled throttling inside FastAPI/Jupyter/any

@@ -1,15 +1,15 @@
-"""Unit tests for streaming correctness (Phase 12 contract).
+"""Unit tests for streaming correctness.
 
 Covers:
 - No-tool ``Agent.stream()`` uses the direct path (no ReAct scaffold, no
   "[Max iterations reached]"); tokens stream incrementally.
 - Mid-stream provider errors are *raised* at the iterator boundary, not
-  buffered into a normal chunk that looks like model output (C3).
-- The final assembled answer is sanitized (Phase-2 hygiene) before it is
+  buffered into a normal chunk that looks like model output.
+- The final assembled answer is sanitized before it is
   handed to ``on_answer`` and stored in short-term memory.
 - The ReAct/tool path also fails honestly (raises) on a streaming error.
 - OpenAI-compatible streaming emits a final usage chunk when the client opts
-  in via ``stream_options.include_usage`` (Audit-2 #47), and omits it otherwise.
+  in via ``stream_options.include_usage``, and omits it otherwise.
 
 These use an in-process fake model (no network) — not a mock of live API
 behaviour, which the project forbids.
@@ -93,7 +93,7 @@ def test_no_tool_stream_increments_token_by_token():
 
 
 def test_final_answer_sanitized_and_stored():
-    """Assembled answer is sanitized before on_answer + memory (Phase-2 hygiene)."""
+    """Assembled answer is sanitized before on_answer + memory."""
     model = _StreamModel(["Final Answer: ", "Canberra"])
     captured: list[str] = []
     agent = _agent(model)
@@ -107,7 +107,7 @@ def test_final_answer_sanitized_and_stored():
 
 
 # --------------------------------------------------------------------------- #
-# Honest mid-stream errors (C3)
+# Honest mid-stream errors
 # --------------------------------------------------------------------------- #
 
 def test_mid_stream_error_raises_not_buffered_direct():
@@ -145,7 +145,7 @@ def test_react_path_stream_error_raises():
 
 
 # --------------------------------------------------------------------------- #
-# OpenAI-compatible streaming usage (Audit-2 #47)
+# OpenAI-compatible streaming usage
 # --------------------------------------------------------------------------- #
 
 def _compat_client():

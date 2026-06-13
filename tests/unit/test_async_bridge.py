@@ -47,7 +47,7 @@ def test_runs_from_inside_a_running_loop():
 
 
 def test_actually_executes_under_running_loop_not_skipped():
-    """Regression for A7: the work is performed, not no-op'd, under a loop."""
+    """Regression: the work is performed, not no-op'd, under a loop."""
     ran = threading.Event()
 
     async def side_effect():

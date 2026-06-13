@@ -405,12 +405,12 @@ class TestStartupHook:
 
 
 # ---------------------------------------------------------------------------
-# 5. Lockfile exists (from Phase 1)
+# 5. Lockfile exists
 # ---------------------------------------------------------------------------
 
 
 class TestLockfilePresent:
-    """The requirements-lock.txt from Phase 1 must exist and be valid."""
+    """The requirements-lock.txt must exist and be valid."""
 
     def test_lockfile_exists(self):
         lockfile = REPO_ROOT / "requirements-lock.txt"

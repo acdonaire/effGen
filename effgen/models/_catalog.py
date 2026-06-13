@@ -505,7 +505,7 @@ def providers_for(model_id: str) -> list[str]:
 
     Used by the loader to route a bare provider model id (e.g. ``gpt-oss-120b``)
     to the one cloud provider that serves it, instead of mistaking it for a local
-    HuggingFace repo (I6 / Audit-2 #13).  An optional ``provider:`` prefix is
+    HuggingFace repo.  An optional ``provider:`` prefix is
     honored.  Returns ``[]`` for ids no cloud catalog knows (the normal case for
     local HF models), and the matches in :func:`known_providers` order otherwise.
     """
@@ -575,7 +575,7 @@ def suggest_for_missing(
 ) -> str:
     """Build a one-line, user-facing hint for a model id the provider rejected.
 
-    Generalizes the per-provider "did you mean" helpers (B8 / Audit-2 #63): on a
+    Generalizes the per-provider "did you mean" helpers: on a
     404 / ``model_not_found`` an adapter can append this so the user sees the
     nearest live alternatives instead of raw provider text.  When *warn* is True
     it also fires :func:`warn_if_stale` once per process for *provider* (the

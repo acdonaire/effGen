@@ -446,7 +446,7 @@ class BaseTool(ABC):
             if not is_valid:
                 # Friendlier guidance for selector/enum mistakes: list the
                 # allowed values (and any natural-name aliases) instead of a
-                # bare repr, so a model or human can self-correct (Audit-2 #36).
+                # bare repr, so a model or human can self-correct.
                 if param_spec.enum is not None and value is not None:
                     allowed = ", ".join(str(v) for v in param_spec.enum)
                     msg = (

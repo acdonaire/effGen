@@ -223,7 +223,7 @@ class LabeledCounter:
 
 
 # ---------------------------------------------------------------------------
-# Phase-2 metric instances (module-level singletons)
+# Metric instances (module-level singletons)
 # ---------------------------------------------------------------------------
 
 #: Latency histogram for model (LLM) calls.
@@ -356,7 +356,7 @@ def record_tokens(
 
 def export_metrics() -> str:
     """
-    Return all Phase-2 metrics in Prometheus text format.
+    Return all metrics in Prometheus text format.
 
     The output also includes the legacy counters from
     ``effgen.utils.prometheus_metrics`` so one scrape endpoint covers
@@ -380,7 +380,7 @@ def export_metrics() -> str:
 
 
 def reset_all() -> None:
-    """Reset all Phase-2 metrics (used in tests)."""
+    """Reset all metrics (used in tests)."""
     model_call_latency.reset()
     tool_call_latency.reset()
     agent_iteration_latency.reset()

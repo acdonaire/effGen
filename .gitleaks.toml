@@ -108,7 +108,7 @@ regex = '''(?i)(effgen[_\-]?api[_\-]?key|provider[_\-]?key|model[_\-]?key)['\"\s
 tags = ["generic", "api-key", "effgen"]
 
 # ---------------------------------------------------------------------------
-# AWS / Cloud credentials (important since deployments land in Phase 5–6)
+# AWS / Cloud credentials (important for deployment configs)
 # ---------------------------------------------------------------------------
 
 [[rules]]

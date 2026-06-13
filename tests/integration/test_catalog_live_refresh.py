@@ -1,7 +1,7 @@
 """Live catalog refresh / drift / default-model smoke tests.
 
 Each provider is skipped when its key is absent, and runs a real call otherwise
-(no mocks).  These guard the failure modes RA-N4 / Audit-2 #57 flagged: a
+(no mocks).  These guard the failure modes: a
 configured default model that has silently gone away, and the per-secondary-
 provider id shapes (Replicate ``owner/model``, Fireworks
 ``accounts/.../models/...``, HF ``org/model``, Together full slug) that were
@@ -47,7 +47,7 @@ def test_default_model_is_live(provider):
     assert live, f"{provider}: live model list came back empty"
 
     if default not in live:
-        # Honest stale-registry signal rather than a hard failure (Audit-2 #57).
+        # Honest stale-registry signal rather than a hard failure.
         pytest.xfail(
             f"{provider} default {default!r} is no longer in the live catalog; "
             f"run `effgen models refresh --provider {provider}`. "
@@ -72,7 +72,7 @@ def test_refresh_models_live(provider):
 
 
 # ---------------------------------------------------------------------------
-# RA-N4 — per-secondary-provider id-shape smoke
+# Per-secondary-provider id-shape smoke
 # ---------------------------------------------------------------------------
 
 _ID_SHAPES = {
@@ -108,7 +108,7 @@ def test_secondary_provider_default_resolves_live(provider):
 
 
 # ---------------------------------------------------------------------------
-# Wrong-id → helpful live suggestion (B8 / Audit-2 #63)
+# Wrong-id → helpful live suggestion
 # ---------------------------------------------------------------------------
 
 

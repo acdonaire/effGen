@@ -285,7 +285,7 @@ def create_app(
 
 
 # ---------------------------------------------------------------------------
-# Model pool — reuse loaded models across requests (Audit-2 #25)
+# Model pool — reuse loaded models across requests
 # ---------------------------------------------------------------------------
 #
 # Constructing a fresh Agent per request is cheap, but each Agent used to spin

@@ -1,6 +1,6 @@
 """
 Unit tests for TogetherAdapter and together_models registry.
-Mocks are OK for adapter plumbing tests per build plan.
+Mocks are OK for adapter plumbing tests.
 """
 
 from __future__ import annotations

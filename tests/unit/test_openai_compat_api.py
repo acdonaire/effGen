@@ -5,7 +5,7 @@ stub runner (an in-process callable) — they do not mock live model behaviour,
 which the project forbids. Live model coverage through the server is in the
 integration/evidence runs.
 
-Covers Phase-19 deliverables:
+Covers the OpenAI-compatible server API:
 - static API-key auth (Bearer + X-API-Key), fail-closed
 - /openapi.json public even with auth on
 - real usage from a RunnerResult (not len//4)
