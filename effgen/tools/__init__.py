@@ -13,6 +13,7 @@ from .base_tool import (
     ToolMetadata,
     ToolResult,
 )
+from .function_tool import FunctionTool, Tool, tool
 from .registry import (
     ToolDependencyError,
     ToolRegistrationError,
@@ -30,6 +31,10 @@ __all__ = [
     "ToolResult",
     "ParameterSpec",
     "ParameterType",
+    # Low-boilerplate authoring (ergonomic wrappers over BaseTool)
+    "tool",
+    "Tool",
+    "FunctionTool",
     # Registry
     "ToolRegistry",
     "ToolDependencyError",

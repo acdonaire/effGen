@@ -213,6 +213,24 @@ class AgentResponse:
     citations: list[Any] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
 
+    def __str__(self) -> str:
+        """The answer text — so ``print(result)`` shows the answer, not a repr.
+
+        The full structured view stays available via ``repr(result)`` and
+        :meth:`to_dict`.
+        """
+        return self.output if self.output is not None else ""
+
+    @property
+    def text(self) -> str:
+        """Read-only alias for :attr:`output` (familiar from other SDKs)."""
+        return self.output
+
+    @property
+    def content(self) -> str:
+        """Read-only alias for :attr:`output` (familiar from other SDKs)."""
+        return self.output
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -349,6 +367,19 @@ Question: {task}
             # No model provided
             self.model_name = None
             self.model = None
+            if config.require_model and config.model is None:
+                # Fail at construction (not on the first run()) so a model-less
+                # agent doesn't look usable. Set require_model=False to defer
+                # model assignment (advanced/sub-agent use).
+                raise ValueError(
+                    f"Agent '{config.name}' was created without a model. "
+                    "Pass a model id or instance, e.g. "
+                    "AgentConfig(name=..., model='gpt-5-nano') or "
+                    "model='Qwen/Qwen2.5-1.5B-Instruct'. "
+                    "Run `effgen models list` to see options, or `effgen doctor` "
+                    "to check which providers are usable. "
+                    "(Set require_model=False to defer loading.)"
+                )
 
         # Multi-model router
         self._model_router = None
@@ -1414,13 +1445,23 @@ Provide a well-structured, comprehensive response that integrates all findings."
                inputs: list[Any] | None = None,
                **kwargs) -> Iterator[str]:
         """
-        Stream response token by token using real model streaming.
+        Stream a response incrementally using real model streaming.
 
-        Streams the ReAct loop in real-time:
-        - Yields thought tokens as they generate
-        - Pauses streaming during tool execution
-        - Yields observation text after tool calls
-        - Yields final answer tokens
+        Streaming contract (stable):
+
+        - Iterating yields successive **text-delta** ``str`` chunks. Joining
+          every chunk (``"".join(agent.stream(task))``) reconstructs the answer.
+        - On a no-tool agent the chunks are the model's answer tokens directly
+          (no ReAct scaffolding). With tools, intermediate ``Observation:``
+          lines are interleaved as the loop runs.
+        - The iterator simply **ending** is the terminal "done" signal; there is
+          no sentinel value to test for.
+        - A provider/model failure raises a typed error from the iterator (it is
+          not silently swallowed into an empty stream).
+
+        The richer typed step-event stream (per-tool ticks, reasoning markers)
+        is a presentation layer built on top of these deltas; the text-delta
+        contract here is the stable one to code against.
 
         Args:
             task: Task description. Accepts a ``str``, a ``Message``, or a
@@ -1436,7 +1477,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
             **kwargs: Additional arguments
 
         Yields:
-            Response tokens (str)
+            str: Successive text-delta chunks (see the streaming contract above).
         """
         # Accept str | Message | list[ContentPart]; streaming is text-only, so
         # surface a clear error if media is supplied rather than dropping it.

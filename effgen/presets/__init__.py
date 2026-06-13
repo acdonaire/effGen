@@ -21,6 +21,23 @@ Usage:
 from effgen.presets import media as _media_preset  # noqa: F401
 from effgen.presets import multimodal as _multimodal_preset  # noqa: F401
 from effgen.presets import notify as _notify_preset  # noqa: F401
-from effgen.presets.registry import PRESETS, create_agent, get_preset, list_presets
+from effgen.presets.registry import (
+    PRESETS,
+    UnknownPresetError,
+    _refresh_create_agent_doc,
+    create_agent,
+    get_preset,
+    list_presets,
+)
 
-__all__ = ["create_agent", "get_preset", "list_presets", "PRESETS"]
+# All bundled presets (including the side-effect ones above) are now registered;
+# regenerate create_agent's docstring so it lists every preset (U1-12).
+_refresh_create_agent_doc()
+
+__all__ = [
+    "create_agent",
+    "get_preset",
+    "list_presets",
+    "PRESETS",
+    "UnknownPresetError",
+]

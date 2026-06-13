@@ -201,8 +201,23 @@ def provider_runtime_error(
     redactor = get_redactor()
     cause = redactor.scrub(str(exc)) if str(exc) else exc.__class__.__name__
     head = redactor.scrub(message) if message else f"{provider} {request_type} failed"
+
+    remediation = ctx["remediation"]
+    # On a 404 / model_not_found, append the live "did you mean…/available
+    # now…" hint so the user sees real alternatives instead of a raw provider
+    # 404 — regardless of which adapter path (plain or tool-calling) failed.
+    if ctx["category"] == "not_found" and provider and model:
+        try:
+            from ._catalog import suggest_for_missing
+
+            hint = suggest_for_missing(provider, model)
+            if hint:
+                remediation = remediation + hint
+        except Exception:  # pragma: no cover - suggestion is best-effort
+            pass
+
     err = RuntimeError(
-        f"{head} [{ctx['retry_status']}]: {cause}. {ctx['remediation']}"
+        f"{head} [{ctx['retry_status']}]: {cause}. {remediation}"
     )
     err.error_context = ctx  # type: ignore[attr-defined]
     return err

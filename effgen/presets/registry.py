@@ -198,15 +198,36 @@ def list_presets() -> dict[str, str]:
     return {name: p.description for name, p in PRESETS.items()}
 
 
+class UnknownPresetError(ValueError, KeyError):
+    """Raised when an unknown preset name is requested.
+
+    Subclasses both :class:`ValueError` and :class:`KeyError` so existing
+    ``except KeyError`` / ``except ValueError`` handlers keep working, while the
+    explicit ``__str__`` keeps the message clean (a bare ``KeyError`` would
+    wrap it in repr-quotes and read like an internal bug).
+    """
+
+    def __str__(self) -> str:  # noqa: D105 - clean message, no KeyError quoting
+        return self.args[0] if self.args else ""
+
+
 def get_preset(name: str) -> PresetConfig:
     """Get a preset configuration by name.
 
     Raises:
-        KeyError: If preset name is not found.
+        UnknownPresetError: If the preset name is not found. The error message
+            lists the available presets and a fuzzy "did you mean" suggestion.
+            It subclasses both ``ValueError`` and ``KeyError`` for compatibility.
     """
     if name not in PRESETS:
+        import difflib
+
         available = ", ".join(sorted(PRESETS.keys()))
-        raise KeyError(f"Unknown preset '{name}'. Available presets: {available}")
+        close = difflib.get_close_matches(str(name), list(PRESETS.keys()), n=1, cutoff=0.6)
+        hint = f" Did you mean '{close[0]}'?" if close else ""
+        raise UnknownPresetError(
+            f"Unknown preset '{name}'.{hint} Available presets: {available}."
+        )
     return PRESETS[name]
 
 
@@ -318,9 +339,32 @@ def _instantiate_tools(tool_names: list[str]) -> list:
     return tools
 
 
+def _resolve_default_model(preset: str) -> str:
+    """Resolve a model when the caller omitted one.
+
+    Honours the ``EFFGEN_DEFAULT_MODEL`` environment variable so a user can set
+    a zero-config default once; otherwise raises a clear, actionable error that
+    points at the discovery commands instead of a cryptic ``TypeError``.
+    """
+    import os
+
+    env_default = os.environ.get("EFFGEN_DEFAULT_MODEL", "").strip()
+    if env_default:
+        return env_default
+    raise ValueError(
+        f"create_agent('{preset}') needs a model — there is no built-in default "
+        "(effGen never silently picks a paid cloud model). Pass one explicitly, "
+        "e.g. create_agent('" + preset + "', 'gpt-5-nano') for a cheap cloud "
+        "model or create_agent('" + preset + "', 'Qwen/Qwen2.5-1.5B-Instruct') "
+        "for a local model. Run `effgen models list` to see options or "
+        "`effgen doctor` to check which providers are usable. You can also set "
+        "EFFGEN_DEFAULT_MODEL to choose a default once."
+    )
+
+
 def create_agent(
     preset: str,
-    model: BaseModel | str,
+    model: BaseModel | str | None = None,
     *,
     agent_name: str | None = None,
     extra_tools: list | None = None,
@@ -334,8 +378,13 @@ def create_agent(
     """Create an agent from a named preset.
 
     Args:
-        preset: Preset name (math, research, coding, general, minimal).
-        model: A loaded model instance or a model identifier string.
+        preset: Preset name. Available: {PRESET_LIST}.
+            New to effGen? Start with ``math`` or ``minimal`` (small, fast);
+            ``general`` is the "kitchen sink" with every tool. See
+            ``list_presets()`` for descriptions.
+        model: A loaded model instance or a model identifier string. If omitted,
+            ``EFFGEN_DEFAULT_MODEL`` is used when set, otherwise a clear error
+            tells you how to pick one (effGen never silently picks a paid model).
         agent_name: Optional override for the agent name.
         extra_tools: Additional tool instances to add beyond the preset.
         system_prompt: Override the preset's system prompt.
@@ -349,11 +398,15 @@ def create_agent(
 
     Example:
         >>> from effgen.presets import create_agent
-        >>> from effgen import load_model
-        >>> model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-        >>> agent = create_agent("math", model)
+        >>> # cheap cloud model:
+        >>> agent = create_agent("math", "gpt-5-nano")
         >>> result = agent.run("What is 12 * 12?")
+        >>> # or a local small model:
+        >>> agent = create_agent("math", "Qwen/Qwen2.5-1.5B-Instruct")
     """
+    if model is None:
+        model = _resolve_default_model(preset)
+
     cfg = get_preset(preset)
 
     tools = _instantiate_tools(cfg.tool_names)
@@ -416,3 +469,35 @@ def create_agent(
     )
 
     return Agent(agent_config)
+
+
+# Keep the template (with the ``{PRESET_LIST}`` placeholder) so the docstring can
+# be regenerated from the registry whenever the set of presets changes — the
+# bundled extra presets (media/multimodal/notify) register by side-effect on
+# import, which can happen after this module finishes (see presets/__init__.py).
+_CREATE_AGENT_DOC_TEMPLATE = create_agent.__doc__ or ""
+
+
+def _refresh_create_agent_doc() -> None:
+    """Regenerate ``create_agent``'s preset list from the live registry (U1-12).
+
+    Idempotent and safe to call repeatedly; the preset list can never drift from
+    the actual presets. Called once here and again after the bundled extra
+    presets are imported.
+    """
+    if _CREATE_AGENT_DOC_TEMPLATE:
+        create_agent.__doc__ = _CREATE_AGENT_DOC_TEMPLATE.replace(
+            "{PRESET_LIST}", ", ".join(sorted(PRESETS.keys()))
+        )
+
+
+# Best-effort: register the bundled extra presets so a *direct* import of this
+# module (bypassing effgen.presets) still sees all of them. When imported via
+# effgen.presets, __init__ re-runs the refresh after its own side-effect imports.
+for _extra in ("media", "multimodal", "notify"):
+    try:  # pragma: no cover - defensive; the modules ship with the package
+        __import__(f"effgen.presets.{_extra}")
+    except Exception:  # noqa: BLE001
+        pass
+
+_refresh_create_agent_doc()

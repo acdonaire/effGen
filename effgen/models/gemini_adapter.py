@@ -832,8 +832,19 @@ class GeminiAdapter(FunctionCallingModel):
                 or "permission_denied" in lowered
             ):
                 raise ModelAuthError("gemini", self.model_name, msg) from exc
-            if "404" in msg or "model not found" in lowered:
-                raise ModelNotFoundError("gemini", self.model_name, msg) from exc
+            if (
+                "404" in msg
+                or "model not found" in lowered
+                or "is not found" in lowered
+                or "not_found" in lowered
+            ):
+                from effgen.models._catalog import suggest_for_missing
+
+                raise ModelNotFoundError(
+                    "gemini",
+                    self.model_name,
+                    msg + suggest_for_missing("gemini", self.model_name),
+                ) from exc
             # A generic 400 INVALID_ARGUMENT is a malformed/unsupported request
             # (e.g. bad schema, or combining google_search with function tools),
             # NOT an auth failure — classify it honestly so retries don't fire.

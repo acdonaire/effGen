@@ -13,14 +13,36 @@ For GPU support with vLLM:
 pip install effgen[vllm]
 ```
 
-## Your First Agent
+## Hello, agent (copy-paste)
+
+The shortest path is a preset plus a model id. Pick **one** model line:
+
+```python
+from effgen.presets import create_agent
+
+# (a) cheap cloud model — needs OPENAI_API_KEY in your environment
+agent = create_agent("math", "gpt-5-nano")
+
+# (b) or a local small model — downloads once, runs on CPU/GPU, no key needed
+# agent = create_agent("math", "Qwen/Qwen2.5-1.5B-Instruct")
+
+result = agent.run("What is 17% of 250?")
+print(result)          # 42.5   (printing the result shows the answer)
+print(result.text)     # same as result.output / result.content
+```
+
+`print(result)` shows the answer; `result.output` (aliased as `result.text` /
+`result.content`) is the string, and `result.to_dict()` has the full detail
+(tokens, cost, trace).
+
+## Your First Agent (explicit)
 
 ```python
 from effgen import Agent, AgentConfig, load_model
 from effgen.tools.builtin import Calculator
 
 # Load a small language model (runs on a single GPU)
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
+model = load_model("Qwen/Qwen2.5-1.5B-Instruct")
 
 # Create an agent with a calculator tool
 agent = Agent(AgentConfig(
@@ -53,7 +75,11 @@ code_agent = create_agent("coding", model)
 result = code_agent.run("Write a Python script that lists prime numbers under 100")
 ```
 
-Available presets: `math`, `research`, `coding`, `general`, `minimal`
+Available presets: `math`, `minimal`, `coding`, `research`, `rag`, `media`,
+`multimodal`, `notify`, `general`. New to effGen? Start with **`math`** or
+**`minimal`** (small and fast); **`general`** is the "kitchen sink" preset that
+loads every tool — powerful but heavier for a small model to reason over. Run
+`list_presets()` (or `effgen presets`) for the full descriptions.
 
 ## CLI Usage
 
@@ -79,4 +105,5 @@ effgen run "Calculate 10!" --preset math --verbose
 - [Building a Math Agent](building-math-agent.md)
 - [Building a Research Agent](building-research-agent.md)
 - [Custom Tools Guide](custom-tools.md)
+- [API Conventions](../api/conventions.md) — naming, results, streaming, errors
 - [API Reference](../api/reference.md)

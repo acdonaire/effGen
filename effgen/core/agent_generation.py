@@ -362,7 +362,14 @@ class AgentGenerationMixin:
         from ..observability.redact import get_redactor
 
         ec = classify_provider_error(exc)
-        provider = getattr(exc, "provider", None) or self._model_provider(model)
+        # Prefer an explicit .provider, then the structured .error_context the
+        # adapters attach (provider_runtime_error), then the model's own.
+        _ctx = getattr(exc, "error_context", None)
+        provider = (
+            getattr(exc, "provider", None)
+            or (_ctx.get("provider") if isinstance(_ctx, dict) else None)
+            or self._model_provider(model)
+        )
         model_name = (
             getattr(exc, "model_name", None)
             or getattr(model, "model_name", None)

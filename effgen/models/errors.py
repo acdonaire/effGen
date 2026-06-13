@@ -40,7 +40,7 @@ _RETRY_STATUS_BY_CATEGORY: dict[str, str] = {
 # category -> remediation hint (no secrets; safe to log/surface).
 REMEDIATION_BY_CATEGORY: dict[str, str] = {
     "auth": "Check the provider API key (present, correct, not expired, and has access to this model).",
-    "not_found": "Model id not found — run `effgen models refresh` and verify the id/provider prefix.",
+    "not_found": "Model id not found — run `effgen models list` to see ids, `effgen models refresh` to update the catalog, and verify the id/provider prefix.",
     "rate_limited": "Rate limited — lower concurrency or configure a rate limit; the client backs off and retries.",
     "timeout": "Request timed out — increase the adapter timeout or retry.",
     "transient": "Transient provider error — retry shortly; check the provider status page if it persists.",

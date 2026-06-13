@@ -94,6 +94,7 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "FinanceDomain": ("effgen.domains.presets", "FinanceDomain"),
     "FireworksAdapter": ("effgen.models.fireworks_adapter", "FireworksAdapter"),
     "FirstAvailablePolicy": ("effgen.models.routing.first_available", "FirstAvailablePolicy"),
+    "FunctionTool": ("effgen.tools.function_tool", "FunctionTool"),
     "GPUAllocator": ("effgen.gpu.allocator", "GPUAllocator"),
     "GPUMonitor": ("effgen.gpu.monitor", "GPUMonitor"),
     "GeminiAdapter": ("effgen.models.gemini_adapter", "GeminiAdapter"),
@@ -171,6 +172,7 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "TestSuite": ("effgen.eval.suites", "TestSuite"),
     "TextPart": ("effgen.core.messages", "TextPart"),
     "TogetherAdapter": ("effgen.models.together_adapter", "TogetherAdapter"),
+    "Tool": ("effgen.tools.function_tool", "Tool"),
     "ToolCallPart": ("effgen.core.messages", "ToolCallPart"),
     "ToolFallbackChain": ("effgen.tools.fallback", "ToolFallbackChain"),
     "ToolIncompatibleError": ("effgen.models.errors", "ToolIncompatibleError"),
@@ -232,6 +234,7 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "replicate_streaming_models": ("effgen.models.replicate_models", "streaming_models"),
     "replicate_tool_capable_models": ("effgen.models.replicate_models", "tool_capable_models"),
     "to_openai_schema": ("effgen.models.openai_schema", "to_openai_schema"),
+    "tool": ("effgen.tools.function_tool", "tool"),
     "together_available_models": ("effgen.models.together_models", "available_models"),
     "together_chat_models": ("effgen.models.together_models", "chat_models"),
     "together_pricing_table": ("effgen.models.together_models", "pricing_table"),
@@ -425,6 +428,9 @@ __all__ = [
 
     # Tools
     "BaseTool",
+    "tool",
+    "Tool",
+    "FunctionTool",
     "ToolRegistry",
     "get_tool_registry",
 
