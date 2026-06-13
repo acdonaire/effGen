@@ -331,7 +331,7 @@ class DockerSandbox(BaseSandbox):
             'network_disabled': not self.config.allow_network,
             'environment': environment,
             'read_only': not self.config.allow_file_ops,
-            'security_opt': ['no-new-privileges'],
+            'security_opt': ['no-new-privileges:true'],
             'cap_drop': ['ALL'],
             'remove': False,  # We'll remove manually after getting stats
         }

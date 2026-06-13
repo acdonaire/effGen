@@ -122,10 +122,20 @@ def _basic_validate(data: Any, schema: dict[str, Any]) -> tuple[bool, str | None
         if not isinstance(data, dict):
             return False, f"Expected object, got {type(data).__name__}"
         required = schema.get("required", [])
+        # A spec-correct schema gives ``required`` as a list of field names; a
+        # malformed schema may give a string (iterating it char-by-char would
+        # invent bogus "missing field" errors) or another scalar. Coerce a bare
+        # string to a single-name list and ignore other non-iterables.
+        if isinstance(required, str):
+            required = [required]
+        elif not isinstance(required, list | tuple):
+            required = []
         for key in required:
             if key not in data:
                 return False, f"Missing required field: {key}"
         properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
         for key, prop_schema in properties.items():
             if key in data:
                 valid, err = _basic_validate(data[key], prop_schema)
@@ -175,8 +185,23 @@ def extract_json_from_text(text: str) -> str | None:
     if fence_match:
         return _clean_json(fence_match.group(1).strip())
 
-    # Try to find JSON object or array
-    for start_char, end_char in [("{", "}"), ("[", "]")]:
+    # Try to find a JSON object or array. Start from whichever opening bracket
+    # appears *earliest* so that a top-level array of objects (``[{...}]``) is
+    # extracted whole rather than collapsing to its first inner object.
+    brace = text.find("{")
+    bracket = text.find("[")
+    if brace == -1 and bracket == -1:
+        bracket_order: list[tuple[str, str]] = []
+    elif brace == -1:
+        bracket_order = [("[", "]")]
+    elif bracket == -1:
+        bracket_order = [("{", "}")]
+    elif brace < bracket:
+        bracket_order = [("{", "}"), ("[", "]")]
+    else:
+        bracket_order = [("[", "]"), ("{", "}")]
+
+    for start_char, end_char in bracket_order:
         start = text.find(start_char)
         if start == -1:
             continue

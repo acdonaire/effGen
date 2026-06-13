@@ -296,7 +296,6 @@ class DockerSandbox(SandboxBase):
             # Security
             "--network", "none" if not config.network_enabled else "bridge",
             "--cap-drop", "ALL",
-            "--no-new-privileges",
             "--security-opt", "no-new-privileges:true",
             # Resource limits
             "--pids-limit", "100",

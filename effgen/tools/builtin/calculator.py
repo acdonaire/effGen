@@ -308,6 +308,18 @@ class Calculator(BaseTool):
                 if m:
                     raw = m.group(1)
 
+        # Guard against pathological input *before* any regex preprocessing.
+        # A real math expression is never thousands of characters; the
+        # normalization regexes below use ``\d+\.?\d*`` groups whose ambiguity
+        # backtracks catastrophically (ReDoS) on a long unbroken digit run, so
+        # reject oversized input fast with a clear, honest error.
+        _MAX_EXPRESSION_LEN = 1024
+        if len(raw) > _MAX_EXPRESSION_LEN:
+            raise ValueError(
+                f"Expression too long ({len(raw)} chars; limit {_MAX_EXPRESSION_LEN}). "
+                "Provide a concise mathematical expression."
+            )
+
         # Sanitize input - remove common natural language patterns
         expr = raw
 
@@ -325,19 +337,19 @@ class Calculator(BaseTool):
         expr = re.sub(r'perform\s+(addition|subtraction|multiplication|division)\s+', '', expr, flags=re.IGNORECASE)
 
         # Handle function-style syntax: add(x, y) -> x + y
-        expr = re.sub(r'add\s*\(?\s*(\d+\.?\d*)\s*,?\s*(\d+\.?\d*)\s*\)?', r'\1 + \2', expr, flags=re.IGNORECASE)
-        expr = re.sub(r'subtract\s*\(?\s*(\d+\.?\d*)\s*,?\s*(\d+\.?\d*)\s*\)?', r'\1 - \2', expr, flags=re.IGNORECASE)
-        expr = re.sub(r'multiply\s*\(?\s*(\d+\.?\d*)\s*,?\s*(\d+\.?\d*)\s*\)?', r'\1 * \2', expr, flags=re.IGNORECASE)
-        expr = re.sub(r'divide\s*\(?\s*(\d+\.?\d*)\s*,?\s*(\d+\.?\d*)\s*\)?', r'\1 / \2', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'add\s*\(?\s*(\d+(?:\.\d+)?)\s*,?\s*(\d+(?:\.\d+)?)\s*\)?', r'\1 + \2', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'subtract\s*\(?\s*(\d+(?:\.\d+)?)\s*,?\s*(\d+(?:\.\d+)?)\s*\)?', r'\1 - \2', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'multiply\s*\(?\s*(\d+(?:\.\d+)?)\s*,?\s*(\d+(?:\.\d+)?)\s*\)?', r'\1 * \2', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'divide\s*\(?\s*(\d+(?:\.\d+)?)\s*,?\s*(\d+(?:\.\d+)?)\s*\)?', r'\1 / \2', expr, flags=re.IGNORECASE)
 
         # Handle "add x y" without parentheses
-        expr = re.sub(r'\b(add|sum)\s+(\d+\.?\d*)\s+(\d+\.?\d*)\b', r'\2 + \3', expr, flags=re.IGNORECASE)
-        expr = re.sub(r'\b(subtract|minus)\s+(\d+\.?\d*)\s+(\d+\.?\d*)\b', r'\2 - \3', expr, flags=re.IGNORECASE)
-        expr = re.sub(r'\b(multiply|times)\s+(\d+\.?\d*)\s+(\d+\.?\d*)\b', r'\2 * \3', expr, flags=re.IGNORECASE)
-        expr = re.sub(r'\b(divide)\s+(\d+\.?\d*)\s+(\d+\.?\d*)\b', r'\2 / \3', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'\b(add|sum)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\b', r'\2 + \3', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'\b(subtract|minus)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\b', r'\2 - \3', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'\b(multiply|times)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\b', r'\2 * \3', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'\b(divide)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\b', r'\2 / \3', expr, flags=re.IGNORECASE)
 
         # Replace ^ with ** for exponentiation (handle BitXor issue)
-        expr = re.sub(r'(\d+\.?\d*)\s*\^\s*(\d+\.?\d*)', r'\1 ** \2', expr)
+        expr = re.sub(r'(\d+(?:\.\d+)?)\s*\^\s*(\d+(?:\.\d+)?)', r'\1 ** \2', expr)
 
         # Replace "to the power of" with **
         expr = re.sub(r'\s+to\s+the\s+power\s+of\s+', '**', expr, flags=re.IGNORECASE)

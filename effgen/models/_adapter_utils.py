@@ -144,6 +144,11 @@ def normalize_finish_reason(raw: Any, *, default: str = FINISH_STOP) -> str:
     if "." in key:
         key = key.rsplit(".", 1)[-1]
 
+    # A value that was only punctuation/prefix (e.g. "." or "stopreason.")
+    # collapses to empty here; never surface an empty finish reason.
+    if not key:
+        return default
+
     return _FINISH_REASON_MAP.get(key, key)
 
 

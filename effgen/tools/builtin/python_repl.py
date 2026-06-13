@@ -300,13 +300,18 @@ class PythonREPL(BaseTool):
             worker.kill()
 
     def _request(
-        self, session_id: str, payload: dict[str, Any], _attempt: int = 0
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+        _attempt: int = 0,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Send one request to a session worker and read its response.
 
         Enforces the wall-clock timeout: if the worker does not answer within
-        ``self._timeout`` seconds it is hard-killed (process group) and a typed
-        timeout failure is returned. Runs blocking I/O — call via a thread.
+        ``timeout`` (or ``self._timeout`` when no per-call override is given)
+        seconds it is hard-killed (process group) and a typed timeout failure is
+        returned. Runs blocking I/O — call via a thread.
 
         If a *reused* worker has exited between requests before producing any
         output, the request is transparently retried once on a fresh worker —
@@ -329,14 +334,15 @@ class PythonREPL(BaseTool):
                 except Exception as e:
                     return self._failure(f"REPL worker unavailable: {e}")
 
-            deadline = time.monotonic() + self._timeout
+            effective_timeout = timeout if (timeout is not None and timeout > 0) else self._timeout
+            deadline = time.monotonic() + effective_timeout
             buf = b""
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self._kill_worker(session_id)
                     return self._failure(
-                        f"Execution timed out after {self._timeout}s "
+                        f"Execution timed out after {effective_timeout:g}s "
                         "(worker process killed)",
                         timeout=True,
                     )
@@ -357,7 +363,9 @@ class PythonREPL(BaseTool):
                     # output and we haven't retried yet, respawn and retry once
                     # (safe: nothing was emitted for this request).
                     if buf == b"" and _attempt == 0:
-                        return self._request(session_id, payload, _attempt=1)
+                        return self._request(
+                            session_id, payload, _attempt=1, timeout=timeout
+                        )
                     return self._failure("REPL worker exited unexpectedly")
                 buf += chunk
                 if len(buf) > self._MAX_RESPONSE_BYTES:
@@ -478,6 +486,7 @@ class PythonREPL(BaseTool):
         reset_session: bool = False,
         return_variables: bool = False,
         restricted_mode: bool = True,
+        timeout: float | int | None = None,
         **kwargs,
     ) -> dict[str, Any]:
         """
@@ -489,6 +498,9 @@ class PythonREPL(BaseTool):
             reset_session: Whether to reset session state before execution
             return_variables: Whether to include all variables in response
             restricted_mode: Whether to use restricted builtins
+            timeout: Per-call wall-clock cap (seconds) overriding the instance
+                default for this execution. A runaway block is hard-killed at
+                this deadline; values <= 0 or ``None`` fall back to the default.
 
         Returns:
             Dict containing result, stdout, stderr, error, and optionally variables
@@ -518,9 +530,22 @@ class PythonREPL(BaseTool):
             "max_output": self._max_output,
         }
 
+        # Resolve the effective wall-clock cap: an explicit positive per-call
+        # ``timeout`` overrides the instance default for this execution only.
+        effective_timeout: float | None = None
+        if timeout is not None:
+            try:
+                t = float(timeout)
+                if t > 0:
+                    effective_timeout = t
+            except (TypeError, ValueError):
+                effective_timeout = None
+
         # The worker runs user code; do the blocking request off the event loop
         # so a slow (or killed-on-timeout) worker never stalls the caller.
-        response = await asyncio.to_thread(self._request, session_id, payload)
+        response = await asyncio.to_thread(
+            self._request, session_id, payload, timeout=effective_timeout
+        )
 
         if response.get("error"):
             logger.debug("REPL execution error: %s", response["error"])
