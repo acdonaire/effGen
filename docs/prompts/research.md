@@ -126,7 +126,7 @@ Test fixtures live in `tests/prompts/fixtures/research/`:
 Run golden + live eval:
 
 ```bash
-effgen prompts eval --domain research --live --model llama3.1-8b
+effgen prompts eval --domain research --live --model gpt-oss-120b
 ```
 
 The `paper_summary.v1` structured-output check asserts that the live output is

@@ -48,9 +48,9 @@ model = load_model("gemini-2.0-flash", provider="gemini")
 agent = create_agent("multimodal", model)
 
 # Image Q&A
-img = image_from("https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/240px-PNG_transparency_demonstration_1.png")
+img = image_from("https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg")
 msg = Message(role=Role.USER, content=[img, "What objects are visible in this image?"])
-result = agent.run_message(msg)
+result = agent.run(msg)
 print(result.output)
 ```
 

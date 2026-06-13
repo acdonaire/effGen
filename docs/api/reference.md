@@ -220,8 +220,8 @@ report = tracker.compare("math", new_results, version="0.2.1")
 ## Model Router
 
 ```python
-from effgen.models.router import ModelRouter
-from effgen.models.capabilities import MODEL_CAPABILITIES, estimate_complexity
+from effgen.models.router import ModelRouter, estimate_complexity
+from effgen.models.capabilities import MODEL_CAPABILITIES
 
 # Auto-routing
 config = AgentConfig(
@@ -231,8 +231,8 @@ config = AgentConfig(
 )
 
 # Complexity estimation
-level = estimate_complexity("Write a recursive merge sort in Python")
-# → ComplexityLevel.COMPLEX
+estimate = estimate_complexity("Write a recursive merge sort in Python")
+print(estimate.level)  # → ComplexityLevel.COMPLEX
 ```
 
 ---
@@ -284,8 +284,7 @@ from effgen.utils.structured_logging import StructuredLogger
 logger = StructuredLogger("my_app")
 
 # Prometheus metrics
-from effgen.utils.prometheus_metrics import get_metrics
-metrics = get_metrics()
+from effgen.utils.prometheus_metrics import metrics
 print(metrics.export())
 ```
 

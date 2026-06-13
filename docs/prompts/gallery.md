@@ -1,6 +1,6 @@
 # Prompt Library Gallery
 
-All 31 templates shipped with effGen v0.2.7, grouped by domain. Regenerate this file with:
+All 31 prompts in the curated library, grouped by domain. Regenerate this file with:
 
 ```bash
 effgen prompts list --format markdown
@@ -126,7 +126,7 @@ effgen prompts show data.sql_from_nl.v1
 effgen prompts eval
 
 # Live evaluation
-effgen prompts eval --domain medical --live --model llama3.1-8b
+effgen prompts eval --domain medical --live --model gpt-oss-120b
 
 # Interactive playground
 effgen prompts playground

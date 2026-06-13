@@ -251,8 +251,8 @@ from effgen.models.latency_tracker import LatencyTracker
 
 tracker = LatencyTracker.get()
 # After a few calls:
-print(tracker.p50("cerebras", "llama3.1-8b"))     # total p50
-print(tracker.p50_ttft("cerebras", "llama3.1-8b")) # TTFT p50 (streaming)
+print(tracker.p50("cerebras", "gpt-oss-120b"))     # total p50
+print(tracker.p50_ttft("cerebras", "gpt-oss-120b")) # TTFT p50 (streaming)
 print(tracker.all_stats())                          # all tracked pairs
 ```
 
@@ -320,7 +320,7 @@ def call_provider(pair):
     if pair.provider == "groq":
         adapter = GroqAdapter(pair.model_id, max_retries=0)
     elif pair.provider == "cerebras":
-        adapter = CerebrasAdapter("llama3.1-8b", max_retries=0)
+        adapter = CerebrasAdapter("gpt-oss-120b", max_retries=0)
     else:
         raise RuntimeError(f"Unsupported provider: {pair.provider}")
     adapter.load()
@@ -334,7 +334,7 @@ result = router.route_and_execute(ctx, call_provider)
 
 for ev in events:
     print(ev.as_dict())
-    # {"from": "groq/llama-3.1-8b-instant", "to": "cerebras/llama3.1-8b",
+    # {"from": "groq/llama-3.1-8b-instant", "to": "cerebras/gpt-oss-120b",
     #  "reason": "rate_limited", "hop": 1, ...}
 ```
 

@@ -29,7 +29,7 @@ from effgen.observability import get_logger, configure_logging
 
 configure_logging(level="INFO")  # call once at startup
 log = get_logger(__name__)
-log.event("model.call.started", provider="cerebras", model="llama3.1-8b", cached_tokens=0)
+log.event("model.call.started", provider="cerebras", model="gpt-oss-120b", cached_tokens=0)
 # → {"ts": "...", "level": "INFO", "event": "model.call.started", "attributes": {...}, ...}
 ```
 
@@ -42,7 +42,7 @@ reaches the log file. See [logging.md](logging.md).
 from effgen.observability import record_model_call, export_metrics
 
 # Histograms auto-record on agent/model/tool calls. You can also record directly:
-record_model_call(provider="cerebras", model="llama3.1-8b", outcome="ok", latency=0.42)
+record_model_call(provider="cerebras", model="gpt-oss-120b", outcome="ok", latency=0.42)
 print(export_metrics())  # Prometheus text format
 ```
 

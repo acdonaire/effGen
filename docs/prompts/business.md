@@ -128,7 +128,7 @@ rendered = prompt.render(
 ## Eval
 
 ```bash
-effgen prompts eval --domain business --live --model llama3.1-8b
+effgen prompts eval --domain business --live --model gpt-oss-120b
 ```
 
 Key assertions:

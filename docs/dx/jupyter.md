@@ -43,7 +43,7 @@ Send a single message to an effGen model and display the response inline.
 %effgen_chat Tell me a one-sentence joke about gradient descent
 
 # Use a specific model
-%effgen_chat --model cerebras:qwen-3-235b-a22b-instruct-2507 Explain attention in transformers
+%effgen_chat --model cerebras:zai-glm-4.7 Explain attention in transformers
 
 # Route through a running effGen server
 %effgen_chat --server http://localhost:8080 What is 42 * 7?
@@ -73,7 +73,7 @@ Return type-annotated code with a docstring.
 ```
 
 ```python
-%%effgen_agent --model cerebras:qwen-3-235b-a22b-instruct-2507
+%%effgen_agent --model cerebras:zai-glm-4.7
 Search Wikipedia for "mixture of experts" and summarize the key ideas.
 ```
 
@@ -86,7 +86,7 @@ When `[preset]` names a built-in preset (`math`, `research`, `coding`, `general`
 
 **Output:** Rendered Markdown with the agent's final answer and, if tools were used, a trace listing each tool call with its inputs and outputs.
 
-> **Note on context windows.** Large presets such as `general` enable many tools, whose descriptions can exceed the context window of small models (e.g. the free-tier `cerebras:llama3.1-8b` has an 8K window). When that happens the magic prints a clear hint suggesting a smaller preset (e.g. `math`) or a larger-context model (e.g. `--model cerebras:qwen-3-235b-a22b-instruct-2507`) instead of a raw provider error.
+> **Note on context windows.** Large presets such as `general` enable many tools, whose descriptions can exceed the context window of small models (e.g. a local model with a 4K–8K window). When that happens the magic prints a clear hint suggesting a smaller preset (e.g. `math`) or a larger-context model instead of a raw provider error.
 
 ---
 
@@ -115,7 +115,7 @@ Snapshot and display the current Prometheus counters registered by the effGen fr
 
 | Environment variable | Default | Description |
 |---------------------|---------|-------------|
-| `EFFGEN_JUPYTER_MODEL` | `cerebras:llama3.1-8b` | Default model for all magics |
+| `EFFGEN_JUPYTER_MODEL` | `cerebras:gpt-oss-120b` | Default model for all magics |
 | `EFFGEN_JUPYTER_SERVER_URL` | *(unset)* | If set, `%effgen_chat` routes through this server instead of running in-process |
 
 These can also be set per-cell using `--model` / `--server` flags.

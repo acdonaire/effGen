@@ -1,8 +1,9 @@
 # Cerebras Backend
 
 effGen supports [Cerebras Cloud](https://inference.cerebras.ai/) as a hosted
-inference backend via `CerebrasAdapter`.  All four free-tier models are
-registered, with automatic rate-limit enforcement built in.
+inference backend via `CerebrasAdapter`.  The models the live API currently
+serves are registered, with automatic rate-limit enforcement built in. Run
+`effgen models refresh --provider cerebras` to re-sync the catalog if it drifts.
 
 ## Setup
 
@@ -22,7 +23,7 @@ export CEREBRAS_API_KEY="your-key-here"
 ```python
 from effgen import CerebrasAdapter
 
-adapter = CerebrasAdapter(model_name="llama3.1-8b")
+adapter = CerebrasAdapter(model_name="gpt-oss-120b")
 adapter.load()
 
 result = adapter.generate("What is 7 * 8?")
@@ -37,7 +38,7 @@ adapter.unload()
 ```python
 from effgen.models import load_model
 
-model = load_model("llama3.1-8b", provider="cerebras")
+model = load_model("gpt-oss-120b", provider="cerebras")
 print(model.generate("Hello!").text)
 model.unload()
 ```
@@ -49,7 +50,7 @@ import asyncio
 from effgen import CerebrasAdapter
 
 async def main():
-    adapter = CerebrasAdapter(model_name="llama3.1-8b")
+    adapter = CerebrasAdapter(model_name="gpt-oss-120b")
     adapter.load()
     result = await adapter.async_generate("Explain quantum entanglement briefly.")
     print(result.text)
@@ -60,29 +61,25 @@ asyncio.run(main())
 
 ## Supported models
 
-Values fetched from Cerebras docs on 2026-04-24.  Free-tier context /
-max-output shown first; paid-tier values in parentheses.
+The catalog tracks the models the live API currently serves. Use
+`effgen models list --provider cerebras` (or `available_models()` in code) for
+the authoritative, up-to-date list; the snapshot below is a point-in-time view.
 
-| Model | Context (free / paid) | Max output (free / paid) | RPM | RPH | RPD | TPM | Free-tier callable |
-|-------|-----------------------|--------------------------|-----|-----|-----|-----|--------------------|
-| `llama3.1-8b` | 8k / 32k | 8k / 8k | 30 | 900 | 14 400 | 60 000 | ✓ |
-| `qwen-3-235b-a22b-instruct-2507` | 65k / 131k | 32k / 40k | 30 | 900 | 14 400 | 60 000 | ✓ |
-| `gpt-oss-120b` | 65k / 131k | 32k / 40k | 30 | 900 | 14 400 | 64 000 | ✗ (restricted) |
-| `zai-glm-4.7` | 64k / 131k | 40k / 40k | 10 | 100 | 100 | 60 000 | ✗ (restricted) |
+| Model | Max output | RPM | RPH | RPD | TPM | Free-tier callable |
+|-------|------------|-----|-----|-----|-----|--------------------|
+| `gpt-oss-120b` | 32k | 30 | 900 | 14 400 | 64 000 | ✓ |
+| `zai-glm-4.7` | 40k | 10 | 100 | 100 | 60 000 | ✓ |
 
-`gpt-oss-120b` and `zai-glm-4.7` are listed by the API (and work on paid
-tier) but Cerebras has "temporarily reduced free-tier rate limits" on them
-due to high demand — free-tier keys typically receive a `404 model_not_found`
-response. `llama3.1-8b` and `qwen-3-235b-a22b-instruct-2507` are reliably
-callable on the free tier today.
-
-**Deprecation notice:** `llama3.1-8b` and `qwen-3-235b-a22b-instruct-2507`
-are scheduled for deprecation on **2026-05-27** per Cerebras docs.
+Cerebras rotates its hosted line-up frequently. The previously-listed
+`llama3.1-8b` and `qwen-3-235b-a22b-instruct-2507` have been retired and now
+return `404 model_not_found`; effGen suggests the nearest live alternative when
+you request a model that is no longer served. If your catalog looks stale, run
+`effgen models refresh --provider cerebras`.
 
 ### Paid-tier limits
 
 The Pay-as-You-Go tier has no hourly/daily caps and significantly higher
-per-minute limits (e.g. `llama3.1-8b` is 2M TPM / 2K RPM on paid tier).
+per-minute limits than the free tier.
 The effGen `RateLimitCoordinator` is initialised with free-tier limits by
 default — construct `CerebrasAdapter(model_name=..., enable_rate_limiting=False)`
 or pass a custom `RateLimitCoordinator` if you're on the paid tier.
@@ -92,11 +89,11 @@ or pass a custom `RateLimitCoordinator` if you're on the paid tier.
 ```python
 from effgen.models.cerebras_models import available_models, free_tier_models, model_info
 
-print(available_models())          # all 4 models
+print(available_models())          # all 2 models
 print(free_tier_models())          # models accessible on the free tier
 
-info = model_info("llama3.1-8b")
-print(info["rpm"], info["tpm"])    # 30, 60000
+info = model_info("gpt-oss-120b")
+print(info["rpm"], info["tpm"])    # 30, 64000
 ```
 
 ## Rate-limit coordinator
@@ -110,7 +107,7 @@ When you call `generate()` or `async_generate()`, the coordinator:
 3. Records the actual tokens used after each call.
 
 ```python
-adapter = CerebrasAdapter(model_name="llama3.1-8b")
+adapter = CerebrasAdapter(model_name="gpt-oss-120b")
 adapter.load()
 
 result = adapter.generate("Hello!")
@@ -124,7 +121,7 @@ print(status["total_throttled"])   # number of requests that were delayed
 To disable rate limiting (e.g., in tests or when managing limits externally):
 
 ```python
-adapter = CerebrasAdapter(model_name="llama3.1-8b", enable_rate_limiting=False)
+adapter = CerebrasAdapter(model_name="gpt-oss-120b", enable_rate_limiting=False)
 ```
 
 ### RateLimitExceeded
@@ -148,7 +145,7 @@ from effgen.core.agent import Agent, AgentConfig
 from effgen.models.cerebras_adapter import CerebrasAdapter
 from effgen.tools.builtin import Calculator, DateTimeTool
 
-adapter = CerebrasAdapter(model_name="llama3.1-8b")
+adapter = CerebrasAdapter(model_name="gpt-oss-120b")
 adapter.load()
 
 config = AgentConfig(
@@ -168,8 +165,15 @@ with Agent(config) as agent:
 
 ## Streaming
 
-Streaming (`generate_stream`) is not yet available.
-Calling it raises `NotImplementedError`.
+`generate_stream()` yields tokens incrementally as they arrive:
+
+```python
+adapter = CerebrasAdapter(model_name="gpt-oss-120b")
+adapter.load()
+for chunk in adapter.generate_stream("Explain streaming in one sentence."):
+    print(chunk, end="", flush=True)
+adapter.unload()
+```
 
 ## Environment variables
 

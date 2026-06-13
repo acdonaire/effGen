@@ -146,14 +146,13 @@ from effgen import Agent, AgentConfig
 from effgen.tools.builtin.code_executor import CodeExecutor
 
 agent = Agent(
-    config=AgentConfig(provider="openai", model="gpt-4o-mini"),
-    tools=[CodeExecutor()],
+    config=AgentConfig(provider="openai", model="gpt-4o-mini", tools=[CodeExecutor()]),
 )
 
-response = await agent.run(
+response = agent.run(
     "Write and run a Python script that computes the first 10 prime numbers."
 )
-print(response.content)
+print(response.output)
 ```
 
 ### Direct Sandbox Usage

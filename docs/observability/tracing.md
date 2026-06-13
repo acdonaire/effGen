@@ -97,7 +97,7 @@ with start_agent_run(preset="my_agent", task="hello", run_id="abc") as span:
     span.set_attribute(AgentAttrs.RUN_ID, "abc")
 
     with start_agent_iteration(preset="my_agent", iteration=1):
-        with start_model_call(provider="cerebras", model="llama3.1-8b") as mspan:
+        with start_model_call(provider="cerebras", model="gpt-oss-120b") as mspan:
             # ... call model ...
             mspan.set_attribute(ModelAttrs.INPUT_TOKENS, 400)
             mspan.set_attribute(ModelAttrs.OUTPUT_TOKENS, 60)

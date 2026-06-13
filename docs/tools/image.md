@@ -252,7 +252,7 @@ except NoVisionProviderAvailable as exc:
 from effgen.presets import create_agent
 from effgen import load_model
 
-model = load_model("llama3.1-8b", provider="cerebras")
+model = load_model("gpt-oss-120b", provider="cerebras")
 agent = create_agent("general", model)
 result = agent.run("What are the dimensions of /path/to/image.jpg?")
 ```

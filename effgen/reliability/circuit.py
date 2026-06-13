@@ -133,6 +133,15 @@ class CircuitBreaker:
         with self._lock:
             return self._check_and_advance()
 
+    @property
+    def consecutive_failures(self) -> int:
+        """Number of consecutive failures recorded since the last success.
+
+        Read-only view of the value also reported under ``stats()``.
+        """
+        with self._lock:
+            return self._consecutive_failures
+
     def is_call_permitted(self) -> bool:
         """Return True if a call should be attempted.
 

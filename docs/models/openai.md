@@ -115,15 +115,13 @@ adapter.unload()
 ```python
 from effgen import Agent, AgentConfig
 from effgen.models.openai_adapter import OpenAIAdapter
-from effgen.tools.builtin.calculator import CalculatorTool
+from effgen.tools.builtin.calculator import Calculator
 
 model = OpenAIAdapter("gpt-5.4-nano")
 model.load()
 
 agent = Agent(
-    config=AgentConfig(name="math-agent"),
-    model=model,
-    tools=[CalculatorTool()],
+    config=AgentConfig(name="math-agent", model=model, tools=[Calculator()]),
 )
 result = agent.run("What is 17 * 23 + sqrt(144)?")
 print(result.output)

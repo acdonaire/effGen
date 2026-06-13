@@ -65,9 +65,9 @@ Set max_papers = 10
 │ ...                                             │
 ╰─────────────────────────────────────────────────╯
 
-[research.literature_review.v1.zero_shot]> run --model llama3.1-8b
-Running with model: llama3.1-8b ...
-╭── Model Output (llama3.1-8b) ──────────────────╮
+[research.literature_review.v1.zero_shot]> run --model gpt-oss-120b
+Running with model: gpt-oss-120b ...
+╭── Model Output (gpt-oss-120b) ──────────────────╮
 │ **Overview**                                   │
 │ Diffusion models have emerged as ...           │
 ╰─────────────────────────────────────────────────╯
@@ -133,7 +133,7 @@ Example:
 
 ```bash
 effgen prompts run coding.docstring_fill.v1 \
-  --model llama3.1-8b \
+  --model gpt-oss-120b \
   --input inputs/coding.json
 ```
 
@@ -154,7 +154,7 @@ Sessions are stored as plain JSON:
   "render_history": ["...rendered text..."],
   "run_history": [
     {
-      "model": "llama3.1-8b",
+      "model": "gpt-oss-120b",
       "rendered": "...rendered text...",
       "output": "...model response...",
       "timestamp": "2026-05-19T12:00:00Z"
@@ -191,10 +191,10 @@ cmd_render("research.literature_review.v1.zero_shot", {
 })
 
 # Render + run
-cmd_run("coding.docstring_fill.v1", {}, model="llama3.1-8b")
+cmd_run("coding.docstring_fill.v1", {}, model="gpt-oss-120b")
 
 # Embed REPL in your script
-repl = PlaygroundREPL(default_model="llama3.1-8b")
+repl = PlaygroundREPL(default_model="gpt-oss-120b")
 repl.run()
 ```
 

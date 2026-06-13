@@ -78,7 +78,7 @@ alert = Alert(
     summary="Error rate exceeded 5% for 10 minutes",
     value=0.08,
     threshold=0.05,
-    labels={"provider": "cerebras", "model": "llama3.1-8b"},
+    labels={"provider": "cerebras", "model": "gpt-oss-120b"},
 )
 result = hook.fire(alert)
 # {"ok": True, "webhook": "https://hooks.slack.com/***", "status": 200, ...}

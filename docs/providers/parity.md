@@ -51,7 +51,7 @@ from effgen.tools.builtin import Calculator
 
 # Cerebras
 from effgen.models.cerebras_adapter import CerebrasAdapter
-model = CerebrasAdapter("llama3.1-8b")
+model = CerebrasAdapter("gpt-oss-120b")
 
 # Or Groq
 # from effgen.models.groq_adapter import GroqAdapter
@@ -140,7 +140,7 @@ For the canonical parity task, these models were validated:
 
 | Provider | Model | Notes |
 |----------|-------|-------|
-| Cerebras | `llama3.1-8b` | Fast, free; deprecating 2026-05-27 |
+| Cerebras | `gpt-oss-120b` | Fast, free-tier eligible |
 | Groq | `llama-3.3-70b-versatile` | Best quality/speed on free tier |
 | Together | `meta-llama/Meta-Llama-3-8B-Instruct-Lite` | Free, fast |
 | Fireworks | `accounts/fireworks/models/kimi-k2p5` | Tool-capable serverless model |

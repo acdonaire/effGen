@@ -14,8 +14,8 @@ configure_logging(level="INFO")
 
 # In any module
 log = get_logger(__name__)
-log.event("model.call.started", model="llama3.1-8b", cached_tokens=0)
-log.event("model.call.done",    model="llama3.1-8b", latency_ms=340)
+log.event("model.call.started", model="gpt-oss-120b", cached_tokens=0)
+log.event("model.call.done",    model="gpt-oss-120b", latency_ms=340)
 ```
 
 ---
@@ -45,7 +45,7 @@ Every line is a single JSON object on stdout / stderr:
 
 ```jsonl
 {"ts":"2026-05-22T05:53:39.025+00:00","level":"INFO","module":"effgen.core.agent","event":"agent.run.started","attributes":{"agent":"my_agent","task":"What is 2+2?","mode":"auto","run_id":"abc123"}}
-{"ts":"2026-05-22T05:53:39.436+00:00","level":"INFO","module":"effgen.models.cerebras_adapter","event":"model.call.done","attributes":{"provider":"cerebras","model":"llama3.1-8b","prompt_tokens":60,"completion_tokens":2,"cost_usd":0.0}}
+{"ts":"2026-05-22T05:53:39.436+00:00","level":"INFO","module":"effgen.models.cerebras_adapter","event":"model.call.done","attributes":{"provider":"cerebras","model":"gpt-oss-120b","prompt_tokens":60,"completion_tokens":2,"cost_usd":0.0}}
 {"ts":"2026-05-22T05:53:39.437+00:00","level":"INFO","module":"effgen.core.agent","event":"agent.run.completed","attributes":{"agent":"my_agent","run_id":"abc123","latency_ms":252.4,"tokens":2,"tool_calls":0,"success":true}}
 ```
 
@@ -62,7 +62,7 @@ Return a cached `EffGenLogger` for *name*.  Pass `__name__` from the calling mod
 Emit a structured log line.
 
 ```python
-log.event("model.call.started", model="llama3.1-8b", cached_tokens=0)
+log.event("model.call.started", model="gpt-oss-120b", cached_tokens=0)
 ```
 
 ### Level helpers
@@ -77,7 +77,7 @@ log.error("hard fault", key="value")
 ### Domain helpers
 
 ```python
-log.model_event("call.done", provider="cerebras", model="llama3.1-8b")
+log.model_event("call.done", provider="cerebras", model="gpt-oss-120b")
 log.tool_event("executed",   tool="web_search", latency_ms=123)
 log.agent_event("run.started", agent="my_agent", task="hello")
 log.router_event("decision",   policy="cost", selected_provider="cerebras")

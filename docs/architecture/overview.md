@@ -77,7 +77,7 @@ Additional model infrastructure:
 
 - `base_tool.py`: `BaseTool` abstract class with metadata and validation
 - `registry.py`: `ToolRegistry` for discovery, lazy loading, dependency management
-- `builtin/`: 31 built-in tools (core, finance, data science, DevOps, knowledge, communication)
+- `builtin/`: 66 built-in tools (core, finance, data science, DevOps, knowledge, communication)
 - `plugin.py`: External plugin loading via entry points
 - `protocols/`: MCP, A2A, ACP protocol implementations
 

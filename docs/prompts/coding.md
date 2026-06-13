@@ -172,13 +172,13 @@ effgen prompts eval --domain coding
 **Live eval (requires `CEREBRAS_API_KEY`):**
 
 ```bash
-effgen prompts eval --domain coding --live --model llama3.1-8b
+effgen prompts eval --domain coding --live --model gpt-oss-120b
 ```
 
 For providers with tight request-per-minute limits, increase or decrease the spacing between live calls:
 
 ```bash
-effgen prompts eval --domain coding --live --model llama3.1-8b --delay 35
+effgen prompts eval --domain coding --live --model gpt-oss-120b --delay 35
 ```
 
 **Key live assertions:**

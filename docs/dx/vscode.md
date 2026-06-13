@@ -42,7 +42,7 @@ Open **Settings** (`Ctrl+,`) and search for `effgen`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `effgen.serverUrl` | `http://localhost:8080` | URL of your running effGen API server |
-| `effgen.defaultModel` | `cerebras:llama3.1-8b` | Default model for the Run code lens |
+| `effgen.defaultModel` | `cerebras:gpt-oss-120b` | Default model for the Run code lens |
 | `effgen.enableCompletion` | `true` | Toggle prompt-template auto-completion |
 | `effgen.enableHover` | `true` | Toggle hover documentation |
 

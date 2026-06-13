@@ -157,7 +157,7 @@ pytest tests/prompts/test_data.py -v
 Run live eval (requires `CEREBRAS_API_KEY`):
 
 ```bash
-effgen prompts eval --domain data --live --model llama3.1-8b
+effgen prompts eval --domain data --live --model gpt-oss-120b
 ```
 
 The live eval for `data.sql_from_nl.v1` validates that the generated JSON contains `sql` and `warnings`, and that the generated SQL parses cleanly with `sqlglot.parse`.

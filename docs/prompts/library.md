@@ -62,7 +62,7 @@ result = ev.eval_golden(p)
 print(result.passed, result.message)
 
 # Live eval (runs prompt through a model, checks expected_shape)
-result = ev.eval_live(p, model="llama3.1-8b")
+result = ev.eval_live(p, model="gpt-oss-120b")
 
 # Batch eval with report table
 report = ev.eval_all_golden(registry.all())
@@ -89,7 +89,7 @@ effgen prompts show research.literature_review.v1
 effgen prompts eval
 
 # Run golden + live eval
-effgen prompts eval --domain research --live --model llama3.1-8b
+effgen prompts eval --domain research --live --model gpt-oss-120b
 
 # Write eval table to file
 effgen prompts eval --output outputs/eval.txt

@@ -50,7 +50,7 @@ Response structure:
   "recent_runs": [
     {
       "ts": "12:00:01",
-      "model": "cerebras:llama3.1-8b",
+      "model": "cerebras:gpt-oss-120b",
       "input_tokens": 120,
       "output_tokens": 340,
       "duration_s": 0.543,
@@ -70,7 +70,7 @@ Trace spans are pushed over SSE at `/dashboard/spans`.  Each event is a JSON obj
 ```json
 {
   "ts": "12:00:01",
-  "name": "effgen.model.call cerebras:llama3.1-8b",
+  "name": "effgen.model.call cerebras:gpt-oss-120b",
   "duration_ms": 543.2,
   "error": null
 }
@@ -102,7 +102,7 @@ To populate the "Recent Agent Runs" panel, call `record_run` from your code:
 from effgen.observability.run_log import record_run
 
 record_run(
-    model="cerebras:qwen-3-235b-a22b-instruct-2507",
+    model="cerebras:zai-glm-4.7",
     input_tokens=250,
     output_tokens=80,
     duration_s=1.12,

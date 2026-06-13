@@ -22,7 +22,7 @@ Measures the wall-clock time from the first byte sent to a model provider to the
 | Label | Values |
 |---|---|
 | `provider` | `cerebras`, `openai`, `gemini`, `groq`, … |
-| `model` | model identifier, e.g. `llama3.1-8b`, `gpt-4o-mini` |
+| `model` | model identifier, e.g. `gpt-oss-120b`, `gpt-4o-mini` |
 | `outcome` | `ok` (success), `error` (exception), `timeout` |
 
 **Recording:**
@@ -33,14 +33,14 @@ import time
 t0 = time.perf_counter()
 try:
     response = model.call(...)
-    record_model_call(provider="cerebras", model="llama3.1-8b",
+    record_model_call(provider="cerebras", model="gpt-oss-120b",
                       outcome="ok", latency=time.perf_counter() - t0)
 except TimeoutError:
-    record_model_call(provider="cerebras", model="llama3.1-8b",
+    record_model_call(provider="cerebras", model="gpt-oss-120b",
                       outcome="timeout", latency=time.perf_counter() - t0)
     raise
 except Exception:
-    record_model_call(provider="cerebras", model="llama3.1-8b",
+    record_model_call(provider="cerebras", model="gpt-oss-120b",
                       outcome="error", latency=time.perf_counter() - t0)
     raise
 ```
@@ -106,7 +106,7 @@ Cumulative token count since process start.
 from effgen.observability.metrics import record_tokens
 record_tokens(
     provider="cerebras",
-    model="llama3.1-8b",
+    model="gpt-oss-120b",
     input_tokens=128,
     output_tokens=64,
     cached_tokens=32,
@@ -129,7 +129,7 @@ Content-Type: text/plain; version=0.0.4; charset=utf-8
 
 # HELP effgen_model_call_latency_seconds Latency of model (LLM) calls in seconds
 # TYPE effgen_model_call_latency_seconds histogram
-effgen_model_call_latency_seconds_bucket{model="llama3.1-8b",outcome="ok",provider="cerebras",le="0.05"} 0
+effgen_model_call_latency_seconds_bucket{model="gpt-oss-120b",outcome="ok",provider="cerebras",le="0.05"} 0
 ...
 ```
 
@@ -158,7 +158,7 @@ from effgen.observability import (
 )
 
 # Record observations inline:
-record_model_call(provider="cerebras", model="llama3.1-8b",
+record_model_call(provider="cerebras", model="gpt-oss-120b",
                   outcome="ok", latency=0.42)
 
 # Export Prometheus text format at any time:

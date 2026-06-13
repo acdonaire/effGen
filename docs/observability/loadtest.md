@@ -15,7 +15,7 @@ effgen loadtest
 effgen loadtest --duration 60 --concurrency 20
 
 # Live run against Cerebras
-effgen loadtest --provider cerebras --model llama3.1-8b --concurrency 5 --duration 60
+effgen loadtest --provider cerebras --model gpt-oss-120b --concurrency 5 --duration 60
 
 # Synthetic scenario, save report to custom path
 effgen loadtest --scenario synthetic --output /tmp/report.json
@@ -37,7 +37,7 @@ Options:
       --think-time SECONDS Think-time between requests per VU (default: 0)
       --request-timeout N  Per-request timeout in seconds (default: 60)
       --provider NAME      Provider for live runs (e.g. cerebras, openai)
-      --model MODEL_ID     Model id for live runs (e.g. llama3.1-8b)
+      --model MODEL_ID     Model id for live runs (e.g. gpt-oss-120b)
   -o, --output PATH        Write the JSON report to PATH (default: stdout only)
 ```
 

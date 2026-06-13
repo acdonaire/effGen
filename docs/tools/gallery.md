@@ -696,7 +696,7 @@ from effgen.tools.builtin.arxiv import ArXivTool
 from effgen.tools.builtin.translate import TranslateTool
 from effgen.tools.builtin.hackernews import HackerNewsTool
 
-model = load_model("llama3.1-8b", provider="cerebras")
+model = load_model("gpt-oss-120b", provider="cerebras")
 agent = Agent(config=AgentConfig(
     name="researcher",
     model=model,
@@ -713,7 +713,7 @@ print(result.output)
 from effgen import load_model
 from effgen.presets import create_agent
 
-model = load_model("llama3.1-8b", provider="cerebras")
+model = load_model("gpt-oss-120b", provider="cerebras")
 
 research_agent = create_agent("research", model)  # ArXiv, PubMed, SemanticScholar, RSS, News, YouTube, Reddit, HN, Wikipedia, WebSearch, PDF, DOCX, Excel
 general_agent  = create_agent("general", model)   # All of the above + OCR, ImageInfo, Weather, Geocode, Maps, Email, Webhooks, Translate, QR, ...

@@ -161,7 +161,7 @@ from effgen.models.cerebras_adapter import CerebrasAdapter
 from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
 from effgen.core.agent import Agent, AgentConfig
 
-adapter = CerebrasAdapter(model_name="llama3.1-8b")
+adapter = CerebrasAdapter(model_name="gpt-oss-120b")
 
 try:
     agent = Agent(AgentConfig(
@@ -171,7 +171,7 @@ try:
     ))
 except ToolIncompatibleError as e:
     print(e)
-    # Tool 'openai_web_search' is incompatible with model 'llama3.1-8b'.
+    # Tool 'openai_web_search' is incompatible with model 'gpt-oss-120b'.
     # OpenAI native tools ... require an OpenAIAdapter.
 ```
 

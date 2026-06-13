@@ -102,7 +102,7 @@ rendered = prompt.render(
 ## Eval
 
 ```bash
-effgen prompts eval --domain creative --live --model llama3.1-8b
+effgen prompts eval --domain creative --live --model gpt-oss-120b
 ```
 
 - `character_bio.v1` — live output validated against JSON schema

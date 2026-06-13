@@ -82,7 +82,7 @@ Schema (`policy.json`):
   {
     "name": "readonly",
     "allowed_tools": [],
-    "allowed_models": ["llama3.1-8b"],
+    "allowed_models": ["gpt-oss-120b"],
     "max_cost_per_day": 1.0,
     "deny_tools": true
   }
@@ -114,7 +114,7 @@ from effgen.server.rbac import Role, reset_registry
 
 custom_roles = [
     Role("developer", allowed_tools=frozenset({"code_exec", "git"})),
-    Role("analyst",   allowed_models=frozenset({"llama3.1-8b"}), max_cost_per_day=20.0),
+    Role("analyst",   allowed_models=frozenset({"gpt-oss-120b"}), max_cost_per_day=20.0),
 ]
 reset_registry(custom_roles)
 ```
