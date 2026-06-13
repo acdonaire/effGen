@@ -34,7 +34,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only on Python 3.10
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 DEFAULT_SBOM_PATH = REPO_ROOT / "sbom.cdx.json"
-OUTPUT_SBOM_PATH = REPO_ROOT / "build_plan" / "v0.2.10" / "outputs" / "1-sbom.cdx.json"
+OUTPUT_SBOM_PATH = REPO_ROOT / "dist" / "sbom.cdx.json"
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +328,7 @@ class TestSBOMGeneration:
         assert len(sbom.get("components", [])) > 0
 
     def test_sbom_output_saved_to_build_outputs(self):
-        """The SBOM output file must exist in build_plan/v0.2.10/outputs/."""
+        """The SBOM output file must exist after generation."""
         if not OUTPUT_SBOM_PATH.exists():
             # Generate it now
             OUTPUT_SBOM_PATH.parent.mkdir(parents=True, exist_ok=True)

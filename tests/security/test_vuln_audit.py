@@ -34,7 +34,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-OUTPUT_DIR = REPO_ROOT / "build_plan" / "v0.2.10" / "outputs"
+OUTPUT_DIR = REPO_ROOT / "dist"
 
 # Packages excluded from the HIGH/CRITICAL gate:
 #   - packaging toolchain (pip, setuptools) — not shipped runtime deps
@@ -158,7 +158,7 @@ class TestNoHighCriticalInCoreEnv:
 
     def test_pip_audit_output_saved(self, tmp_path):
         """pip-audit JSON output can be saved to the outputs directory."""
-        out_file = OUTPUT_DIR / "2-pip-audit.json"
+        out_file = OUTPUT_DIR / "pip-audit.json"
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         subprocess.run(
             [

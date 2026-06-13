@@ -25,7 +25,7 @@ from effgen.errors import InvalidMultimodalContent, MissingSystemDependency
 # Fixtures
 # ---------------------------------------------------------------------------
 
-SAMPLE_VIDEO = Path(__file__).parent.parent.parent / "build_plan/validation/fixtures/sample_video.mp4"
+SAMPLE_VIDEO = Path(__file__).parent.parent.parent / "tests/fixtures/multimodal/sample_video.mp4"
 
 _FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 

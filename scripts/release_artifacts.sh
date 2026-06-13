@@ -9,7 +9,7 @@
 #
 #   scripts/release_artifacts.sh [OUTPUT_DIR]
 #
-# Default OUTPUT_DIR: build_plan/outputs/release-artifacts-<timestamp>
+# Default OUTPUT_DIR: dist/release-artifacts-<timestamp>
 ################################################################################
 set -uo pipefail
 
@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PY="${EFFGEN_PYTHON:-python}"
 
-OUT="${1:-${REPO_ROOT}/build_plan/outputs/release-artifacts-$(date +%Y%m%d-%H%M%S)}"
+OUT="${1:-${REPO_ROOT}/dist/release-artifacts-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "${OUT}"
 echo "[artifacts] writing to ${OUT}"
 

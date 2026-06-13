@@ -49,7 +49,7 @@ if len(sys.argv) > 1:
     video_path = sys.argv[1]
 else:
     repo_root = Path(__file__).parent.parent.parent
-    video_path = str(repo_root / "build_plan/validation/fixtures/sample_video.mp4")
+    video_path = str(repo_root / "tests/fixtures/multimodal/sample_video.mp4")
 
 print(f"Video file: {video_path}")
 

@@ -47,7 +47,7 @@ def sample_jpg(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def audio_fixture() -> Path:
-    p = Path(__file__).parent.parent.parent / "build_plan/validation/fixtures/sample_audio.mp3"
+    p = Path(__file__).parent.parent.parent / "tests/fixtures/multimodal/sample_audio.mp3"
     if not p.exists():
         pytest.skip("sample_audio.mp3 fixture not found")
     return p
@@ -55,7 +55,7 @@ def audio_fixture() -> Path:
 
 @pytest.fixture()
 def video_fixture() -> Path:
-    p = Path(__file__).parent.parent.parent / "build_plan/validation/fixtures/sample_video.mp4"
+    p = Path(__file__).parent.parent.parent / "tests/fixtures/multimodal/sample_video.mp4"
     if not p.exists():
         pytest.skip("sample_video.mp4 fixture not found")
     return p
@@ -297,7 +297,7 @@ def test_multimodal_describe_image_live(sample_png):
 @pytest.mark.live
 @pytest.mark.skipif(
     not os.path.exists(
-        str(Path(__file__).parent.parent.parent / "build_plan/validation/fixtures/sample_audio.mp3")
+        str(Path(__file__).parent.parent.parent / "tests/fixtures/multimodal/sample_audio.mp3")
     ),
     reason="sample_audio.mp3 fixture not found",
 )
@@ -308,7 +308,7 @@ def test_multimodal_describe_image_live(sample_png):
 def test_multimodal_describe_audio_live():
     fixture = (
         Path(__file__).parent.parent.parent
-        / "build_plan/validation/fixtures/sample_audio.mp3"
+        / "tests/fixtures/multimodal/sample_audio.mp3"
     )
     from effgen.tools.builtin.multimodal_describe import MultimodalDescribeTool
     tool = MultimodalDescribeTool()

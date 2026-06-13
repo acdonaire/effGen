@@ -47,7 +47,7 @@ if len(sys.argv) > 1:
 else:
     # Fall back to the repo fixture used in validation
     repo_root = Path(__file__).parent.parent.parent
-    audio_path = str(repo_root / "build_plan/validation/fixtures/sample_audio.mp3")
+    audio_path = str(repo_root / "tests/fixtures/multimodal/sample_audio.mp3")
 
 print(f"Audio file: {audio_path}")
 

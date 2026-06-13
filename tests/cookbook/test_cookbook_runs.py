@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
-_FIXTURES_DIR = _REPO_ROOT / "build_plan/validation/fixtures"
+_FIXTURES_DIR = _REPO_ROOT / "tests/fixtures/multimodal"
 
 load_dotenv(_REPO_ROOT / ".env")
 
