@@ -30,6 +30,17 @@ from .protocol import (
     TaskStatus,
 )
 
+# Optional, only needed when running the HTTP server. Imported at module level
+# (not just inside create_app) so the string annotations produced by
+# ``from __future__ import annotations`` on the route handlers resolve to the
+# real FastAPI types — otherwise FastAPI mistakes ``request: Request`` for a
+# query parameter and rejects every /execute call with HTTP 422.
+try:  # pragma: no cover - import guard
+    from fastapi import HTTPException, Request
+except Exception:  # pragma: no cover - fastapi is an optional extra
+    HTTPException = None  # type: ignore[assignment, misc]
+    Request = None  # type: ignore[assignment, misc]
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,10 +64,14 @@ class ACPServerConfig:
         enable_streaming: Enable streaming responses
         require_auth: Require authentication
     """
-    host: str = "0.0.0.0"
+    # Bind to loopback by default. Exposing the server to the network requires
+    # an explicit non-loopback host (and emits a warning on run()).
+    host: str = "127.0.0.1"
     port: int = 8080
     enable_telemetry: bool = True
     enable_cors: bool = True
+    # No cross-origin access by default. Set explicit origins to opt in; a
+    # wildcard ("*") is honored but warned about when binding non-loopback.
     cors_origins: list[str] = None
     max_concurrent_tasks: int = 100
     task_timeout: int = 300
@@ -65,7 +80,7 @@ class ACPServerConfig:
 
     def __post_init__(self):
         if self.cors_origins is None:
-            self.cors_origins = ["*"]
+            self.cors_origins = []
 
 
 class ACPCapabilityRegistry:
@@ -102,12 +117,16 @@ class ACPCapabilityRegistry:
             version: Capability version
             metadata: Additional metadata
         """
-        # Create schema definitions
+        # Create schema definitions. Follow JSON Schema semantics for
+        # additionalProperties (default: allowed) instead of silently locking
+        # the schema closed — a capability declared as {"type": "object"} with
+        # no properties must still accept input, not reject every call.
         input_def = SchemaDefinition(
             type=input_schema.get("type", "object"),
             properties=input_schema.get("properties", {}),
             required=input_schema.get("required", []),
             description=input_schema.get("description"),
+            additionalProperties=input_schema.get("additionalProperties", True),
         )
 
         output_def = None
@@ -117,6 +136,7 @@ class ACPCapabilityRegistry:
                 properties=output_schema.get("properties", {}),
                 required=output_schema.get("required", []),
                 description=output_schema.get("description"),
+                additionalProperties=output_schema.get("additionalProperties", True),
             )
 
         # Create capability definition
@@ -790,9 +810,8 @@ class ACPServer:
             ImportError: If fastapi/uvicorn not installed
         """
         try:
-            from fastapi import FastAPI, HTTPException, Request
+            from fastapi import FastAPI
             from fastapi.middleware.cors import CORSMiddleware
-            from fastapi.responses import JSONResponse  # noqa: F401
         except ImportError:
             raise ImportError(
                 "FastAPI is required for ACP server mode. "
@@ -806,8 +825,13 @@ class ACPServer:
             description=self.description,
         )
 
-        # CORS
-        if self.config.enable_cors:
+        # CORS (only when explicit origins are configured — no wildcard default)
+        if self.config.enable_cors and self.config.cors_origins:
+            if "*" in self.config.cors_origins:
+                logger.warning(
+                    "ACP server CORS configured with a wildcard origin '*' — any "
+                    "website can call this server. Prefer explicit origins."
+                )
             app.add_middleware(
                 CORSMiddleware,
                 allow_origins=self.config.cors_origins,
@@ -873,13 +897,23 @@ class ACPServer:
                 "Install with: pip install uvicorn"
             )
 
+        host = kwargs.pop("host", self.config.host)
+        port = kwargs.pop("port", self.config.port)
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            logger.warning(
+                "ACP server binding to non-loopback address %s — it will be "
+                "reachable from the network. Enable require_auth and restrict "
+                "cors_origins before exposing it.",
+                host,
+            )
+            if not self.config.require_auth:
+                logger.warning(
+                    "ACP server is exposed to the network with require_auth=False "
+                    "— requests are unauthenticated."
+                )
+
         app = self.create_app()
-        uvicorn.run(
-            app,
-            host=kwargs.pop("host", self.config.host),
-            port=kwargs.pop("port", self.config.port),
-            **kwargs,
-        )
+        uvicorn.run(app, host=host, port=port, **kwargs)
 
     def __repr__(self) -> str:
         """String representation."""

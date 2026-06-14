@@ -8,8 +8,11 @@ tools using the official Model Context Protocol Python SDK.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import inspect
 import logging
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, field
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -20,6 +23,40 @@ from ...registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+# Tools that execute code, reach the shell, mutate the host filesystem, or
+# expose host/system internals. They are NOT exposed over MCP unless the
+# operator explicitly opts in (``expose_unsafe_tools=True`` or by naming them in
+# ``allowed_tools``). Fail-closed by default: an MCP client should never get a
+# remote shell or arbitrary code execution just by connecting.
+UNSAFE_TOOLS: frozenset[str] = frozenset(
+    {
+        "bash",
+        "python_repl",
+        "code_executor",
+        "code_execution",
+        "docker",
+        "git",
+        "file_operations",
+        "system_info",
+        "anthropic_bash",
+        "anthropic_computer",
+        "anthropic_text_editor",
+        "openai_code_interpreter",
+    }
+)
+
+# Map effGen parameter type names to Python types so FastMCP can build a JSON
+# schema from the generated function signature.
+_PARAM_TYPE_MAP: dict[str, Any] = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
+
 @dataclass
 class EffGenMCPServerConfig:
     """Configuration for effGen MCP server."""
@@ -27,6 +64,12 @@ class EffGenMCPServerConfig:
     version: str = "1.0.0"
     instructions: str = "MCP server exposing effGen tools for AI agents"
     tools_registry: ToolRegistry | None = None
+    # Security: fail-closed tool exposure. By default, code-execution / shell /
+    # filesystem tools are hidden. Set ``expose_unsafe_tools=True`` to expose
+    # them, or list specific tools in ``allowed_tools`` (an explicit opt-in).
+    expose_unsafe_tools: bool = False
+    allowed_tools: list[str] | None = None
+    blocked_tools: list[str] = field(default_factory=list)
 
 
 class EffGenMCPServer:
@@ -65,6 +108,9 @@ class EffGenMCPServer:
         version: str = "1.0.0",
         instructions: str | None = None,
         tools_registry: ToolRegistry | None = None,
+        expose_unsafe_tools: bool = False,
+        allowed_tools: list[str] | None = None,
+        blocked_tools: list[str] | None = None,
     ):
         """
         Initialize EffGen MCP server.
@@ -74,16 +120,25 @@ class EffGenMCPServer:
             version: Server version
             instructions: Server instructions for clients
             tools_registry: Tool registry to expose (creates new if None)
+            expose_unsafe_tools: Expose code-execution / shell / filesystem
+                tools over MCP. Off by default (fail-closed).
+            allowed_tools: If set, expose ONLY these tools (an explicit opt-in
+                that overrides the unsafe-tool block for the named tools).
+            blocked_tools: Additional tool names to hide regardless of the above.
         """
         self.name = name
         self.version = version
         self.instructions = instructions or (
             "MCP server exposing effGen tools for AI agents. "
-            "Provides access to various tools for code execution, "
+            "Provides access to various tools for "
             "web search, data processing, and more."
         )
         self.tools_registry = tools_registry or ToolRegistry()
+        self.expose_unsafe_tools = expose_unsafe_tools
+        self.allowed_tools = allowed_tools
+        self.blocked_tools = list(blocked_tools or [])
         self._initialized = False
+        self._exposed_tools: list[str] = []
 
         # Create FastMCP instance
         self.mcp = FastMCP(
@@ -93,27 +148,78 @@ class EffGenMCPServer:
 
         logger.info(f"Initialized EffGen MCP Server: {self.name} v{self.version}")
 
+    def _select_tools(self) -> list[str]:
+        """Apply the fail-closed allowlist/blocklist to the discovered tools."""
+        all_tools = sorted(self.tools_registry.list_tools())
+        if self.allowed_tools is not None:
+            allow = set(self.allowed_tools)
+            selected = [t for t in all_tools if t in allow]
+        else:
+            selected = list(all_tools)
+            if not self.expose_unsafe_tools:
+                selected = [t for t in selected if t not in UNSAFE_TOOLS]
+        if self.blocked_tools:
+            blocked = set(self.blocked_tools)
+            selected = [t for t in selected if t not in blocked]
+        return selected
+
     async def initialize(self) -> None:
         """Initialize the server and register tools."""
         if self._initialized:
             return
 
-        # Discover and initialize builtin tools
+        # Discover builtin tools (metadata only — individual tools are
+        # initialized lazily on first use so the fail-closed allowlist also
+        # avoids spinning up heavy/unsafe subsystems like the code sandbox).
         self.tools_registry.discover_builtin_tools()
-        await self.tools_registry.initialize_all()
 
-        # Register all tools with MCP
-        await self._register_all_tools()
+        # Apply the fail-closed allowlist BEFORE registering anything.
+        self._exposed_tools = self._select_tools()
+
+        # Register selected tools with MCP
+        for tool_name in self._exposed_tools:
+            self._register_tool(tool_name)
 
         self._initialized = True
-        logger.info(f"Server initialized with {len(self.tools_registry.list_tools())} tools")
+        hidden = len(self.tools_registry.list_tools()) - len(self._exposed_tools)
+        logger.info(
+            "MCP server initialized: exposing %d tools (%d hidden by policy)",
+            len(self._exposed_tools),
+            hidden,
+        )
 
-    async def _register_all_tools(self) -> None:
-        """Register all tools from the registry with MCP."""
-        for tool_name in self.tools_registry.list_tools():
-            await self._register_tool(tool_name)
+    def _build_signature(self, metadata: Any) -> inspect.Signature:
+        """Build a real call signature from effGen tool metadata.
 
-    async def _register_tool(self, tool_name: str) -> None:
+        FastMCP introspects the function signature (``inspect.signature``) to
+        generate the MCP input schema and to validate call arguments, so the
+        wrapper must advertise the tool's actual parameters — a bare
+        ``**kwargs`` would produce an empty/invalid schema.
+        """
+        params = [
+            inspect.Parameter(
+                "ctx", inspect.Parameter.KEYWORD_ONLY, annotation=Context
+            )
+        ]
+        for param in metadata.parameters:
+            pytype = _PARAM_TYPE_MAP.get(param.type.value, Any)
+            if param.required:
+                default = inspect.Parameter.empty
+            else:
+                # Optional parameters are nullable with their declared default.
+                pytype = pytype | None if pytype is not Any else Any
+                default = param.default
+            params.append(
+                inspect.Parameter(
+                    param.name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=default,
+                    annotation=pytype,
+                )
+            )
+        return inspect.Signature(params, return_annotation=dict)
+
+    def _register_tool(self, tool_name: str) -> None:
         """
         Register a single tool with MCP.
 
@@ -122,114 +228,83 @@ class EffGenMCPServer:
         """
         try:
             metadata = self.tools_registry.get_metadata(tool_name)
+            registry = self.tools_registry
+            signature = self._build_signature(metadata)
 
-            # Build input schema from tool parameters
-            properties = {}
-            required = []
+            # Bind ``tool_name`` as a default argument so each wrapper closes
+            # over its OWN name (a plain closure over the loop variable would
+            # make every tool call the last-registered tool).
+            async def tool_wrapper(*, ctx: Context[ServerSession, None] = None, _tool_name=tool_name, **kwargs):
+                """Wrapper function for tool execution."""
+                if ctx is not None:
+                    with contextlib.suppress(Exception):
+                        await ctx.debug(f"Executing tool: {_tool_name}")
 
-            for param in metadata.parameters:
-                prop = {
-                    "type": param.type.value,
-                    "description": param.description or "",
+                # Drop unset optional arguments so tool defaults apply.
+                call_args = {k: v for k, v in kwargs.items() if v is not None}
+                try:
+                    tool = await registry.get_tool(_tool_name)
+                    result = await tool.execute(**call_args)
+                except Exception as e:
+                    error_msg = f"Error executing tool {_tool_name}: {e}"
+                    logger.error(error_msg, exc_info=True)
+                    return {"success": False, "error": error_msg, "metadata": {}}
+
+                if result.success:
+                    return {
+                        "success": True,
+                        "output": result.output,
+                        "metadata": result.metadata or {},
+                    }
+                return {
+                    "success": False,
+                    "error": result.error or "Tool execution failed",
+                    "metadata": result.metadata or {},
                 }
 
-                if param.enum:
-                    prop["enum"] = param.enum
-                if param.default is not None:
-                    prop["default"] = param.default
-
-                properties[param.name] = prop
-
-                if param.required:
-                    required.append(param.name)
-
-            input_schema = {
-                "type": "object",
-                "properties": properties,
-            }
-
-            if required:
-                input_schema["required"] = required
-
-            # Create tool function wrapper
-            async def tool_wrapper(
-                ctx: Context[ServerSession, None],
-                **kwargs
-            ) -> dict[str, Any]:
-                """Wrapper function for tool execution."""
-                # Log tool execution
-                await ctx.info(f"Executing tool: {tool_name}")
-
-                try:
-                    # Get tool instance
-                    tool = await self.tools_registry.get_tool(tool_name)
-
-                    # Execute tool
-                    result = await tool.execute(**kwargs)
-
-                    # Check if execution was successful
-                    if result.success:
-                        await ctx.debug(f"Tool {tool_name} executed successfully")
-
-                        # Return structured output
-                        return {
-                            "success": True,
-                            "output": result.output,
-                            "metadata": result.metadata or {},
-                        }
-                    else:
-                        error_msg = result.error or "Tool execution failed"
-                        await ctx.error(f"Tool {tool_name} failed: {error_msg}")
-
-                        return {
-                            "success": False,
-                            "error": error_msg,
-                            "metadata": result.metadata or {},
-                        }
-
-                except Exception as e:
-                    error_msg = f"Error executing tool {tool_name}: {str(e)}"
-                    await ctx.error(error_msg)
-                    logger.error(error_msg, exc_info=True)
-
-                    return {
-                        "success": False,
-                        "error": error_msg,
-                    }
-
-            # Set function metadata
             tool_wrapper.__name__ = tool_name
             tool_wrapper.__doc__ = metadata.description or f"Tool: {tool_name}"
+            tool_wrapper.__signature__ = signature
+            tool_wrapper.__annotations__ = {
+                p.name: p.annotation for p in signature.parameters.values()
+            }
+            tool_wrapper.__annotations__["return"] = dict
 
-            # Add annotations for parameter types
-            annotations = {}
-            for param in metadata.parameters:
-                # Map parameter types to Python types
-                if param.type.value == "string":
-                    annotations[param.name] = str
-                elif param.type.value == "integer":
-                    annotations[param.name] = int
-                elif param.type.value == "number":
-                    annotations[param.name] = float
-                elif param.type.value == "boolean":
-                    annotations[param.name] = bool
-                elif param.type.value == "array":
-                    annotations[param.name] = list
-                elif param.type.value == "object":
-                    annotations[param.name] = dict
-                else:
-                    annotations[param.name] = Any
-
-            annotations["return"] = dict[str, Any]
-            tool_wrapper.__annotations__ = annotations
-
-            # Register with FastMCP
-            self.mcp.tool()(tool_wrapper)
+            # Register with FastMCP. structured_output=False keeps the tool's
+            # dict result as JSON text content (predictable for any MCP client).
+            self.mcp.add_tool(
+                tool_wrapper,
+                name=tool_name,
+                description=metadata.description or f"Tool: {tool_name}",
+                structured_output=False,
+            )
 
             logger.debug(f"Registered tool: {tool_name}")
 
         except Exception as e:
             logger.error(f"Failed to register tool {tool_name}: {e}", exc_info=True)
+
+    @staticmethod
+    def _route_logs_to_stderr() -> None:
+        """Ensure no logging/console handler writes to stdout.
+
+        The stdio transport owns stdout for JSON-RPC; any stray byte written
+        there (a log line, a rich panel) corrupts the protocol. Redirect every
+        stdout-bound handler to stderr, which MCP clients ignore.
+        """
+        for name in (None, "effgen", "mcp"):
+            lg = logging.getLogger(name) if name else logging.getLogger()
+            for handler in lg.handlers:
+                stream = getattr(handler, "stream", None)
+                if stream is sys.stdout:
+                    with contextlib.suppress(Exception):
+                        handler.setStream(sys.stderr)
+                console = getattr(handler, "console", None)  # RichHandler
+                if console is not None and getattr(console, "file", None) is sys.stdout:
+                    with contextlib.suppress(Exception):
+                        from rich.console import Console
+
+                        handler.console = Console(file=sys.stderr)
 
     async def run_stdio(self) -> None:
         """
@@ -238,23 +313,25 @@ class EffGenMCPServer:
         This is the main entry point for Claude Desktop and other
         STDIO-based MCP clients.
         """
+        # Keep stdout pristine for the JSON-RPC stream.
+        self._route_logs_to_stderr()
         try:
-            # Initialize if not already done
-            if not self._initialized:
-                await self.initialize()
+            with contextlib.redirect_stdout(sys.stderr):
+                if not self._initialized:
+                    await self.initialize()
+                logger.info(f"Starting MCP server (STDIO): {self.name}")
 
-            logger.info(f"Starting MCP server (STDIO): {self.name}")
+            # FastMCP's async entry point — no nested event loop.
+            await self.mcp.run_stdio_async()
 
-            # Run FastMCP with STDIO transport
-            self.mcp.run(transport="stdio")
-
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Server stopped by user")
         except Exception as e:
             logger.error(f"Server error: {e}", exc_info=True)
             raise
         finally:
-            await self.cleanup()
+            with contextlib.redirect_stdout(sys.stderr):
+                await self.cleanup()
 
     async def run_http(
         self,
@@ -265,26 +342,40 @@ class EffGenMCPServer:
         """
         Run server with HTTP transport.
 
+        Binds to 127.0.0.1 by default; binding to a non-loopback address
+        exposes the server to the network and emits a warning.
+
         Args:
             host: Host to bind to
             port: Port to bind to
             transport: Transport type ("streamable-http" or "sse")
         """
+        self._route_logs_to_stderr()
         try:
-            # Initialize if not already done
             if not self._initialized:
                 await self.initialize()
 
+            if host not in ("127.0.0.1", "localhost", "::1"):
+                logger.warning(
+                    "MCP HTTP server binding to non-loopback address %s — it will "
+                    "be reachable from the network. Ensure auth/origin protection "
+                    "is in place.",
+                    host,
+                )
+
+            # Configure bind address on the FastMCP settings (run() doesn't take
+            # host/port kwargs).
+            self.mcp.settings.host = host
+            self.mcp.settings.port = port
+
             logger.info(f"Starting MCP server ({transport}): {host}:{port}")
 
-            # Run FastMCP with HTTP transport
-            self.mcp.run(
-                transport=transport,
-                host=host,
-                port=port
-            )
+            if transport == "sse":
+                await self.mcp.run_sse_async()
+            else:
+                await self.mcp.run_streamable_http_async()
 
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Server stopped by user")
         except Exception as e:
             logger.error(f"Server error: {e}", exc_info=True)
@@ -317,6 +408,9 @@ def create_server(
     name: str = "effgen-tools",
     version: str = "1.0.0",
     tools_registry: ToolRegistry | None = None,
+    expose_unsafe_tools: bool = False,
+    allowed_tools: list[str] | None = None,
+    blocked_tools: list[str] | None = None,
 ) -> EffGenMCPServer:
     """
     Create an EffGen MCP server instance.
@@ -325,6 +419,10 @@ def create_server(
         name: Server name
         version: Server version
         tools_registry: Tool registry to expose
+        expose_unsafe_tools: Expose code-execution/shell/filesystem tools
+            (off by default — fail-closed).
+        allowed_tools: If set, expose ONLY these tools.
+        blocked_tools: Additional tool names to hide.
 
     Returns:
         EffGen MCP server instance
@@ -333,6 +431,9 @@ def create_server(
         name=name,
         version=version,
         tools_registry=tools_registry,
+        expose_unsafe_tools=expose_unsafe_tools,
+        allowed_tools=allowed_tools,
+        blocked_tools=blocked_tools,
     )
 
 

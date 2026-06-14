@@ -7,7 +7,9 @@ MCP servers and using their tools and resources.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +23,14 @@ from mcp.types import (
     Tool,
 )
 from pydantic import AnyUrl
+
+from ...base_tool import (
+    BaseTool,
+    ParameterSpec,
+    ParameterType,
+    ToolCategory,
+    ToolMetadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +99,13 @@ class EffGenMCPClient:
         """
         self.config = config
         self.session: ClientSession | None = None
-        self._context_manager = None
+        self._exit_stack: AsyncExitStack | None = None
         self._connected = False
+        # The event loop the session is bound to. MCP transport streams are
+        # loop-affine, so tool calls issued from another loop/thread (e.g. an
+        # effGen Agent running its tools in a worker loop) must be marshaled
+        # back here via run_coroutine_threadsafe.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
         # Tool and resource caches
         self._tools: dict[str, Tool] = {}
@@ -104,6 +119,7 @@ class EffGenMCPClient:
         if self._connected:
             return
 
+        stack = AsyncExitStack()
         try:
             # Create appropriate transport context
             if self.config.transport == "stdio":
@@ -116,29 +132,28 @@ class EffGenMCPClient:
                     env=self.config.env,
                 )
 
-                self._context_manager = stdio_client(server_params)
+                transport_context = stdio_client(server_params)
 
             elif self.config.transport in ("http", "streamable-http"):
                 if not self.config.url:
                     raise ValueError("URL required for HTTP transport")
 
-                self._context_manager = streamablehttp_client(self.config.url)
+                transport_context = streamablehttp_client(self.config.url)
 
             else:
                 raise ValueError(f"Unsupported transport: {self.config.transport}")
 
-            # Enter transport context
-            transport_context = await self._context_manager.__aenter__()
+            # Enter transport context via the exit stack
+            transport = await stack.enter_async_context(transport_context)
 
-            # For STDIO, unpack read/write streams
-            if self.config.transport == "stdio":
-                read_stream, write_stream = transport_context
-            else:
-                # For HTTP, unpack read/write streams and session
-                read_stream, write_stream, _ = transport_context
+            # stdio yields (read, write); HTTP yields (read, write, get_session_id)
+            read_stream, write_stream = transport[0], transport[1]
 
-            # Create session
-            self.session = ClientSession(read_stream, write_stream)
+            # Create AND enter the session context manager — entering it is what
+            # starts the background receive loop; without it initialize() hangs.
+            self.session = await stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
 
             # Initialize session
             await self.session.initialize()
@@ -146,12 +161,15 @@ class EffGenMCPClient:
             # Discover capabilities
             await self._discover()
 
+            self._exit_stack = stack
+            self._loop = asyncio.get_running_loop()
             self._connected = True
             logger.info(f"Connected to MCP server: {self.config.name}")
 
         except Exception as e:
             logger.error(f"Failed to connect to server: {e}", exc_info=True)
-            await self.disconnect()
+            await stack.aclose()
+            self.session = None
             raise
 
     async def disconnect(self) -> None:
@@ -160,16 +178,15 @@ class EffGenMCPClient:
             return
 
         try:
-            # Exit context manager
-            if self._context_manager:
-                await self._context_manager.__aexit__(None, None, None)
-
+            if self._exit_stack is not None:
+                await self._exit_stack.aclose()
+        except Exception as e:
+            logger.error(f"Error during disconnect: {e}", exc_info=True)
+        finally:
+            self._exit_stack = None
             self._connected = False
             self.session = None
             logger.info(f"Disconnected from MCP server: {self.config.name}")
-
-        except Exception as e:
-            logger.error(f"Error during disconnect: {e}", exc_info=True)
 
     async def _discover(self) -> None:
         """Discover server capabilities, tools, and resources."""
@@ -319,6 +336,26 @@ class EffGenMCPClient:
         """
         return list(self._tools.values())
 
+    def get_effgen_tools(self, prefix: str = "mcp_") -> list[Any]:
+        """
+        Wrap the discovered MCP tools as effGen ``BaseTool`` instances.
+
+        The returned tools can be passed straight into an effGen ``Agent`` so it
+        can call tools served by any MCP server. The client must stay connected
+        for the lifetime of the agent run.
+
+        Args:
+            prefix: Name prefix for the wrapped tools (avoids collisions with
+                effGen's builtin tool names).
+
+        Returns:
+            List of effGen ``BaseTool`` instances.
+        """
+        return [
+            _MCPOfficialToolBridge(tool, self, prefix=prefix)
+            for tool in self._tools.values()
+        ]
+
     def get_tool(self, name: str) -> Tool | None:
         """
         Get a specific tool by name.
@@ -381,6 +418,69 @@ class EffGenMCPClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.disconnect()
+
+
+class _MCPOfficialToolBridge(BaseTool):
+    """Wrap an MCP tool (discovered via the official client) as an effGen tool."""
+
+    _JSON_TYPE_MAP = {
+        "string": ParameterType.STRING,
+        "integer": ParameterType.INTEGER,
+        "number": ParameterType.FLOAT,
+        "boolean": ParameterType.BOOLEAN,
+        "array": ParameterType.ARRAY,
+        "object": ParameterType.OBJECT,
+    }
+
+    def __init__(self, mcp_tool: Tool, client: EffGenMCPClient, prefix: str = "mcp_"):
+        input_schema = mcp_tool.inputSchema or {}
+        properties = input_schema.get("properties", {})
+        required = input_schema.get("required", [])
+
+        params = []
+        for prop_name, prop_schema in properties.items():
+            json_type = prop_schema.get("type", "string")
+            params.append(
+                ParameterSpec(
+                    name=prop_name,
+                    type=self._JSON_TYPE_MAP.get(json_type, ParameterType.STRING),
+                    description=prop_schema.get("description", ""),
+                    required=prop_name in required,
+                    default=prop_schema.get("default"),
+                )
+            )
+
+        metadata = ToolMetadata(
+            name=f"{prefix}{mcp_tool.name}",
+            description=mcp_tool.description or f"MCP tool: {mcp_tool.name}",
+            category=ToolCategory.EXTERNAL_API,
+            parameters=params,
+        )
+        super().__init__(metadata=metadata)
+        self._mcp_name = mcp_tool.name
+        self._client = client
+
+    async def _execute(self, **kwargs) -> Any:
+        coro = self._client.call_tool(self._mcp_name, kwargs)
+        session_loop = self._client._loop
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        if session_loop is not None and current_loop is not session_loop:
+            # Called from a different loop/thread (e.g. an Agent's worker loop):
+            # marshal the call back to the loop that owns the MCP session.
+            future = asyncio.run_coroutine_threadsafe(coro, session_loop)
+            result = await asyncio.wrap_future(future)
+        else:
+            result = await coro
+        texts = [c.text for c in result.content if getattr(c, "text", None)]
+        text = "\n".join(texts)
+        if result.isError:
+            return {"success": False, "error": text or "MCP tool returned an error"}
+        if getattr(result, "structuredContent", None):
+            return result.structuredContent
+        return text
 
 
 def create_client(config: MCPServerConfig) -> EffGenMCPClient:

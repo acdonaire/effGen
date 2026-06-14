@@ -352,8 +352,8 @@ class MCPToolBridge(BaseTool):
             "integer": ParameterType.INTEGER,
             "number": ParameterType.FLOAT,
             "boolean": ParameterType.BOOLEAN,
-            "array": ParameterType.LIST,
-            "object": ParameterType.DICT,
+            "array": ParameterType.ARRAY,
+            "object": ParameterType.OBJECT,
         }
 
         for prop_name, prop_schema in properties.items():
@@ -369,7 +369,7 @@ class MCPToolBridge(BaseTool):
         metadata = ToolMetadata(
             name=f"mcp_{mcp_tool.name}",
             description=mcp_tool.description or f"MCP tool: {mcp_tool.name}",
-            category=ToolCategory.UTILITY,
+            category=ToolCategory.EXTERNAL_API,
             parameters=params,
         )
         super().__init__(metadata=metadata)

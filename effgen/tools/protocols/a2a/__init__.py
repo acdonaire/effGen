@@ -3,6 +3,14 @@ Agent-to-Agent (A2A) Protocol Integration.
 
 This package implements Google's A2A protocol for agent-to-agent communication,
 providing message protocol handling, task lifecycle management, and context passing.
+
+.. note::
+   **Experimental.** effGen ships the A2A *client* (``A2AClient``), the agent-card
+   model (``AgentCard``), authentication handlers, and the wire protocol/task
+   model (``A2AProtocolHandler``). It does not bundle an A2A *server*; point the
+   client at an external A2A-compatible agent. The client and auth paths are
+   smoke-tested, but the protocol has not been validated against a third-party
+   A2A implementation. Interfaces may change.
 """
 
 from .agent_card import (

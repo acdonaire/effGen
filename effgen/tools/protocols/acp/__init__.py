@@ -4,6 +4,14 @@ Agent Communication Protocol (ACP) Integration.
 This package implements IBM's ACP protocol for agent-to-agent communication,
 providing agent manifests, synchronous/asynchronous requests, task tracking,
 and OpenTelemetry instrumentation.
+
+.. note::
+   **Experimental.** The ACP server (``ACPServer``) and client (``ACPClient``)
+   are smoke-tested locally (manifest exchange, synchronous capability execution,
+   and capability-token auth), but have not been validated against the external
+   BeeAI platform. The HTTP server binds to 127.0.0.1 by default and warns when
+   bound to a public address; enable ``require_auth`` before exposing it.
+   Interfaces may change.
 """
 
 from .client import (
