@@ -187,12 +187,24 @@ class SubAgentRouter:
         Main routing decision function.
 
         Args:
-            task: Task description
+            task: Task description (a plain string).
             context: Optional context for routing
 
         Returns:
             RoutingDecision with strategy and decomposition
+
+        Example::
+
+            from effgen import SubAgentRouter
+
+            decision = SubAgentRouter().route("Research and analyze AI safety trends.")
+            print(decision.use_sub_agents, decision.strategy.value)
         """
+        if not isinstance(task, str):
+            raise TypeError(
+                f"SubAgentRouter.route() expects the task as a string; "
+                f"got {type(task).__name__}."
+            )
         context = context or {}
 
         # Step 1: Analyze task complexity
@@ -292,7 +304,7 @@ class SubAgentRouter:
         """
         # User-explicit trigger check — always honor user's request
         if self._check_user_explicit_triggers(task):
-            logger.info("User explicitly requested sub-agents — honoring request.")
+            logger.debug("User explicitly requested sub-agents — honoring request.")
             return True
 
         # Complexity threshold check

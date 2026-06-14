@@ -63,7 +63,7 @@ class HumanApproval:
             ApprovalDecision indicating the human's response.
         """
         if callback is None:
-            logger.info(
+            logger.debug(
                 "No approval callback set; using default decision '%s' for tool '%s'",
                 self.default_decision.value, self.tool_name,
             )
@@ -77,7 +77,7 @@ class HumanApproval:
                     try:
                         approved = future.result(timeout=self.timeout)
                     except concurrent.futures.TimeoutError:
-                        logger.info(
+                        logger.debug(
                             "Approval timeout for tool '%s'; default=%s",
                             self.tool_name, self.default_decision.value,
                         )
@@ -86,7 +86,7 @@ class HumanApproval:
                 approved = callback(self.tool_name, self.tool_args)
 
             decision = ApprovalDecision.APPROVED if approved else ApprovalDecision.DENIED
-            logger.info("Approval decision for tool '%s': %s", self.tool_name, decision.value)
+            logger.debug("Approval decision for tool '%s': %s", self.tool_name, decision.value)
             return decision
         except Exception as e:
             logger.error("Approval callback error for tool '%s': %s", self.tool_name, e)
@@ -131,7 +131,7 @@ class HumanInput:
                     try:
                         return future.result(timeout=self.timeout)
                     except concurrent.futures.TimeoutError:
-                        logger.info("Input timeout; using default: %r", self.default)
+                        logger.debug("Input timeout; using default: %r", self.default)
                         return self.default
             else:
                 return callback(self.prompt)
@@ -183,7 +183,7 @@ class HumanChoice:
                     try:
                         idx = future.result(timeout=self.timeout)
                     except concurrent.futures.TimeoutError:
-                        logger.info("Choice timeout; using default index %d", self.default)
+                        logger.debug("Choice timeout; using default index %d", self.default)
                         return self.default
             else:
                 idx = callback(self.prompt, self.options)

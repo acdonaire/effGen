@@ -1,6 +1,39 @@
 # Multi-Agent Workflows
 
-effGen v0.2.0 provides advanced multi-agent orchestration with a message bus, DAG-based workflows, shared state, and agent lifecycle management.
+effGen provides multi-agent orchestration with a message bus, DAG-based
+workflows, shared state, and agent lifecycle management. The main entry points
+are importable from the top level:
+
+```python
+from effgen import (
+    MultiAgentOrchestrator, OrchestrationPattern, TeamConfig,
+    WorkflowDAG, WorkflowNode, SubAgentRouter,
+)
+```
+
+## Teams — MultiAgentOrchestrator
+
+Coordinate several agents with a chosen pattern (sequential, parallel,
+hierarchical, collaborative, competitive, pipeline):
+
+```python
+from effgen import Agent, AgentConfig, MultiAgentOrchestrator, OrchestrationPattern, load_model
+
+m = load_model("gpt-5-nano")
+writer = Agent(AgentConfig(name="writer", model=m))
+editor = Agent(AgentConfig(name="editor", model=m))
+
+orch = MultiAgentOrchestrator()
+orch.create_team("blog", [writer, editor], pattern=OrchestrationPattern.SEQUENTIAL)
+
+# Pass the team object or just its name:
+result = orch.assign_task("Write one sentence about the ocean.", "blog")
+print(result.success, result.output)
+```
+
+`assign_task` returns a `TeamResponse` whose `success` is `False` (never a
+silent success) if the team is empty or any agent fails; per-agent outputs and
+errors are kept in `result.agent_responses`.
 
 ## MessageBus — Agent Communication
 
@@ -9,20 +42,23 @@ from effgen.core.message_bus import MessageBus, AgentMessage, MessageType
 
 bus = MessageBus()
 
-# Subscribe to topics
-bus.subscribe("results.*", callback=lambda msg: print(f"Got result: {msg.payload}"))
+# Subscribe to a topic pattern (supports * / ? wildcards)
+bus.subscribe("results.*", lambda msg: print(f"Got result: {msg.payload}"))
 
-# Publish messages
-bus.publish("results.math", AgentMessage(
-    type=MessageType.RESULT,
+# Publish a message to its topic
+bus.publish(AgentMessage(
     sender="math_agent",
+    recipient="coordinator",
+    type=MessageType.RESULT,
     payload={"answer": 42},
+    topic="results.math",
 ))
 
 # Mailbox-based (direct agent-to-agent)
-bus.send("research_agent", AgentMessage(
-    type=MessageType.TASK_ASSIGNMENT,
+bus.send(AgentMessage(
     sender="coordinator",
+    recipient="research_agent",
+    type=MessageType.TASK_ASSIGNMENT,
     payload={"task": "Search for quantum computing papers"},
 ))
 messages = bus.receive("research_agent")
@@ -35,17 +71,20 @@ Define complex workflows as directed acyclic graphs:
 ### Python API
 
 ```python
-from effgen.core.workflow import WorkflowDAG, WorkflowNode
+from effgen import WorkflowDAG, WorkflowNode
 
-dag = WorkflowDAG()
-dag.add_node(WorkflowNode(id="research", agent=research_agent, task="Find papers on topic"))
-dag.add_node(WorkflowNode(id="summarize", agent=summary_agent, task="Summarize findings"))
-dag.add_node(WorkflowNode(id="format", agent=format_agent, task="Format as report"))
+dag = WorkflowDAG("report_pipeline")
+dag.add_node(WorkflowNode(id="research", agent=research_agent))
+dag.add_node(WorkflowNode(id="summarize", agent=summary_agent))
+dag.add_node(WorkflowNode(id="format", agent=format_agent))
 
-dag.add_edge("research", "summarize")
-dag.add_edge("summarize", "format")
+dag.connect("research", "summarize")   # add an edge (validates against cycles)
+dag.connect("summarize", "format")
 
-results = dag.execute()  # Runs in topological order, parallelizes independent nodes
+# A single string is routed to the entry node(s); or pass {node_id: task}.
+result = dag.run("Find recent papers on small language models and write a report.")
+# Runs in topological order and parallelizes independent nodes.
+print(result.success, result.outputs["format"])
 ```
 
 ### YAML Workflow Definitions
@@ -103,7 +142,7 @@ count = state.get("research", "papers_found")  # 42
 # Snapshots for rollback
 snapshot = state.snapshot()
 # ... do work ...
-state.restore(snapshot)  # Rollback
+state.rollback(snapshot)  # Restore to the snapshot
 ```
 
 ## Agent Lifecycle Management
@@ -111,12 +150,13 @@ state.restore(snapshot)  # Rollback
 ```python
 from effgen.core.lifecycle import AgentRegistry, AgentPool
 
-# Registry — track all agents
+# Registry — track agents by id
 registry = AgentRegistry()
-registry.register(agent, timeout=300)  # 5-minute timeout
+registry.register("agent-1", agent, timeout=300)  # 5-minute timeout
 
-# Pool — pre-warmed agents for fast allocation
-pool = AgentPool(factory=lambda: create_agent("general", model), min_size=2, max_size=10)
+# Pool — reuse pre-built agents for fast allocation
+pool = AgentPool(max_size=10)
+pool.add(create_agent("general", model))  # pre-warm
 agent = pool.acquire()
 try:
     result = agent.run("task")
@@ -124,8 +164,8 @@ finally:
     pool.release(agent)
 
 # Timeout and cancellation
-registry.check_timeouts()    # Cancel agents that exceeded timeout
-registry.cancel("agent-id")  # Cancel specific agent
+registry.check_timeouts()    # Cancel agents that exceeded their timeout
+registry.cancel("agent-1")   # Cancel a specific agent
 ```
 
 ## CLI Commands

@@ -574,25 +574,61 @@ class ComplexityAnalyzer:
 
     def calibrate_weights(self, training_data: list[dict[str, Any]]):
         """
-        Calibrate weights based on historical performance data.
+        Calibrate the analyzer's feature weights from labelled examples.
 
-        Args:
-            training_data: List of dicts with 'task', 'actual_complexity', 'execution_metrics'
+        Each example is a dict with a ``task`` string and an
+        ``actual_complexity`` score in ``[0, 10]``. Weights for features that
+        correlate positively with the observed complexity are nudged up and
+        re-normalised; features that don't correlate are left alone. Returns the
+        updated weight mapping.
+
+        Raises ``ValueError`` if fewer than 10 labelled samples are supplied
+        (too few for a stable estimate) — an honest, actionable error rather
+        than a silent no-op.
         """
-        # Placeholder for weight calibration using training data
-        # In production, would use optimization algorithm to find best weights
-        logger.info(f"Calibrating weights with {len(training_data)} samples...")
-
-        # Simple heuristic: adjust weights based on correlation with actual complexity
-        # This is a simplified version - real implementation would use proper optimization
-
         if len(training_data) < 10:
-            logger.warning("Insufficient training data for reliable calibration (need at least 10 samples)")
-            return
+            raise ValueError(
+                f"calibrate_weights needs at least 10 labelled samples for a "
+                f"stable estimate; got {len(training_data)}."
+            )
 
-        # Calculate correlations (simplified)
-        # In production: use proper statistical methods
-        logger.info("Weight calibration complete (feature in development)")
+        logger.debug("Calibrating complexity weights from %d samples", len(training_data))
+
+        # Pearson-style correlation between each feature's score and the
+        # observed complexity, computed over the provided samples.
+        feature_scores: dict[str, list[float]] = {k: [] for k in self.weights}
+        actuals: list[float] = []
+        for sample in training_data:
+            score = self.analyze(str(sample.get("task", "")))
+            actuals.append(float(sample.get("actual_complexity", score.overall)))
+            for feat in self.weights:
+                feature_scores[feat].append(float(getattr(score, feat, 0.0)))
+
+        def _corr(xs: list[float], ys: list[float]) -> float:
+            n = len(xs)
+            if n < 2:
+                return 0.0
+            mx, my = sum(xs) / n, sum(ys) / n
+            cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+            vx = sum((x - mx) ** 2 for x in xs)
+            vy = sum((y - my) ** 2 for y in ys)
+            denom = (vx * vy) ** 0.5
+            return cov / denom if denom else 0.0
+
+        # Nudge weights toward features that track the actual complexity.
+        for feat in self.weights:
+            corr = _corr(feature_scores[feat], actuals)
+            if corr > 0:
+                self.weights[feat] *= (1.0 + 0.25 * corr)
+
+        # Re-normalise so the weights still sum to 1.
+        total = sum(self.weights.values())
+        if total > 0:
+            for feat in self.weights:
+                self.weights[feat] /= total
+
+        logger.debug("Complexity weights recalibrated: %s", self.weights)
+        return self.weights
 
     def batch_analyze(self, tasks: list[str]) -> list[ComplexityScore]:
         """

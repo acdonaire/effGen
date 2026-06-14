@@ -214,8 +214,8 @@ class SubAgentManager:
         # Get configuration for specialization
         sub_agent_config = SubAgentConfig.get_default_config(specialization)
 
-        # Create sub-agent (will be implemented by importing Agent class)
-        # For now, we create a placeholder that will be replaced
+        # Record the sub-agent's identity + resolved config. The real Agent is
+        # constructed lazily in _execute_sub_agent (reusing the parent's model).
         agent_id = f"sub_agent_{subtask.id}"
 
         # Track spawning event
@@ -437,9 +437,10 @@ class SubAgentManager:
             # Update status
             subtask.status = TaskStatus.RUNNING
 
-            # Simulate execution (in real implementation, would call agent.run())
-            # This is a placeholder that will be replaced when Agent class is available
-            result_data = self._simulate_execution(subtask, config)
+            # Run the subtask on a real specialized agent built from the parent's
+            # model. (Previously this returned fabricated "Completed: …" text with
+            # made-up token/tool counts — a silent-fabrication trap.)
+            result_data = self._run_real_sub_agent(subtask, config)
 
             execution_time = time.time() - start_time
 
@@ -454,16 +455,21 @@ class SubAgentManager:
                 }
             ))
 
+            sub_success = result_data.get("success", True) if isinstance(result_data, dict) else True
+
             # Update subtask
-            subtask.status = TaskStatus.COMPLETED
+            subtask.status = TaskStatus.COMPLETED if sub_success else TaskStatus.FAILED
             subtask.result = result_data
 
-            # Create result
+            # Create result — honour the child agent's own success flag so a
+            # failing sub-agent is reported as failed, not a silent success.
             result = SubAgentResult(
                 subtask_id=subtask.id,
                 agent_id=agent_id,
-                success=True,
+                success=sub_success,
                 result=result_data,
+                error=None if sub_success else str(result_data.get("output", "sub-agent failed"))
+                if isinstance(result_data, dict) else None,
                 execution_time=execution_time,
                 tokens_used=result_data.get("tokens_used", 0) if isinstance(result_data, dict) else 0,
                 tool_calls=result_data.get("tool_calls", 0) if isinstance(result_data, dict) else 0
@@ -507,21 +513,58 @@ class SubAgentManager:
 
             return result
 
-    def _simulate_execution(self, subtask: SubTask, config: SubAgentConfig) -> dict[str, Any]:
+    def _run_real_sub_agent(self, subtask: SubTask, config: SubAgentConfig) -> dict[str, Any]:
         """
-        Simulate sub-agent execution (placeholder).
+        Execute a subtask on a real, specialized sub-agent.
 
-        This will be replaced with actual agent.run() call when Agent class is available.
+        Builds a lightweight child :class:`Agent` that **reuses the parent
+        agent's already-loaded model** (so no extra GPU load / no re-resolution)
+        and the parent's configured tools, steered by the specialization's
+        system prompt. Sub-agent spawning is disabled on the child to prevent
+        unbounded recursion.
+
+        Returns a dict with the real ``output`` text and the real
+        ``tokens_used`` / ``tool_calls`` reported by the run — never fabricated.
+
+        Raises ``RuntimeError`` if there is no parent agent with a usable model;
+        the caller turns that into an honest failed ``SubAgentResult`` rather
+        than a fake success.
         """
-        # Placeholder simulation
-        time.sleep(0.1)  # Simulate some work
+        parent = self.parent_agent
+        model = getattr(parent, "model", None) if parent is not None else None
+        if model is None:
+            raise RuntimeError(
+                "sub-agent execution requires a parent agent with a loaded model; "
+                "none was provided to SubAgentManager."
+            )
 
-        return {
-            "output": f"Completed: {subtask.description}",
-            "summary": f"Successfully executed {config.specialization.value} task",
-            "tokens_used": 500,
-            "tool_calls": 2
-        }
+        # Local import avoids a circular import (agent.py imports this module).
+        from .agent import Agent, AgentConfig
+
+        base_prompt = config.system_prompt or "You are a helpful AI assistant."
+        child_cfg = AgentConfig(
+            name=f"{config.specialization.value}_specialist",
+            model=model,                       # reuse the parent's model instance
+            tools=list(getattr(parent, "tools", {}).values()),
+            system_prompt=base_prompt,
+            max_iterations=config.max_iterations,
+            temperature=config.temperature,
+            enable_sub_agents=False,           # no recursive decomposition
+            enable_memory=False,
+            require_model=False,               # model is already an instance
+        )
+        child = Agent(child_cfg)
+        try:
+            response = child.run(subtask.description)
+            return {
+                "output": response.output,
+                "summary": f"{config.specialization.value} sub-agent result",
+                "success": response.success,
+                "tokens_used": getattr(response, "tokens_used", 0),
+                "tool_calls": getattr(response, "tool_calls", 0),
+            }
+        finally:
+            child.close()
 
     def synthesize_results(self,
                           results: list[SubAgentResult],
@@ -621,8 +664,12 @@ class SubAgentManager:
         return len([a for a in self.active_sub_agents.values() if a["status"] == "running"])
 
     def cleanup(self):
-        """Cleanup resources and terminate sub-agents."""
-        # In real implementation, would terminate running agents
+        """Clear tracked sub-agent state.
+
+        Sub-agents are short-lived child agents that are closed as soon as their
+        subtask finishes (see :meth:`_run_real_sub_agent`), so there is nothing
+        long-running to terminate here — this just drops the bookkeeping refs.
+        """
         self.active_sub_agents.clear()
         self.sub_agent_results.clear()
 

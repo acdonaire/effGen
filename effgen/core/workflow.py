@@ -24,6 +24,20 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _redact(text: str) -> str:
+    """Scrub secrets from an error string before it is surfaced/logged.
+
+    Mirrors the agent's failure path so orchestrated errors never leak keys.
+    Redaction must never mask the underlying error, so any failure falls back
+    to the raw text.
+    """
+    try:
+        from ..observability.redact import get_redactor
+        return get_redactor().scrub(text)
+    except Exception:  # pragma: no cover - redaction is best-effort
+        return text
+
+
 class NodeStatus(Enum):
     """Execution status of a workflow node."""
     PENDING = "pending"
@@ -225,18 +239,66 @@ class WorkflowDAG:
 
     # -- Execution --
 
-    def run(self, initial_inputs: dict[str, Any] | None = None,
+    def entry_nodes(self) -> list[str]:
+        """Return the ids of nodes with no incoming edges (the DAG's roots)."""
+        return [nid for nid in self.topological_order() if not self._reverse.get(nid)]
+
+    def _normalize_initial_inputs(
+        self, initial_inputs: dict[str, Any] | str | None,
+    ) -> dict[str, Any]:
+        """
+        Coerce the ``initial_inputs`` argument into a ``{node_id: input}`` dict.
+
+        Accepts the same shapes a user would naturally try:
+        - ``None`` -> ``{}`` (nodes get their upstream/empty input).
+        - a ``dict`` -> used as-is (the canonical ``{node_id: input}`` form).
+        - a bare ``str`` -> routed to every entry (root) node, so the obvious
+          ``dag.run("do the task")`` works like ``agent.run("do the task")``.
+
+        Any other type raises a one-line ``TypeError`` naming the expected shape.
+        """
+        if initial_inputs is None:
+            return {}
+        if isinstance(initial_inputs, dict):
+            return initial_inputs
+        if isinstance(initial_inputs, str):
+            roots = self.entry_nodes()
+            if not roots:
+                # No nodes (or — impossible for a DAG — no roots): nothing to seed.
+                return {}
+            return dict.fromkeys(roots, initial_inputs)
+        raise TypeError(
+            "WorkflowDAG.run() expects the task as a {node_id: input} dict "
+            "(e.g. {'search': 'find recent news'}) or a single string routed to "
+            f"the entry node(s) {self.entry_nodes()!r}; got {type(initial_inputs).__name__}."
+        )
+
+    def run(self, initial_inputs: dict[str, Any] | str | None = None,
             context: dict[str, Any] | None = None) -> WorkflowResult:
         """
         Execute the workflow synchronously.
 
         Args:
-            initial_inputs: Mapping of node_id -> initial task string
+            initial_inputs: Either a ``{node_id: task}`` mapping, or a single
+                task string that is routed to the workflow's entry node(s).
             context: Shared context dict passed to each agent
 
         Returns:
             WorkflowResult
+
+        Example::
+
+            from effgen import Agent, AgentConfig, WorkflowDAG, WorkflowNode, load_model
+
+            m = load_model("gpt-5-nano")
+            dag = WorkflowDAG("pipeline")
+            dag.add_node(WorkflowNode(id="draft", agent=Agent(AgentConfig(name="w", model=m))))
+            dag.add_node(WorkflowNode(id="polish", agent=Agent(AgentConfig(name="e", model=m))))
+            dag.connect("draft", "polish")
+            result = dag.run("Write one sentence about the sea.")
+            print(result.outputs["polish"])
         """
+        initial_inputs = self._normalize_initial_inputs(initial_inputs)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -251,16 +313,18 @@ class WorkflowDAG:
         else:
             return asyncio.run(self.run_async(initial_inputs, context))
 
-    async def run_async(self, initial_inputs: dict[str, Any] | None = None,
+    async def run_async(self, initial_inputs: dict[str, Any] | str | None = None,
                         context: dict[str, Any] | None = None) -> WorkflowResult:
         """
         Execute the workflow asynchronously.
 
+        Accepts the same ``initial_inputs`` shapes as :meth:`run` (a
+        ``{node_id: task}`` dict or a single string routed to the entry nodes).
         Independent nodes at the same topological level are run in parallel
         via ``asyncio.gather``.
         """
         start = time.time()
-        initial_inputs = initial_inputs or {}
+        initial_inputs = self._normalize_initial_inputs(initial_inputs)
         context = context or {}
 
         # Reset node state
@@ -345,7 +409,14 @@ class WorkflowDAG:
 
     async def _run_node(self, node: WorkflowNode, task: str,
                         context: dict[str, Any]) -> None:
-        """Execute a single workflow node."""
+        """Execute a single workflow node.
+
+        A node is COMPLETED only when its agent returns a real, successful
+        answer. If the agent reports ``success=False`` (e.g. a bad model id or
+        an auth error inside the node) the node is marked FAILED and carries a
+        typed, redacted error — never a silent success — matching the failure
+        contract used everywhere else.
+        """
         node.status = NodeStatus.RUNNING
         t0 = time.time()
         try:
@@ -362,9 +433,25 @@ class WorkflowDAG:
                 )
 
             node.output = response.output if hasattr(response, "output") else str(response)
-            node.status = NodeStatus.COMPLETED
+
+            # Honour the agent's own success flag: a sub-agent that failed must
+            # fail the node too (its error is already typed + redacted upstream).
+            if getattr(response, "success", True) is False:
+                detail = (getattr(response, "metadata", None) or {}).get("error")
+                if isinstance(detail, dict):
+                    node.error = (
+                        f"{detail.get('type', 'AgentError')}: "
+                        f"{detail.get('message', node.output)}"
+                    )
+                    node.metadata["error_detail"] = detail
+                else:
+                    node.error = _redact(str(node.output))
+                node.status = NodeStatus.FAILED
+                logger.error("Workflow node '%s' failed: %s", node.id, node.error)
+            else:
+                node.status = NodeStatus.COMPLETED
         except Exception as e:
-            node.error = f"{type(e).__name__}: {e}"
+            node.error = f"{type(e).__name__}: {_redact(str(e))}"
             node.status = NodeStatus.FAILED
             logger.error("Workflow node '%s' failed: %s", node.id, node.error)
         finally:

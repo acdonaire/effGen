@@ -247,7 +247,7 @@ class SharedState:
             self._data = copy.deepcopy(target.data)
             # Truncate mutation log to the snapshot point
             self._mutations = self._mutations[:target.mutation_index]
-            logger.info("State rolled back to snapshot %s", snapshot_id)
+            logger.debug("State rolled back to snapshot %s", snapshot_id)
             return True
 
     def list_snapshots(self) -> list[dict[str, Any]]:

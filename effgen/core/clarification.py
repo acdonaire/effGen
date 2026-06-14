@@ -148,7 +148,7 @@ class ClarificationDetector:
         if request is None:
             return None
 
-        logger.info("Requesting clarification: %s (reason: %s)", request.question, request.context)
+        logger.debug("Requesting clarification: %s (reason: %s)", request.question, request.context)
         return request.ask(
             choice_callback=self.choice_callback,
             input_callback=self.input_callback,

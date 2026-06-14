@@ -11,6 +11,8 @@ Coordinates multiple agents using various patterns:
 from __future__ import annotations
 
 import asyncio
+import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -21,6 +23,17 @@ from .execution_tracker import EventType, ExecutionEvent, ExecutionTracker
 from .lifecycle import AgentRegistry
 from .message_bus import AgentMessage, MessageBus, MessageType
 from .shared_state import SharedState
+
+logger = logging.getLogger(__name__)
+
+
+def _redact(text: str) -> str:
+    """Scrub secrets from an error string before surfacing/logging it."""
+    try:
+        from ..observability.redact import get_redactor
+        return get_redactor().scrub(text)
+    except Exception:  # pragma: no cover - redaction is best-effort
+        return text
 
 
 class OrchestrationPattern(Enum):
@@ -110,6 +123,23 @@ class MultiAgentOrchestrator:
     - Result aggregation
     - Conflict resolution
     - Load balancing
+
+    Example::
+
+        from effgen import (
+            Agent, AgentConfig, MultiAgentOrchestrator, OrchestrationPattern, load_model,
+        )
+
+        m = load_model("gpt-5-nano")
+        writer = Agent(AgentConfig(name="writer", model=m))
+        editor = Agent(AgentConfig(name="editor", model=m))
+
+        orch = MultiAgentOrchestrator()
+        team = orch.create_team(
+            "blog", [writer, editor], pattern=OrchestrationPattern.SEQUENTIAL,
+        )
+        result = orch.assign_task("Write one sentence about the ocean.", team)
+        print(result.success, result.output)
     """
 
     def __init__(self, config: dict[str, Any] | None = None):
@@ -126,6 +156,11 @@ class MultiAgentOrchestrator:
         self.message_bus = MessageBus(persist=True)
         self.shared_state = SharedState()
         self.lifecycle_registry = AgentRegistry()
+        # Per-team cooperative-cancellation flags. cancel_workflow() sets these;
+        # the execution loops check them before starting the next agent so a
+        # cancel reliably stops not-yet-started in-flight work and returns the
+        # partial results gathered so far.
+        self._cancel_events: dict[str, threading.Event] = {}
 
     def register_agent(self, agent: Agent):
         """
@@ -178,21 +213,61 @@ class MultiAgentOrchestrator:
 
     def assign_task(self,
                    task: str,
-                   team: TeamConfig,
+                   team: TeamConfig | str,
                    context: dict[str, Any] | None = None) -> TeamResponse:
         """
         Assign task to team and coordinate execution.
 
         Args:
-            task: Task description
-            team: Team configuration
+            task: Task description (a plain string).
+            team: Either the ``TeamConfig`` returned by :meth:`create_team`, or
+                the **name** of an already-registered team (so you can pass the
+                name you just registered, not only the config object).
             context: Optional context
 
         Returns:
-            TeamResponse with results
+            TeamResponse with results. ``success`` is ``False`` (never a silent
+            success) when the team is empty or any agent fails; per-agent
+            outputs and errors are preserved in ``agent_responses``.
         """
         start_time = time.time()
         context = context or {}
+
+        # Accept a team *name* as well as a TeamConfig (additive ergonomics).
+        if isinstance(team, str):
+            resolved = self.teams.get(team)
+            if resolved is None:
+                known = ", ".join(self.teams) or "<none>"
+                raise KeyError(
+                    f"No team named {team!r} is registered. Known teams: {known}. "
+                    f"Create one with orchestrator.create_team(name, agents, pattern=...)."
+                )
+            team = resolved
+        elif not isinstance(team, TeamConfig):
+            raise TypeError(
+                "assign_task() expects a TeamConfig or a registered team name "
+                f"(str); got {type(team).__name__}. Build one with "
+                "orchestrator.create_team(name, agents, pattern=...)."
+            )
+
+        if not isinstance(task, str):
+            raise TypeError(
+                f"assign_task() task must be a string; got {type(task).__name__}."
+            )
+
+        # Honest empty-team guard: a team with no agents cannot succeed.
+        if not team.agents:
+            return TeamResponse(
+                output="Error: team has no agents to run the task.",
+                success=False,
+                pattern=team.pattern,
+                execution_time=time.time() - start_time,
+                metadata={"reason": "empty_team", "error": "Team has no agents."},
+            )
+
+        # Arm a fresh cancellation flag for this run.
+        cancel_event = threading.Event()
+        self._cancel_events[team.name] = cancel_event
 
         # Track team task start
         self.execution_tracker.track_event(ExecutionEvent(
@@ -236,20 +311,24 @@ class MultiAgentOrchestrator:
             return response
 
         except Exception as e:
+            # Redact before surfacing/logging so an orchestration error never
+            # leaks secrets, mirroring the single-agent failure path.
+            safe = _redact(str(e))
+            logger.error("Team '%s' failed: %s", team.name, safe)
             # Track failure
             self.execution_tracker.track_event(ExecutionEvent(
                 type=EventType.TASK_FAILED,
                 agent_id=f"team_{team.name}",
-                message=f"Team failed: {str(e)}",
-                data={"error": str(e)}
+                message=f"Team failed: {safe}",
+                data={"error": safe}
             ))
 
             return TeamResponse(
-                output=f"Error: {str(e)}",
+                output=f"Error: {safe}",
                 success=False,
                 pattern=team.pattern,
                 execution_time=time.time() - start_time,
-                metadata={"error": str(e)}
+                metadata={"reason": "team_error", "error": safe}
             )
 
     def _execute_sequential(self,
@@ -264,8 +343,15 @@ class MultiAgentOrchestrator:
         """
         current_task = task
         responses = []
+        cancel_event = self._cancel_events.get(team.name)
+        cancelled = False
 
         for i, agent in enumerate(team.agents):
+            # Cooperative cancellation: stop before launching the next agent.
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
+
             # Send task assignment via message bus
             self.message_bus.send(AgentMessage(
                 sender=f"orchestrator_{team.name}",
@@ -317,12 +403,17 @@ class MultiAgentOrchestrator:
             )
 
             if not response.success:
+                # Capture the typed, redacted error from the failing agent so the
+                # team response carries an honest per-agent failure, not a silent
+                # success. Labeled partials (the responses so far) are preserved.
+                err_detail = (getattr(response, "metadata", None) or {}).get("error")
+                agent_result["error"] = err_detail or _redact(str(response.output))
                 # Publish error
                 self.message_bus.send(AgentMessage(
                     sender=agent.name,
                     recipient=f"orchestrator_{team.name}",
                     type=MessageType.ERROR,
-                    payload=response.output,
+                    payload=_redact(str(response.output)),
                     topic=f"team.{team.name}.error",
                 ))
                 break
@@ -330,11 +421,24 @@ class MultiAgentOrchestrator:
             # Use output as input for next agent
             current_task = response.output
 
+        # success only when at least one agent ran AND all that ran succeeded
+        # AND the run was not cancelled — never a silent True on an empty/aborted run.
+        success = bool(responses) and all(r["success"] for r in responses) and not cancelled
+        meta: dict[str, Any] = {}
+        if cancelled:
+            meta["reason"] = "cancelled"
+            meta["error"] = "Workflow cancelled before completion."
+        elif not success:
+            meta["reason"] = "sub_agent_failed"
+            failed = next((r for r in responses if not r["success"]), None)
+            if failed is not None:
+                meta["error"] = failed.get("error", "A sub-agent failed.")
         return TeamResponse(
             output=current_task,
-            success=all(r["success"] for r in responses),
+            success=success,
             pattern=OrchestrationPattern.SEQUENTIAL,
-            agent_responses=responses
+            agent_responses=responses,
+            metadata=meta,
         )
 
     def _execute_parallel(self,
@@ -347,24 +451,47 @@ class MultiAgentOrchestrator:
         Synthesize results at the end.
         """
         # Run all agents in parallel
-        responses = asyncio.run(self._parallel_execution(task, team.agents, context))
+        cancel_event = self._cancel_events.get(team.name)
+        responses = asyncio.run(
+            self._parallel_execution(task, team.agents, context, cancel_event)
+        )
 
         # Synthesize results
         synthesis = self._synthesize_parallel_results(task, responses)
 
+        # Honest: success only if at least one agent actually succeeded.
+        success = any(r["success"] for r in responses)
+        meta: dict[str, Any] = {}
+        if not success:
+            meta["reason"] = "sub_agent_failed"
+            failed = next((r for r in responses if r.get("error")), None)
+            if failed is not None:
+                meta["error"] = failed["error"]
         return TeamResponse(
             output=synthesis,
-            success=any(r["success"] for r in responses),
+            success=success,
             pattern=OrchestrationPattern.PARALLEL,
-            agent_responses=responses
+            agent_responses=responses,
+            metadata=meta,
         )
 
     async def _parallel_execution(self,
                                   task: str,
                                   agents: list[Agent],
-                                  context: dict[str, Any]) -> list[dict[str, Any]]:
+                                  context: dict[str, Any],
+                                  cancel_event: threading.Event | None = None,
+                                  ) -> list[dict[str, Any]]:
         """Execute agents in parallel."""
         async def run_agent(agent: Agent):
+            # Skip not-yet-started work if the run was cancelled.
+            if cancel_event is not None and cancel_event.is_set():
+                return {
+                    "agent_name": agent.name,
+                    "output": "Cancelled before start.",
+                    "success": False,
+                    "tokens_used": 0,
+                    "error": "Workflow cancelled before completion.",
+                }
             # Track start
             self.execution_tracker.track_event(ExecutionEvent(
                 type=EventType.SUB_AGENT_START,
@@ -382,12 +509,16 @@ class MultiAgentOrchestrator:
                 message="Agent completed (parallel)"
             ))
 
-            return {
+            result = {
                 "agent_name": agent.name,
                 "output": response.output,
                 "success": response.success,
-                "tokens_used": response.tokens_used
+                "tokens_used": response.tokens_used,
             }
+            if not response.success:
+                detail = (getattr(response, "metadata", None) or {}).get("error")
+                result["error"] = detail or _redact(str(response.output))
+            return result
 
         # Execute all in parallel
         results = await asyncio.gather(*[run_agent(agent) for agent in agents])
@@ -523,7 +654,10 @@ Consider the above viewpoints and provide your perspective or refined answer."""
         Can use voting or scoring.
         """
         # All agents work on same task
-        responses = asyncio.run(self._parallel_execution(task, team.agents, context))
+        cancel_event = self._cancel_events.get(team.name)
+        responses = asyncio.run(
+            self._parallel_execution(task, team.agents, context, cancel_event)
+        )
 
         # Select best response
         best_response = self._select_best_response(task, responses, team.voting_strategy)
@@ -579,13 +713,30 @@ Consider the above viewpoints and provide your perspective or refined answer."""
 
     def _calculate_consensus(self, responses: list[dict[str, Any]]) -> float:
         """
-        Calculate consensus score.
+        Calculate a consensus score in ``[0, 1]`` across agent responses.
 
-        Simple heuristic: similarity of responses.
+        Uses the mean pairwise Jaccard overlap of the responses' word sets — a
+        cheap, dependency-free lexical-agreement signal (1.0 = identical wording,
+        0.0 = no shared vocabulary). One or zero responses trivially agree.
         """
-        # Placeholder - would use semantic similarity
-        # For now, return fixed score
-        return 0.7
+        import re
+
+        def _tokens(text: str) -> set[str]:
+            return set(re.findall(r"[a-z0-9']+", str(text).lower()))
+
+        token_sets = [_tokens(r.get("output", "")) for r in responses]
+        token_sets = [t for t in token_sets if t]
+        if len(token_sets) < 2:
+            return 1.0
+
+        scores: list[float] = []
+        for i in range(len(token_sets)):
+            for j in range(i + 1, len(token_sets)):
+                a, b = token_sets[i], token_sets[j]
+                union = a | b
+                scores.append(len(a & b) / len(union) if union else 0.0)
+
+        return round(sum(scores) / len(scores), 3) if scores else 0.0
 
     def _select_best_response(self,
                              task: str,
@@ -650,15 +801,24 @@ Consider the above viewpoints and provide your perspective or refined answer."""
 
     def cancel_workflow(self, team_name: str | None = None) -> int:
         """
-        Cancel all running agents, optionally scoped to a team.
+        Cancel running/queued work, optionally scoped to a team.
+
+        Sets the cooperative cancellation flag so an in-progress
+        :meth:`assign_task` stops before launching its next agent and returns
+        the partial results gathered so far, and signals the lifecycle registry
+        so any tracked agents are marked terminated.
 
         Args:
-            team_name: If given, only cancel agents in this team
+            team_name: If given, only cancel this team's run; otherwise cancel
+                every armed team run.
 
         Returns:
-            Number of agents cancelled
+            Number of agents signalled to cancel.
         """
         if team_name:
+            event = self._cancel_events.get(team_name)
+            if event is not None:
+                event.set()
             team = self.teams.get(team_name)
             if not team:
                 return 0
@@ -668,6 +828,8 @@ Consider the above viewpoints and provide your perspective or refined answer."""
                     count += 1
             return count
         else:
+            for event in self._cancel_events.values():
+                event.set()
             return self.lifecycle_registry.cancel_all()
 
     def __repr__(self) -> str:

@@ -189,7 +189,7 @@ class ResultAggregator:
                 )
             )
 
-        logger.info(
+        logger.debug(
             "Deduplication: %d results -> %d unique (%s)",
             len(results),
             len(aggregated),

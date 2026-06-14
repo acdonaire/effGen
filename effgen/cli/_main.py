@@ -2564,6 +2564,8 @@ Model id formats:
     workflow_run.add_argument('-m', '--model', help='Default model for all agents')
     workflow_run.add_argument('--input', action='append', nargs=2, metavar=('NODE', 'TASK'),
                               help='Input for a specific node (can be repeated)')
+    workflow_run.add_argument('--task', help='A single task string routed to the '
+                              'workflow entry node(s) (alternative to --input)')
 
     workflow_validate = workflow_subparsers.add_parser('validate', help='Validate a workflow YAML file')
     workflow_validate.add_argument('file', help='Path to workflow YAML file')
@@ -3238,6 +3240,12 @@ def _handle_workflow_command(args, cli) -> int:
                 from effgen.models import load_model
                 m = model_name or nd.get('model', 'Qwen/Qwen2.5-1.5B-Instruct')
                 model = load_model(m)
+                # A node may name a preset (research/coding/general/...) to get a
+                # ready-made tool-equipped agent; otherwise build a plain agent.
+                preset = nd.get('preset')
+                if preset:
+                    from effgen.presets import create_agent
+                    return create_agent(preset, model=model)
                 config = AgentConfig(
                     name=nd.get('agent', nd['id']),
                     model=model,
@@ -3248,13 +3256,39 @@ def _handle_workflow_command(args, cli) -> int:
             dag = WorkflowDAG.from_yaml(args.file, agent_factory=_agent_factory)
             cli.print(f"Running workflow '{dag.name}' ({len(dag.nodes)} nodes)...")
 
-            # Build initial inputs from --input flags
-            initial_inputs = {}
+            # Per-node ``task:`` strings declared in the YAML become each node's
+            # default input (so `effgen workflow run workflow.yaml` works with no
+            # flags). --input / --task then override or supplement them.
+            yaml_inputs: dict = {}
+            for node in dag.nodes:
+                node_task = node.metadata.get('task')
+                if node_task:
+                    yaml_inputs[node.id] = node_task
+
+            bare_task = getattr(args, 'task', None)
+            initial_inputs: dict | str = dict(yaml_inputs)
             if getattr(args, 'input', None):
                 for node_id, task_str in args.input:
                     initial_inputs[node_id] = task_str
+            if bare_task:
+                if dag.entry_nodes():
+                    for nid in dag.entry_nodes():
+                        initial_inputs[nid] = bare_task
+                elif not initial_inputs:
+                    initial_inputs = bare_task
 
-            result = dag.run(initial_inputs=initial_inputs)
+            try:
+                result = dag.run(initial_inputs=initial_inputs)
+            finally:
+                # Release each node's agent so we don't leak handles / emit
+                # garbage-collected-without-close warnings.
+                for node in dag.nodes:
+                    agent = getattr(node, "agent", None)
+                    if agent is not None and hasattr(agent, "close"):
+                        try:
+                            agent.close()
+                        except Exception:
+                            pass
 
             cli.print(f"\nWorkflow {'succeeded' if result.success else 'FAILED'} "
                        f"in {result.execution_time:.2f}s")

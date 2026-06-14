@@ -124,7 +124,7 @@ class AgentEntry:
                           AgentLifecycleState.READY):
             self.state = AgentLifecycleState.TERMINATED
             self.completed_at = time.time()
-        logger.info("Agent %s cancelled", self.agent_id)
+        logger.debug("Agent %s cancelled", self.agent_id)
 
     def to_dict(self) -> dict[str, Any]:
         return {
