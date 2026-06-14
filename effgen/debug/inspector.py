@@ -156,15 +156,16 @@ def run_debug_cli(
         step: If True, pause after each iteration for user input
     """
     try:
-        from rich.console import Console
         from rich.panel import Panel
         from rich.table import Table
         from rich.text import Text  # noqa: F401
+
+        from effgen.ui.theme import get_console
     except ImportError:
         print("rich library required for debug CLI. Install with: pip install rich")
         return
 
-    console = Console()
+    console = get_console()
 
     # Build agent config if not provided
     if config is None:
@@ -229,9 +230,10 @@ def run_debug_cli(
 def _print_trace_rich(trace: DebugTrace) -> None:
     """Pretty-print a DebugTrace using rich."""
     try:
-        from rich.console import Console
         from rich.panel import Panel
         from rich.table import Table
+
+        from effgen.ui.theme import get_console
     except ImportError:
         # Fallback to plain text
         print(trace.summary())
@@ -239,7 +241,7 @@ def _print_trace_rich(trace: DebugTrace) -> None:
             print(f"  [{it.iteration}] action={it.action} obs={_truncate(it.observation or '', 80)}")
         return
 
-    console = Console()
+    console = get_console()
     console.print(Panel(trace.summary(), title="Debug Trace", style="blue"))
 
     for it in trace.iterations:

@@ -92,6 +92,10 @@ from effgen.cli import onboarding as _onboarding
 # Live status / progress presentation (TTY-aware; degrades to plain text).
 from effgen.cli import progress as _progress
 
+# Shared Rich theme + console factory (one palette across the whole CLI).
+from effgen.ui.theme import CODE_THEME
+from effgen.ui.theme import get_console as _get_console
+
 # ---------------------------------------------------------------------------
 # Server request models + types — defined at MODULE level (not inside serve_api).
 #
@@ -256,7 +260,7 @@ class CLIInterface:
 
     def __init__(self):
         """Initialize CLI interface."""
-        self.console = Console() if RICH_AVAILABLE else None
+        self.console = _get_console() if RICH_AVAILABLE else None
         self.config_loader = ConfigLoader()
         self.tool_registry = get_tool_registry()
 
@@ -1554,7 +1558,7 @@ class CLIInterface:
                     syntax = Syntax(
                         json.dumps(config.to_dict(), indent=2),
                         "json",
-                        theme="monokai",
+                        theme=CODE_THEME,
                         line_numbers=True
                     )
                     self.console.print(syntax)
@@ -1744,7 +1748,7 @@ class CLIInterface:
         self.print("\n[bold]Input schema:[/bold]" if self.console else "\nInput schema:")
         schema = metadata.to_json_schema()
         if self.console:
-            self.console.print(Syntax(json.dumps(schema, indent=2), "json", theme="monokai"))
+            self.console.print(Syntax(json.dumps(schema, indent=2), "json", theme=CODE_THEME))
         else:
             print(json.dumps(schema, indent=2))
 
@@ -1794,7 +1798,7 @@ class CLIInterface:
             self.print("\n[bold]Parameters:[/bold]" if self.console else "\nParameters:")
             schema = metadata.to_json_schema()
             if self.console:
-                self.console.print(Syntax(json.dumps(schema, indent=2), "json", theme="monokai"))
+                self.console.print(Syntax(json.dumps(schema, indent=2), "json", theme=CODE_THEME))
             else:
                 print(json.dumps(schema, indent=2))
 
@@ -3195,7 +3199,7 @@ def _handle_doctor_command(args) -> int:
 
     # Pretty-print
     if RICH_AVAILABLE:
-        console = Console()
+        console = _get_console()
         table = Table(title="effgen doctor — Provider Status")
         table.add_column("Provider", style="cyan", no_wrap=True)
         table.add_column("Key", style="white")

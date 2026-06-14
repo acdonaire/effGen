@@ -66,8 +66,13 @@ def _env_flag(name: str) -> bool:
 
 
 def color_enabled() -> bool:
-    """Honor the ``NO_COLOR`` convention (https://no-color.org/)."""
-    return not os.environ.get("NO_COLOR")
+    """Honor the ``NO_COLOR`` convention (https://no-color.org/).
+
+    Re-exported from the shared theme module so the CLI has one source of truth.
+    """
+    from effgen.ui.theme import color_enabled as _color_enabled
+
+    return _color_enabled()
 
 
 def is_ci() -> bool:

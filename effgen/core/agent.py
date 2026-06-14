@@ -221,6 +221,49 @@ class AgentResponse:
         """
         return self.output if self.output is not None else ""
 
+    def __repr__(self) -> str:
+        """A detailed-but-compact developer view.
+
+        The default dataclass repr dumps the entire execution trace and tree,
+        which is unreadable. This keeps the useful structured fields and a
+        truncated answer preview, and summarizes the trace by length.
+        """
+        preview = (self.output or "").replace("\n", " ")
+        if len(preview) > 80:
+            preview = preview[:77] + "…"
+        reason = self.metadata.get("reason") if isinstance(self.metadata, dict) else None
+        return (
+            f"AgentResponse(success={self.success}, output={preview!r}, "
+            f"mode={self.mode.value!r}, iterations={self.iterations}, "
+            f"tool_calls={self.tool_calls}, tokens_used={self.tokens_used}, "
+            f"execution_time={self.execution_time:.2f}s, "
+            f"trace_steps={len(self.execution_trace)}, reason={reason!r})"
+        )
+
+    def _repr_html_(self) -> str:
+        """Rich HTML card for Jupyter/IPython (answer + metrics + step trace)."""
+        from effgen.ui import response_html
+
+        return response_html(self)
+
+    def show(self, console: Any = None) -> "AgentResponse":
+        """Print a compact human view: the answer plus a one-line metric footer.
+
+        Renders markdown, fenced code, and tables in the answer. Returns
+        ``self`` so it can be chained. Use :meth:`trace` for the full reasoning.
+        """
+        from effgen.ui import response_show
+
+        response_show(self, console=console)
+        return self
+
+    def trace(self, console: Any = None) -> "AgentResponse":
+        """Print the full step-by-step reasoning trace. Returns ``self``."""
+        from effgen.ui import response_trace
+
+        response_trace(self, console=console)
+        return self
+
     @property
     def text(self) -> str:
         """Read-only alias for :attr:`output` (familiar from other SDKs)."""

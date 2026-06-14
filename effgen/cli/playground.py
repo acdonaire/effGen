@@ -35,10 +35,11 @@ from effgen.prompts.library.registry import registry
 from effgen.prompts.library.session import PlaygroundSession
 
 try:
-    from rich.console import Console
     from rich.panel import Panel
+
+    from effgen.ui.theme import get_console as _get_console
     _RICH = True
-    _console = Console()
+    _console = _get_console()
 except ImportError:
     _RICH = False
     _console = None  # type: ignore[assignment]
