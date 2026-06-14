@@ -49,7 +49,6 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -160,6 +159,54 @@ def _general_purpose_tool_names(registry: Any, limit: int = 5) -> list:
         if len(names) >= limit:
             break
     return names
+
+
+def filter_incompatible_tools(
+    tools: list,
+    model_id: str,
+    *,
+    warn: Any = None,
+) -> tuple[list, list[tuple[str, str]]]:
+    """Drop provider-native tools the chosen model cannot execute.
+
+    Provider-*native* tools (Anthropic computer-use ``bash``/``text_editor``/
+    ``computer``, OpenAI built-ins like ``web_search_preview``) are run
+    server-side by one specific provider and raise "incompatible with model" on
+    any other model. ``effgen run`` and ``effgen chat`` both attach a default
+    tool set, so both must filter these out for the common case (a non-Claude,
+    non-OpenAI model) instead of crashing at agent construction.
+
+    Returns ``(kept_tools, skipped)`` where *skipped* is a list of
+    ``(tool_name, reason)``. If *warn* is callable it is invoked once per
+    skipped tool with a friendly one-line note.
+    """
+    model_id = model_id or ""
+    is_anthropic_model = model_id.startswith("claude") or "anthropic" in model_id.lower()
+    is_openai_model = (
+        model_id.startswith("gpt-")
+        or model_id.startswith("o1")
+        or model_id.startswith("o3")
+        or model_id.startswith("o4")
+        or "openai" in model_id.lower()
+    )
+    kept: list = []
+    skipped: list[tuple[str, str]] = []
+    for tool in tools:
+        tname = str(getattr(tool, "name", "") or "")
+        cls_name = type(tool).__name__
+        is_anthropic_native = "AnthropicNative" in cls_name or "anthropic" in tname.lower()
+        is_openai_native = "OpenAINative" in cls_name
+        if is_anthropic_native and not is_anthropic_model:
+            skipped.append((tname, "requires a Claude model"))
+            continue
+        if is_openai_native and not is_openai_model:
+            skipped.append((tname, "requires a gpt/o-series model"))
+            continue
+        kept.append(tool)
+    if warn is not None:
+        for name, why in skipped:
+            warn(f"Skipping native tool '{name}' ({why})")
+    return kept, skipped
 
 
 # Configure logging
@@ -545,35 +592,9 @@ class CLIInterface:
 
             # Filter provider-specific native tools that are incompatible with
             # the selected model so the agent doesn't reject them at startup.
-            _is_anthropic_model = (
-                model_id.startswith("claude") or "anthropic" in model_id.lower()
+            selected_tools, _skipped = filter_incompatible_tools(
+                selected_tools, model_id, warn=self.print_warning
             )
-            _is_openai_model = (
-                model_id.startswith("gpt-") or model_id.startswith("o1") or
-                model_id.startswith("o3") or model_id.startswith("o4") or
-                "openai" in model_id.lower()
-            )
-            _filtered_tools: list = []
-            for _t in selected_tools:
-                _tname = getattr(getattr(_t, "name", None), "__str__", lambda: "")() or str(getattr(_t, "name", ""))
-                _cls_name = type(_t).__name__
-                _is_anthropic_native = "AnthropicNative" in _cls_name or "anthropic" in _tname.lower()
-                _is_openai_native = "OpenAINative" in _cls_name
-                # Skip Anthropic native tools unless model is Anthropic
-                if _is_anthropic_native and not _is_anthropic_model:
-                    self.print_warning(f"Skipping Anthropic native tool '{_tname}' (requires claude model)")
-                    continue
-                # Skip OpenAI native tools (web_search_preview etc.) unless model is OpenAI
-                if _is_openai_native and not _is_openai_model:
-                    self.print_warning(f"Skipping OpenAI native tool '{_tname}' (requires gpt/o1/o3 model)")
-                    continue
-                _filtered_tools.append(_t)
-            if len(_filtered_tools) < len(selected_tools):
-                skipped = len(selected_tools) - len(_filtered_tools)
-                self.print_warning(
-                    f"Filtered out {skipped} provider-specific tool(s) incompatible with '{model_id}'"
-                )
-            selected_tools = _filtered_tools
 
             agent_config = AgentConfig(
                 name="interactive-agent",
@@ -838,26 +859,14 @@ class CLIInterface:
                 # Display explain trace (tool reasoning)
                 if getattr(args, 'explain', False) and response.execution_trace:
                     self.print_header("Execution Trace (Explain Mode)")
-                    for i, step in enumerate(response.execution_trace, 1):
-                        thought = step.get("thought", step.get("input", ""))
-                        action = step.get("action", step.get("tool", ""))
-                        observation = step.get("observation", step.get("output", ""))
+                    _lines = _progress.execution_trace_lines(response.execution_trace)
+                    if not _lines:
+                        self.print("(no detailed steps recorded for this run)")
+                    for _style, _text in _lines:
                         if self.console:
-                            self.console.print(f"[bold cyan]Step {i}[/bold cyan]")
-                            if thought:
-                                self.console.print(f"  [yellow]Thought:[/yellow] {str(thought)[:300]}")
-                            if action:
-                                self.console.print(f"  [green]Action:[/green] {action}")
-                            if observation:
-                                self.console.print(f"  [blue]Result:[/blue] {str(observation)[:200]}")
+                            self.console.print(f"[{_style}]{_text}[/{_style}]")
                         else:
-                            print(f"Step {i}")
-                            if thought:
-                                print(f"  Thought: {str(thought)[:300]}")
-                            if action:
-                                print(f"  Action: {action}")
-                            if observation:
-                                print(f"  Result: {str(observation)[:200]}")
+                            print(_text)
 
                 # Display execution statistics
                 if getattr(args, 'verbose', False) or getattr(args, 'explain', False):
@@ -981,246 +990,35 @@ class CLIInterface:
         return table
 
     def chat_mode(self, args):
-        """
-        Interactive chat mode.
+        """Interactive chat REPL.
 
-        Args:
-            args: Parsed command-line arguments
+        Delegates to :class:`effgen.cli.chat.ChatREPL`, which provides streaming
+        answers with a thinking spinner, a model/tool-aware prompt, slash
+        commands (``/model``, ``/tools``, ``/cost``, ``/trace``, …), persistent
+        ↑/↓ history, multiline input, and graceful per-turn Ctrl-C cancel.
         """
-        self.print_header(f"effGen v{__version__} - Chat Mode")
-        self.print("Type 'exit' or 'quit' to end the conversation")
-        self.print("Type 'clear' to clear conversation history")
-        self.print("Type 'help' for available commands\n")
+        # Validate an explicit --provider up front (a typo like "grok" should
+        # fail fast with a suggestion, exactly as ``run`` does).
+        provider, prov_err = resolve_provider_name(getattr(args, "provider", None))
+        if prov_err:
+            self.print_error(prov_err)
+            return 1
+        try:
+            args._provider = provider
+        except Exception:  # noqa: BLE001 - argparse Namespace always allows this
+            pass
+
+        from effgen.cli.chat import ChatREPL
 
         try:
-            # Initialize agent (similar to run_agent)
-            tools = []
-            self.tool_registry.discover_builtin_tools()
-            tool_names = self.tool_registry.list_tools()[:5]
-            for name in tool_names:
-                try:
-                    tool = asyncio.run(self.tool_registry.get_tool(name))
-                    tools.append(tool)
-                except Exception:
-                    pass
-
-            agent_config = AgentConfig(
-                name="chat-agent",
-                model=args.model or "Qwen/Qwen2.5-3B-Instruct",
-                tools=tools,
-                temperature=args.temperature or 0.7,
-                enable_sub_agents=not args.no_sub_agents,
-                enable_streaming=True
-            )
-
-            agent = Agent(agent_config)
-            conversation_history = []
-
-            while True:
-                try:
-                    # Get user input
-                    if self.console:
-                        user_input = self.console.input("\n[bold cyan]You:[/bold cyan] ")
-                    else:
-                        user_input = input("\nYou: ")
-
-                    if not user_input.strip():
-                        continue
-
-                    # Handle commands
-                    if user_input.lower() in ['exit', 'quit']:
-                        self.print("\nGoodbye!")
-                        break
-                    elif user_input.lower() == 'clear':
-                        agent.reset_memory()
-                        conversation_history = []
-                        self.print_success("Conversation history cleared")
-                        continue
-                    elif user_input.lower() == 'help':
-                        self._print_chat_help()
-                        continue
-                    elif user_input.lower() == 'save':
-                        self._save_conversation(conversation_history)
-                        continue
-                    elif user_input.lower() == 'history':
-                        self._list_conversations()
-                        continue
-                    elif user_input.lower() == 'load':
-                        loaded = self._load_conversation()
-                        if loaded:
-                            conversation_history = loaded
-                        continue
-
-                    # Add to history
-                    conversation_history.append({
-                        "role": "user",
-                        "content": user_input,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                    # Get agent response with thinking spinner
-                    response_text = ""
-                    import time as _time
-                    _turn_start = _time.monotonic()
-
-                    if self.console:
-                        # Show thinking spinner until first token arrives
-                        with Progress(
-                            SpinnerColumn(),
-                            TextColumn("[progress.description]{task.description}"),
-                            console=self.console,
-                            transient=True  # Remove spinner when done
-                        ) as progress:
-                            progress.add_task("Thinking...", total=None)
-
-                            # Get iterator and wait for first token
-                            token_iter = iter(agent.stream(user_input))
-                            try:
-                                first = next(token_iter)
-                                response_text += first
-                            except StopIteration:
-                                first = None
-
-                        # Now print the response
-                        self.console.print("\n[bold green]Agent:[/bold green] ", end="")
-                        if first:
-                            print(first, end='', flush=True)
-
-                        # Continue with remaining tokens
-                        for token in token_iter:
-                            print(token, end='', flush=True)
-                            response_text += token
-                    else:
-                        print("\nThinking...", end="", flush=True)
-                        token_iter = iter(agent.stream(user_input))
-                        try:
-                            first = next(token_iter)
-                            response_text += first
-                        except StopIteration:
-                            first = None
-
-                        # Clear "Thinking..." and print response
-                        print("\r" + " " * 20 + "\r", end="")  # Clear line
-                        print("Agent: ", end="", flush=True)
-                        if first:
-                            print(first, end='', flush=True)
-
-                        for token in token_iter:
-                            print(token, end='', flush=True)
-                            response_text += token
-
-                    print()  # New line
-
-                    # Subtle per-turn footer (elapsed time) for a live feel.
-                    _turn_elapsed = _time.monotonic() - _turn_start
-                    if not getattr(args, 'quiet', False):
-                        _footer = f"· {_turn_elapsed:.1f}s"
-                        if self.console:
-                            self.console.print(f"[dim]{_footer}[/dim]")
-                        else:
-                            print(_footer)
-
-                    # Add to history
-                    conversation_history.append({
-                        "role": "agent",
-                        "content": response_text,
-                        "timestamp": datetime.now().isoformat()
-                    })
-
-                except KeyboardInterrupt:
-                    self.print("\n\nInterrupted. Type 'exit' to quit.")
-                    continue
-                except Exception as e:
-                    self.print_error(f"Error: {e}")
-                    if args.verbose:
-                        import traceback
-                        traceback.print_exc()
-
-            return 0
-
-        except Exception as e:
+            return ChatREPL(self, args).run()
+        except Exception as e:  # noqa: BLE001
             self.print_error(f"Error in chat mode: {e}")
-            if args.verbose:
+            if getattr(args, "verbose", False):
                 import traceback
+
                 traceback.print_exc()
             return 1
-
-    def _print_chat_help(self):
-        """Print chat mode help."""
-        help_text = """
-        [bold]Available Commands:[/bold]
-        - exit, quit: Exit chat mode
-        - clear: Clear conversation history
-        - save: Save conversation to file
-        - load: Load a previous conversation
-        - history: List saved conversations
-        - help: Show this help message
-        """ if self.console else """
-        Available Commands:
-        - exit, quit: Exit chat mode
-        - clear: Clear conversation history
-        - save: Save conversation to file
-        - load: Load a previous conversation
-        - history: List saved conversations
-        - help: Show this help message
-        """
-        self.print(help_text)
-
-    @staticmethod
-    def _history_dir() -> Path:
-        """Return the chat history directory, creating it if needed."""
-        d = Path.home() / ".effgen" / "history"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    def _save_conversation(self, history: list[dict]):
-        """Save conversation history to ~/.effgen/history/."""
-        hist_dir = self._history_dir()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = hist_dir / f"conversation_{timestamp}.json"
-
-        with open(filename, 'w') as f:
-            json.dump(history, f, indent=2)
-
-        self.print_success(f"Conversation saved to {filename}")
-
-    def _list_conversations(self):
-        """List saved conversation files."""
-        hist_dir = self._history_dir()
-        files = sorted(hist_dir.glob("conversation_*.json"), reverse=True)
-        if not files:
-            self.print("No saved conversations found.")
-            return
-        self.print("Saved conversations:")
-        for i, f in enumerate(files[:20], 1):
-            size = f.stat().st_size
-            self.print(f"  {i}. {f.name}  ({size} bytes)")
-
-    def _load_conversation(self) -> list[dict] | None:
-        """Load a previous conversation by index."""
-        hist_dir = self._history_dir()
-        files = sorted(hist_dir.glob("conversation_*.json"), reverse=True)
-        if not files:
-            self.print("No saved conversations found.")
-            return None
-        self._list_conversations()
-        try:
-            choice = input("Enter number to load (or 'cancel'): ").strip()
-            if choice.lower() == "cancel":
-                return None
-            idx = int(choice) - 1
-            if 0 <= idx < len(files):
-                with open(files[idx]) as f:
-                    history = json.load(f)
-                self.print_success(f"Loaded {files[idx].name} ({len(history)} messages)")
-                for msg in history:
-                    role = msg.get("role", "?")
-                    content = msg.get("content", "")[:100]
-                    self.print(f"  [{role}] {content}...")
-                return history
-        except (ValueError, IndexError):
-            self.print_error("Invalid selection.")
-        return None
 
     def serve_api(self, args):
         """
@@ -2624,6 +2422,7 @@ Model id formats:
         help='Provider for a bare model id (e.g. openai, groq, cerebras, gemini). '
              'Equivalent to the "provider:model" prefix.',
     )
+    chat_parser.add_argument('--preset', help='Agent preset to label the session (e.g. math, research)')
     chat_parser.add_argument('--temperature', type=float, help='Temperature')
     chat_parser.add_argument('--no-sub-agents', action='store_true', help='Disable sub-agents')
     chat_parser.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS,

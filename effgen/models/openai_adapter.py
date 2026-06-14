@@ -662,13 +662,19 @@ class OpenAIAdapter(FunctionCallingModel):
 
         messages = self._create_messages(prompt)
         request_params = self._build_request_params(messages, config, stream=True)
+        # Ask for a final usage chunk so streamed turns are costed/counted just
+        # like non-streamed ones (the chunk carries empty choices + a usage block).
+        request_params.setdefault("stream_options", {"include_usage": True})
         request_params.update(kwargs)
 
+        _usage = None
         try:
             with timed_call("openai", self.model_name) as _stream_timer:
                 stream = self.client.chat.completions.create(**request_params)
                 _first_token = True
                 for chunk in stream:
+                    if getattr(chunk, "usage", None) is not None:
+                        _usage = chunk.usage
                     if chunk.choices and chunk.choices[0].delta.content is not None:
                         if _first_token:
                             _stream_timer.mark_first_token()
@@ -677,6 +683,23 @@ class OpenAIAdapter(FunctionCallingModel):
         except Exception as e:
             logger.error(f"OpenAI streaming failed: {e}")
             raise provider_runtime_error("openai", self.model_name, "stream", e, message="OpenAI streaming failed") from e
+
+        # Record real usage from the final chunk so cost/token tracking and the
+        # CLI's per-turn footer reflect streamed turns too.
+        if _usage is not None:
+            try:
+                cached_tokens = 0
+                details = getattr(_usage, "prompt_tokens_details", None)
+                if details:
+                    cached_tokens = getattr(details, "cached_tokens", 0) or 0
+                self._record_cost(
+                    _usage.prompt_tokens,
+                    _usage.completion_tokens,
+                    _usage.total_tokens,
+                    cached_tokens,
+                )
+            except Exception:  # noqa: BLE001 - usage accounting must not break streaming
+                logger.debug("OpenAI stream usage recording failed", exc_info=True)
 
     def generate_structured(
         self,

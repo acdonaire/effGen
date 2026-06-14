@@ -360,6 +360,52 @@ def print_summary(cli: Any, response: Any) -> None:
         print(plain)
 
 
+def _truncate(value: Any, limit: int) -> str:
+    text = str(value).strip().replace("\n", " ")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str, str]]:
+    """Turn an :class:`ExecutionTracker` event trace into readable ``(style, text)``.
+
+    The agent's ``execution_trace`` is a list of event dicts (``type``,
+    ``message``, ``data``) — not a ReAct ``thought/action/observation`` shape —
+    so a plain ``step.get("thought")`` renders blank. This formatter walks the
+    events and produces one human line each (reasoning, tool call + result,
+    delegation, …), shared by ``effgen run --explain`` and chat's ``/trace`` so
+    they agree.
+    """
+    out: list[tuple[str, str]] = []
+    for ev in trace or []:
+        etype = str(ev.get("type", "") or "")
+        msg = str(ev.get("message", "") or "")
+        data = ev.get("data") or {}
+        if etype == "reasoning_step":
+            out.append(("cyan", f"💭 {msg or 'reasoning…'}"))
+        elif etype == "tool_call_start":
+            name = data.get("tool_name", "tool")
+            tool_input = data.get("tool_input", data.get("input", ""))
+            detail = f"🔧 {name}"
+            if tool_input:
+                detail += f"({_truncate(tool_input, 80)})"
+            out.append(("green", detail))
+        elif etype == "tool_call_complete":
+            result = data.get("result", data.get("output", ""))
+            out.append(("dim", f"   ✓ {_truncate(result, 120)}" if result else "   ✓ done"))
+        elif etype == "tool_call_failed":
+            err = data.get("error", msg)
+            out.append(("red", f"   ✗ {_truncate(err, 120)}"))
+        elif etype in ("sub_agent_start",):
+            name = data.get("agent_name") or ev.get("agent_id") or "sub-agent"
+            out.append(("magenta", f"👥 delegating to {name}"))
+        elif etype == "task_decomposition":
+            out.append(("yellow", f"🧩 {msg or 'planning…'}"))
+        elif etype in ("task_complete", "answer"):
+            if msg:
+                out.append(("dim", f"   {_truncate(msg, 120)}"))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Progress bars for the long-running, countable commands
 # ---------------------------------------------------------------------------
