@@ -189,3 +189,35 @@ def test_env_search_paths_include_override_and_home(monkeypatch):
     assert any(p.endswith("/.effgen/.env") for p in paths)
     # walks up from cwd, so it includes a ./.env candidate
     assert any(p.endswith("/.env") for p in paths)
+
+
+# --------------------------------------------------------------------------- #
+# "Did you mean?" on mistyped subcommands and choice-based options (D-10)
+# --------------------------------------------------------------------------- #
+def test_unknown_subcommand_suggests_and_exits_2(capsys):
+    parser = _main.create_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["rnu"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unknown command 'rnu'" in err
+    assert "Did you mean 'run'?" in err
+    assert "Available commands:" in err
+
+
+def test_mistyped_preset_value_suggests_and_exits_2(capsys):
+    parser = _main.create_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["run", "task", "--preset", "codng"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "invalid value 'codng' for --preset" in err
+    assert "Did you mean 'coding'?" in err
+
+
+def test_mistyped_completion_value_suggests(capsys):
+    parser = _main.create_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--completion", "bsh"])
+    err = capsys.readouterr().err
+    assert "Did you mean 'bash'?" in err

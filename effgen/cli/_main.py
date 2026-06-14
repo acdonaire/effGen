@@ -86,6 +86,9 @@ except ImportError:
     print("Error: effGen package not found. Please install it first.")
     sys.exit(1)
 
+# Tips, first-run welcome, "did you mean?" and teaching-error helpers.
+from effgen.cli import onboarding as _onboarding
+
 # Live status / progress presentation (TTY-aware; degrades to plain text).
 from effgen.cli import progress as _progress
 
@@ -1504,12 +1507,15 @@ class CLIInterface:
         key: str = args.key
         value_str: str = args.value
 
+        _supported_keys = ("budget.daily", "budget.monthly")
         # Route budget.* keys to the cost tracker's budget config.
         if key.startswith("budget."):
             budget_key = key[len("budget."):]
             if budget_key not in {"daily", "monthly"}:
+                hint = _onboarding.did_you_mean(key, _supported_keys, n=1, cutoff=0.5)
                 self.print_error(
-                    f"Unknown budget key: {key!r}. Supported: budget.daily, budget.monthly"
+                    f"Unknown budget key: {key!r}. {hint + ' ' if hint else ''}"
+                    f"Supported: {', '.join(_supported_keys)}."
                 )
                 return
             try:
@@ -1530,7 +1536,11 @@ class CLIInterface:
             budget_path.write_text(json.dumps(existing, indent=2))
             self.print_success(f"Set {key} = {value}")
         else:
-            self.print_error(f"Unknown config key: {key!r}. Supported: budget.daily, budget.monthly")
+            hint = _onboarding.did_you_mean(key, _supported_keys, n=1, cutoff=0.5)
+            self.print_error(
+                f"Unknown config key: {key!r}. {hint + ' ' if hint else ''}"
+                f"Supported: {', '.join(_supported_keys)}."
+            )
 
     def _config_show(self, args):
         """Show current configuration."""
@@ -2448,6 +2458,61 @@ class CLIInterface:
         return 0
 
 
+class _EffgenArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that turns an "invalid choice" into a teaching error.
+
+    A mistyped subcommand (``effgen rnu``) or a mistyped ``choices=`` option
+    value (``--preset codng``) gets a fuzzy "did you mean 'run'?" /
+    "did you mean 'coding'?" suggestion instead of just dumping the usage
+    banner, so the CLI is self-correcting like the model/tool suggesters
+    elsewhere. Because ``add_subparsers`` inherits this parser class, the
+    handler fires for both the top-level command and every sub-command.
+    """
+
+    def error(self, message: str):  # noqa: D401 - argparse hook
+        if "invalid choice:" in message:
+            import re
+
+            m_bad = re.search(r"invalid choice: '([^']*)'", message)
+            m_arg = re.search(r"argument ([^:]+): invalid choice", message)
+            # The offending argument's valid choices are spelled out in the
+            # message ("(choose from 'a', 'b', …)"); fall back to the
+            # subparsers action so an older argparse phrasing still works.
+            choices: list[str] = []
+            if "choose from" in message:
+                tail = message.split("choose from", 1)[1]
+                choices = re.findall(r"'([^']*)'", tail)
+            sub_action = next(
+                (a for a in self._actions
+                 if isinstance(a, argparse._SubParsersAction)), None)
+            if not choices and sub_action is not None:
+                choices = list(sub_action.choices.keys())
+            if m_bad and choices:
+                bad = m_bad.group(1)
+                arg_name = m_arg.group(1) if m_arg else None
+                hint = _onboarding.did_you_mean(bad, choices, n=1, cutoff=0.5)
+                self.print_usage(sys.stderr)
+                # A positional sub-command (dest matches the subparsers action)
+                # reads best as "unknown command"; a flag value as "invalid value".
+                is_subcommand = sub_action is not None and (
+                    arg_name is None or arg_name in (sub_action.dest, sub_action.metavar)
+                )
+                if is_subcommand:
+                    line = f"{self.prog}: error: unknown command '{bad}'."
+                    if hint:
+                        line += f" {hint}"
+                    line += f"\nAvailable commands: {', '.join(choices)}."
+                else:
+                    label = f" for {arg_name}" if arg_name else ""
+                    line = f"{self.prog}: error: invalid value '{bad}'{label}."
+                    if hint:
+                        line += f" {hint}"
+                    line += f"\nValid choices: {', '.join(choices)}."
+                print(line, file=sys.stderr)
+                self.exit(2)
+        super().error(message)
+
+
 def create_parser():
     """Create argument parser for CLI."""
     # Drive --preset choices from the preset registry so all 9 presets are
@@ -2458,7 +2523,7 @@ def create_parser():
     except Exception:
         _preset_choices = ['math', 'research', 'coding', 'general', 'minimal']
 
-    parser = argparse.ArgumentParser(
+    parser = _EffgenArgumentParser(
         description=f"effGen v{__version__} - CLI for agent framework",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -2674,6 +2739,18 @@ Model id formats:
 
     # Presets command
     subparsers.add_parser('presets', help='List available agent presets')
+
+    # Quickstart / tutorial — a short guided first run.
+    for _qs_name in ('quickstart', 'tutorial'):
+        qs_parser = subparsers.add_parser(
+            _qs_name,
+            help='Guided first run: pick a model, run an agent, see the trace and cost',
+        )
+        qs_parser.add_argument('-m', '--model', help='Model to use (skips the model prompt)')
+        qs_parser.add_argument('--provider', help='Provider for a bare model id')
+        qs_parser.add_argument('--task', help='Task to run (defaults to a sample task)')
+        qs_parser.add_argument('-y', '--yes', action='store_true',
+                               help='Run non-interactively with sensible defaults')
 
     # Workflow command
     workflow_parser = subparsers.add_parser('workflow', help='Run a DAG-based workflow')
@@ -2999,6 +3076,15 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
         }, indent=2))
         return 0
 
+    # Friendly empty state: warm message + a next step instead of a blank table.
+    if not rows:
+        cli.print_header(f"effGen Cost Summary — {period_label}")
+        cli.print("No spend recorded yet. 🎉")
+        cli.print("Run an agent to start tracking — e.g. effgen run \"What is 2+2?\" -m gpt-5-nano "
+                  "--provider openai")
+        cli.print("Then set a cap with: effgen cost set-budget 1.00")
+        return 0
+
     if RICH_AVAILABLE and cli.console:
         table = Table(title=f"effGen Cost Summary — {period_label}", show_footer=True)
         table.add_column("Provider", style="cyan", no_wrap=True)
@@ -3010,18 +3096,15 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
         table.add_column("Cost (USD)", style="green", justify="right",
                          footer=f"${total_cost:.6f}")
 
-        if not rows:
-            table.add_row("—", "No data", "0", "0", "0", "$0.000000")
-        else:
-            for r in rows:
-                table.add_row(
-                    r['provider'],
-                    r['model'],
-                    str(r['requests']),
-                    f"{r['prompt_tokens']:,}",
-                    f"{r['completion_tokens']:,}",
-                    _cost_label(r),
-                )
+        for r in rows:
+            table.add_row(
+                r['provider'],
+                r['model'],
+                str(r['requests']),
+                f"{r['prompt_tokens']:,}",
+                f"{r['completion_tokens']:,}",
+                _cost_label(r),
+            )
 
         cli.console.print(table)
         cli.console.print(f"\n[bold]Total:[/bold] {total_requests} requests  "
@@ -3040,18 +3123,15 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
         print("-" * 80)
         print(f"{'Provider':<12} {'Model':<48} {'Reqs':>5} {'Cost (USD)':>12}")
         print("-" * 80)
-        if not rows:
-            print("  (no data)")
-        else:
-            for r in rows:
-                # Show the full model id (wrap rather than truncate).
-                model = r['model']
-                cost_label = _cost_label(r)
-                if len(model) > 48:
-                    print(f"{r['provider']:<12} {model}")
-                    print(f"{'':<12} {'':<48} {r['requests']:>5} {cost_label:>12}")
-                else:
-                    print(f"{r['provider']:<12} {model:<48} {r['requests']:>5} {cost_label:>12}")
+        for r in rows:
+            # Show the full model id (wrap rather than truncate).
+            model = r['model']
+            cost_label = _cost_label(r)
+            if len(model) > 48:
+                print(f"{r['provider']:<12} {model}")
+                print(f"{'':<12} {'':<48} {r['requests']:>5} {cost_label:>12}")
+            else:
+                print(f"{r['provider']:<12} {model:<48} {r['requests']:>5} {cost_label:>12}")
         print("-" * 80)
         print(f"{'TOTAL':<12} {'':<48} {total_requests:>5} ${total_cost:>11.6f}")
         if daily_budget is not None:
@@ -3685,6 +3765,194 @@ def _handle_resume_command(args, cli) -> int:
     return 0 if getattr(response, 'success', True) else 1
 
 
+# Cheapest well-known model per cloud provider, used to suggest a first model in
+# the quickstart. Order = auto-pick preference (fast/free first).
+_QUICKSTART_CLOUD_MODELS: tuple[tuple[str, str], ...] = (
+    ("groq", "llama-3.1-8b-instant"),
+    ("openai", "gpt-5-nano"),
+    ("gemini", "gemini-3.1-flash-lite"),
+    ("cerebras", "gpt-oss-120b"),
+)
+_QUICKSTART_LOCAL_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+
+
+def _quickstart_suggest_model() -> tuple[str, str | None, str]:
+    """Pick a sensible first model: a keyed cloud model if any, else local.
+
+    Returns ``(model_id, provider, reason)``.
+    """
+    try:
+        from effgen.models.auth import check_keys
+        keys = check_keys()
+    except Exception:  # noqa: BLE001
+        keys = {}
+    for provider, model_id in _QUICKSTART_CLOUD_MODELS:
+        info = keys.get(provider)
+        if info and info.get("available"):
+            return model_id, provider, f"{provider} key detected"
+    return _QUICKSTART_LOCAL_MODEL, None, "no cloud key found — using a small local model"
+
+
+def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
+    """Handle 'effgen quickstart' / 'effgen tutorial' — a guided first run.
+
+    Walks a brand-new user from nothing to a successful agent run in well under
+    two minutes: pick a model → run a sample task → see the trace → see the
+    cost. Fully scriptable (``--model``/``--task``/``--yes``) for CI and docs.
+    """
+    interactive = _onboarding.is_interactive() and not getattr(args, 'yes', False)
+
+    cli.print_header("effGen quickstart")
+    cli.print("Let's run your first agent. This takes about a minute.\n")
+
+    # --- 1. Choose a model -------------------------------------------------
+    provider, prov_err = resolve_provider_name(getattr(args, 'provider', None))
+    if prov_err:
+        cli.print_error(prov_err)
+        return 1
+
+    model_id = getattr(args, 'model', None)
+    if not model_id:
+        model_id, suggested_provider, reason = _quickstart_suggest_model()
+        provider = provider or suggested_provider
+        cli.print(f"Suggested model: [bold]{model_id}[/bold]"
+                  f"{f' (provider: {provider})' if provider else ''} — {reason}"
+                  if cli.console else
+                  f"Suggested model: {model_id}"
+                  f"{f' (provider: {provider})' if provider else ''} — {reason}")
+        if interactive:
+            cli.print("Press Enter to accept, or type a model id (e.g. gpt-5-nano):")
+            try:
+                typed = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                typed = ""
+                cli.print("")
+            if typed:
+                model_id = typed
+                # A bare cloud id without a provider gets routed by the registry;
+                # leave provider as-is so the loader can infer it.
+        cli.print("")
+
+    # --- 2. Run a sample task ---------------------------------------------
+    _default_task = "What is 25 * 17?"
+    task = getattr(args, 'task', None) or _default_task
+    is_default_task = task == _default_task
+    cli.print(f"Task: [italic]{task}[/italic]\n" if cli.console else f"Task: {task}\n")
+
+    agent = None
+    try:
+        # Only equip the calculator for the math sample task. A user-supplied
+        # task gets a clean direct-answer run so an unrelated question never
+        # makes a small local model loop on a tool it doesn't need.
+        tools = []
+        if is_default_task:
+            cli.tool_registry.discover_builtin_tools()
+            if "calculator" in cli.tool_registry.list_tools():
+                try:
+                    tools.append(cli.tool_registry.get_tool_sync("calculator"))
+                except Exception as e:  # noqa: BLE001
+                    logging.debug(f"quickstart: calculator load failed: {e}")
+
+        agent_config = AgentConfig(
+            name="quickstart-agent",
+            model=model_id,
+            provider=provider,
+            tools=tools,
+            system_prompt="You are a helpful AI assistant.",
+            max_iterations=5,
+        )
+        agent = Agent(agent_config)
+
+        animate = cli._animate(args)
+        # Keep the first impression clean: the agent transparently retries and
+        # recovers from transient provider hiccups, so suppress that internal
+        # log churn during the guided run (restored immediately after). A real
+        # failure still surfaces via response.success below.
+        _effgen_logger = logging.getLogger("effgen")
+        _prev_level = _effgen_logger.level
+        _effgen_logger.setLevel(logging.CRITICAL)
+        try:
+            if animate:
+                with _progress.LiveStatus(
+                    cli.console,
+                    model_label=_progress.short_model_label(model_id),
+                    reasoning=_progress.is_reasoning_agent(agent),
+                    tracker=agent.execution_tracker,
+                ):
+                    response = agent.run(task)
+            else:
+                cli.print("Thinking...")
+                response = agent.run(task)
+        except KeyboardInterrupt:
+            cli._handle_interrupt(agent)
+            return 130
+        finally:
+            _effgen_logger.setLevel(_prev_level)
+
+        # --- 3. Show the answer ------------------------------------------
+        cli.print_header("Answer")
+        if cli.console:
+            cli.console.print(Panel(
+                Markdown(response.output or "(no output)"),
+                border_style="green" if response.success else "red",
+            ))
+        else:
+            print(response.output)
+
+        if not response.success:
+            err = (response.metadata or {}).get("error", {})
+            cli.print_error(_onboarding.teach(
+                f"The run did not succeed: {err.get('message', 'unknown error')}",
+                fix="Run 'effgen doctor --live --cheap' to confirm the model is reachable, "
+                    "or try a different model with -m.",
+                doc="docs/getting-started.md",
+            ))
+            return 1
+
+        # --- 4. Show the trace -------------------------------------------
+        if response.execution_trace:
+            cli.print_header("What the agent did")
+            for i, step in enumerate(response.execution_trace, 1):
+                action = step.get("action", step.get("tool", ""))
+                observation = step.get("observation", step.get("output", ""))
+                if action:
+                    cli.print(f"  {i}. used [cyan]{action}[/cyan] → {str(observation)[:80]}"
+                              if cli.console else
+                              f"  {i}. used {action} -> {str(observation)[:80]}")
+            if not any(s.get("action") or s.get("tool") for s in response.execution_trace):
+                cli.print("  (answered directly, no tools needed)")
+        else:
+            cli.print("  (answered directly, no tools needed)")
+
+        # --- 5. Show the cost --------------------------------------------
+        _progress.print_summary(cli, response)
+
+        # --- Next steps --------------------------------------------------
+        cli.print_header("You're set! Next steps")
+        cli.print("  • effgen run \"your question\" -m " + model_id + "   # run any task")
+        cli.print("  • effgen chat -m " + model_id + "                  # interactive chat")
+        cli.print("  • effgen tools list                              # see available tools")
+        cli.print("  • effgen doctor --live --cheap                   # check all providers")
+        return 0
+
+    except Exception as e:  # noqa: BLE001
+        cli.print_error(_onboarding.teach(
+            f"Quickstart could not complete: {e}",
+            fix="Run 'effgen doctor' to check your setup, then 'effgen quickstart -m <model>'.",
+            doc="docs/getting-started.md",
+        ))
+        if getattr(args, 'verbose', False):
+            import traceback
+            traceback.print_exc()
+        return 1
+    finally:
+        if agent is not None:
+            try:
+                agent.close()
+            except Exception as e:  # noqa: BLE001
+                logging.debug(f"quickstart: agent close failed: {e}")
+
+
 def _handle_sessions_command(args, cli) -> int:
     """Handle 'effgen sessions' subcommands."""
     from effgen.core.session import SessionManager
@@ -3693,7 +3961,10 @@ def _handle_sessions_command(args, cli) -> int:
     if cmd == 'list':
         sessions = mgr.list_sessions()
         if not sessions:
-            cli.print("No sessions found.")
+            cli.print(
+                "No sessions yet. Start one with: effgen chat  (or effgen run \"...\" "
+                "creates a session you can resume)."
+            )
             return 0
         for s in sessions:
             cli.print(f"  {s['session_id']:36s}  msgs={s['messages']:<4d}  updated={s.get('updated_at')}")
@@ -3957,6 +4228,10 @@ def main():
     # Create CLI interface
     cli = CLIInterface()
 
+    # One-time friendly welcome on first interactive use (records a flag so it
+    # only ever shows once). Silent under --quiet / non-interactive / CI.
+    _onboarding.maybe_show_first_run_welcome(quiet=getattr(args, 'quiet', False))
+
     # Route to appropriate handler
     try:
         if args.command == 'run':
@@ -4005,6 +4280,8 @@ def main():
                 cli.print(f"  {name:12s} — {desc}")
             cli.print("\nUsage: effgen run --preset <name> \"your task\"")
             exit_code = 0
+        elif args.command in ('quickstart', 'tutorial'):
+            exit_code = _handle_quickstart_command(args, cli)
         elif args.command == 'workflow':
             exit_code = _handle_workflow_command(args, cli)
         elif args.command == 'batch':
@@ -4054,6 +4331,17 @@ def main():
         else:
             parser.print_help()
             exit_code = 0
+
+        # A gentle, rotating tip at a natural moment — only after the commands a
+        # human watches finish cleanly, never under --quiet / non-interactive /
+        # EFFGEN_TIPS=0, and only every few runs (see onboarding.maybe_print_tip).
+        _TIP_COMMANDS = {'run', 'chat', 'quickstart', 'tutorial', 'presets', 'doctor'}
+        if (
+            exit_code == 0
+            and args.command in _TIP_COMMANDS
+            and not getattr(args, 'output_json', False)
+        ):
+            _onboarding.maybe_print_tip(quiet=getattr(args, 'quiet', False))
 
         sys.exit(exit_code)
 
