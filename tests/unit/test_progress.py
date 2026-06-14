@@ -1,0 +1,299 @@
+"""Unit tests for the CLI live-progress / status presentation layer.
+
+These exercise the *decision* logic (when to animate), the pure formatting
+(summary line, model labels, sticky tool labels), the execution-tracker
+listener wiring, and the streaming soft-cursor — all without any live model
+calls. The animated rendering itself is verified end-to-end with real models in
+``build_plan/outputs/33-*``.
+"""
+
+from __future__ import annotations
+
+import io
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+import pytest
+
+from effgen.cli import progress as P
+
+# ---------------------------------------------------------------------------
+# animation_enabled / color / CI gating
+# ---------------------------------------------------------------------------
+
+
+class _FakeTTY(io.StringIO):
+    def __init__(self, tty: bool):
+        super().__init__()
+        self._tty = tty
+
+    def isatty(self) -> bool:  # noqa: D401
+        return self._tty
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    """Start each test from a known, non-CI, color-on environment."""
+    for var in ("NO_COLOR", "EFFGEN_NO_ANIM", *P._CI_ENV_VARS):
+        monkeypatch.delenv(var, raising=False)
+    yield
+
+
+def test_animation_enabled_on_interactive_tty():
+    assert P.animation_enabled(stream=_FakeTTY(True)) is True
+
+
+def test_animation_disabled_when_not_a_tty():
+    assert P.animation_enabled(stream=_FakeTTY(False)) is False
+
+
+@pytest.mark.parametrize("kwargs", [{"quiet": True}, {"no_animation": True}])
+def test_animation_disabled_by_flags(kwargs):
+    assert P.animation_enabled(stream=_FakeTTY(True), **kwargs) is False
+
+
+def test_animation_disabled_by_no_anim_env(monkeypatch):
+    monkeypatch.setenv("EFFGEN_NO_ANIM", "1")
+    assert P.animation_enabled(stream=_FakeTTY(True)) is False
+
+
+def test_animation_disabled_by_no_color(monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert P.animation_enabled(stream=_FakeTTY(True)) is False
+    assert P.color_enabled() is False
+
+
+def test_animation_disabled_in_ci(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    assert P.is_ci() is True
+    assert P.animation_enabled(stream=_FakeTTY(True)) is False
+
+
+# ---------------------------------------------------------------------------
+# pure formatting helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("Qwen/Qwen2.5-1.5B-Instruct", "Qwen2.5-1.5B-Instruct"),
+        ("openai:gpt-5-nano", "gpt-5-nano"),
+        ("gpt-5-nano", "gpt-5-nano"),
+        (None, "model"),
+        ("", "model"),
+    ],
+)
+def test_short_model_label(raw, expected):
+    assert P.short_model_label(raw) == expected
+
+
+def test_short_model_label_truncates():
+    out = P.short_model_label("a" * 60, limit=10)
+    assert len(out) == 10
+    assert out.endswith("…")
+
+
+@dataclass
+class _FakeModel:
+    model_name: str = ""
+    _is_reasoning_model: bool = False
+
+
+@dataclass
+class _FakeAgent:
+    model: Any = None
+
+
+def test_is_reasoning_agent_by_flag():
+    agent = _FakeAgent(model=_FakeModel("o3-mini", _is_reasoning_model=True))
+    assert P.is_reasoning_agent(agent) is True
+
+
+def test_is_reasoning_agent_by_name_heuristic():
+    assert P.is_reasoning_agent(_FakeAgent(model=_FakeModel("o4-mini"))) is True
+    assert P.is_reasoning_agent(_FakeAgent(model=_FakeModel("deepseek-r1"))) is True
+
+
+def test_is_reasoning_agent_false_for_chat_models():
+    assert P.is_reasoning_agent(_FakeAgent(model=_FakeModel("gpt-5-nano"))) is False
+    assert P.is_reasoning_agent(_FakeAgent(model=_FakeModel("Qwen/Qwen2.5-1.5B-Instruct"))) is False
+    assert P.is_reasoning_agent(_FakeAgent(model=None)) is False
+
+
+@dataclass
+class _FakeResponse:
+    success: bool = True
+    execution_time: float = 3.2
+    tool_calls: int = 2
+    tokens_used: int = 1204
+    metadata: dict = field(default_factory=dict)
+
+
+def test_summary_line_success():
+    plain, markup = P.summary_line(_FakeResponse(metadata={"cost_usd": 0.0006}))
+    assert plain == "✓ Done in 3.2s · 2 tools · 1,204 tokens · $0.0006"
+    assert "[green]" in markup
+
+
+def test_summary_line_singular_tool_and_no_cost():
+    plain, _ = P.summary_line(_FakeResponse(tool_calls=1, tokens_used=10, metadata={}))
+    assert "1 tool ·" in plain
+    assert "$" not in plain  # no cost when none recorded (never a fake $0)
+
+
+def test_summary_line_failure_shows_reason():
+    resp = _FakeResponse(success=False, tool_calls=0, tokens_used=0,
+                         metadata={"reason": "model_not_found"})
+    plain, markup = P.summary_line(resp)
+    assert plain.startswith("✗ Failed (model_not_found)")
+    assert "[red]" in markup
+
+
+# ---------------------------------------------------------------------------
+# sticky status state
+# ---------------------------------------------------------------------------
+
+
+def test_status_state_sticky_tool_label():
+    s = P._StatusState("gpt-5-nano", reasoning=False)
+    assert s.effective_label() == "Calling gpt-5-nano…"
+    s.set_step("Running calculator…")
+    # Immediately after a fast tool completes, the base reverts but the sticky
+    # step label must remain visible for its minimum window.
+    s.set_base(s._idle_label())
+    assert s.effective_label() == "Running calculator…"
+    # Force the sticky window to expire.
+    s.sticky_until = 0.0
+    assert s.effective_label() == "Calling gpt-5-nano…"
+
+
+def test_status_state_reasoning_label():
+    s = P._StatusState("o3-mini", reasoning=True)
+    assert "reasoning" in s.effective_label()
+    assert "🧠" in s.effective_label()
+
+
+# ---------------------------------------------------------------------------
+# LiveStatus event mapping (no rendering)
+# ---------------------------------------------------------------------------
+
+
+class _EvType(Enum):
+    TOOL_CALL_START = "tool_call_start"
+    TOOL_CALL_COMPLETE = "tool_call_complete"
+    TASK_DECOMPOSITION = "task_decomposition"
+
+
+@dataclass
+class _Ev:
+    type: _EvType
+    data: dict = field(default_factory=dict)
+    agent_id: str | None = None
+
+
+def _live_status():
+    # console=None makes LiveStatus a non-rendering no-op, but on_event still
+    # mutates the shared state, which is what we assert on.
+    ls = P.LiveStatus(None, model_label="gpt-5-nano")
+    return ls
+
+
+def test_live_status_tool_label_transition():
+    ls = _live_status()
+    ls.on_event(_Ev(_EvType.TOOL_CALL_START, data={"tool_name": "calculator"}))
+    assert ls.state.effective_label() == "Running calculator…"
+    ls.on_event(_Ev(_EvType.TOOL_CALL_COMPLETE, data={"tool_name": "calculator"}))
+    # sticky still showing immediately after completion
+    assert ls.state.effective_label() == "Running calculator…"
+    ls.state.sticky_until = 0.0
+    assert ls.state.effective_label() == "Calling gpt-5-nano…"
+
+
+def test_live_status_planning_label():
+    ls = _live_status()
+    ls.on_event(_Ev(_EvType.TASK_DECOMPOSITION))
+    assert ls.state.effective_label() == "Planning…"
+
+
+# ---------------------------------------------------------------------------
+# ExecutionTracker listener wiring
+# ---------------------------------------------------------------------------
+
+
+def test_execution_tracker_listener_receives_events():
+    from effgen.core.execution_tracker import EventType, ExecutionEvent, ExecutionTracker
+
+    tracker = ExecutionTracker()
+    seen = []
+    cb = seen.append
+    tracker.add_listener(cb)
+    tracker.track_event(ExecutionEvent(type=EventType.TASK_START, message="x"))
+    assert len(seen) == 1
+    tracker.remove_listener(cb)
+    tracker.track_event(ExecutionEvent(type=EventType.TASK_COMPLETE, message="y"))
+    assert len(seen) == 1  # no more after removal
+
+
+def test_execution_tracker_listener_exception_is_swallowed():
+    from effgen.core.execution_tracker import EventType, ExecutionEvent, ExecutionTracker
+
+    tracker = ExecutionTracker()
+
+    def boom(_event):
+        raise RuntimeError("listener blew up")
+
+    tracker.add_listener(boom)
+    # A misbehaving listener must never break tracking.
+    tracker.track_event(ExecutionEvent(type=EventType.TASK_START, message="x"))
+    assert len(tracker.events) == 1
+
+
+# ---------------------------------------------------------------------------
+# StepProgress no-op path
+# ---------------------------------------------------------------------------
+
+
+def test_step_progress_noop_without_animation():
+    with P.StepProgress(None, total=3, description="Batch", animate=False) as bar:
+        bar.update(1)
+        bar.advance()
+        bar.update(3, total=3)
+    # no exception, no console required
+
+
+# ---------------------------------------------------------------------------
+# streaming soft cursor
+# ---------------------------------------------------------------------------
+
+
+def _cli():
+    from effgen.cli._main import CLIInterface
+
+    return CLIInterface()
+
+
+def test_stream_tokens_plain(capsys):
+    cli = _cli()
+    text = cli._stream_tokens(iter(["Hello", " ", "world"]), animate=False)
+    assert text == "Hello world"
+    out = capsys.readouterr().out
+    assert out == "Hello world"  # plain, no cursor artifacts
+
+
+def test_stream_tokens_soft_cursor(capsys):
+    cli = _cli()
+    text = cli._stream_tokens(iter(["Hi", "!"]), animate=True)
+    assert text == "Hi!"
+    out = capsys.readouterr().out
+    # cursor printed then erased with backspace-space-backspace; final text intact
+    assert "▌" in out
+    assert "\b \b" in out
+    assert out.replace("▌", "").replace("\b \b", "") == "Hi!"
+
+
+def test_stream_tokens_skips_empty_chunks(capsys):
+    cli = _cli()
+    text = cli._stream_tokens(iter(["a", "", None, "b"]), animate=False)  # type: ignore[list-item]
+    assert text == "ab"

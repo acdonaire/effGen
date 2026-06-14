@@ -255,20 +255,34 @@ class AgentEvaluator:
     # Public API
     # ------------------------------------------------------------------
 
-    def run_suite(self, suite: Any, max_cases: int | None = None) -> SuiteResults:
+    def run_suite(
+        self,
+        suite: Any,
+        max_cases: int | None = None,
+        progress_callback: Any = None,
+    ) -> SuiteResults:
         """Run all test cases in *suite* and return aggregated results.
 
         Args:
             suite: A TestSuite instance or iterable of TestCase objects.
             max_cases: If set, run only the first *max_cases* cases (useful for
                 quick smoke runs in CI).
+            progress_callback: Optional ``callback(completed, total)`` invoked
+                after each case finishes (used by the CLI to drive a progress
+                bar). Purely observational; does not change results.
         """
         test_cases: list[TestCase] = suite.test_cases if hasattr(suite, "test_cases") else list(suite)
         if max_cases is not None:
             test_cases = test_cases[:max_cases]
+        total = len(test_cases)
         results: list[EvalResult] = []
-        for tc in test_cases:
+        for idx, tc in enumerate(test_cases, 1):
             results.append(self.run_case(tc))
+            if progress_callback is not None:
+                try:
+                    progress_callback(idx, total)
+                except Exception:  # noqa: BLE001 - never let a callback break eval
+                    pass
         return self._aggregate(suite.name if hasattr(suite, "name") else "custom", results)
 
     def run_case(self, tc: TestCase) -> EvalResult:

@@ -86,6 +86,8 @@ except ImportError:
     print("Error: effGen package not found. Please install it first.")
     sys.exit(1)
 
+# Live status / progress presentation (TTY-aware; degrades to plain text).
+from effgen.cli import progress as _progress
 
 # ---------------------------------------------------------------------------
 # Server request models + types — defined at MODULE level (not inside serve_api).
@@ -254,6 +256,13 @@ class CLIInterface:
         self.console = Console() if RICH_AVAILABLE else None
         self.config_loader = ConfigLoader()
         self.tool_registry = get_tool_registry()
+
+    def _animate(self, args) -> bool:
+        """Whether to show live animation for this invocation (TTY-aware, opt-out)."""
+        return _progress.animation_enabled(
+            quiet=getattr(args, 'quiet', False),
+            no_animation=getattr(args, 'no_animation', False),
+        )
 
     def print(self, *args, **kwargs):
         """Print with rich formatting if available."""
@@ -760,25 +769,43 @@ class CLIInterface:
             self.print()
 
             exit_code = 0
+            animate = self._animate(args)
+            quiet = getattr(args, 'quiet', False)
+            model_label = _progress.short_model_label(
+                getattr(agent.config, "model", None) if hasattr(agent, "config") else None
+            )
             if args.stream:
-                # Streaming output
-                self.print("[italic]Streaming response...[/italic]\n" if self.console else "Streaming response...\n")
-                for token in agent.stream(args.task, mode=mode):
-                    print(token, end='', flush=True)
+                # Streaming output with an optional soft cursor for a live feel.
+                if not quiet:
+                    self.print(
+                        "[italic]Streaming response...[/italic]\n"
+                        if self.console else "Streaming response...\n"
+                    )
+                try:
+                    self._stream_tokens(agent.stream(args.task, mode=mode), animate=animate)
+                except KeyboardInterrupt:
+                    self._handle_interrupt(agent)
+                    return 130
                 print()  # New line after streaming
             else:
-                # Regular output with spinner
-                if self.console:
-                    with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[progress.description]{task.description}"),
-                        console=self.console
-                    ) as progress:
-                        progress.add_task("Thinking...", total=None)
+                # Regular output with a live, accurate status line.
+                try:
+                    if animate:
+                        reasoning = _progress.is_reasoning_agent(agent)
+                        with _progress.LiveStatus(
+                            self.console,
+                            model_label=model_label,
+                            reasoning=reasoning,
+                            tracker=agent.execution_tracker,
+                        ):
+                            response = agent.run(args.task, mode=mode, **_checkpoint_run_kwargs(args))
+                    else:
+                        if not quiet:
+                            self.print("Thinking...")
                         response = agent.run(args.task, mode=mode, **_checkpoint_run_kwargs(args))
-                else:
-                    self.print("Thinking...")
-                    response = agent.run(args.task, mode=mode)
+                except KeyboardInterrupt:
+                    self._handle_interrupt(agent)
+                    return 130
 
                 # Surface failure in the process exit code.
                 if not response.success:
@@ -796,6 +823,10 @@ class CLIInterface:
                     ))
                 else:
                     print(response.output)
+
+                # Frozen one-glance summary: ✓ Done in 3.2s · 2 tools · 1,204 tokens · $…
+                if not quiet:
+                    _progress.print_summary(self, response)
 
                 # Display explain trace (tool reasoning)
                 if getattr(args, 'explain', False) and response.execution_trace:
@@ -871,6 +902,62 @@ class CLIInterface:
                     agent.close()
                 except Exception as e:
                     logging.debug(f"Agent close failed: {e}")
+
+    def _stream_tokens(self, token_iter, *, animate: bool) -> str:
+        """Print streamed tokens with an optional soft cursor; return the text.
+
+        On an interactive terminal a single-cell soft cursor (``▌``) trails the
+        latest token and is erased before the next one, giving a live-typing
+        feel. When not animating (piped/redirected/non-TTY) tokens are written
+        plainly so the output is clean to capture.
+        """
+        cursor = "▌"
+        wrote_cursor = False
+        collected = []
+        for token in token_iter:
+            if not token:
+                continue
+            collected.append(token)
+            if animate:
+                if wrote_cursor:
+                    sys.stdout.write("\b \b")  # erase the previous single-cell cursor
+                sys.stdout.write(token + cursor)
+                wrote_cursor = True
+            else:
+                sys.stdout.write(token)
+            sys.stdout.flush()
+        if animate and wrote_cursor:
+            sys.stdout.write("\b \b")  # erase the trailing cursor
+            sys.stdout.flush()
+        return "".join(collected)
+
+    def _handle_interrupt(self, agent) -> None:
+        """Render a friendly Ctrl-C stop (partial trace + 'Stopped.'), no traceback."""
+        # Move to a clean line after any in-flight spinner/stream output.
+        try:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        # Surface whatever partial progress the tracker captured.
+        try:
+            tracker = getattr(agent, "execution_tracker", None)
+            tools = sorted(getattr(tracker, "active_tools", set()) or set())
+            done = [
+                n.name for n in getattr(tracker, "nodes", {}).values()
+                if getattr(n, "node_type", "") == "tool" and getattr(n, "status", "") == "completed"
+            ]
+            if done:
+                self.print(f"Partial progress: {len(done)} tool call(s) completed "
+                           f"({', '.join(done[:5])}).")
+            if tools:
+                self.print(f"Cancelled in-flight: {', '.join(tools)}.")
+        except Exception:  # noqa: BLE001 - never let cleanup add noise
+            pass
+        if self.console:
+            self.console.print("[yellow]Stopped.[/yellow]")
+        else:
+            print("Stopped.")
 
     def _create_stats_table(self, stats: dict[str, Any]) -> Any:
         """Create statistics table."""
@@ -966,6 +1053,8 @@ class CLIInterface:
 
                     # Get agent response with thinking spinner
                     response_text = ""
+                    import time as _time
+                    _turn_start = _time.monotonic()
 
                     if self.console:
                         # Show thinking spinner until first token arrives
@@ -1014,6 +1103,15 @@ class CLIInterface:
                             response_text += token
 
                     print()  # New line
+
+                    # Subtle per-turn footer (elapsed time) for a live feel.
+                    _turn_elapsed = _time.monotonic() - _turn_start
+                    if not getattr(args, 'quiet', False):
+                        _footer = f"· {_turn_elapsed:.1f}s"
+                        if self.console:
+                            self.console.print(f"[dim]{_footer}[/dim]")
+                        else:
+                            print(_footer)
 
                     # Add to history
                     conversation_history.append({
@@ -2387,6 +2485,9 @@ Model id formats:
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output (show DEBUG/INFO logs)')
     parser.add_argument('-q', '--quiet', action='store_true', help='Quiet output (errors only)')
     parser.add_argument('--log-file', help='Log file path')
+    parser.add_argument('--no-animation', action='store_true',
+                        help='Disable live spinners/progress animation '
+                             '(also via NO_COLOR or EFFGEN_NO_ANIM=1)')
     parser.add_argument('--completion', choices=['bash', 'zsh', 'fish'],
                         help='Print shell completion script and exit')
 
@@ -2406,6 +2507,8 @@ Model id formats:
                             help='Verbose output (show DEBUG/INFO logs)')
     run_parser.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
                             help='Quiet output (errors only)')
+    run_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
+                            help='Disable live spinners/progress animation')
     run_parser.add_argument('-n', '--name', help='Agent name')
     run_parser.add_argument('-t', '--tools', nargs='+', help='Tools to enable')
     run_parser.add_argument('-c', '--config', help='Configuration file')
@@ -2458,6 +2561,8 @@ Model id formats:
                              help='Verbose output (show DEBUG/INFO logs)')
     chat_parser.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
                              help='Quiet output (errors only)')
+    chat_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
+                             help='Disable live spinners/progress animation')
 
     # Serve command
     serve_parser = subparsers.add_parser('serve', help='Start API server')
@@ -2595,6 +2700,8 @@ Model id formats:
     batch_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
     batch_parser.add_argument('--query-field', default='query', help='Field name for queries in JSONL/CSV (default: query)')
+    batch_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
+                              help='Disable the live progress bar (plain output)')
 
     # Eval command
     eval_parser = subparsers.add_parser('eval', help='Evaluate an agent against a test suite')
@@ -2614,6 +2721,8 @@ Model id formats:
     eval_parser.add_argument('-o', '--output', help='Output file for results (JSON)')
     eval_parser.add_argument('--difficulty', choices=['easy', 'medium', 'hard'],
                               help='Filter test cases by difficulty')
+    eval_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
+                              help='Disable the live progress bar (plain output)')
 
     # Compare command
     compare_parser = subparsers.add_parser('compare', help='Compare multiple models on a test suite')
@@ -3311,16 +3420,33 @@ def _handle_batch_command(args, cli) -> int:
             config = AgentConfig(name="batch-agent", model=model, max_iterations=5)
             agent = Agent(config)
 
-        batch_config = BatchConfig(
-            max_concurrency=args.concurrency,
-            batch_size=args.batch_size,
-            retry_failed=args.retries,
-            timeout_per_item=args.timeout,
-        )
-
         runner = BatchRunner(agent)
         cli.print(f"Loading queries from {input_path}...")
-        result = runner.run_from_file(input_path, config=batch_config, query_field=query_field)
+
+        # Count queries up front so the progress bar shows a real total/ETA.
+        try:
+            _queries = runner._read_queries(Path(input_path), query_field)
+            _total = len(_queries)
+        except Exception:  # noqa: BLE001 - fall back to an indeterminate bar
+            _total = None
+
+        animate = _progress.animation_enabled(
+            quiet=getattr(args, 'quiet', False),
+            no_animation=getattr(args, 'no_animation', False),
+        )
+        with _progress.StepProgress(
+            cli.console, total=_total, description="Batch", animate=animate,
+        ) as _bar:
+            batch_config = BatchConfig(
+                max_concurrency=args.concurrency,
+                batch_size=args.batch_size,
+                retry_failed=args.retries,
+                timeout_per_item=args.timeout,
+                progress_callback=lambda done, total: _bar.update(done, total),
+            )
+            result = runner.run_from_file(
+                input_path, config=batch_config, query_field=query_field,
+            )
 
         cli.print(
             f"\nBatch complete: {result.succeeded}/{result.total} succeeded "
@@ -3386,7 +3512,16 @@ def _handle_eval_command(args, cli) -> int:
 
         cli.print(f"Running {suite_name} suite ({len(suite)} cases, scoring={args.scoring})...")
         evaluator = AgentEvaluator(agent, scoring=scoring, pass_threshold=threshold)
-        results = evaluator.run_suite(suite)
+        animate = _progress.animation_enabled(
+            quiet=getattr(args, 'quiet', False),
+            no_animation=getattr(args, 'no_animation', False),
+        )
+        with _progress.StepProgress(
+            cli.console, total=len(suite), description="Eval", animate=animate,
+        ) as _bar:
+            results = evaluator.run_suite(
+                suite, progress_callback=lambda done, total: _bar.update(done, total),
+            )
 
         # Display results
         summary = results.summary()

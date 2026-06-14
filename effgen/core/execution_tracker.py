@@ -189,6 +189,27 @@ class ExecutionTracker:
         self.end_time: float | None = None
         self.active_agents: set = set()
         self.active_tools: set = set()
+        # Optional live observers (e.g. the CLI status line). Each is called
+        # synchronously with every tracked event; a misbehaving listener must
+        # never break the run, so calls are wrapped in a try/except.
+        self._listeners: list[Any] = []
+
+    def add_listener(self, callback: Any) -> None:
+        """Register a callback invoked with each :class:`ExecutionEvent`.
+
+        Used by the CLI to drive a live status line off the events the agent
+        already emits. Safe to call before a run; remove with
+        :meth:`remove_listener` when done.
+        """
+        if callback not in self._listeners:
+            self._listeners.append(callback)
+
+    def remove_listener(self, callback: Any) -> None:
+        """Unregister a previously added event listener (no error if absent)."""
+        try:
+            self._listeners.remove(callback)
+        except ValueError:
+            pass
 
     def track_event(self, event: ExecutionEvent):
         """
@@ -204,6 +225,13 @@ class ExecutionTracker:
 
         # Update execution tree
         self._update_tree(event)
+
+        # Notify any live observers (cosmetic; never let one break the run).
+        for listener in self._listeners:
+            try:
+                listener(event)
+            except Exception:  # noqa: BLE001 - observers are best-effort
+                pass
 
     def _update_state(self, event: ExecutionEvent):
         """Update internal state based on event."""

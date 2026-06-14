@@ -69,6 +69,35 @@ effgen models refresh                  # update the catalog from each keyed prov
 By default the CLI is quiet: tables and answers print cleanly with no library log
 noise.
 
+## Live status & animation
+
+When you run a task in an interactive terminal, `effgen` shows a live status line
+while the agent works — a spinner whose label tracks what is actually happening
+(`Calling <model>…`, `Running <tool>…`, and `🧠 reasoning…` for reasoning models)
+with a ticking elapsed timer — then a single summary line on completion:
+
+```
+✓ Done in 3.2s · 2 tools · 1,204 tokens · $0.0006
+```
+
+Long-running commands (`batch`, `eval`) show a count/rate/ETA progress bar.
+`--stream` prints tokens as they arrive with a soft cursor. Pressing `Ctrl-C`
+cancels the in-flight call and prints `Stopped.` (never a traceback).
+
+The animation is **TTY-aware and fully opt-out**. It is shown only on an
+interactive terminal and is automatically disabled — falling back to clean,
+pipe-safe plain text — when any of these apply:
+
+- `--no-animation` (per command or global),
+- `--quiet`,
+- `NO_COLOR` is set (also disables color everywhere),
+- `EFFGEN_NO_ANIM=1`,
+- output is piped/redirected (not a TTY), or
+- a CI environment is detected (`CI`, `GITHUB_ACTIONS`, …).
+
+The status line is *transient* — it erases itself before the answer prints, so
+redirected output and logs are never corrupted.
+
 ## Examples
 
 `effgen examples list` / `effgen examples run <name>` work from a source checkout.
