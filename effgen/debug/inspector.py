@@ -133,6 +133,21 @@ class DebugAgent:
         """Access the underlying Agent instance."""
         return self._agent
 
+    def close(self) -> None:
+        """Release the underlying agent's resources (avoids GC-close warnings)."""
+        close = getattr(self._agent, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def __enter__(self) -> "DebugAgent":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
 
 # ---------------------------------------------------------------------------
 # Rich TUI for interactive debugging
@@ -144,7 +159,7 @@ def run_debug_cli(
     preset: str | None = None,
     model: str | None = None,
     step: bool = False,
-) -> None:
+) -> int:
     """
     Run an agent in interactive debug mode with a rich TUI.
 
@@ -154,6 +169,11 @@ def run_debug_cli(
         preset: Preset name (e.g. "math", "research")
         model: Model name/path
         step: If True, pause after each iteration for user input
+
+    Returns:
+        Process exit code: ``0`` when the run succeeded, ``1`` when the agent
+        run failed, and ``2`` for a user/config error (no model/preset, missing
+        dependency). Lets ``effgen debug`` report honest exit codes.
     """
     try:
         from rich.panel import Panel
@@ -163,7 +183,7 @@ def run_debug_cli(
         from effgen.ui.theme import get_console
     except ImportError:
         print("rich library required for debug CLI. Install with: pip install rich")
-        return
+        return 2
 
     console = get_console()
 
@@ -171,19 +191,26 @@ def run_debug_cli(
     if config is None:
         config = _build_debug_config(preset=preset, model=model)
         if config is None:
-            console.print("[red]Could not create agent config. Provide --model or --preset.[/red]")
-            return
+            console.print(
+                "[red]Could not create agent config.[/red] Provide -m/--model "
+                "(e.g. `-m gpt-5-nano`) or --preset. Run `effgen models list` "
+                "for options or `effgen doctor` to check usable providers."
+            )
+            return 2
 
     console.print(Panel(f"[bold]effGen Debug Mode[/bold]\nTask: {task}", style="blue"))
 
     agent = DebugAgent(config)
-    result = agent.run(task)
+    try:
+        result = agent.run(task)
+    finally:
+        agent.close()
     trace: DebugTrace | None = result.metadata.get("debug_trace")
 
     if trace is None:
         console.print("[yellow]No debug trace captured.[/yellow]")
         console.print(f"Output: {result.output}")
-        return
+        return 0 if getattr(result, "success", False) else 1
 
     # Display each iteration
     for it in trace.iterations:
@@ -221,6 +248,8 @@ def run_debug_cli(
     summary.add_row("Success", str(trace.success))
     summary.add_row("Output", _truncate(result.output, 300))
     console.print(summary)
+
+    return 0 if getattr(result, "success", trace.success) else 1
 
 
 # ---------------------------------------------------------------------------

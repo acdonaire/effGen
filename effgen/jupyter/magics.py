@@ -16,9 +16,15 @@ Configuration
 -------------
 Set environment variables or pass options on the magic line:
 
-    EFFGEN_JUPYTER_MODEL      — model id (default: cerebras:gpt-oss-120b)
+    EFFGEN_JUPYTER_MODEL      — model id for the magics (no built-in default;
+                                falls back to EFFGEN_DEFAULT_MODEL when unset)
+    EFFGEN_DEFAULT_MODEL      — the framework-wide default model id
     EFFGEN_JUPYTER_SERVER_URL — server URL for /v1 chat (default: none;
                                 uses in-process agent when unset)
+
+effGen never silently picks a paid cloud model, so if neither variable is set
+you must pass ``--model``/``-m`` on the magic line. Run ``effgen models list``
+to see options or ``effgen doctor`` to check which providers are usable.
 """
 
 from __future__ import annotations
@@ -45,8 +51,32 @@ except ImportError as _exc:  # pragma: no cover
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _default_model() -> str:
-    return os.environ.get("EFFGEN_JUPYTER_MODEL", "cerebras:gpt-oss-120b")
+def _default_model() -> str | None:
+    """Resolve the magics' default model id without ever guessing.
+
+    Honours ``EFFGEN_JUPYTER_MODEL`` first (a Jupyter-specific override), then
+    the framework-wide ``EFFGEN_DEFAULT_MODEL``. Returns ``None`` when neither
+    is set — effGen never silently selects a paid cloud model, so callers show a
+    friendly "pass --model" message instead of a stale hardcoded id.
+    """
+    for var in ("EFFGEN_JUPYTER_MODEL", "EFFGEN_DEFAULT_MODEL"):
+        value = os.environ.get(var, "").strip()
+        if value:
+            return value
+    return None
+
+
+def _no_model_message() -> str:
+    """Friendly, actionable Markdown shown when no model could be resolved."""
+    return (
+        "**No model configured.** Pass one on the magic line, e.g.\n\n"
+        "```\n"
+        "%effgen_chat -m gpt-5-nano Hello!\n"
+        "```\n\n"
+        "or set a default once with `EFFGEN_DEFAULT_MODEL` (effGen never picks a "
+        "paid cloud model for you). Run `effgen models list` to see options or "
+        "`effgen doctor` to check which providers are usable."
+    )
 
 
 def _server_url() -> str | None:
@@ -107,22 +137,21 @@ def _trace_from_response(response: Any) -> list[dict[str, Any]]:
     return trace
 
 
-def _chat_in_process(message: str, model: str) -> tuple[str, list[dict[str, Any]]]:
+def _chat_in_process(message: str, model: str) -> Any:
     """Run a one-shot chat in-process using effGen's Agent.
 
-    Returns ``(reply_text, tool_trace)`` where *tool_trace* is a list of
-    ``{"tool": name, "input": ..., "output": ...}`` dicts (may be empty).
+    Returns the :class:`AgentResponse` on success (so the caller can display its
+    rich ``_repr_html_`` card in the notebook), or a plain error string when the
+    agent could not be built or run.
     """
     try:
         from effgen.core.agent import Agent, AgentConfig
 
         config = AgentConfig(name="jupyter", model=model, require_model=True)
         agent = Agent(config)
-        response = agent.run(message)
-        text = getattr(response, "output", str(response))
-        return text, _trace_from_response(response)
+        return agent.run(message)
     except Exception as exc:  # noqa: BLE001
-        return f"[effGen error] {exc}", []
+        return f"[effGen error] {exc}"
 
 
 def _resolve_tools(names: list[str]) -> list[Any]:
@@ -151,14 +180,17 @@ def _run_agent(
     task: str,
     preset: str | None,
     extra_tools: list[str],
-) -> tuple[str, list[dict[str, Any]]]:
-    """Run an agentic task and return ``(answer, tool_trace)``.
+) -> Any:
+    """Run an agentic task and return the :class:`AgentResponse`.
 
     When *preset* names a known effGen preset (math, research, coding, general,
     rag, minimal, …) the agent is built via :func:`effgen.presets.create_agent`
     so it is wired with that preset's tools (e.g. ``general``/``math`` include a
     calculator, so arithmetic tasks are computed, not guessed). Otherwise a
     plain :class:`Agent` is used, optionally augmented with ``extra_tools``.
+
+    Returns the response object on success (so its rich card renders), or a
+    plain string when a context-overflow hint applies or the run errored.
     """
     extra_tool_objs = _resolve_tools(extra_tools)
     try:
@@ -174,9 +206,8 @@ def _run_agent(
                     require_model=True,
                 )
                 response = agent.run(task)
-                output = getattr(response, "output", str(response))
-                hint = _context_overflow_hint(output, preset)
-                return (hint or output), _trace_from_response(response)
+                hint = _context_overflow_hint(getattr(response, "output", ""), preset)
+                return hint or response
 
         # No (recognised) preset: plain agent with any explicitly-requested tools.
         from effgen.core.agent import Agent, AgentConfig
@@ -189,12 +220,11 @@ def _run_agent(
         )
         agent = Agent(config)
         response = agent.run(task)
-        output = getattr(response, "output", str(response))
-        hint = _context_overflow_hint(output, preset)
-        return (hint or output), _trace_from_response(response)
+        hint = _context_overflow_hint(getattr(response, "output", ""), preset)
+        return hint or response
     except Exception as exc:  # noqa: BLE001
         hint = _context_overflow_hint(str(exc), preset)
-        return (hint or f"[effGen agent error] {exc}"), []
+        return hint or f"[effGen agent error] {exc}"
 
 
 def _context_overflow_hint(text: str, preset: str | None) -> str | None:
@@ -234,6 +264,23 @@ def _format_tool_trace(trace: list[dict[str, Any]]) -> str:
             lines.append(f"*Output:* `{out}`")
         lines.append("")
     return "\n".join(lines)
+
+
+def _display_outcome(header: str, result: Any) -> None:
+    """Display a chat/agent outcome in the notebook.
+
+    *result* is either an :class:`AgentResponse` (rendered via its rich
+    ``_repr_html_`` card after a small Markdown header) or a plain string
+    (an error or a server reply, rendered inline as Markdown).
+    """
+    if isinstance(result, str):
+        display(Markdown(f"{header}\n\n{result}"))
+        return
+    # AgentResponse (or any object) — show the header, then let the object's
+    # rich representation (Phase-aware _repr_html_ card) render the answer,
+    # metrics and step trace.
+    display(Markdown(header))
+    display(result)
 
 
 def _prometheus_snapshot() -> dict[str, float]:
@@ -318,17 +365,18 @@ class EffgenMagics(Magics):  # type: ignore[misc]
         model = args.model or _default_model()
         server = args.server or _server_url()
 
+        if not model:
+            display(Markdown(_no_model_message()))
+            return
+
         t0 = time.perf_counter()
         if server:
-            reply = _chat_via_server(message, model, server)
-            trace: list[dict[str, Any]] = []
+            result: Any = _chat_via_server(message, model, server)
         else:
-            reply, trace = _chat_in_process(message, model)
+            result = _chat_in_process(message, model)
         elapsed = time.perf_counter() - t0
 
-        md = f"**effGen** ({model}, {elapsed:.2f}s)\n\n{reply}"
-        md += _format_tool_trace(trace)
-        display(Markdown(md))
+        _display_outcome(f"**effGen** ({model}, {elapsed:.2f}s)", result)
 
     # ------------------------------------------------------------------
     # %%effgen_agent
@@ -360,14 +408,16 @@ class EffgenMagics(Magics):  # type: ignore[misc]
         preset_name: str | None = args.preset
         extra_tools: list[str] = args.tools or []
 
+        if not model:
+            display(Markdown(_no_model_message()))
+            return
+
         t0 = time.perf_counter()
-        text, trace = _run_agent(model, task, preset_name, extra_tools)
+        result = _run_agent(model, task, preset_name, extra_tools)
         elapsed = time.perf_counter() - t0
 
         label = f"agent:{preset_name or 'default'}" if preset_name else "agent"
-        md = f"**effGen** ({label} · {model}, {elapsed:.2f}s)\n\n{text}"
-        md += _format_tool_trace(trace)
-        display(Markdown(md))
+        _display_outcome(f"**effGen** ({label} · {model}, {elapsed:.2f}s)", result)
 
     # ------------------------------------------------------------------
     # %effgen_metrics

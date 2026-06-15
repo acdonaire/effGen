@@ -13,6 +13,19 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _configured_default_model(monkeypatch):
+    """The magics no longer ship a hardcoded default model — they require one to
+    be configured (so they never silently call a paid cloud model). Provide a
+    default for the invocation tests below; the tests that specifically assert
+    the no-model behaviour delete these vars again.
+    """
+    monkeypatch.setenv("EFFGEN_DEFAULT_MODEL", "gpt-5-nano")
+    monkeypatch.delenv("EFFGEN_JUPYTER_MODEL", raising=False)
+
 # ---------------------------------------------------------------------------
 # Helpers — minimal IPython-shaped kernel mock
 # ---------------------------------------------------------------------------
@@ -59,16 +72,26 @@ class TestLoadExtension:
 
 class TestHelpers:
     def test_default_model_from_env(self, monkeypatch):
-        monkeypatch.setenv("EFFGEN_JUPYTER_MODEL", "cerebras:qwen-3-235b-a22b")
+        monkeypatch.setenv("EFFGEN_JUPYTER_MODEL", "gpt-5-nano")
         from effgen.jupyter import magics  # reimport to hit monkeypatched env
 
-        assert magics._default_model() == "cerebras:qwen-3-235b-a22b"
+        assert magics._default_model() == "gpt-5-nano"
 
-    def test_default_model_fallback(self, monkeypatch):
+    def test_default_model_falls_back_to_framework_default(self, monkeypatch):
+        """With no Jupyter-specific override, EFFGEN_DEFAULT_MODEL is used."""
         monkeypatch.delenv("EFFGEN_JUPYTER_MODEL", raising=False)
+        monkeypatch.setenv("EFFGEN_DEFAULT_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
         from effgen.jupyter import magics
 
-        assert magics._default_model() == "cerebras:gpt-oss-120b"
+        assert magics._default_model() == "Qwen/Qwen2.5-1.5B-Instruct"
+
+    def test_default_model_none_when_unset(self, monkeypatch):
+        """No hardcoded paid default — returns None so callers can guide the user."""
+        monkeypatch.delenv("EFFGEN_JUPYTER_MODEL", raising=False)
+        monkeypatch.delenv("EFFGEN_DEFAULT_MODEL", raising=False)
+        from effgen.jupyter import magics
+
+        assert magics._default_model() is None
 
     def test_server_url_none_when_unset(self, monkeypatch):
         monkeypatch.delenv("EFFGEN_JUPYTER_SERVER_URL", raising=False)
@@ -205,7 +228,7 @@ class TestEffgenChat:
         """Non-empty message calls _chat_in_process when no server URL is set."""
         monkeypatch.delenv("EFFGEN_JUPYTER_SERVER_URL", raising=False)
 
-        mock_result = ("Hello from mock!", [])
+        mock_result = "Hello from mock!"
         displayed = []
 
         with (
@@ -243,7 +266,7 @@ class TestEffgenChat:
 
         def fake_chat(msg, model):
             captured_model.append(model)
-            return (f"response from {model}", [])
+            return f"response from {model}"
 
         displayed = []
         with (
@@ -251,9 +274,9 @@ class TestEffgenChat:
             patch("effgen.jupyter.magics.display", side_effect=displayed.append),
         ):
             magic = self._make_magics()
-            magic.effgen_chat("--model cerebras:qwen-3-235b-a22b hello")
+            magic.effgen_chat("--model gpt-5-nano hello")
 
-        assert captured_model == ["cerebras:qwen-3-235b-a22b"]
+        assert captured_model == ["gpt-5-nano"]
 
     def test_chat_displays_markdown(self, monkeypatch):
         monkeypatch.delenv("EFFGEN_JUPYTER_SERVER_URL", raising=False)
@@ -264,14 +287,37 @@ class TestEffgenChat:
         with (
             patch(
                 "effgen.jupyter.magics._chat_in_process",
-                return_value=("Test answer", []),
+                return_value="Test answer",
             ),
             patch("effgen.jupyter.magics.display", side_effect=displayed.append),
         ):
             magic = self._make_magics()
-            magic.effgen_chat("test question")
+            magic.effgen_chat("--model gpt-5-nano test question")
 
         assert any(isinstance(d, Markdown) for d in displayed)
+        assert any("Test answer" in d.data for d in displayed if isinstance(d, Markdown))
+
+    def test_chat_no_model_shows_friendly_message(self, monkeypatch):
+        """With no model and no env default, show an actionable message — never
+        a stale hardcoded id, and never an actual model call."""
+        monkeypatch.delenv("EFFGEN_JUPYTER_SERVER_URL", raising=False)
+        monkeypatch.delenv("EFFGEN_JUPYTER_MODEL", raising=False)
+        monkeypatch.delenv("EFFGEN_DEFAULT_MODEL", raising=False)
+
+        from IPython.display import Markdown
+
+        displayed = []
+        with (
+            patch("effgen.jupyter.magics._chat_in_process") as mock_fn,
+            patch("effgen.jupyter.magics.display", side_effect=displayed.append),
+        ):
+            magic = self._make_magics()
+            magic.effgen_chat("hello with no model")
+
+        mock_fn.assert_not_called()
+        assert any(
+            isinstance(d, Markdown) and "No model configured" in d.data for d in displayed
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -3508,12 +3508,19 @@ def _handle_compare_command(args, cli) -> int:
     threshold = args.threshold
     preset_name = getattr(args, 'preset', None)
 
+    # Unknown suite is a user error, not a crash — report cleanly (no traceback)
+    # and exit 2 with the list of valid suites.
     try:
         suite = get_suite(suite_name)
+    except (KeyError, ValueError):
+        from effgen.eval import list_suites
+        cli.print(f"Unknown suite '{suite_name}'. Available: {', '.join(list_suites())}.")
+        return 2
 
+    agents: dict = {}
+    try:
         # Load all models and create agents
         from effgen.models import load_model
-        agents: dict = {}
 
         for model_name in model_names:
             cli.print(f"Loading model {model_name}...")
@@ -3531,7 +3538,10 @@ def _handle_compare_command(args, cli) -> int:
                 cli.print(f"  Warning: Failed to load {model_name}: {e}")
 
         if not agents:
-            cli.print("Error: No models loaded successfully.")
+            cli.print(
+                "Error: No models loaded successfully. Check the model ids "
+                "(`effgen models list`) and provider keys (`effgen doctor`)."
+            )
             return 1
 
         cli.print(f"\nComparing {len(agents)} models on {suite_name} ({len(suite)} cases)...")
@@ -3554,9 +3564,19 @@ def _handle_compare_command(args, cli) -> int:
 
     except Exception as e:
         cli.print(f"Comparison failed: {e}")
-        import traceback
-        traceback.print_exc()
+        if getattr(args, 'verbose', False):
+            import traceback
+            traceback.print_exc()
         return 1
+    finally:
+        # Release agent resources so the run leaves no GC-close warnings.
+        for agent in agents.values():
+            close = getattr(agent, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 def _checkpoint_run_kwargs(args) -> dict:
@@ -4193,13 +4213,12 @@ def main():
                 exit_code = run_loadtest_command(args)
         elif args.command == 'debug':
             from effgen.debug.inspector import run_debug_cli
-            run_debug_cli(
+            exit_code = run_debug_cli(
                 task=args.task,
                 preset=getattr(args, 'preset', None),
                 model=getattr(args, 'model', None),
                 step=getattr(args, 'step', False),
             )
-            exit_code = 0
         elif args.command is None:
             # No command - launch interactive wizard
             # Create a namespace with default values for run command

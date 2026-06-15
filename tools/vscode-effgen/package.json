@@ -51,8 +51,8 @@
         },
         "effgen.defaultModel": {
           "type": "string",
-          "default": "cerebras:llama3.1-8b",
-          "description": "Default model for running prompts from the editor"
+          "default": "gpt-5-nano",
+          "description": "Default model id sent to the effGen server when running prompts from the editor (e.g. gpt-5-nano, groq:llama-3.1-8b-instant, or a local HF repo id)"
         },
         "effgen.enableCompletion": {
           "type": "boolean",

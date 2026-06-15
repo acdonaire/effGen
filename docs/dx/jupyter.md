@@ -49,7 +49,11 @@ Send a single message to an effGen model and display the response inline.
 %effgen_chat --server http://localhost:8080 What is 42 * 7?
 ```
 
-**Output:** Rendered Markdown cell showing `effGen (model, Xs)` header and the model's reply.
+**Output:** A short `effGen (model, Xs)` header followed by effGen's rich result
+card — the markdown-rendered answer plus a compact metric strip (status · time ·
+tokens · cost) and, when tools ran, a collapsible step trace (the
+`AgentResponse._repr_html_` card). In a plain terminal/IPython it falls back to a
+readable text representation.
 
 ---
 
@@ -84,7 +88,7 @@ What is the population of France in millions, divided by 3.14159?
 
 When `[preset]` names a built-in preset (`math`, `research`, `coding`, `general`, `rag`, `minimal`), the agent is created via `effgen.presets.create_agent`, so it is wired with that preset's tools — e.g. `math` and `general` include a calculator, so `Compute 17*23.` is actually computed (391), not guessed.
 
-**Output:** Rendered Markdown with the agent's final answer and, if tools were used, a trace listing each tool call with its inputs and outputs.
+**Output:** effGen's rich result card with the agent's final answer and, when tools were used, a collapsible step trace listing each tool call.
 
 > **Note on context windows.** Large presets such as `general` enable many tools, whose descriptions can exceed the context window of small models (e.g. a local model with a 4K–8K window). When that happens the magic prints a clear hint suggesting a smaller preset (e.g. `math`) or a larger-context model instead of a raw provider error.
 
@@ -115,10 +119,17 @@ Snapshot and display the current Prometheus counters registered by the effGen fr
 
 | Environment variable | Default | Description |
 |---------------------|---------|-------------|
-| `EFFGEN_JUPYTER_MODEL` | `cerebras:gpt-oss-120b` | Default model for all magics |
+| `EFFGEN_JUPYTER_MODEL` | *(unset)* | Jupyter-specific default model for all magics |
+| `EFFGEN_DEFAULT_MODEL` | *(unset)* | Framework-wide default model (used when `EFFGEN_JUPYTER_MODEL` is unset) |
 | `EFFGEN_JUPYTER_SERVER_URL` | *(unset)* | If set, `%effgen_chat` routes through this server instead of running in-process |
 
 These can also be set per-cell using `--model` / `--server` flags.
+
+> **No hidden default model.** The magics never silently pick a (potentially
+> paid) cloud model. If you pass no `--model` and neither environment variable is
+> set, the magic prints a short, actionable message telling you to pass `--model`
+> or set `EFFGEN_DEFAULT_MODEL` — run `effgen models list` to see options or
+> `effgen doctor` to check which providers are usable.
 
 ---
 

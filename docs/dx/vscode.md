@@ -1,5 +1,10 @@
 # effGen VSCode Extension
 
+> **Experimental.** This extension is a developer-experience preview shipped from
+> the repository (`tools/vscode-effgen`). It is not published to the VSCode
+> Marketplace and is not covered by effGen's stability guarantees. Build it from
+> source (below).
+
 The effGen VSCode extension adds editor support for the effGen framework inside Visual Studio Code.
 
 ## Features
@@ -42,7 +47,7 @@ Open **Settings** (`Ctrl+,`) and search for `effgen`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `effgen.serverUrl` | `http://localhost:8080` | URL of your running effGen API server |
-| `effgen.defaultModel` | `cerebras:gpt-oss-120b` | Default model for the Run code lens |
+| `effgen.defaultModel` | `gpt-5-nano` | Default model id sent to the server for the Run code lens (use any id your server can serve) |
 | `effgen.enableCompletion` | `true` | Toggle prompt-template auto-completion |
 | `effgen.enableHover` | `true` | Toggle hover documentation |
 

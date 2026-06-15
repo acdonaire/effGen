@@ -276,7 +276,7 @@ async function runPromptAtLine(
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const config = vscode.workspace.getConfiguration("effgen");
   const serverUrl: string = config.get("serverUrl") ?? "http://localhost:8080";
-  const defaultModel: string = config.get("defaultModel") ?? "cerebras:llama3.1-8b";
+  const defaultModel: string = config.get("defaultModel") ?? "gpt-5-nano";
 
   const completionProvider = new EffgenCompletionProvider(serverUrl);
   const hoverProvider = new EffgenHoverProvider();
