@@ -165,7 +165,7 @@ class ShortTermMemory:
                 result = self._model.count_tokens(text)
                 # TokenCount dataclass has a .count attribute
                 return result.count if hasattr(result, 'count') else int(result)
-            except Exception:
+            except Exception:  # best-effort: fall back to the word-count estimate below
                 pass
         return len(text) // 4
 

@@ -36,6 +36,29 @@ jobs:
       - name: Ruff lint (zero-error policy)
         run: ruff check effgen/
 
+  types:
+    name: Public-surface types (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install type-check dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install "mypy>=1.7.0"
+
+      # effGen ships py.typed; this lane type-checks the public surface so the
+      # annotations users see stay honest. It is advisory (allowed to warn) —
+      # the hard gate that public stubs resolve lives in the unit tests.
+      - name: mypy (public API surface)
+        run: bash scripts/check_public_types.sh
+
   test-unit:
     name: Unit Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

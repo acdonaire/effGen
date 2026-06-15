@@ -8,6 +8,9 @@ Covers:
 - The final assembled answer is sanitized before it is
   handed to ``on_answer`` and stored in short-term memory.
 - The ReAct/tool path also fails honestly (raises) on a streaming error.
+- A tool agent's default stream yields only the sanitized answer text — raw
+  ReAct scaffolding (Thought/Action/Observation/Final Answer) is never the
+  payload; ``include_events=True`` surfaces typed step events instead.
 - OpenAI-compatible streaming emits a final usage chunk when the client opts
   in via ``stream_options.include_usage``, and omits it otherwise.
 
@@ -142,6 +145,125 @@ def test_react_path_stream_error_raises():
         for tok in _agent(model, tools=[Calculator()]).stream("15 squared?"):
             received.append(tok)
     assert not any("[Error" in c for c in received)
+
+
+# --------------------------------------------------------------------------- #
+# Tool-agent streaming contract: raw ReAct scaffolding is NEVER the payload.
+# --------------------------------------------------------------------------- #
+
+class _ScriptedReActModel(BaseModel):
+    """Streams a different scripted ReAct turn on each successive call.
+
+    Lets us drive the tool path deterministically (a tool step, then a final
+    answer) without a network model.
+    """
+
+    def __init__(self, turns: list[list[str]]):
+        super().__init__(model_name="fake-react", model_type=ModelType.OPENAI)
+        self._turns = turns
+        self._call = 0
+
+    def load(self) -> None:
+        pass
+
+    def generate(self, prompt, config=None, **kwargs):
+        text = "".join(self._turns[min(self._call, len(self._turns) - 1)])
+        return GenerationResult(
+            text=text, tokens_used=1, finish_reason="stop",
+            model_name=self.model_name, metadata={},
+        )
+
+    def generate_stream(self, prompt, config=None, **kwargs) -> Iterator[str]:
+        turn = self._turns[min(self._call, len(self._turns) - 1)]
+        self._call += 1
+        yield from turn
+
+    def count_tokens(self, text: str) -> TokenCount:
+        return TokenCount(count=len(text.split()), model_name=self.model_name)
+
+    def get_context_length(self) -> int:
+        return 4096
+
+    def unload(self) -> None:
+        pass
+
+    def generate_batch(self, prompts, config=None, **kwargs):
+        return [self.generate(p, config) for p in prompts]
+
+
+_SCAFFOLD = ("Thought:", "Action:", "Action Input:", "Observation:", "Final Answer:")
+
+
+def test_tool_stream_default_has_no_scaffolding_and_joins_to_answer():
+    """A tool agent's default stream yields only the sanitized answer text."""
+    from effgen.tools.builtin.calculator import Calculator
+
+    model = _ScriptedReActModel([
+        ["Thought: I should compute it.\n",
+         "Action: calculator\n", "Action Input: 15*15\n"],
+        ["Thought: I have the result.\n",
+         "Final Answer: The square of 15 is 225.\n"],
+    ])
+    chunks = list(_agent(model, tools=[Calculator()]).stream("What is 15 squared?"))
+    joined = "".join(chunks)
+    for marker in _SCAFFOLD:
+        assert marker not in joined, f"scaffolding leaked: {marker!r}"
+    assert joined == "The square of 15 is 225."
+
+
+def test_tool_stream_multiword_answer_not_truncated():
+    """The early Final-Answer break must not clip a multi-word answer."""
+    from effgen.tools.builtin.calculator import Calculator
+
+    model = _ScriptedReActModel([
+        ["Final Answer: Paris is the capital of France and a lovely city.\n"],
+    ])
+    joined = "".join(_agent(model, tools=[Calculator()]).stream("Capital of France?"))
+    assert joined == "Paris is the capital of France and a lovely city."
+
+
+def test_tool_stream_include_events_yields_typed_events():
+    """include_events=True surfaces typed step events, answer text reconstructs."""
+    from effgen.core.agent import StreamEvent
+    from effgen.tools.builtin.calculator import Calculator
+
+    model = _ScriptedReActModel([
+        ["Thought: compute.\n", "Action: calculator\n", "Action Input: 2+2\n"],
+        ["Final Answer: 4\n"],
+    ])
+    events = list(
+        _agent(model, tools=[Calculator()]).stream("2+2?", include_events=True)
+    )
+    assert all(isinstance(e, StreamEvent) for e in events)
+    kinds = [e.kind for e in events]
+    assert "thought" in kinds and "tool_call" in kinds
+    assert "observation" in kinds and "answer" in kinds
+    tool_call = next(e for e in events if e.kind == "tool_call")
+    assert tool_call.tool == "calculator"
+    answer = "".join(e.text for e in events if e.kind == "answer")
+    assert answer == "4"
+    # No event's text carries raw scaffolding labels.
+    for e in events:
+        for marker in _SCAFFOLD:
+            assert marker not in (e.text or "")
+
+
+def test_tool_stream_step_limit_is_honest_not_scaffolding():
+    """Hitting the step limit yields a plain notice, not raw bracket scaffolding."""
+    from effgen.tools.builtin.calculator import Calculator
+
+    # Never emits a Final Answer → loops to the iteration cap.
+    model = _ScriptedReActModel([
+        ["Thought: hmm.\n", "Action: calculator\n", "Action Input: 1+1\n"],
+    ])
+    agent = Agent(config=AgentConfig(
+        name="limit", model=model, tools=[Calculator()], max_iterations=2,
+    ))
+    joined = "".join(agent.stream("loop forever"))
+    assert "[Max iterations reached]" not in joined
+    for marker in _SCAFFOLD:
+        assert marker not in joined
+    assert joined.strip()  # never a silently empty stream
 
 
 # --------------------------------------------------------------------------- #

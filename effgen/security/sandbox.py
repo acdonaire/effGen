@@ -88,6 +88,23 @@ class SandboxResult:
     error: str | None = None
 
 
+def _killed_at_deadline(exit_code: int | None, elapsed: float, timeout: float) -> bool:
+    """True when a process was killed by a signal at/after its time budget.
+
+    The subprocess backends enforce the wall-clock timeout two ways: an outer
+    ``asyncio.wait_for`` (raises ``TimeoutError``) and an inner CPU-time
+    ``ulimit -t`` that ``SIGXCPU``/``SIGKILL``s a busy loop *before* the outer
+    guard fires. A negative exit code (signal kill) that lands at or after the
+    requested deadline is therefore a timeout, not a clean exit — report it
+    honestly instead of as a silent success. (An OOM from ``ulimit -v`` surfaces
+    as a Python ``MemoryError`` with a positive exit code, so it is not matched
+    here.)
+    """
+    if exit_code is None or exit_code >= 0 or timeout <= 0:
+        return False
+    return elapsed >= timeout
+
+
 # ---------------------------------------------------------------------------
 # Abstract base
 # ---------------------------------------------------------------------------
@@ -409,7 +426,12 @@ class SubprocessSandbox(SandboxBase):
                     timeout=config.timeout + 2,
                 )
                 exit_code = proc.returncode
-                timed_out = False
+                elapsed = time.monotonic() - start
+                # The CPU-time ulimit can SIGKILL a busy loop before the outer
+                # wait_for fires; surface that as a timeout, not a clean exit.
+                timed_out = _killed_at_deadline(exit_code, elapsed, config.timeout)
+                if timed_out and not stderr_b:
+                    stderr_b = b"Execution timed out"
             except asyncio.TimeoutError:
                 try:
                     proc.kill()
@@ -652,7 +674,10 @@ class OffSandbox(SandboxBase):
                     timeout=config.timeout + 2,
                 )
                 exit_code = proc.returncode
-                timed_out = False
+                elapsed = time.monotonic() - start
+                timed_out = _killed_at_deadline(exit_code, elapsed, config.timeout)
+                if timed_out and not stderr_b:
+                    stderr_b = b"Execution timed out"
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()

@@ -131,7 +131,7 @@ def clear_run_context() -> None:
     for key in ("run_id", "workflow_id", "agent_name", "session_id", "iteration"):
         try:
             delattr(_run_ctx, key)
-        except AttributeError:
+        except AttributeError:  # field already unset for this run
             pass
 
 

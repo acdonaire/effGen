@@ -223,6 +223,37 @@ _FETCHERS: dict[str, Callable[[str], list[tuple[str, dict[str, Any]]]]] = {
 }
 
 
+# pip extra that ships each provider's SDK (defaults to the provider name).
+_PROVIDER_EXTRAS: dict[str, str] = {
+    "openai": "openai",
+    "gemini": "gemini",
+    "cerebras": "cerebras",
+    "groq": "groq",
+    "anthropic": "anthropic",
+    "together": "together",
+    "fireworks": "fireworks",
+    "replicate": "replicate",
+    "hf": "hf",
+}
+
+
+def _call_fetcher(provider: str, key: str | None) -> list[tuple[str, dict[str, Any]]]:
+    """Run a provider fetcher, turning a missing SDK into an actionable hint.
+
+    In a lean install the provider SDK may be absent; a raw
+    ``ModuleNotFoundError: No module named 'cerebras'`` is honest but unhelpful.
+    Mirror the adapter path and point at the right extra to install.
+    """
+    try:
+        return _FETCHERS[provider](key)  # type: ignore[arg-type]
+    except (ImportError, ModuleNotFoundError) as exc:
+        extra = _PROVIDER_EXTRAS.get(provider, provider)
+        raise RuntimeError(
+            f"Refreshing '{provider}' needs its SDK, which is not installed "
+            f"({exc}). Install with: pip install 'effgen[{extra}]'"
+        ) from exc
+
+
 def refreshable_providers() -> list[str]:
     """Providers with a live refresh fetcher."""
     return [p for p in known_providers() if p in _FETCHERS]
@@ -288,7 +319,7 @@ def available_models_live(provider: str, api_key: str | None = None) -> list[str
         raise PermissionError(
             f"No API key for '{provider}'. Set {_KEY_ENVS.get(provider, ('<KEY>',))[0]}."
         )
-    return sorted(mid for mid, _ in _FETCHERS[provider](key))  # type: ignore[arg-type]
+    return sorted(mid for mid, _ in _call_fetcher(provider, key))
 
 
 def refresh_models(
@@ -327,7 +358,7 @@ def refresh_models(
         )
 
     today = datetime.date.today().isoformat()
-    live = _FETCHERS[provider](key)  # type: ignore[arg-type]
+    live = _call_fetcher(provider, key)
     records = _records_from_live(provider, live, verified_on=today)
 
     previous = load_snapshot_records(provider)
@@ -378,7 +409,7 @@ def check_drift(
         live_records = build_records(provider)
         source = "offline-catalog"
     else:
-        live = _FETCHERS[provider](key)  # type: ignore[arg-type]
+        live = _call_fetcher(provider, key)
         live_records = _records_from_live(provider, live, verified_on=today)
         source = "live-api"
 

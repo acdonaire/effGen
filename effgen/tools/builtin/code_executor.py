@@ -257,7 +257,7 @@ class CodeExecutor(BaseTool):
         if result.error:
             raise CodeExecutionError(f"Sandbox error: {result.error}")
 
-        return {
+        out: dict[str, Any] = {
             "stdout": result.stdout[: self.DEFAULT_MAX_OUTPUT],
             "stderr": result.stderr[: self.DEFAULT_MAX_OUTPUT],
             "exit_code": result.exit_code,
@@ -265,3 +265,12 @@ class CodeExecutor(BaseTool):
             "timed_out": result.timed_out,
             "sandbox_backend": result.backend_used,
         }
+        # A timed-out run is a failure, not a silent success: reflect it in the
+        # honest tool envelope so the outer ToolResult.success agrees.
+        if result.timed_out:
+            out["success"] = False
+            out["error"] = (
+                f"Execution timed out after {timeout}s "
+                f"(sandbox '{result.backend_used}' killed the process)"
+            )
+        return out

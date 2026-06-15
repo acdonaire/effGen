@@ -126,7 +126,7 @@ class CircuitBreaker:
         try:
             with open(self._persist_path, "w") as f:
                 json.dump(data, f)
-        except Exception:
+        except Exception:  # best-effort state persistence; never break the call path
             pass
 
     def _load_state(self) -> None:
@@ -147,5 +147,5 @@ class CircuitBreaker:
                 # stuck open (a stale monotonic value would never elapse).
                 if circuit._state == CircuitState.OPEN:
                     circuit._opened_at = time.monotonic()
-        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):  # missing/corrupt state file; start fresh
             pass

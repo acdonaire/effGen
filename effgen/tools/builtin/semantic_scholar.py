@@ -110,7 +110,7 @@ def _http_get(url: str, headers: dict[str, str], timeout: int = 25) -> bytes:
         body = ""
         try:
             body = e.read().decode("utf-8", errors="replace")[:200]
-        except Exception:
+        except Exception:  # error body unreadable; use the status code only
             pass
         # Mark rate-limit errors distinctly so the async wrapper can back off.
         if e.code == 429:

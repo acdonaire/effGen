@@ -280,7 +280,7 @@ class ACPClient:
             try:
                 from opentelemetry.propagate import inject
                 inject(headers)
-            except ImportError:
+            except ImportError:  # OTel not installed; skip trace propagation
                 pass
 
         # Retry logic with exponential backoff

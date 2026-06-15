@@ -143,7 +143,7 @@ def _detect_device() -> tuple[str, str]:
         if result.returncode == 0 and result.stdout.strip():
             logger.debug("GPU detected: %s", result.stdout.strip().splitlines()[0])
             return "cuda", "float16"
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):  # GPU probe failed; fall back to CPU
         pass
     return "cpu", "int8"
 
@@ -264,7 +264,7 @@ def _whisper_transcribe(
         if _tmp_created and Path(_tmp_created).exists():
             try:
                 Path(_tmp_created).unlink()
-            except OSError:
+            except OSError:  # best-effort temp-file cleanup
                 pass
 
 

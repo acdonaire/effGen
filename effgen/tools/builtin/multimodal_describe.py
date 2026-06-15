@@ -151,7 +151,7 @@ def _describe_video_sync(file_path: str, prompt: str, max_frames: int = 6) -> di
             finally:
                 try:
                     Path(tmp.name).unlink(missing_ok=True)
-                except Exception:
+                except Exception:  # best-effort temp-file cleanup
                     pass
     finally:
         loop.close()

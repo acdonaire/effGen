@@ -186,7 +186,7 @@ def _set_argos_data_dir() -> None:
         at_settings.legacy_package_data_dir = package_dir
         at_settings.local_package_index = data_dir / "index.json"
         at_settings.package_dirs = [package_dir]
-    except ImportError:
+    except ImportError:  # argostranslate absent; caller checks availability
         pass
 
 

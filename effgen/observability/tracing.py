@@ -448,7 +448,7 @@ def setup_tracing(
                 svc,
                 _sampler.get_description(),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
             logger.warning("Failed to initialise tracing (non-fatal): %s", exc)
 
 
@@ -471,7 +471,7 @@ def shutdown_tracing() -> None:
         if _provider is not None and hasattr(_provider, "shutdown"):
             try:
                 _provider.shutdown()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 logger.warning("Error shutting down tracing (non-fatal): %s", exc)
         _provider = None
         _initialized = False
@@ -494,7 +494,7 @@ def reset_tracing() -> None:
         if _provider is not None and hasattr(_provider, "shutdown"):
             try:
                 _provider.shutdown()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 pass
         _provider = None
         _initialized = False
@@ -505,7 +505,7 @@ def reset_tracing() -> None:
             # This is the idiomatic approach for OTel test isolation.
             _otel_trace._TRACER_PROVIDER_SET_ONCE._done = False  # type: ignore[attr-defined]
             _otel_trace._TRACER_PROVIDER = None  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
             pass
 
 
@@ -586,7 +586,7 @@ def start_agent_run(
             try:
                 yield span
                 _buffer_span(f"{SpanName.AGENT_RUN} {preset}", (time.monotonic() - start) * 1000)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _mark_error(span, exc)
                 _buffer_span(
                     f"{SpanName.AGENT_RUN} {preset}",
@@ -622,7 +622,7 @@ def start_agent_iteration(
         with tracer.start_as_current_span(SpanName.AGENT_ITERATION, attributes=attrs) as span:
             try:
                 yield span
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _mark_error(span, exc)
                 raise
     except Exception:
@@ -687,7 +687,7 @@ def start_model_call(
                     _set_safe(span, ModelAttrs.OUTCOME, "ok")
                 _mark_ok(span)
                 _buffer_span(f"{SpanName.MODEL_CALL} {_model_label}", (time.monotonic() - start) * 1000)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _set_safe(span, ModelAttrs.OUTCOME, "error")
                 _set_safe(span, ModelAttrs.LATENCY_MS, round((time.monotonic() - start) * 1000, 1))
                 _mark_error(span, exc)
@@ -731,7 +731,7 @@ def start_tool_call(
                     _set_safe(span, ToolAttrs.STATUS, "ok")
                 _mark_ok(span)
                 _buffer_span(f"{SpanName.TOOL_CALL} {tool_name}", (time.monotonic() - start) * 1000)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _set_safe(span, ToolAttrs.STATUS, "error")
                 _set_safe(span, ToolAttrs.LATENCY_MS, round((time.monotonic() - start) * 1000, 1))
                 _mark_error(span, exc)
@@ -774,7 +774,7 @@ def start_router_decision(
             try:
                 yield span
                 _mark_ok(span)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _mark_error(span, exc)
                 raise
     except Exception:
@@ -813,7 +813,7 @@ def record_retry_attempt(
                     RetryAttrs.DELAY_S: float(delay_s),
                 },
             )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
         pass
 
 
@@ -843,7 +843,7 @@ def set_span_error(span_or_exc: Any, exc: Exception | None = None) -> None:
         if span is not None and hasattr(span, "is_recording") and span.is_recording():
             span.set_status(StatusCode.ERROR, str(actual_exc))
             span.record_exception(actual_exc)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
         pass
 
 
@@ -855,7 +855,7 @@ def set_span_attribute(key: str, value: Any) -> None:
         span = _get_current_span()
         if span is not None and hasattr(span, "is_recording") and span.is_recording():
             span.set_attribute(key, value)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
         pass
 
 
@@ -869,7 +869,7 @@ def _set_safe(span: Any, key: str, value: Any) -> None:
     try:
         if span is not None and hasattr(span, "is_recording") and span.is_recording():
             span.set_attribute(key, value)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
         pass
 
 
@@ -878,7 +878,7 @@ def _mark_ok(span: Any) -> None:
     try:
         if _OTEL_AVAILABLE and span is not None and hasattr(span, "set_status"):
             span.set_status(StatusCode.OK)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
         pass
 
 
@@ -888,7 +888,7 @@ def _mark_error(span: Any, exc: Exception) -> None:
         if _OTEL_AVAILABLE and span is not None and hasattr(span, "set_status"):
             span.set_status(StatusCode.ERROR, str(exc))
             span.record_exception(exc)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
         pass
 
 
@@ -897,7 +897,7 @@ def _has_outcome(span: Any) -> bool:
     try:
         if hasattr(span, "attributes") and span.attributes:
             return ModelAttrs.OUTCOME in span.attributes
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
         pass
     return False
 
@@ -907,7 +907,7 @@ def _has_tool_status(span: Any) -> bool:
     try:
         if hasattr(span, "attributes") and span.attributes:
             return ToolAttrs.STATUS in span.attributes
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
         pass
     return False
 

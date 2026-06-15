@@ -213,7 +213,7 @@ def _load_pdf(path: Path) -> list[dict[str, Any]]:
             v = info.get(k)
             if v:
                 metadata[k.lower().replace("creationdate", "date")] = v
-    except Exception:
+    except Exception:  # best-effort metadata; the document still ingests without it
         pass
     for page in doc:
         pages.append(page.get_text())
@@ -240,7 +240,7 @@ def _load_docx(path: Path) -> list[dict[str, Any]]:
             meta["author"] = core.author
         if core.created:
             meta["date"] = str(core.created)
-    except Exception:
+    except Exception:  # best-effort metadata; the document still ingests without it
         pass
     return [{"content": "\n\n".join(paragraphs), "metadata": meta}]
 
@@ -275,7 +275,7 @@ def _load_epub(path: Path) -> list[dict[str, Any]]:
         authors = book.get_metadata("DC", "creator")
         if authors:
             meta["author"] = authors[0][0]
-    except Exception:
+    except Exception:  # best-effort metadata; the document still ingests without it
         pass
     return [{"content": "\n\n".join(texts), "metadata": meta}]
 

@@ -57,6 +57,7 @@ from .tool_calling import (
 )
 
 if TYPE_CHECKING:
+    from .background import BackgroundTaskRunner
     from .messages import Message
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,49 @@ class AgentMode(Enum):
     SINGLE = "single"  # Single agent execution
     SUB_AGENTS = "sub_agents"  # Use sub-agents for complex tasks
     AUTO = "auto"  # Automatically decide based on router
+
+
+@dataclass
+class StreamEvent:
+    """A typed event yielded by ``Agent.stream(..., include_events=True)``.
+
+    The default ``stream()`` yields plain answer-text ``str`` deltas. Opting into
+    events instead surfaces the agent's progress as structured records a
+    presentation layer can render (spinner labels, per-tool ticks) without ever
+    parsing raw ReAct scaffolding out of the text payload.
+
+    ``kind`` is one of:
+
+    - ``"answer"``   — a sanitized final-answer text delta (``text``).
+    - ``"thought"``  — the model's reasoning for a step (``text``); display-only.
+    - ``"tool_call"``— a tool invocation (``tool`` + ``tool_input``).
+    - ``"observation"`` — a tool result (``text`` + ``tool``).
+    - ``"status"``   — a terminal/limit notice (``text``), e.g. step-limit hit.
+    """
+
+    kind: str
+    text: str = ""
+    tool: str | None = None
+    tool_input: str | None = None
+
+
+def _chunk_answer_text(answer: str) -> Iterator[str]:
+    """Yield *answer* as word-sized deltas whose concatenation is ``answer``.
+
+    Each chunk is a run of non-whitespace plus its trailing whitespace, so
+    ``"".join(_chunk_answer_text(s)) == s`` exactly (``sanitize_final_answer``
+    has already stripped leading/trailing whitespace). This gives a streaming
+    feel for an answer that was produced behind ReAct scaffolding without
+    re-emitting any of that scaffolding.
+    """
+    import re as _re
+
+    chunks = _re.findall(r"\S+\s*", answer)
+    if not chunks:  # whitespace-only (shouldn't happen post-sanitize)
+        if answer:
+            yield answer
+        return
+    yield from chunks
 
 
 @dataclass
@@ -367,7 +411,7 @@ Question: {task}
             self.session = _Session.load_or_create(session_id, agent_name=self.name)
 
         # Background task runner, loaded lazily.
-        self._bg_runner = None
+        self._bg_runner: "BackgroundTaskRunner | None" = None
 
         # Last checkpoint info
         self._last_checkpoint_id: str | None = None
@@ -1430,7 +1474,8 @@ Provide a well-structured, comprehensive response that integrates all findings."
             pass
 
     def _stream_direct(self, task: str, on_answer: Callable[[str], None] | None = None,
-                       **kwargs) -> Iterator[str]:
+                       include_events: bool = False,
+                       **kwargs) -> "Iterator[str] | Iterator[StreamEvent]":
         """Stream a model answer directly, without the ReAct scaffold.
 
         Used by ``stream()`` when the agent has no tools. The prompt mirrors
@@ -1439,7 +1484,8 @@ Provide a well-structured, comprehensive response that integrates all findings."
         answer is sanitized before it is stored in memory and handed to
         ``on_answer``. A mid-stream provider error is raised
         (typed + redacted) rather than yielded as a chunk, so a consumer can
-        tell success from failure.
+        tell success from failure. With ``include_events`` the same deltas are
+        wrapped as :class:`StreamEvent` ``answer`` records.
         """
         conversation_history = self._format_conversation_history()
         if conversation_history:
@@ -1467,7 +1513,8 @@ Provide a well-structured, comprehensive response that integrates all findings."
         try:
             for token in stream_iter:
                 accumulated += token
-                yield token
+                if token:
+                    yield StreamEvent(kind="answer", text=token) if include_events else token
         except Exception:
             logger.debug("Streaming generation failed", exc_info=True)
             raise
@@ -1492,25 +1539,32 @@ Provide a well-structured, comprehensive response that integrates all findings."
                on_observation: Callable[[str], None] | None = None,
                on_answer: Callable[[str], None] | None = None,
                inputs: list[Any] | None = None,
-               **kwargs) -> Iterator[str]:
+               include_events: bool = False,
+               **kwargs) -> "Iterator[str] | Iterator[StreamEvent]":
         """
         Stream a response incrementally using real model streaming.
 
         Streaming contract (stable):
 
-        - Iterating yields successive **text-delta** ``str`` chunks. Joining
-          every chunk (``"".join(agent.stream(task))``) reconstructs the answer.
-        - On a no-tool agent the chunks are the model's answer tokens directly
-          (no ReAct scaffolding). With tools, intermediate ``Observation:``
-          lines are interleaved as the loop runs.
+        - **Default (text mode).** Iterating yields successive **answer-text**
+          ``str`` deltas. Joining every chunk
+          (``"".join(agent.stream(task))``) reconstructs the *sanitized* final
+          answer — on both the no-tool and the tool path. Internal ReAct
+          scaffolding (``Thought:``/``Action:``/``Observation:``/
+          ``Final Answer:``) is **never** part of the text payload; on a tool
+          agent the intermediate steps are delivered to the ``on_thought`` /
+          ``on_tool_call`` / ``on_observation`` callbacks (and, with
+          ``include_events=True``, as typed events) — not as text.
+        - **Typed events (opt-in).** ``stream(..., include_events=True)`` yields
+          :class:`StreamEvent` objects instead of plain text — ``answer`` deltas
+          plus ``thought`` / ``tool_call`` / ``observation`` / ``status`` events
+          — so a presentation layer can render live progress without parsing the
+          text stream. Concatenating the ``text`` of the ``answer`` events still
+          reconstructs the sanitized final answer.
         - The iterator simply **ending** is the terminal "done" signal; there is
           no sentinel value to test for.
         - A provider/model failure raises a typed error from the iterator (it is
           not silently swallowed into an empty stream).
-
-        The richer typed step-event stream (per-tool ticks, reasoning markers)
-        is a presentation layer built on top of these deltas; the text-delta
-        contract here is the stable one to code against.
 
         Args:
             task: Task description. Accepts a ``str``, a ``Message``, or a
@@ -1523,10 +1577,13 @@ Provide a well-structured, comprehensive response that integrates all findings."
             on_answer: Callback for final answer tokens
             inputs: Multimodal content parts. Streaming is text-only today; if
                 media parts are supplied a clear error points to ``run()``.
+            include_events: When True, yield typed :class:`StreamEvent` objects
+                instead of plain answer-text ``str`` deltas (opt-in; see above).
             **kwargs: Additional arguments
 
         Yields:
-            str: Successive text-delta chunks (see the streaming contract above).
+            ``str`` answer-text deltas by default, or :class:`StreamEvent`
+            objects when ``include_events=True`` (see the streaming contract).
         """
         # Accept str | Message | list[ContentPart]; streaming is text-only, so
         # surface a clear error if media is supplied rather than dropping it.
@@ -1553,7 +1610,9 @@ Provide a well-structured, comprehensive response that integrates all findings."
         # and small models that write "Action: Final Answer" instead of
         # "Final Answer:" loop to max-iterations and never surface an answer.
         if not self.tools:
-            yield from self._stream_direct(task, on_answer=on_answer, **kwargs)
+            yield from self._stream_direct(
+                task, on_answer=on_answer, include_events=include_events, **kwargs
+            )
             return
 
         max_iterations = self.config.max_iterations
@@ -1599,41 +1658,46 @@ Provide a well-structured, comprehensive response that integrates all findings."
                     verbose=self._verbose_tools,
                 )
 
-            # Stream tokens from model
+            # Stream tokens from the model into a buffer. The raw ReAct
+            # scaffolding (Thought/Action/Observation/Final Answer) is internal
+            # bookkeeping and is NEVER yielded as the user-facing payload — only
+            # the parsed, sanitized final answer is (text deltas in the default
+            # mode; an "answer" StreamEvent in event mode). Stop sequences and an
+            # early Final-Answer break still bound generation so a small model
+            # that ignores `stop` cannot run away.
             accumulated = ""
             stream_iter = self.model.generate_stream(prompt, config=gen_config)
             try:
                 for token in stream_iter:
                     accumulated += token
 
-                    # Check for stop sequences
                     hit_stop = False
                     for stop_seq in default_stop_sequences:
                         if stop_seq in accumulated:
-                            # Trim at stop sequence — only yield text before it
-                            idx = accumulated.index(stop_seq)
-                            # Calculate how much of this token to yield
-                            pre_stop = accumulated[:idx]
-                            already_yielded = accumulated[:len(accumulated) - len(token)]
-                            remaining = pre_stop[len(already_yielded):]
-                            if remaining:
-                                yield remaining
-                            accumulated = pre_stop
+                            accumulated = accumulated[:accumulated.index(stop_seq)]
                             hit_stop = True
                             break
 
-                    # Break early when a complete Final Answer is detected to avoid
-                    # runaway generation — transformers streaming ignores stop_sequences.
+                    # Break early once the Final Answer line is *complete* to
+                    # avoid runaway generation (transformers streaming ignores
+                    # stop_sequences). "Complete" means the model ended the
+                    # answer line (a newline after non-empty answer text) or
+                    # started a new ReAct block — NOT merely "a few characters
+                    # appeared", which would truncate a multi-word answer.
                     if not hit_stop and "Final Answer:" in accumulated:
-                        fa_pos = accumulated.index("Final Answer:")
+                        fa_pos = accumulated.rindex("Final Answer:")
                         after_fa = accumulated[fa_pos + len("Final Answer:"):]
-                        if "\n" in after_fa or len(after_fa.strip()) >= 5:
+                        if after_fa.lstrip("\n").strip() and (
+                            "\n" in after_fa.lstrip("\n")
+                            or any(
+                                m in after_fa
+                                for m in ("Thought:", "Observation:", "Question:")
+                            )
+                        ):
                             hit_stop = True
 
                     if hit_stop:
                         break
-
-                    yield token
 
             except Exception:
                 # Fail honestly: raise the typed (already-redacted) provider error
@@ -1652,8 +1716,11 @@ Provide a well-structured, comprehensive response that integrates all findings."
             thought = parsed.get("thought", "")
             scratchpad += f"\nThought: {thought}"
 
-            if on_thought and thought:
-                on_thought(thought)
+            if thought:
+                if on_thought:
+                    on_thought(thought)
+                if include_events:
+                    yield StreamEvent(kind="thought", text=thought)
 
             # Check for final answer
             if parsed.get("final_answer"):
@@ -1664,6 +1731,14 @@ Provide a well-structured, comprehensive response that integrates all findings."
                 if answer:
                     self.short_term_memory.add_user_message(task)
                     self.short_term_memory.add_assistant_message(answer)
+                # Emit the sanitized answer as the user-facing payload. Text mode
+                # re-chunks it character-preservingly so joining the deltas
+                # reproduces the answer exactly; event mode emits one answer event.
+                if answer:
+                    if include_events:
+                        yield StreamEvent(kind="answer", text=answer)
+                    else:
+                        yield from _chunk_answer_text(answer)
                 return
 
             # Execute tool if present
@@ -1673,6 +1748,10 @@ Provide a well-structured, comprehensive response that integrates all findings."
 
                 if on_tool_call:
                     on_tool_call(action, action_input)
+                if include_events:
+                    yield StreamEvent(
+                        kind="tool_call", tool=action, tool_input=str(action_input)
+                    )
 
                 if action in self.tools:
                     tool_result = self._execute_tool(action, action_input)
@@ -1682,21 +1761,37 @@ Provide a well-structured, comprehensive response that integrates all findings."
                     scratchpad += f"\nAction Input: {action_input}"
                     scratchpad += f"\nObservation: {tool_result}"
 
-                    # Yield observation
-                    obs_text = f"\nObservation: {tool_result}\n"
-                    yield obs_text
                     if on_observation:
                         on_observation(str(tool_result))
+                    if include_events:
+                        yield StreamEvent(
+                            kind="observation", tool=action, text=str(tool_result)
+                        )
                 else:
-                    no_tool_msg = f"\nObservation: Tool '{action}' not found. Use 'Final Answer:' to respond directly.\n"
                     scratchpad += f"\nAction: {action}"
                     scratchpad += f"\nAction Input: {action_input}"
                     scratchpad += f"\nObservation: Tool '{action}' not found."
-                    yield no_tool_msg
+                    if on_observation:
+                        on_observation(f"Tool '{action}' not found.")
+                    if include_events:
+                        yield StreamEvent(
+                            kind="observation",
+                            tool=action,
+                            text=f"Tool '{action}' not found.",
+                        )
             else:
                 scratchpad += "\nAction: (continue reasoning)"
 
-        yield "\n[Max iterations reached]"
+        # Step limit reached without a Final Answer: surface an honest terminal
+        # notice (never raw scaffolding) so the stream is not silently empty.
+        limit_msg = (
+            "I wasn't able to finish this within the step limit. "
+            "Try simplifying the request or raising max_iterations."
+        )
+        if include_events:
+            yield StreamEvent(kind="status", text=limit_msg)
+        else:
+            yield limit_msg
 
     def get_execution_summary(self) -> dict[str, Any]:
         """

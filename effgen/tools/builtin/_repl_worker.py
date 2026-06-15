@@ -65,7 +65,7 @@ def _install_parent_death_signal() -> None:
         # Guard the race where the parent already exited before prctl ran.
         if os.getppid() == 1:
             os._exit(0)
-    except Exception:
+    except Exception:  # best-effort PDEATHSIG race guard
         pass
 
 

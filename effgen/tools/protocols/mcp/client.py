@@ -495,7 +495,7 @@ class MCPClient:
             self._health_task.cancel()
             try:
                 await self._health_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # expected cancellation during shutdown
                 pass
 
         if self.transport:
@@ -531,7 +531,7 @@ class MCPClient:
                 if self.transport:
                     try:
                         await self.transport.disconnect()
-                    except Exception:
+                    except Exception:  # best-effort transport disconnect during cleanup
                         pass
 
                 # Reconnect

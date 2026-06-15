@@ -512,12 +512,12 @@ class BaseTool(ABC):
             if spec.type == ParameterType.INTEGER and isinstance(value, str):
                 try:
                     coerced[name] = int(value)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError):  # leave the raw value for schema validation to reject
                     pass
             elif spec.type == ParameterType.FLOAT and isinstance(value, str):
                 try:
                     coerced[name] = float(value)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError):  # leave the raw value for schema validation to reject
                     pass
             elif spec.type == ParameterType.BOOLEAN and isinstance(value, str):
                 coerced[name] = value.lower() in ("true", "1", "yes")

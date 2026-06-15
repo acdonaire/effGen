@@ -64,7 +64,7 @@ def _server_version() -> str:
 
         try:
             return version("effgen")
-        except PackageNotFoundError:
+        except PackageNotFoundError:  # no install metadata (source/editable run); use the fallback version
             pass
     except Exception:  # noqa: BLE001 - importlib.metadata always present on 3.11
         pass
@@ -230,7 +230,7 @@ def create_app(
                 from effgen.observability.metrics import export_metrics
 
                 payload += "\n" + export_metrics()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - metrics export is optional; omit it on failure
                 pass
             return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
         except ImportError:
@@ -488,7 +488,7 @@ def _resolve_tools(tools: Any) -> list[Any]:
     registry = ToolRegistry()
     try:
         registry.discover_builtin_tools()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - tool discovery is best-effort at startup; server still serves
         pass
 
     def _get(name: str) -> Any:
@@ -586,7 +586,7 @@ class RBACBudgetMiddleware:
                 if int(declared) > self.max_body_bytes:
                     await _reject_json(send, 413, "Request body too large")
                     return
-            except ValueError:
+            except ValueError:  # non-integer Content-Length; downstream limit still applies
                 pass
 
         # Buffer the request body (bounded), then replay it to the route.
@@ -899,7 +899,7 @@ def _collect_dashboard_metrics() -> tuple[dict[str, float], list[tuple[str, dict
                 value = float(sample.value)
                 samples.append((sample.name, labels, value))
                 raw_metrics[_metric_key(sample.name, labels)] = value
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - best-effort metrics scrape; return what parsed
         pass
 
     try:
@@ -908,7 +908,7 @@ def _collect_dashboard_metrics() -> tuple[dict[str, float], list[tuple[str, dict
         for name, labels, value in _parse_prometheus_text(export_metrics()):
             samples.append((name, labels, value))
             raw_metrics[_metric_key(name, labels)] = value
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - best-effort metrics scrape; return what parsed
         pass
 
     return raw_metrics, samples

@@ -56,13 +56,25 @@ __all__ = [
 def is_transient_error(exc: BaseException) -> bool:
     """Return True for errors that are safe to retry.
 
-    Covers:
+    effGen's own typed provider errors (``effgen.models.errors``) carry an
+    authoritative classification; we defer to it so this retry predicate can
+    never drift from the core error taxonomy — an ``auth``/``not_found``/
+    ``invalid``/``fatal`` error is *never* retried, even if it happens to carry
+    a status code that the heuristics below might otherwise treat as transient.
+
+    For everything else (raw SDK exceptions, stdlib errors) we fall back to:
     - Network-level errors (ConnectionError, OSError, TimeoutError)
     - HTTP 429 / 5xx responses (detected by status code attribute)
     - asyncio.TimeoutError
     - effGen's own TimeoutError
     """
     from effgen.reliability.timeouts import TimeoutError as EffGenTimeout
+
+    # effGen typed provider errors → the Phase-0 taxonomy is the source of truth.
+    if isinstance(exc, Exception) and type(exc).__module__ == "effgen.models.errors":
+        from effgen.models.errors import classify_provider_error
+
+        return classify_provider_error(exc).should_retry
 
     # Check for HTTP status codes on the exception
     status = getattr(exc, "status_code", None) or getattr(exc, "status", None)

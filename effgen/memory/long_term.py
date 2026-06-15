@@ -178,6 +178,14 @@ class StorageBackend(ABC):
         """Clear all memories."""
         pass
 
+    def close(self) -> None:
+        """Release any held resources (no-op by default).
+
+        Backends that hold a long-lived handle (e.g. a vector-store client)
+        override this; the file/per-op backends have nothing to release.
+        """
+        return None
+
 
 class JSONStorageBackend(StorageBackend):
     """JSON file-based storage backend."""
@@ -633,6 +641,20 @@ class LongTermMemory:
             if hasattr(self.backend, 'save_session'):
                 self.backend.save_session(self.current_session)
             self.current_session = None
+
+    def close(self) -> None:
+        """Flush the active session and release the storage backend.
+
+        Idempotent. Called by ``Agent.close()`` so a long-lived backend handle
+        (e.g. a vector-store client) is released and the in-flight session is
+        persisted rather than dropped.
+        """
+        if getattr(self, "current_session", None) is not None:
+            if hasattr(self.backend, "save_session"):
+                self.backend.save_session(self.current_session)
+        close = getattr(self.backend, "close", None)
+        if callable(close):
+            close()
 
     def add_memory(self,
                   content: str,

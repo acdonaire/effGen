@@ -72,14 +72,34 @@ or the tool path.
 
 ## Streaming
 
-`agent.stream(task)` yields successive **text-delta** `str` chunks; joining them
-reconstructs the answer. The iterator ending is the "done" signal; a provider
-failure raises a typed error rather than silently ending the stream.
+`agent.stream(task)` yields successive **answer-text** `str` chunks; joining them
+reconstructs the (sanitized) answer. The iterator ending is the "done" signal; a
+provider failure raises a typed error rather than silently ending the stream.
 
 ```python
 for chunk in agent.stream("Write a haiku about the sea"):
     print(chunk, end="", flush=True)
 ```
+
+This holds for **tool-using agents** too: the default text stream is the answer
+only — the internal ReAct scaffolding (`Thought:` / `Action:` / `Observation:` /
+`Final Answer:`) is never part of the text payload. To observe the steps as they
+happen, either pass the `on_thought` / `on_tool_call` / `on_observation`
+callbacks, or opt into typed events:
+
+```python
+for event in agent.stream(task, include_events=True):
+    if event.kind == "answer":
+        print(event.text, end="", flush=True)
+    elif event.kind == "tool_call":
+        print(f"\n[calling {event.tool}]")
+```
+
+`include_events=True` yields `StreamEvent` objects with a `kind` of `answer`,
+`thought`, `tool_call`, `observation`, or `status`; concatenating the `answer`
+events still reconstructs the final answer. For the best tool-use quality on
+capable models, `agent.run(task)` (which uses native function-calling where
+available) is recommended over streaming.
 
 ## Tools
 
@@ -108,6 +128,15 @@ natural verbs) so the obvious call works.
 User-facing errors are typed and actionable: a one-line cause plus how to fix
 it. Unknown preset, model, or tool names raise typed errors with a fuzzy "did
 you mean?" suggestion instead of a bare `KeyError`.
+
+## Type hints
+
+effGen ships a `py.typed` marker, so your editor and `mypy`/`pyright` see effGen's
+annotations on the public surface (`from effgen import ...`). The public surface
+is checked two ways in CI: a deterministic gate ensures every advertised name
+resolves with an introspectable signature, and an advisory `mypy` lane
+type-checks the public modules. Internal modules carry best-effort annotations
+that may still tighten over time; rely on the documented public surface.
 
 ## Counts (tools, presets, providers, models)
 

@@ -373,7 +373,7 @@ def export_metrics() -> str:
         from effgen.utils.prometheus_metrics import metrics as _legacy
 
         sections.append(_legacy.export())
-    except Exception:  # pragma: no cover
+    except Exception:  # pragma: no cover - legacy metrics bridge is optional
         pass
 
     return "\n\n".join(s for s in sections if s) + "\n"

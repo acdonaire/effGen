@@ -70,11 +70,11 @@ class _Worker:
         ):
             try:
                 closer()
-            except Exception:  # pragma: no cover
+            except Exception:  # pragma: no cover - best-effort worker fd/teardown cleanup
                 pass
         try:
             proc.wait(timeout=5)
-        except Exception:  # pragma: no cover
+        except Exception:  # pragma: no cover - best-effort worker reap
             pass
 
 
@@ -264,7 +264,7 @@ class PythonREPL(BaseTool):
                     import resource
 
                     resource.setrlimit(resource.RLIMIT_AS, (max_mem, max_mem))
-                except Exception:
+                except Exception:  # RLIMIT_AS unsupported here; continue without the memory cap
                     pass
 
         popen_kwargs: dict[str, Any] = {

@@ -279,7 +279,7 @@ class MetricsCollector:
                     }
                     for gpu in gpus
                 ]
-            except Exception:
+            except Exception:  # GPU metrics unavailable; omit them
                 pass
 
         return ResourceSnapshot(

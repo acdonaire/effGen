@@ -343,7 +343,7 @@ def _call_gemini_vision(
         if tmp_path:
             try:
                 Path(tmp_path).unlink(missing_ok=True)
-            except Exception:
+            except Exception:  # best-effort temp-file cleanup
                 pass
 
 

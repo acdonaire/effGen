@@ -173,6 +173,17 @@ class BashTool(BaseTool):
                         min_length=1,
                         max_length=2000,
                     ),
+                    ParameterSpec(
+                        name="timeout",
+                        type=ParameterType.INTEGER,
+                        description=(
+                            "Per-call wall-clock timeout in seconds, overriding the "
+                            "tool default for this command only. Values <= 0 fall "
+                            "back to the default."
+                        ),
+                        required=False,
+                        default=None,
+                    ),
                 ],
                 returns={
                     "type": "object",
@@ -310,19 +321,41 @@ class BashTool(BaseTool):
         if not killed:
             try:
                 proc.kill()
-            except ProcessLookupError:
+            except ProcessLookupError:  # process already gone
                 pass
         try:
             await asyncio.wait_for(proc.wait(), timeout=5)
         except Exception:  # pragma: no cover - defensive
             pass
 
-    async def _execute(self, command: str, **kwargs) -> dict[str, Any]:
+    def _resolve_timeout(self, timeout: float | int | None) -> float:
+        """Resolve the effective wall-clock cap for one command.
+
+        A positive per-call ``timeout`` overrides the instance default for this
+        execution only; ``None`` or non-positive values fall back to the default
+        so a caller cannot accidentally disable the deadline.
+        """
+        if timeout is not None:
+            try:
+                t = float(timeout)
+                if t > 0:
+                    return t
+            except (TypeError, ValueError):  # invalid timeout value; fall back to the default
+                pass
+        return float(self.timeout)
+
+    async def _execute(
+        self, command: str, timeout: float | int | None = None, **kwargs
+    ) -> dict[str, Any]:
         """
         Execute a shell command.
 
         Args:
             command: The shell command to execute.
+            timeout: Per-call wall-clock cap (seconds) overriding the instance
+                default for this command. A runaway command is hard-killed
+                (process group) at this deadline; values <= 0 or ``None`` fall
+                back to the default.
 
         Returns:
             Dict with stdout, stderr, return_code, and command.
@@ -338,18 +371,19 @@ class BashTool(BaseTool):
             raise ValueError(f"Working directory does not exist: {cwd}")
 
         env = self._get_safe_env()
+        effective_timeout = self._resolve_timeout(timeout)
 
         try:
             proc = await self._spawn(command, cwd, env)
             try:
                 stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=self.timeout
+                    proc.communicate(), timeout=effective_timeout
                 )
             except asyncio.TimeoutError:  # noqa: UP041 - distinct class on py3.10
                 # Kill the whole process group so backgrounded children die too.
                 await self._kill_process_group(proc)
                 raise TimeoutError(
-                    f"Command timed out after {self.timeout}s: {command}"
+                    f"Command timed out after {effective_timeout:g}s: {command}"
                 )
 
             stdout_str = stdout.decode("utf-8", errors="replace").strip()

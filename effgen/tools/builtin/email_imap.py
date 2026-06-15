@@ -212,7 +212,7 @@ class EmailIMAPTool(BaseTool):
         finally:
             try:
                 imap.logout()
-            except Exception:
+            except Exception:  # best-effort IMAP logout
                 pass
 
     def _fetch_recent_sync(
@@ -241,7 +241,7 @@ class EmailIMAPTool(BaseTool):
         finally:
             try:
                 imap.logout()
-            except Exception:
+            except Exception:  # best-effort IMAP logout
                 pass
 
     def _search_sync(self, cfg: dict, query: str, folder: str) -> list[dict]:
@@ -265,7 +265,7 @@ class EmailIMAPTool(BaseTool):
         finally:
             try:
                 imap.logout()
-            except Exception:
+            except Exception:  # best-effort IMAP logout
                 pass
 
     def _get_message_sync(self, cfg: dict, uid: str, folder: str) -> dict:
@@ -283,7 +283,7 @@ class EmailIMAPTool(BaseTool):
         finally:
             try:
                 imap.logout()
-            except Exception:
+            except Exception:  # best-effort IMAP logout
                 pass
 
     # ------------------------------------------------------------------

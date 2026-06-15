@@ -65,19 +65,19 @@ if OTEL_AVAILABLE:
     try:
         from opentelemetry.exporter.jaeger.thrift import JaegerExporter  # noqa: F401
         _JAEGER_AVAILABLE = True
-    except ImportError:
+    except ImportError:  # optional Jaeger exporter not installed
         pass
     try:
         from opentelemetry.exporter.zipkin.json import ZipkinExporter  # noqa: F401
         _ZIPKIN_AVAILABLE = True
-    except ImportError:
+    except ImportError:  # optional Zipkin exporter not installed
         pass
     try:
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
             OTLPSpanExporter,  # noqa: F401
         )
         _OTLP_AVAILABLE = True
-    except ImportError:
+    except ImportError:  # optional OTLP exporter not installed
         pass
 
 
