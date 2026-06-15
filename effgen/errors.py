@@ -109,6 +109,29 @@ class CorruptDocumentError(EffGenError):
         super().__init__(msg)
 
 
+class CorruptStateError(EffGenError):
+    """Raised when a persisted session or checkpoint file cannot be read.
+
+    The file is named explicitly so a user can find and fix (or delete) it
+    instead of seeing a raw ``JSONDecodeError`` stack trace.
+
+    Attributes:
+        kind: What was being loaded (e.g. 'session', 'checkpoint').
+        path: The file path that failed to parse.
+        detail: Underlying parser detail.
+    """
+
+    def __init__(self, kind: str, path: str, detail: str = "") -> None:
+        self.kind = kind
+        self.path = path
+        self.detail = detail
+        msg = f"Cannot read {kind} file '{path}' - it is corrupt, truncated, or not valid JSON."
+        if detail:
+            msg += f"\nDetail: {detail}"
+        msg += "\n\nFix: inspect the file, restore a backup, or delete it to start fresh."
+        super().__init__(msg)
+
+
 class MissingCredentialsError(EffGenError):
     """Raised when required credentials (env vars) are absent for a tool.
 

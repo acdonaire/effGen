@@ -1381,6 +1381,12 @@ Provide a well-structured, comprehensive response that integrates all findings."
             return
         self._closed = True
         self._circuit_breaker.reset_all()
+        # Stop background worker threads so they never outlive the agent.
+        if getattr(self, '_bg_runner', None) is not None:
+            try:
+                self._bg_runner.shutdown(wait=False)
+            except Exception:
+                logger.debug("Failed to shut down background runner", exc_info=True)
         if self.long_term_memory is not None:
             try:
                 self.long_term_memory.close()

@@ -23,6 +23,17 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _read_checkpoint_json(path: str) -> dict:
+    """Read+parse a checkpoint JSON file, raising a clear error if corrupt."""
+    with open(path) as f:
+        raw = f.read()
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as e:
+        from ..errors import CorruptStateError
+        raise CorruptStateError("checkpoint", path, str(e)) from e
+
+
 @dataclass
 class Checkpoint:
     """A single checkpoint snapshot."""
@@ -31,6 +42,7 @@ class Checkpoint:
     agent_name: str
     task: str
     iteration: int
+    model: str = ""
     scratchpad: str = ""
     partial_output: str | None = None
     tool_calls: int = 0
@@ -132,8 +144,9 @@ class CheckpointManager:
         """Load a checkpoint by id, or by file path."""
         # Allow passing a path directly
         if os.path.sep in checkpoint_id or checkpoint_id.endswith(".json"):
-            with open(checkpoint_id) as f:
-                return Checkpoint.from_dict(json.load(f))
+            if not os.path.exists(checkpoint_id):
+                raise FileNotFoundError(f"Checkpoint not found: {checkpoint_id}")
+            return Checkpoint.from_dict(_read_checkpoint_json(checkpoint_id))
 
         if self.backend == "sqlite":
             with sqlite3.connect(self.db_path) as conn:
@@ -143,13 +156,17 @@ class CheckpointManager:
                 ).fetchone()
                 if row is None:
                     raise FileNotFoundError(f"Checkpoint not found: {checkpoint_id}")
-                return Checkpoint.from_dict(json.loads(row[0]))
+                try:
+                    data = json.loads(row[0])
+                except (json.JSONDecodeError, ValueError) as e:
+                    from ..errors import CorruptStateError
+                    raise CorruptStateError("checkpoint", self.db_path, str(e)) from e
+                return Checkpoint.from_dict(data)
 
         path = os.path.join(self.checkpoint_dir, f"{checkpoint_id}.json")
         if not os.path.exists(path):
             raise FileNotFoundError(f"Checkpoint not found: {path}")
-        with open(path) as f:
-            return Checkpoint.from_dict(json.load(f))
+        return Checkpoint.from_dict(_read_checkpoint_json(path))
 
     def load_latest(self) -> Checkpoint:
         """Return the most recently created checkpoint."""
@@ -160,12 +177,16 @@ class CheckpointManager:
                 ).fetchone()
                 if row is None:
                     raise FileNotFoundError("No checkpoints found")
-                return Checkpoint.from_dict(json.loads(row[0]))
+                try:
+                    data = json.loads(row[0])
+                except (json.JSONDecodeError, ValueError) as e:
+                    from ..errors import CorruptStateError
+                    raise CorruptStateError("checkpoint", self.db_path, str(e)) from e
+                return Checkpoint.from_dict(data)
 
         latest = os.path.join(self.checkpoint_dir, "latest.json")
         if os.path.exists(latest):
-            with open(latest) as f:
-                return Checkpoint.from_dict(json.load(f))
+            return Checkpoint.from_dict(_read_checkpoint_json(latest))
 
         files = sorted(
             (f for f in os.listdir(self.checkpoint_dir) if f.endswith(".json")),
@@ -210,7 +231,8 @@ class CheckpointManager:
                     "iteration": data.get("iteration"),
                     "created_at": data.get("created_at"),
                 })
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError) as e:
+                logger.debug("Skipping unreadable checkpoint file %s: %s", fname, e)
                 continue
         results.sort(key=lambda d: d.get("created_at") or "", reverse=True)
         return results
@@ -262,6 +284,10 @@ class CheckpointManager:
         except Exception:
             logger.debug("Failed to snapshot short-term memory for checkpoint", exc_info=True)
 
+        # Record the model id so `resume` can reuse it (and warn on a mismatch)
+        # rather than silently resuming on a different model.
+        model_id = getattr(agent, "model_name", None) or ""
+
         tool_states: dict[str, Any] = {}
         for tname, tool in getattr(agent, "tools", {}).items():
             tool_states[tname] = {
@@ -275,6 +301,7 @@ class CheckpointManager:
             agent_name=getattr(agent, "name", "agent"),
             task=task,
             iteration=iteration,
+            model=model_id,
             scratchpad=scratchpad,
             partial_output=partial_output,
             tool_calls=tool_calls,

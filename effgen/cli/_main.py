@@ -728,6 +728,7 @@ class CLIInterface:
                     max_iterations=args.max_iterations,
                     temperature=args.temperature,
                     enable_streaming=args.stream,
+                    session_id=getattr(args, 'session_id', None),
                     **_preset_overrides,
                 )
                 self.print_success(f"Created {args.preset} preset agent")
@@ -3572,6 +3573,7 @@ def _handle_resume_command(args, cli) -> int:
     """Handle 'effgen resume' command."""
     from effgen import Agent, AgentConfig
     from effgen.core.checkpoint import CheckpointManager
+    from effgen.errors import CorruptStateError
 
     cp_arg = args.checkpoint
     # Determine directory + id
@@ -3587,19 +3589,61 @@ def _handle_resume_command(args, cli) -> int:
         cp_id = cp_arg
 
     mgr = CheckpointManager(ckpt_dir)
-    cp = mgr.load(cp_id) if cp_id else mgr.load_latest()
+    try:
+        cp = mgr.load(cp_id) if cp_id else mgr.load_latest()
+    except FileNotFoundError as e:
+        cli.print(f"Error: {e}")
+        cli.print("List available checkpoints by pointing --checkpoint at their directory.")
+        return 2
+    except CorruptStateError as e:
+        cli.print(f"Error: {e}")
+        return 2
     cli.print(f"Resuming '{cp.task[:80]}' from iteration {cp.iteration}")
 
-    if getattr(args, 'preset', None):
-        from effgen.presets import create_agent as _create_preset_agent
-        agent = _create_preset_agent(args.preset, args.model or "Qwen/Qwen2.5-3B-Instruct")
+    # Choose the model: an explicit --model wins; otherwise reuse the model the
+    # checkpoint was created with so the run continues on the same model. Warn
+    # loudly if the two disagree (a different model may not complete the task
+    # coherently). Fall back to a small local model only if nothing is known.
+    saved_model = getattr(cp, "model", "") or ""
+    if args.model:
+        chosen_model = args.model
+        if saved_model and saved_model != args.model:
+            cli.print(
+                f"Warning: checkpoint was created with '{saved_model}' but resuming "
+                f"with '{args.model}'. Results may differ."
+            )
+    elif saved_model:
+        chosen_model = saved_model
+        cli.print(f"Using checkpoint's model: {saved_model}")
     else:
-        cfg = AgentConfig(name=cp.agent_name, model=args.model or "Qwen/Qwen2.5-3B-Instruct", tools=[])
-        agent = Agent(cfg)
+        chosen_model = "Qwen/Qwen2.5-1.5B-Instruct"
+        cli.print(
+            "This checkpoint did not record a model; resuming on a small local "
+            f"model ({chosen_model}). Pass -m/--model to choose another."
+        )
 
-    response = agent.resume(checkpoint_id=cp_id, checkpoint_dir=ckpt_dir)
-    cli.print(response.output if hasattr(response, 'output') else str(response))
-    return 0 if getattr(response, 'success', True) else 1
+    try:
+        if getattr(args, 'preset', None):
+            from effgen.presets import create_agent as _create_preset_agent
+            agent = _create_preset_agent(args.preset, chosen_model)
+        else:
+            cfg = AgentConfig(name=cp.agent_name, model=chosen_model, tools=[])
+            agent = Agent(cfg)
+    except Exception as e:  # noqa: BLE001 - surface a clean error, no stack trace
+        cli.print(f"Error: could not load model '{chosen_model}' to resume: {e}")
+        return 1
+
+    try:
+        response = agent.resume(checkpoint_id=cp_id, checkpoint_dir=ckpt_dir)
+        cli.print(response.output if hasattr(response, 'output') else str(response))
+        return 0 if getattr(response, 'success', True) else 1
+    finally:
+        # Release the agent so resume never emits the "garbage-collected
+        # without calling close()" warning (matches the run path).
+        try:
+            agent.close()
+        except Exception as e:  # noqa: BLE001
+            logging.debug(f"Agent close after resume failed: {e}")
 
 
 # Cheapest well-known model per cloud provider, used to suggest a first model in
@@ -3793,6 +3837,7 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
 def _handle_sessions_command(args, cli) -> int:
     """Handle 'effgen sessions' subcommands."""
     from effgen.core.session import SessionManager
+    from effgen.errors import CorruptStateError
     mgr = SessionManager()
     cmd = getattr(args, 'session_command', None)
     if cmd == 'list':
@@ -3805,13 +3850,21 @@ def _handle_sessions_command(args, cli) -> int:
             return 0
         for s in sessions:
             cli.print(f"  {s['session_id']:36s}  msgs={s['messages']:<4d}  updated={s.get('updated_at')}")
+        cli.print(f"\nStored in: {mgr.sessions_dir}")
         return 0
     if cmd == 'delete':
         ok = mgr.delete(args.session_id)
-        cli.print("Deleted." if ok else "Not found.")
+        cli.print("Deleted." if ok else f"Session not found: {args.session_id}")
         return 0 if ok else 1
     if cmd == 'export':
-        cli.print(mgr.export(args.session_id, format=args.format))
+        try:
+            cli.print(mgr.export(args.session_id, format=args.format))
+        except FileNotFoundError:
+            cli.print(f"Session not found: {args.session_id}")
+            return 1
+        except CorruptStateError as e:
+            cli.print(f"Error: {e}")
+            return 2
         return 0
     if cmd == 'cleanup':
         n = mgr.cleanup(older_than_days=args.days)

@@ -176,6 +176,13 @@ class AgentReActMixin:
                     )
                 else:
                     prompt = task
+                # Carry prior conversation turns into the native tool-calling
+                # prompt. Without this the model only sees the latest task and
+                # forgets earlier turns, so a multi-turn *session* loses its
+                # context the moment any tool is attached (the ReAct/template
+                # branches below already inject this history).
+                if conversation_history:
+                    prompt = f"{conversation_history}\n\n{prompt}"
                 # Pass tool definitions for the chat template
                 tool_defs = self._tool_calling_strategy.format_tools_for_prompt(
                     list(self.tools.values())

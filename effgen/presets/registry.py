@@ -373,6 +373,7 @@ def create_agent(
     max_iterations: int | None = None,
     temperature: float | None = None,
     enable_memory: bool | None = None,
+    session_id: str | None = None,
     **config_overrides: Any,
 ) -> Agent:
     """Create an agent from a named preset.
@@ -391,6 +392,9 @@ def create_agent(
         max_iterations: Override max iterations.
         temperature: Override temperature.
         enable_memory: Override memory setting.
+        session_id: Optional persistent session id. When set, the agent loads or
+            creates a stored conversation session so multi-turn context carries
+            across processes (the same `--session-id` the CLI exposes).
         **config_overrides: Extra keyword arguments forwarded to AgentConfig.
 
     Returns:
@@ -468,7 +472,7 @@ def create_agent(
         ", ".join(t.metadata.name for t in tools) if tools else "(none)",
     )
 
-    return Agent(agent_config)
+    return Agent(agent_config, session_id=session_id)
 
 
 # Keep the template (with the ``{PRESET_LIST}`` placeholder) so the docstring can

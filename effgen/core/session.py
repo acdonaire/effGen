@@ -10,13 +10,36 @@ provide their own session_id (e.g. "user-123").
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-DEFAULT_SESSION_DIR = os.path.expanduser("~/.effgen/sessions")
+logger = logging.getLogger(__name__)
+
+
+def _default_session_dir() -> str:
+    """Resolve where sessions live.
+
+    Honors ``EFFGEN_SESSIONS_DIR`` (explicit) then ``EFFGEN_HOME`` (the base
+    effGen state dir), falling back to ``~/.effgen/sessions``. Resolved lazily so
+    tests and callers can point it elsewhere via the environment.
+    """
+    explicit = os.environ.get("EFFGEN_SESSIONS_DIR")
+    if explicit:
+        return os.path.abspath(os.path.expanduser(explicit))
+    home = os.environ.get("EFFGEN_HOME")
+    if home:
+        return os.path.join(os.path.abspath(os.path.expanduser(home)), "sessions")
+    return os.path.expanduser("~/.effgen/sessions")
+
+
+# Module-level constant kept for backward compatibility. New code should call
+# _default_session_dir() so EFFGEN_SESSIONS_DIR / EFFGEN_HOME are honored at
+# call time rather than import time.
+DEFAULT_SESSION_DIR = _default_session_dir()
 
 
 @dataclass
@@ -70,32 +93,44 @@ class Session:
 
         return load_from_dict(cls, data, label="Session")
 
-    def save(self, sessions_dir: str = DEFAULT_SESSION_DIR) -> str:
+    def save(self, sessions_dir: str | None = None) -> str:
+        sessions_dir = sessions_dir or _default_session_dir()
         os.makedirs(sessions_dir, exist_ok=True)
         path = os.path.join(sessions_dir, f"{self.session_id}.json")
         self.updated_at = datetime.now().isoformat()
-        with open(path, "w") as f:
+        # Write atomically so a crash mid-write can't leave a truncated file
+        # that later fails to load.
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as f:
             json.dump(self.to_dict(), f, indent=2, default=str)
+        os.replace(tmp, path)
         return path
 
     @classmethod
     def load(
         cls,
         session_id: str,
-        sessions_dir: str = DEFAULT_SESSION_DIR,
+        sessions_dir: str | None = None,
     ) -> "Session":
+        sessions_dir = sessions_dir or _default_session_dir()
         path = os.path.join(sessions_dir, f"{session_id}.json")
         if not os.path.exists(path):
             raise FileNotFoundError(f"Session not found: {session_id}")
         with open(path) as f:
-            return cls.from_dict(json.load(f))
+            raw = f.read()
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as e:
+            from ..errors import CorruptStateError
+            raise CorruptStateError("session", path, str(e)) from e
+        return cls.from_dict(data)
 
     @classmethod
     def load_or_create(
         cls,
         session_id: str | None,
         agent_name: str = "",
-        sessions_dir: str = DEFAULT_SESSION_DIR,
+        sessions_dir: str | None = None,
     ) -> "Session":
         if session_id:
             try:
@@ -112,8 +147,10 @@ class SessionManager:
     Provides list / get / delete / cleanup operations used by the CLI.
     """
 
-    def __init__(self, sessions_dir: str = DEFAULT_SESSION_DIR):
-        self.sessions_dir = os.path.abspath(os.path.expanduser(sessions_dir))
+    def __init__(self, sessions_dir: str | None = None):
+        self.sessions_dir = os.path.abspath(
+            os.path.expanduser(sessions_dir or _default_session_dir())
+        )
         os.makedirs(self.sessions_dir, exist_ok=True)
 
     def list_sessions(self) -> list[dict[str, Any]]:
@@ -131,7 +168,10 @@ class SessionManager:
                     "created_at": data.get("created_at"),
                     "updated_at": data.get("updated_at"),
                 })
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError) as e:
+                # Listing must stay resilient to one bad file, but a corrupt
+                # session is worth a breadcrumb (it won't load individually).
+                logger.debug("Skipping unreadable session file %s: %s", fname, e)
                 continue
         out.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
         return out
