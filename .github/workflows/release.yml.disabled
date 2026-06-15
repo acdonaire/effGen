@@ -1,6 +1,14 @@
-# NOTE: Auto-publish temporarily disabled. Upload manually via:
+# NOTE: This is a DELIBERATELY-DISABLED template, not an active lane. effGen's
+# release process is intentionally MANUAL (no automated PyPI publish on a GitHub
+# release): build + inspect in a temp dir, fresh-env install smoke, then a human
+# uploads. See docs/installation.md and the release runbook. To publish:
+#
 #   python -m build && twine upload dist/*
-# Re-enable by uncommenting the workflow below once PyPI trusted publishing is configured.
+#
+# The `.disabled` extension keeps this out of GitHub's workflow loader on purpose.
+# Before re-enabling, configure PyPI Trusted Publishing (OIDC), re-pin the action
+# versions below (e.g. pypa/gh-action-pypi-publish@release/v1), and rename to
+# release.yml.
 
 # name: Release to PyPI
 #

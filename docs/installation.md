@@ -101,6 +101,38 @@ pip install effgen
 python -c "import torch; print(torch.cuda.is_available())"   # -> True
 ```
 
+### Keeping your GPU torch when installing extras (`-c constraints-cu1xx.txt`)
+
+Installing the wrong wheel is only half the trap. The *other* half: once you have
+a working GPU torch, a later `pip install -e ".[all]"` (or any extra that pulls a
+torch-pinning dependency such as vLLM) can let pip's resolver **silently upgrade
+torch back to a newer-CUDA wheel** — your GPU goes dark again with no install-time
+warning. To prevent that, the repo ships a small constraints file per CUDA line
+that pins torch/torchvision/torchaudio to a driver-compatible build. Apply it with
+`-c` and an extras install can never move torch:
+
+```bash
+# CUDA 12.4 box: install the GPU torch, then install extras under the constraint
+pip install "torch>=2.0,<3" --index-url https://download.pytorch.org/whl/cu124
+pip install -e ".[local]" -c constraints-cu124.txt
+python -c "import torch; print(torch.cuda.is_available())"   # still True
+```
+
+| Your driver (`nvidia-smi` CUDA) | Constraints file |
+|---|---|
+| **CUDA 12.1–12.7** (e.g. 12.4) | `constraints-cu124.txt` |
+| **CUDA 12.8+** | `constraints-cu128.txt` |
+| **CUDA 13.x** | `constraints-cu130.txt` |
+| **CPU only** | `constraints-cpu.txt` |
+
+The constraints files carry their own `--extra-index-url`, so they also work on a
+fresh env (no pre-installed torch). For the everything-extra `[all]` — which pins
+vLLM to one exact torch — use the matching vLLM/torch pair from
+[Installing vLLM](#installing-vllm-optional) rather than a generic constraint, or
+the committed `requirements-all-lock.txt`. `scripts/check_install_constraints.sh`
+verifies the flow end to end (an extras install over a pinned torch leaves torch
+and `torch.cuda.is_available()` untouched).
+
 effGen detects a torch-CUDA / driver mismatch at runtime: when it sees physical
 NVIDIA GPUs but `torch.cuda` cannot use them, it prints **one** warning naming the
 torch CUDA build vs the driver's CUDA version and pointing back here, instead of

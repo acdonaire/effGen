@@ -1,13 +1,16 @@
 #!/bin/bash
 
 ################################################################################
-# effGen Master Installer
+# effGen Installer (repo-root front-end)
 #
-# One-command setup for the effGen framework. This script handles everything:
-# - Environment setup (conda or pip)
-# - Dependency installation
-# - Configuration
-# - Verification
+# This is the one documented entry point for setting up effGen from a clone:
+#   ./install.sh
+# It parses the user-facing options below and then delegates the actual work to
+# the CANONICAL install engine, scripts/install_effgen.sh, which owns the
+# driver-aware PyTorch selection (so a CUDA-13 default wheel is never installed
+# on a CUDA-12 driver). Verification is handled by the engine (or scripts/
+# verify.sh for --skip-install). There is exactly one installer engine; this
+# front-end and scripts/setup_and_verify.sh are thin wrappers around it.
 #
 # Usage:
 #   ./install.sh                    # Standard installation
@@ -377,56 +380,49 @@ export_settings() {
 run_installation() {
     print_section "Running Installation"
 
-    # Build command for setup_and_verify.sh
-    local CMD="$SCRIPT_DIR/scripts/setup_and_verify.sh"
-    local ARGS=""
-
-    # Pass quick mode to sub-script
-    if [ "$QUICK_MODE" = true ]; then
-        ARGS="$ARGS --quick"
-    fi
-
-    if [ "$SKIP_INSTALL" = true ]; then
-        ARGS="$ARGS --skip-install"
-    fi
-
-    if [ "$SKIP_VERIFY" = true ]; then
-        ARGS="$ARGS --skip-verify"
-    fi
-
-    if [ "$INSTALL_VLLM" = true ]; then
-        ARGS="$ARGS --install-vllm"
-    fi
-
-    if [ "$DOWNLOAD_MODELS" = true ]; then
-        ARGS="$ARGS --download-models"
-    fi
-
-    if [ "$INSTALL_DEV" = true ]; then
-        ARGS="$ARGS --dev"
-    fi
-
-    if [ "$VERBOSE" = true ]; then
-        ARGS="$ARGS --verbose"
-    fi
-
-    # Check if setup script exists
+    # The canonical install engine (owns driver-aware torch selection).
+    local CMD="$SCRIPT_DIR/scripts/install_effgen.sh"
     if [ ! -f "$CMD" ]; then
-        print_error "Setup script not found: $CMD"
+        print_error "Canonical installer not found: $CMD"
         print_info "Make sure you're running from the effGen repository root"
         exit 1
     fi
 
-    # Run the setup script
-    print_info "Running: bash $CMD $ARGS"
+    # --skip-install: run verification only, never the install engine.
+    if [ "$SKIP_INSTALL" = true ]; then
+        local VCMD="$SCRIPT_DIR/scripts/verify.sh"
+        if [ -f "$VCMD" ]; then
+            local VARGS=""
+            [ "$QUICK_MODE" = true ] && VARGS="$VARGS --quick"
+            [ "$VERBOSE" = true ] && VARGS="$VARGS --verbose"
+            print_info "Skipping install; running verification only: bash $VCMD$VARGS"
+            echo ""
+            if ! bash "$VCMD" $VARGS; then
+                print_error "Verification failed"
+                exit 1
+            fi
+        else
+            print_warning "Verification script not found: $VCMD"
+        fi
+        return
+    fi
+
+    # Map this front-end's options onto the canonical engine's flags.
+    local ARGS=""
+    [ "$QUICK_MODE" = true ]      && ARGS="$ARGS --quick"
+    [ "$SKIP_CONDA" = true ]      && ARGS="$ARGS --skip-conda"
+    [ "$MINIMAL_INSTALL" = true ] && ARGS="$ARGS --minimal"
+    [ "$INSTALL_VLLM" = true ]    && ARGS="$ARGS --install-vllm"
+    [ "$DOWNLOAD_MODELS" = true ] && ARGS="$ARGS --download-models"
+    [ "$INSTALL_DEV" = true ]     && ARGS="$ARGS --dev"
+    [ "$SKIP_VERIFY" = true ]     && ARGS="$ARGS --skip-verification"
+
+    print_info "Running canonical installer: bash $CMD$ARGS"
     echo ""
 
-    bash "$CMD" $ARGS
-    local exit_code=$?
-
-    if [ $exit_code -ne 0 ]; then
-        print_error "Installation failed with exit code $exit_code"
-        exit $exit_code
+    if ! bash "$CMD" $ARGS; then
+        print_error "Installation failed"
+        exit 1
     fi
 }
 
@@ -443,8 +439,8 @@ show_final_instructions() {
         echo "  source activate.sh && python examples/basic_agent.py"
         echo ""
     fi
-    # The setup_and_verify.sh script shows detailed instructions,
-    # so we only add brief instructions for quick mode
+    # The install engine shows detailed instructions, so we only add brief
+    # instructions for quick mode
 }
 
 ################################################################################

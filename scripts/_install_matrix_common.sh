@@ -106,6 +106,25 @@ install_wheel() {
     ok "effGen installed from wheel"
 }
 
+# install_wheel_constrained "<extras>" "<constraints-file-rel-to-repo-root>"
+# Installs effGen + extras while applying a `-c` constraints file. Used by the
+# torch-preservation matrix check (scripts/check_install_constraints.sh).
+install_wheel_constrained() {
+    local extras="${1:-}"
+    local cfile="${REPO_ROOT}/${2}"
+    [ -f "${cfile}" ] || { fail "constraints file not found: ${cfile}"; exit 1; }
+    log "Installing effGen wheel ${extras:-(base)} with -c ${2} ..."
+    "${VENV_PY}" -m pip install --quiet "${EFFGEN_WHEEL}${extras}" -c "${cfile}" \
+        >"${MATRIX_WORKDIR}/install.log" 2>&1 || {
+            fail "constrained install failed; see ${MATRIX_WORKDIR}/install.log"; tail -25 "${MATRIX_WORKDIR}/install.log"; exit 1; }
+    ok "effGen installed from wheel (constrained by ${2})"
+}
+
+# torch_version: echo the installed torch version string (empty if absent).
+torch_version() {
+    "${VENV_PY}" -c "import torch; print(torch.__version__)" 2>/dev/null || true
+}
+
 # ---- the shared check battery -------------------------------------------------
 
 check_pip_check() {

@@ -1,11 +1,15 @@
 #!/bin/bash
 
 ################################################################################
-# effGen Master Installation Script
+# effGen Installation Engine (CANONICAL installer)
 #
-# This script provides a complete, automated setup for the effGen framework.
-# It handles conda environment management, dependency installation, configuration,
-# model downloads, and verification tests with beautiful CLI output.
+# This is the one install engine for effGen. It owns the driver-aware PyTorch
+# selection (install_compatible_torch below) so a CUDA-13 default wheel is never
+# silently installed on a CUDA-12 driver, and handles conda environment
+# management, dependency installation, configuration, model downloads, and
+# verification. The repo-root ./install.sh is a thin front-end that delegates
+# here; scripts/setup_and_verify.sh is a deprecated forwarder. Run either
+# ./install.sh (recommended) or this script directly — both do the same work.
 #
 # Usage:
 #   bash scripts/install_effgen.sh [OPTIONS]
@@ -540,7 +544,7 @@ install_compatible_torch
 if [ "$MINIMAL_INSTALL" = true ]; then
     print_step "Installing minimal dependencies..."
     $PYTHON_CMD -m pip install -e . > /dev/null 2>&1
-    $PYTHON_CMD -m pip install bitsandbytes>=0.46.1 > /dev/null 2>&1
+    $PYTHON_CMD -m pip install "bitsandbytes>=0.46.1" > /dev/null 2>&1
     print_success "Minimal installation complete"
 else
     # Install core requirements
@@ -594,6 +598,13 @@ else
         done
         if [ ${PIPESTATUS[0]} -eq 0 ]; then
             print_success "vLLM installed successfully"
+            # vLLM pins one exact torch; a plain `pip install vllm` can replace the
+            # driver-compatible torch we installed above with a newer-CUDA wheel.
+            # Re-check and warn loudly rather than silently losing the GPU.
+            if [ "$HAS_GPU" = true ] && ! $PYTHON_CMD -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" > /dev/null 2>&1; then
+                print_warning "vLLM upgraded torch to a build that can't use this driver (torch.cuda.is_available() is False)."
+                print_warning "Pick a vLLM release whose pinned torch matches CUDA ${DRIVER_CUDA_VERSION:-your driver} — see docs/installation.md (Installing vLLM)."
+            fi
             echo ""
         else
             print_warning "vLLM installation failed - you can install it manually later"
@@ -607,7 +618,7 @@ else
 
     # Install bitsandbytes for 4-bit quantization support
     print_step "Installing bitsandbytes for 4-bit quantization..."
-    $PYTHON_CMD -m pip install bitsandbytes>=0.46.1 > /dev/null 2>&1
+    $PYTHON_CMD -m pip install "bitsandbytes>=0.46.1" > /dev/null 2>&1
     print_success "bitsandbytes installed"
 fi
 
