@@ -45,6 +45,18 @@ pytest tests/benchmarks/ -v --no-cov
 pytest tests/ -v
 ```
 
+### Cleaning up artifacts
+
+Test, build, and runtime runs leave gitignored artifacts behind (caches, coverage,
+`./checkpoints`, `__pycache__`, etc.). Tidy the tree at any time with:
+
+```bash
+scripts/clean.sh            # remove caches, coverage, build artifacts, runtime state
+scripts/clean.sh --dry-run  # preview what would be removed
+```
+
+It only deletes already-ignored artifacts — never tracked source, `.git/`, or `.env`.
+
 ## Code Style
 
 We use the following tools to maintain code quality:

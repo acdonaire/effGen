@@ -223,3 +223,12 @@ config/
 # Actual path is ~/.effgen/supply_chain/installed_hashes.json; this guard is
 # belt-and-suspenders in case the snapshot ever falls back into the tree.
 effgen/security/installed_hashes.json
+
+# Runtime state written under the working directory.
+# CheckpointManager defaults to ./checkpoints (override with --checkpoint-dir);
+# per-user state normally lives in ~/.effgen but EFFGEN_HOME can redirect it.
+/checkpoints/
+/.effgen/
+
+# Secret-scan dir-scan report (gitleaks writes ./gitleaks-report.json on findings).
+gitleaks-report.json
