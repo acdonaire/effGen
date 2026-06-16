@@ -107,6 +107,34 @@ def test_run_rejects_bad_type_with_clear_error():
     assert "node_id" in str(ei.value)
 
 
+def test_empty_workflow_is_honest_failure():
+    # A zero-node DAG must NOT report success=True (all([]) trap). Mirrors the
+    # empty-team contract in MultiAgentOrchestrator.assign_task.
+    from effgen.core.workflow import WorkflowDAG
+    res = WorkflowDAG().run("any task")
+    assert res.success is False
+    assert res.metadata.get("reason") == "empty_workflow"
+    assert res.outputs == {}
+    assert res.node_results == []
+
+
+def test_empty_workflow_async_is_honest_failure():
+    import asyncio
+
+    from effgen.core.workflow import WorkflowDAG
+    res = asyncio.run(WorkflowDAG().run_async("any task"))
+    assert res.success is False
+    assert res.metadata.get("reason") == "empty_workflow"
+
+
+def test_real_dag_still_runs_after_empty_guard():
+    # Don't regress GA1: a non-empty DAG with a bare-string task still works.
+    dag = _two_node_dag()
+    res = dag.run("do the task")
+    assert res.success is True
+    assert len(res.node_results) == 2
+
+
 def test_entry_nodes_and_topological_order():
     dag = _two_node_dag()
     assert dag.entry_nodes() == ["a"]

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from effgen.core.agent import Agent, AgentConfig
@@ -362,13 +363,117 @@ def _resolve_default_model(preset: str) -> str:
     )
 
 
+def _looks_like_path(s: str) -> bool:
+    """Heuristic: does ``s`` look like a file/dir path the user expected to
+    exist (rather than an inline text document)?
+
+    Used to fail loudly on a *typo'd* path instead of silently indexing the
+    literal string as a one-line document. Prose has whitespace, so anything
+    with internal whitespace is treated as inline text. A whitespace-free
+    string is path-like if it has a path separator, a home/relative prefix, or
+    a file-ish extension. A bare single word (e.g. ``"Canberra"``) is NOT
+    path-like and stays inline.
+    """
+    s = s.strip()
+    if not s or any(ch.isspace() for ch in s):
+        return False
+    if "/" in s or "\\" in s:
+        return True
+    if s.startswith(("~", ".")):
+        return True
+    suffix = Path(s).suffix.lower()
+    return bool(suffix) and len(suffix) <= 6 and suffix[1:].isalnum()
+
+
+def _ingest_rag_knowledge_base(
+    tools: list, knowledge_base: str | list[str]
+) -> None:
+    """Populate the RAG preset's Retrieval tool from ``knowledge_base``.
+
+    Each entry is a file path, a directory path, **or** a raw text document:
+    an entry that exists on disk is loaded as a file/dir; any other string is
+    treated as an inline document and chunked directly. An entry that *looks
+    like* a path (a separator/extension, no whitespace) but does not exist is
+    rejected loudly as a likely typo rather than indexed as a literal string.
+    Raises ``ValueError`` if nothing ingestable was found (so a misuse fails
+    loudly instead of silently producing an empty index).
+    """
+    try:
+        from effgen.rag import DocumentIngester
+        from effgen.tools.builtin import Retrieval
+    except ImportError as exc:  # pragma: no cover - exercised via clear error
+        raise ImportError(
+            "The 'rag' preset needs RAG dependencies. Install with "
+            "`pip install effgen[rag]`."
+        ) from exc
+
+    if isinstance(knowledge_base, str | Path):
+        sources: list = [knowledge_base]
+    else:
+        sources = list(knowledge_base)
+
+    ingester = DocumentIngester(show_progress=False)
+    chunks = []
+    n_files = 0
+    n_inline = 0
+    for src in sources:
+        s = str(src)
+        # A blank entry has no content; skip it (and never let "" become
+        # Path(".") and silently ingest the whole working directory).
+        if not s.strip():
+            continue
+        path = Path(s).expanduser()
+        if path.exists():
+            chunks.extend(ingester.ingest(path))
+            n_files += 1
+        elif _looks_like_path(s):
+            # Looks like a path but isn't on disk -> almost certainly a typo.
+            # Fail loudly instead of indexing the literal path string.
+            raise ValueError(
+                f"knowledge_base entry {s!r} looks like a file/directory path "
+                "but does not exist. Fix the path, or pass raw text (text has "
+                "spaces and no file extension) to index it inline."
+            )
+        else:
+            # Not a path on disk -> treat the string as an inline document.
+            chunks.extend(ingester.ingest_text(s))
+            n_inline += 1
+
+    docs = [
+        {"content": c.content, "id": c.id, "metadata": c.metadata}
+        for c in chunks
+    ]
+    if not docs:
+        raise ValueError(
+            "knowledge_base produced 0 documents to index. Pass existing file "
+            "or directory paths, or raw text strings with content. Got "
+            f"{len(sources)} entr{'y' if len(sources) == 1 else 'ies'} "
+            f"({n_files} treated as path(s), {n_inline} as inline text)."
+        )
+
+    retrieval_tool = next(
+        (t for t in tools if t.metadata.name == "retrieval"), None
+    )
+    if retrieval_tool is None:
+        retrieval_tool = Retrieval()
+        tools.append(retrieval_tool)
+
+    retrieval_tool.add_documents(docs, chunk=False)
+    logger.info(
+        "RAG preset: indexed %d chunk(s) from %d path(s) + %d inline document(s)",
+        len(docs),
+        n_files,
+        n_inline,
+    )
+
+
 def create_agent(
     preset: str,
     model: BaseModel | str | None = None,
     *,
     agent_name: str | None = None,
     extra_tools: list | None = None,
-    knowledge_base: str | None = None,
+    knowledge_base: str | list[str] | None = None,
     system_prompt: str | None = None,
     max_iterations: int | None = None,
     temperature: float | None = None,
@@ -388,6 +493,13 @@ def create_agent(
             tells you how to pick one (effGen never silently picks a paid model).
         agent_name: Optional override for the agent name.
         extra_tools: Additional tool instances to add beyond the preset.
+        knowledge_base: Only used by the ``rag`` preset. A document source, or
+            a list of them, indexed into the agent's retrieval tool at
+            creation. Each entry may be a file path, a directory path, **or**
+            raw text (an entry that does not exist on disk is treated as an
+            inline document and chunked directly). Raises ``ValueError`` if the
+            sources yield zero documents, so a typo'd path or empty text fails
+            loudly rather than producing a silent empty-index agent.
         system_prompt: Override the preset's system prompt.
         max_iterations: Override max iterations.
         temperature: Override temperature.
@@ -415,40 +527,12 @@ def create_agent(
 
     tools = _instantiate_tools(cfg.tool_names)
 
-    # Special handling for RAG preset: ingest knowledge base on creation
-    if preset == "rag" and knowledge_base:
-        try:
-            from effgen.rag import DocumentIngester, HybridSearchEngine  # noqa: F401
-            from effgen.tools.builtin import Retrieval
-
-            ingester = DocumentIngester(show_progress=False)
-            chunks = ingester.ingest(knowledge_base)
-
-            # Find the Retrieval tool in tools and populate it
-            retrieval_tool = next(
-                (t for t in tools if t.metadata.name == "retrieval"), None
-            )
-            if retrieval_tool is None:
-                retrieval_tool = Retrieval()
-                tools.append(retrieval_tool)
-
-            docs = [
-                {
-                    "content": c.content,
-                    "id": c.id,
-                    "metadata": c.metadata,
-                }
-                for c in chunks
-            ]
-            if docs:
-                retrieval_tool.add_documents(docs, chunk=False)
-                logger.info(
-                    "RAG preset: ingested %d chunks from %s",
-                    len(docs),
-                    knowledge_base,
-                )
-        except Exception as exc:
-            logger.warning("RAG knowledge base ingestion failed: %s", exc)
+    # Special handling for RAG preset: ingest knowledge base on creation.
+    # Failures here are LOUD: a knowledge_base that ingests to zero documents
+    # raises instead of silently producing an empty-index agent that answers
+    # "No documents in index." with success=True.
+    if preset == "rag" and knowledge_base is not None:
+        _ingest_rag_knowledge_base(tools, knowledge_base)
 
     if extra_tools:
         tools.extend(extra_tools)

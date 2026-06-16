@@ -139,6 +139,28 @@ class TestDebugExitCodes:
         code = run_debug_cli(task="x", model=None, preset=None)
         assert isinstance(code, int)
 
+    def test_parser_accepts_provider_flag(self):
+        """`effgen debug -m <id> --provider <name>` parses (PR4) — used to
+        argparse-error 2 with 'unrecognized arguments: --provider'."""
+        from effgen.cli._main import create_parser
+
+        args = create_parser().parse_args(
+            ["debug", "do x", "-m", "llama-3.1-8b-instant", "--provider", "groq"]
+        )
+        assert args.command == "debug"
+        assert args.provider == "groq"
+
+    def test_build_config_threads_provider(self):
+        """_build_debug_config wires --provider into the AgentConfig so a bare
+        id resolves to the chosen provider (like `run`/`chat`)."""
+        from effgen.debug.inspector import _build_debug_config
+
+        cfg = _build_debug_config(
+            preset=None, model="llama-3.1-8b-instant", provider="groq"
+        )
+        assert cfg is not None
+        assert cfg.provider == "groq"
+
 
 # ---------------------------------------------------------------------------
 # Jupyter magics — registry-driven default (no hardcoded paid model)

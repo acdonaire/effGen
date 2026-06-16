@@ -760,14 +760,20 @@ class TestRagPreset:
         )
         assert retrieval is not None
 
-    def test_create_rag_agent_missing_kb_dir_doesnt_crash(self, tmp_path: Path):
+    def test_create_rag_agent_missing_kb_dir_fails_loud(self, tmp_path: Path):
+        # A knowledge_base path that doesn't exist is a typo, not an empty
+        # index: it must raise a clear error rather than silently indexing the
+        # literal path string (the PR1 silent-no-op trap).
+        import pytest
+
         from effgen.presets import create_agent
         from tests.fixtures.mock_models import MockModel
 
-        agent = create_agent(
-            "rag", MockModel(responses=["ok"]), knowledge_base=str(tmp_path / "nope")
-        )
-        assert agent is not None
+        with pytest.raises(ValueError, match="looks like a file"):
+            create_agent(
+                "rag", MockModel(responses=["ok"]),
+                knowledge_base=str(tmp_path / "nope"),
+            )
 
 
 # ---------------------------------------------------------------------------

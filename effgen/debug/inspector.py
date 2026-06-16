@@ -158,6 +158,7 @@ def run_debug_cli(
     config: Any = None,
     preset: str | None = None,
     model: str | None = None,
+    provider: str | None = None,
     step: bool = False,
 ) -> int:
     """
@@ -168,6 +169,8 @@ def run_debug_cli(
         config: AgentConfig (if None, built from preset/model)
         preset: Preset name (e.g. "math", "research")
         model: Model name/path
+        provider: Optional provider for a bare model id (e.g. "groq").
+            Equivalent to the ``provider:model`` prefix form.
         step: If True, pause after each iteration for user input
 
     Returns:
@@ -189,7 +192,7 @@ def run_debug_cli(
 
     # Build agent config if not provided
     if config is None:
-        config = _build_debug_config(preset=preset, model=model)
+        config = _build_debug_config(preset=preset, model=model, provider=provider)
         if config is None:
             console.print(
                 "[red]Could not create agent config.[/red] Provide -m/--model "
@@ -294,13 +297,18 @@ def _truncate(s: str, n: int) -> str:
     return s[:n] + "..." if len(s) > n else s
 
 
-def _build_debug_config(preset: str | None, model: str | None) -> Any:
+def _build_debug_config(
+    preset: str | None, model: str | None, provider: str | None = None
+) -> Any:
     """Build an AgentConfig from preset/model args."""
     if preset:
         try:
             from effgen.presets import create_agent
             # create_agent returns an Agent, we need its config
-            agent = create_agent(preset, model or "Qwen/Qwen2.5-1.5B-Instruct")
+            kwargs = {"provider": provider} if provider else {}
+            agent = create_agent(
+                preset, model or "Qwen/Qwen2.5-1.5B-Instruct", **kwargs
+            )
             return agent.config
         except Exception:
             pass
@@ -311,6 +319,7 @@ def _build_debug_config(preset: str | None, model: str | None) -> Any:
         return AgentConfig(
             name="debug_agent",
             model=model,
+            provider=provider,
             tools=[Calculator()],
         )
 

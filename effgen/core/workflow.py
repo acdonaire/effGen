@@ -327,6 +327,24 @@ class WorkflowDAG:
         initial_inputs = self._normalize_initial_inputs(initial_inputs)
         context = context or {}
 
+        # A zero-node workflow has nothing to run: report it honestly instead
+        # of an empty success (all([]) is True). Mirrors the empty-team contract
+        # in MultiAgentOrchestrator.assign_task.
+        if not self._nodes:
+            return WorkflowResult(
+                success=False,
+                outputs={},
+                node_results=[],
+                execution_time=time.time() - start,
+                metadata={
+                    "name": self.name,
+                    "node_count": 0,
+                    "reason": "empty_workflow",
+                    "error": "Workflow has no nodes. Add nodes with add_node() "
+                    "before running.",
+                },
+            )
+
         # Reset node state
         for node in self._nodes.values():
             node.status = NodeStatus.PENDING

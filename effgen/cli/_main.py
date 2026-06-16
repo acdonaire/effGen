@@ -2610,7 +2610,10 @@ Model id formats:
     # Compare command
     compare_parser = subparsers.add_parser('compare', help='Compare multiple models on a test suite')
     compare_parser.add_argument('--models', required=True,
-                                 help='Comma-separated model names')
+                                 help='Comma-separated model ids. Use a '
+                                      'provider:model prefix to pin a provider '
+                                      'for a bare id (e.g. '
+                                      'groq:llama-3.1-8b-instant,gpt-5-nano).')
     compare_parser.add_argument('--suite', required=True,
                                  help='Test suite name')
     compare_parser.add_argument('--scoring', choices=['exact_match', 'contains', 'regex', 'semantic_similarity', 'llm_judge'],
@@ -2625,6 +2628,9 @@ Model id formats:
     debug_parser = subparsers.add_parser('debug', help='Run an agent in interactive debug mode')
     debug_parser.add_argument('task', help='Task to execute')
     debug_parser.add_argument('-m', '--model', help='Model to use')
+    debug_parser.add_argument('--provider',
+                              help='Provider for a bare model id (e.g. groq). '
+                                   'Equivalent to the provider:model prefix.')
     debug_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
     debug_parser.add_argument('--step', action='store_true', help='Step through each iteration')
@@ -4213,12 +4219,20 @@ def main():
                 exit_code = run_loadtest_command(args)
         elif args.command == 'debug':
             from effgen.debug.inspector import run_debug_cli
-            exit_code = run_debug_cli(
-                task=args.task,
-                preset=getattr(args, 'preset', None),
-                model=getattr(args, 'model', None),
-                step=getattr(args, 'step', False),
-            )
+            # Validate an explicit --provider up front (a typo like "grok"
+            # should fail fast with a suggestion), mirroring `run`/`chat`.
+            provider, prov_err = resolve_provider_name(getattr(args, 'provider', None))
+            if prov_err:
+                cli.print_error(prov_err)
+                exit_code = 1
+            else:
+                exit_code = run_debug_cli(
+                    task=args.task,
+                    preset=getattr(args, 'preset', None),
+                    model=getattr(args, 'model', None),
+                    provider=provider,
+                    step=getattr(args, 'step', False),
+                )
         elif args.command is None:
             # No command - launch interactive wizard
             # Create a namespace with default values for run command

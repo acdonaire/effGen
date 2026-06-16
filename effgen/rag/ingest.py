@@ -436,6 +436,57 @@ class DocumentIngester:
 
         return out
 
+    def ingest_text(
+        self,
+        text: str,
+        doc_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[IngestedChunk]:
+        """Ingest a raw text string directly (no file on disk required).
+
+        Chunks ``text`` the same way file ingestion does and returns the
+        resulting :class:`IngestedChunk` objects. Useful when documents live in
+        memory rather than on disk (e.g. ``create_agent("rag",
+        knowledge_base=["...raw text..."])``).
+
+        Args:
+            text: The document body to ingest.
+            doc_id: Optional base id for the produced chunks (defaults to a
+                hash-derived ``inline-<hash>`` id so repeated text is stable).
+            metadata: Optional metadata merged into every chunk.
+
+        Returns:
+            A list of `IngestedChunk` objects (empty if ``text`` is blank).
+        """
+        if text is None or not str(text).strip():
+            return []
+        content = str(text)
+        base_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        base_id = doc_id or f"inline-{base_hash}"
+        source = doc_id or f"inline:{base_hash}"
+        doc_meta = dict(metadata or {})
+
+        out: list[IngestedChunk] = []
+        for c in self.chunker.chunk(content, base_id):
+            if not c.content.strip():
+                continue
+            content_hash = hashlib.sha256(
+                c.content.encode("utf-8")
+            ).hexdigest()[:16]
+            if self.dedupe and content_hash in self._seen_hashes:
+                continue
+            self._seen_hashes.add(content_hash)
+            merged_meta = {**doc_meta, **c.metadata}
+            merged_meta["source"] = source
+            out.append(IngestedChunk(
+                id=c.id,
+                content=c.content,
+                source=source,
+                metadata=merged_meta,
+                content_hash=content_hash,
+            ))
+        return out
+
     def reset_dedupe(self) -> None:
         """Clear the deduplication cache."""
         self._seen_hashes.clear()
