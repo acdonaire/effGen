@@ -11,7 +11,6 @@ import re
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -20,6 +19,11 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
+
+# Wikipedia serves per-language API hosts (en/de/fr/….wikipedia.org); pin the
+# family (the shared SSRF guard also blocks internal targets).
+_ALLOWED_HOSTS = frozenset({"*.wikipedia.org"})
 
 
 def _get_user_agent(tool_name: str = "") -> str:
@@ -131,9 +135,11 @@ class WikipediaTool(BaseTool):
         """Make a request to the Wikipedia API."""
         params["format"] = "json"
         url = f"{self._api_url}?{urlencode(params)}"
-        req = Request(url, headers={"User-Agent": _get_user_agent("Wikipedia Tool")})
+        headers = {"User-Agent": _get_user_agent("Wikipedia Tool")}
         try:
-            with urlopen(req, timeout=10) as resp:
+            with safe_urlopen(
+                url, headers=headers, timeout=10, allowed_hosts=_ALLOWED_HOSTS
+            ) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except URLError as e:
             raise ConnectionError(f"Wikipedia API error: {e}")

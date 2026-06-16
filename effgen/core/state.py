@@ -10,6 +10,17 @@ from datetime import datetime
 from typing import Any
 
 
+def _unsupported_format_msg(format: str) -> str:
+    """Build a clear error for an unsupported state serialization format."""
+    if format == "pickle":
+        return (
+            "The 'pickle' state format has been removed: unpickling a state "
+            "file can execute arbitrary code (RCE on an untrusted file). Use "
+            "the default JSON format (format='json')."
+        )
+    return f"Unsupported format: {format!r}. Only 'json' is supported."
+
+
 @dataclass
 class AgentState:
     """
@@ -56,7 +67,7 @@ class AgentState:
             with open(filepath, "w") as f:
                 json.dump(self.to_dict(), f, indent=2, default=str)
         else:
-            raise ValueError(f"Unsupported format: {format}")
+            raise ValueError(_unsupported_format_msg(format))
 
     @classmethod
     def load(cls, filepath: str, format: str = "json") -> "AgentState":
@@ -75,7 +86,7 @@ class AgentState:
 
             return load_from_dict(cls, data, label="AgentState")
         else:
-            raise ValueError(f"Unsupported format: {format}")
+            raise ValueError(_unsupported_format_msg(format))
 
     def to_dict(self) -> dict[str, Any]:
         """Convert state to dictionary."""

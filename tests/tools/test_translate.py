@@ -89,7 +89,7 @@ def _make_mock_urlopen(response_body: bytes):
 def test_translate_mock_en_to_fr():
     import json as json_mod
     body = json_mod.dumps({"translatedText": "Bonjour le monde"}).encode()
-    with patch("effgen.tools.builtin.translate.urllib.request.urlopen", return_value=_make_mock_urlopen(body)):
+    with patch("effgen.tools.builtin.translate.safe_urlopen", return_value=_make_mock_urlopen(body)):
         r = _run(TranslateTool().execute(operation="translate", text="Hello world", source="en", target="fr"))
     out = r.output
     assert out["success"] is True
@@ -105,7 +105,7 @@ def test_translate_mock_available_pairs():
         {"code": "en", "name": "English", "targets": ["fr", "es", "ja"]},
         {"code": "fr", "name": "French", "targets": ["en", "es"]},
     ]).encode()
-    with patch("effgen.tools.builtin.translate.urllib.request.urlopen", return_value=_make_mock_urlopen(body)):
+    with patch("effgen.tools.builtin.translate.safe_urlopen", return_value=_make_mock_urlopen(body)):
         r = _run(TranslateTool().execute(operation="available_pairs"))
     out = r.output
     assert out["success"] is True
@@ -154,7 +154,7 @@ def test_translate_fallback_to_argos_on_libre_failure():
     def raise_url_error(*args, **kwargs):
         raise URLError("connection refused")
 
-    with patch("effgen.tools.builtin.translate.urllib.request.urlopen", side_effect=raise_url_error):
+    with patch("effgen.tools.builtin.translate.safe_urlopen", side_effect=raise_url_error):
         # Patch the argos translate path so we don't need actual packs installed
         with patch("effgen.tools.builtin.translate._argos_translate", return_value="Hola mundo") as mock_argos:
             r = _run(TranslateTool().execute(operation="translate", text="Hello world", source="en", target="es"))
@@ -169,7 +169,7 @@ def test_translate_fallback_to_argos_on_libre_failure():
 def test_translate_both_backends_fail_returns_error():
     from urllib.error import URLError
 
-    with patch("effgen.tools.builtin.translate.urllib.request.urlopen", side_effect=URLError("fail")):
+    with patch("effgen.tools.builtin.translate.safe_urlopen", side_effect=URLError("fail")):
         with patch("effgen.tools.builtin.translate._argos_translate", side_effect=RuntimeError("argos fail")):
             r = _run(TranslateTool().execute(operation="translate", text="Hello", source="en", target="ja"))
 
@@ -186,7 +186,7 @@ def test_translate_service_unavailable_exception_type():
 
 
 def test_translate_same_language_returns_original_without_backend_call():
-    with patch("effgen.tools.builtin.translate.urllib.request.urlopen") as mock_urlopen:
+    with patch("effgen.tools.builtin.translate.safe_urlopen") as mock_urlopen:
         r = _run(TranslateTool().execute(operation="translate", text="Hello", source="en", target="en"))
     assert r.success
     assert r.output["translated_text"] == "Hello"

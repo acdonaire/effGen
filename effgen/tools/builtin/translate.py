@@ -18,11 +18,9 @@ import asyncio
 import json
 import logging
 import os
-import urllib.request
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request
 
 from ..base_tool import (
     BaseTool,
@@ -31,6 +29,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +72,16 @@ def _libre_url() -> str:
     return _libre_urls()[0]
 
 
+def _operator_configured() -> bool:
+    """True when the operator explicitly set LIBRE_TRANSLATE_URL.
+
+    A self-hosted LibreTranslate on localhost is a legitimate, deliberate
+    operator choice (not a model-suppliable value), so we relax the SSRF block
+    for that case only; the default public mirrors are always SSRF-checked.
+    """
+    return bool(os.environ.get("LIBRE_TRANSLATE_URL"))
+
+
 # ---------------------------------------------------------------------------
 # LibreTranslate helpers
 # ---------------------------------------------------------------------------
@@ -80,8 +89,14 @@ def _libre_url() -> str:
 def _try_libre_post(base: str, path: str, body: dict, timeout: int) -> Any:
     url = f"{base}{path}"
     payload = json.dumps(body).encode()
-    req = Request(url, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with safe_urlopen(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+        timeout=timeout,
+        allow_private=_operator_configured(),
+    ) as resp:
         return json.loads(resp.read().decode())
 
 
@@ -144,8 +159,11 @@ def _libre_available_pairs(timeout: int = _DEFAULT_TIMEOUT) -> list[dict[str, An
     last_err: str = ""
     for base in _libre_urls():
         try:
-            req = Request(f"{base}/languages")
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with safe_urlopen(
+                f"{base}/languages",
+                timeout=timeout,
+                allow_private=_operator_configured(),
+            ) as resp:
                 langs = json.loads(resp.read().decode())
             pairs = []
             for lang in langs:

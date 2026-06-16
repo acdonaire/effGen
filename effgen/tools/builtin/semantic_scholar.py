@@ -23,7 +23,6 @@ import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -32,10 +31,13 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
 S2_BASE = "https://api.semanticscholar.org/graph/v1"
+# Fixed API host (pinned; the shared SSRF guard also blocks internal targets).
+_ALLOWED_HOSTS = frozenset({"api.semanticscholar.org"})
 
 PAPER_FIELDS = (
     "paperId,externalIds,url,title,abstract,venue,year,referenceCount,"
@@ -102,9 +104,10 @@ def _limiter() -> _SlidingWindow:
 
 
 def _http_get(url: str, headers: dict[str, str], timeout: int = 25) -> bytes:
-    req = Request(url, headers=headers)
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(
+            url, headers=headers, timeout=timeout, allowed_hosts=_ALLOWED_HOSTS
+        ) as resp:
             return resp.read()
     except HTTPError as e:
         body = ""

@@ -25,6 +25,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._fs import PathNotAllowedError, confine_path, normalize_allowed_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 def _read_qr(
     image_path: str | None = None,
     image_base64: str | None = None,
+    allowed_dirs: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Decode QR/barcodes from an image file or base64 PNG bytes."""
     try:
@@ -41,14 +43,15 @@ def _read_qr(
 
     try:
         if image_path:
-            path = Path(image_path)
-            if not path.exists():
+            try:
+                path = confine_path(image_path, allowed_dirs)
+            except (PathNotAllowedError, FileNotFoundError) as exc:
                 return {
                     "success": False,
                     "data": {"codes": [], "count": 0},
                     "codes": [],
                     "count": 0,
-                    "error": f"File not found: {image_path}",
+                    "error": str(exc),
                 }
             loaded_img = Image.open(path)
             img_info = dict(loaded_img.info)
@@ -211,7 +214,14 @@ def _opencv_code(data: str, points: Any) -> dict[str, Any]:
 class QRReadTool(BaseTool):
     """Decode QR codes and barcodes from images (local, no network required)."""
 
-    def __init__(self) -> None:
+    def __init__(self, allowed_directories: list[str] | None = None) -> None:
+        """Args:
+            allowed_directories: Roots a file path may be read from. By default
+                any path is allowed except protected system and credential
+                locations (/etc, /proc, ~/.ssh, cloud creds, …), which are
+                always refused. Pass a list to confine reads to those roots only.
+        """
+        self._allowed_dirs = normalize_allowed_dirs(allowed_directories)
         super().__init__(
             metadata=ToolMetadata(
                 name="qr_read",
@@ -265,6 +275,8 @@ class QRReadTool(BaseTool):
         if op == "read":
             if not image_path and not image_base64:
                 raise ValueError("Provide 'image_path' or 'image_base64' for the read operation.")
-            return await asyncio.to_thread(_read_qr, image_path, image_base64)
+            return await asyncio.to_thread(
+                _read_qr, image_path, image_base64, self._allowed_dirs
+            )
 
         raise ValueError(f"Unknown operation: {operation!r}. Use 'read'.")

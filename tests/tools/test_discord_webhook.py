@@ -73,7 +73,7 @@ class TestDiscordWebhookToolUnit:
         t = DiscordWebhookTool()
         long_content = "x" * 2500
         captured = {}
-        def fake_post(url, payload):
+        def fake_post(url, payload, *args):
             captured.update(payload)
             return True, 200, "{}"
         with patch.dict(os.environ, {"DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/test"}):
@@ -108,7 +108,7 @@ class TestDiscordWebhookToolUnit:
     async def test_custom_username_passed(self):
         t = DiscordWebhookTool()
         captured = {}
-        def fake_post(url, payload):
+        def fake_post(url, payload, *args):
             captured.update(payload)
             return True, 200, "{}"
         with patch.dict(os.environ, {"DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/test"}):

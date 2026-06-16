@@ -23,7 +23,6 @@ import sys
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -32,6 +31,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -174,9 +174,10 @@ def _download_caption_payload(entries: list[dict[str, Any]]) -> tuple[str, str]:
         entry = by_ext.get(ext)
         if not entry:
             continue
-        req = Request(entry["url"], headers={"User-Agent": "Mozilla/5.0"})
         try:
-            with urlopen(req, timeout=20) as resp:
+            with safe_urlopen(
+                entry["url"], headers={"User-Agent": "Mozilla/5.0"}, timeout=20
+            ) as resp:
                 return ext, resp.read().decode("utf-8", errors="replace")
         except (HTTPError, URLError, TimeoutError) as exc:
             errors.append(f"{ext}: {exc}")

@@ -25,7 +25,6 @@ import os
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 from ...errors import MissingCredentialsError
 from ..base_tool import (
@@ -35,6 +34,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,13 @@ class DiscordWebhookTool(BaseTool):
     Set DISCORD_WEBHOOK_URL env var, or pass webhook_url per call.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, allow_private: bool = False) -> None:
+        """Args:
+            allow_private: Allow posting to private/loopback/link-local/metadata
+                addresses. Default ``False`` blocks them (SSRF protection); the
+                webhook URL is user/model-suppliable.
+        """
+        self.allow_private = allow_private
         super().__init__(
             metadata=ToolMetadata(
                 name="discord_webhook",
@@ -179,18 +185,19 @@ class DiscordWebhookTool(BaseTool):
         return url
 
     @staticmethod
-    def _post_sync(url: str, payload: dict) -> tuple[bool, int, str]:
+    def _post_sync(url: str, payload: dict, allow_private: bool = False) -> tuple[bool, int, str]:
         body = json.dumps(payload).encode("utf-8")
         # Discord wants ?wait=true to get a 200 response with message data
         req_url = url if "?" in url else url + "?wait=true"
-        req = Request(
-            req_url,
-            data=body,
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            method="POST",
-        )
         try:
-            with urlopen(req, timeout=_TIMEOUT) as resp:
+            with safe_urlopen(
+                req_url,
+                data=body,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                method="POST",
+                timeout=_TIMEOUT,
+                allow_private=allow_private,
+            ) as resp:
                 resp_body = resp.read().decode("utf-8", errors="replace")
                 # 200 with wait=true means success; 204 without
                 ok = resp.status in (200, 204)
@@ -245,7 +252,7 @@ class DiscordWebhookTool(BaseTool):
 
         try:
             ok, code, resp_body = await asyncio.get_event_loop().run_in_executor(
-                None, self._post_sync, url, payload
+                None, self._post_sync, url, payload, self.allow_private
             )
             return {
                 "success": ok,

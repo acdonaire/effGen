@@ -93,7 +93,7 @@ class TestSlackWebhookToolUnit:
     async def test_thread_ts_included(self):
         t = SlackWebhookTool()
         captured = {}
-        def fake_post(url, payload):
+        def fake_post(url, payload, *args):
             captured.update(payload)
             return True, "ok"
         with patch.dict(os.environ, {"SLACK_WEBHOOK_URL": "https://hooks.slack.com/test"}):

@@ -21,7 +21,6 @@ import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 
 from ..base_tool import (
@@ -31,10 +30,13 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
 NCBI_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+# Fixed API host (pinned; the shared SSRF guard also blocks internal targets).
+_ALLOWED_HOSTS = frozenset({"eutils.ncbi.nlm.nih.gov"})
 
 
 def _user_agent() -> str:
@@ -94,9 +96,11 @@ class _RateLimited(Exception):
 
 
 def _http_get(url: str, accept: str = "application/json", timeout: int = 20) -> bytes:
-    req = Request(url, headers={"User-Agent": _user_agent(), "Accept": accept})
+    headers = {"User-Agent": _user_agent(), "Accept": accept}
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(
+            url, headers=headers, timeout=timeout, allowed_hosts=_ALLOWED_HOSTS
+        ) as resp:
             return resp.read()
     except HTTPError as e:
         if e.code == 429:

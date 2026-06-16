@@ -23,7 +23,6 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -32,10 +31,14 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
 _OPEN_METEO_BASE = "https://api.open-meteo.com/v1"
+# Fixed API hosts (pinned; the shared SSRF guard also blocks internal targets).
+# Open-Meteo serves forecast/geocoding/archive on subdomains of open-meteo.com.
+_ALLOWED_HOSTS = frozenset({"*.open-meteo.com"})
 
 # WMO Weather interpretation codes
 _WMO_CODES: dict[int, str] = {
@@ -79,9 +82,11 @@ def _user_agent() -> str:
 
 
 def _fetch_json(url: str) -> dict:
-    req = Request(url, headers={"User-Agent": _user_agent()})
+    headers = {"User-Agent": _user_agent()}
     try:
-        with urlopen(req, timeout=15) as resp:
+        with safe_urlopen(
+            url, headers=headers, timeout=15, allowed_hosts=_ALLOWED_HOSTS
+        ) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except URLError as exc:
         raise ConnectionError(f"Network error fetching weather data: {exc}") from exc

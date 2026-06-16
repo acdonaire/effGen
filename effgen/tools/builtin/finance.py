@@ -14,7 +14,6 @@ import logging
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -23,6 +22,17 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
+
+# Fixed API hosts (pinned; the shared SSRF guard also blocks internal targets).
+# frankfurter.app currently 301-redirects to frankfurter.dev, so both are pinned
+# (every redirect hop is re-validated against this list).
+_ALLOWED_HOSTS = frozenset({
+    "*.finance.yahoo.com",
+    "*.frankfurter.app",
+    "*.frankfurter.dev",
+    "api.coingecko.com",
+})
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +52,13 @@ def _user_agent() -> str:
 def _fetch_json(url: str, timeout: int = 15, max_retries: int = 4) -> Any:
     """Fetch JSON data from a URL using urllib with exponential backoff for 429/503."""
     import time as _time
-    req = Request(url, headers={"User-Agent": _user_agent(), "Accept": "application/json"})
+    headers = {"User-Agent": _user_agent(), "Accept": "application/json"}
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         try:
-            with urlopen(req, timeout=timeout) as resp:
+            with safe_urlopen(
+                url, headers=headers, timeout=timeout, allowed_hosts=_ALLOWED_HOSTS
+            ) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except HTTPError as e:
             if e.code in (429, 503, 502) and attempt < max_retries - 1:

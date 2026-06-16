@@ -103,14 +103,16 @@ class TestGeocodeToolUnit:
             def read(self):
                 return json.dumps([]).encode()
 
-        def fake_urlopen(req, timeout):
-            captured["user_agent"] = req.get_header("User-agent")
+        def fake_safe_urlopen(url, *, headers=None, timeout=None, **kwargs):
+            captured["user_agent"] = (headers or {}).get("User-Agent")
             captured["timeout"] = timeout
             return FakeResponse()
 
         with patch("effgen.tools.builtin.geocode._BUCKET") as bucket:
             bucket.acquire = MagicMock()
-            with patch("effgen.tools.builtin.geocode.urlopen", side_effect=fake_urlopen):
+            with patch(
+                "effgen.tools.builtin.geocode.safe_urlopen", side_effect=fake_safe_urlopen
+            ):
                 _fetch_json("https://nominatim.openstreetmap.org/search?q=test")
 
         assert captured["user_agent"] == _user_agent()

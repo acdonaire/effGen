@@ -27,7 +27,6 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
-from urllib import request
 
 from effgen.errors import OCRBackendUnavailable
 
@@ -38,8 +37,13 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._fs import confine_path, normalize_allowed_dirs
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
+
+# Fixed OCR API host (pinned; the shared SSRF guard also blocks internal targets).
+_OCR_SPACE_HOSTS = frozenset({"api.ocr.space"})
 
 # ---------------------------------------------------------------------------
 # Backend detection helpers
@@ -227,15 +231,15 @@ def _ocrspace_extract(
     body = b"".join(body_parts)
     content_type = b"multipart/form-data; boundary=" + boundary
 
-    req = request.Request(
-        _OCR_SPACE_URL,
-        data=body,
-        headers={"Content-Type": content_type.decode()},
-        method="POST",
-    )
-
     try:
-        with request.urlopen(req, timeout=_OCR_SPACE_TIMEOUT) as resp:
+        with safe_urlopen(
+            _OCR_SPACE_URL,
+            data=body,
+            headers={"Content-Type": content_type.decode()},
+            method="POST",
+            timeout=_OCR_SPACE_TIMEOUT,
+            allowed_hosts=_OCR_SPACE_HOSTS,
+        ) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         raise RuntimeError(f"OCR.space API request failed: {exc}") from exc
@@ -362,7 +366,16 @@ class OCRTool(BaseTool):
     Accepts image file paths OR raw bytes for all operations.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, allowed_directories: list[str] | None = None) -> None:
+        """Args:
+            allowed_directories: Roots an image path may be read from. By
+                default any path is allowed except protected system and
+                credential locations (/etc, /proc, ~/.ssh, cloud creds, …),
+                which are always refused. Pass a list to confine reads to
+                those roots only. This also bounds what OCR may upload to the
+                OCR.space backend.
+        """
+        self._allowed_dirs = normalize_allowed_dirs(allowed_directories)
         super().__init__(
             metadata=ToolMetadata(
                 name="ocr",
@@ -475,10 +488,7 @@ class OCRTool(BaseTool):
         if image_path and image_bytes:
             raise ValueError("Provide image_path OR image_bytes, not both.")
         if image_path:
-            p = Path(image_path)
-            if not p.exists():
-                raise FileNotFoundError(f"Image not found: {image_path}")
-            return str(p)
+            return str(confine_path(image_path, self._allowed_dirs))
         if image_bytes:
             if isinstance(image_bytes, bytes | bytearray):
                 return bytes(image_bytes)

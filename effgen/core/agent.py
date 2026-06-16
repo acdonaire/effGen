@@ -1280,7 +1280,7 @@ Question: {task}
 
         Args:
             filepath: Path to save to
-            format: Format (json or pickle)
+            format: Serialization format. Only ``"json"`` is supported.
         """
         self.state.save(filepath, format)
 
@@ -1290,7 +1290,7 @@ Question: {task}
 
         Args:
             filepath: Path to load from
-            format: Format (json or pickle)
+            format: Serialization format. Only ``"json"`` is supported.
         """
         self.state = AgentState.load(filepath, format)
 

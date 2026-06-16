@@ -23,7 +23,6 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -32,11 +31,14 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://hacker-news.firebaseio.com/v0"
 _DEFAULT_TIMEOUT = 15
+# Fixed API host (pinned; the shared SSRF guard also blocks internal targets).
+_ALLOWED_HOSTS = frozenset({"hacker-news.firebaseio.com"})
 
 
 def _user_agent() -> str:
@@ -48,9 +50,11 @@ def _user_agent() -> str:
 
 
 def _get_json(url: str, timeout: int = _DEFAULT_TIMEOUT) -> Any:
-    req = Request(url, headers={"User-Agent": _user_agent(), "Accept": "application/json"})
+    headers = {"User-Agent": _user_agent(), "Accept": "application/json"}
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(
+            url, headers=headers, timeout=timeout, allowed_hosts=_ALLOWED_HOSTS
+        ) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except HTTPError as exc:
         raise ConnectionError(f"HN API HTTP {exc.code}: {exc.reason}") from exc

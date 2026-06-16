@@ -24,6 +24,7 @@ import pickle
 import subprocess
 import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -305,3 +306,227 @@ class TestFileOpsPathSafety:
         )
         assert res.success is False
         assert not os.path.exists("/tmp/p17_should_not_exist.txt")
+
+
+# --------------------------------------------------------------------------- #
+# SEC2 — PromptChain condition evaluation (no eval of model output)           #
+# --------------------------------------------------------------------------- #
+class TestChainConditionSafety:
+    def _state(self):
+        from effgen.prompts.chain_manager import ChainState
+
+        return ChainState()
+
+    def test_legit_conditions_still_work(self):
+        st = self._state()
+        st.set_variable("quality_score", 0.85)
+        st.set_variable("result_type", "success")
+        st.iteration_count = 1
+        assert st.evaluate_condition("quality_score >= 0.8") is True
+        assert st.evaluate_condition("result_type == 'success'") is True
+        assert st.evaluate_condition("iteration_count < 3") is True
+        assert st.evaluate_condition("{quality_score} >= 0.8") is True
+        assert st.evaluate_condition(
+            "quality_score >= 0.8 and result_type == 'success'"
+        ) is True
+        assert st.evaluate_condition("result_type in ['success', 'ok']") is True
+
+    def test_model_output_is_data_not_code(self):
+        # A prior step result of "1+1" must compare as the string, never compute.
+        st = self._state()
+        st.set_variable("step_result", "1+1")
+        assert st.evaluate_condition("{step_result} == 2") is False
+        assert st.evaluate_condition("step_result == '1+1'") is True
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "().__class__.__name__ == 'tuple'",
+            "len(().__class__.__base__.__subclasses__()) > 0",
+            "__import__('os').system('echo pwned') == 0",
+            "''.__class__.__mro__[1].__subclasses__()",
+            "(lambda: 1)() == 1",
+        ],
+    )
+    def test_adversarial_payloads_inert(self, payload):
+        st = self._state()
+        # Either rejected (False) — never raises, never executes.
+        assert st.evaluate_condition(payload) is False
+
+    def test_injected_payload_does_not_execute(self, tmp_path):
+        st = self._state()
+        flag = tmp_path / "chain_pwned"
+        st.set_variable(
+            "evil", f"__import__('os').system('touch {flag}')"
+        )
+        # Interpolated into the condition the way a vulnerable eval() would see it.
+        st.evaluate_condition("{evil} == 0")
+        st.evaluate_condition("evil == 0")
+        assert not flag.exists(), "chain condition executed code — injection not prevented"
+
+
+# --------------------------------------------------------------------------- #
+# SEC3 — shared SSRF guard used by every URL-taking tool                       #
+# --------------------------------------------------------------------------- #
+class TestSharedSSRFGuard:
+    INTERNAL = [
+        "http://127.0.0.1/",
+        "http://localhost/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://10.0.0.1/",
+        "http://[::1]/",
+    ]
+
+    def test_net_helpers_classify(self):
+        from effgen.tools.builtin import _net
+
+        assert _net.is_blocked_ip(__import__("ipaddress").ip_address("127.0.0.1"))
+        assert _net.is_blocked_ip(__import__("ipaddress").ip_address("169.254.169.254"))
+        assert not _net.is_blocked_ip(__import__("ipaddress").ip_address("8.8.8.8"))
+        for url in self.INTERNAL:
+            with pytest.raises(_net.BlockedURLError):
+                _net.check_url_safe(url)
+        # opt-out lets it through the guard (no exception)
+        _net.check_url_safe("http://127.0.0.1/", allow_private=True)
+
+    def test_host_pin_rejects_other_hosts(self):
+        from effgen.tools.builtin import _net
+
+        with pytest.raises(_net.BlockedURLError):
+            _net.check_url_safe(
+                "https://evil.example.com/", allowed_hosts={"api.example.org"}
+            )
+        # wildcard suffix match
+        _net.check_url_safe(
+            "https://en.wikipedia.org/w/api.php", allowed_hosts={"*.wikipedia.org"}
+        )
+
+    async def test_rss_blocks_internal(self):
+        from effgen.tools.builtin.rss import RSSFeedTool
+
+        res = await RSSFeedTool().execute(operation="latest", url="http://127.0.0.1/x", n=1)
+        assert res.success is False
+
+    async def test_news_newsapi_blocks_internal(self):
+        # NewsAPI host pin: an internal URL never reaches the network.
+        from effgen.tools.builtin import news
+        from effgen.tools.builtin._net import BlockedURLError
+
+        with pytest.raises(BlockedURLError):
+            news._newsapi_request("http://127.0.0.1:9/v2/top-headlines")
+
+    async def test_devops_http_blocks_internal(self):
+        from effgen.tools.builtin.devops import HTTPTool
+
+        res = await HTTPTool().execute(url="http://169.254.169.254/latest/meta-data/")
+        assert res.success is False
+
+    async def test_webhook_override_blocks_internal(self):
+        from effgen.tools.builtin.slack_webhook import SlackWebhookTool
+
+        res = await SlackWebhookTool().execute(
+            text="hi", webhook_url="http://127.0.0.1:9/services/x"
+        )
+        assert res.success is False
+
+    def test_url_fetch_uses_shared_guard(self):
+        # url_fetch must re-export the shared classifier (single source of truth).
+        from effgen.tools.builtin import _net, url_fetch
+
+        assert url_fetch._is_blocked_ip is _net.is_blocked_ip
+
+
+# --------------------------------------------------------------------------- #
+# SEC4 — file-path tools may not read sensitive locations; tighten on demand    #
+# --------------------------------------------------------------------------- #
+class TestFilePathConfinement:
+    # Sensitive targets an attacker actually wants (refused by default).
+    SENSITIVE = ["/etc/passwd", str(Path.home() / ".ssh" / "id_rsa")]
+
+    async def test_image_info_blocks_sensitive(self):
+        from effgen.tools.builtin.image_info import ImageInfoTool
+
+        for target in self.SENSITIVE:
+            res = await ImageInfoTool().execute(operation="info", image_path=target)
+            assert res.success is False
+            assert "protected" in str(res.error).lower() or "refus" in str(res.error).lower()
+
+    async def test_pdf_blocks_etc_passwd(self):
+        from effgen.tools.builtin.pdf import PDFTool
+
+        res = await PDFTool().execute(operation="text", path="/etc/passwd")
+        assert res.success is False
+        assert "protected" in str(res.error).lower() or "refus" in str(res.error).lower()
+
+    async def test_data_analysis_blocks_etc(self):
+        from effgen.tools.builtin.data_analysis import DataFrameTool
+
+        res = await DataFrameTool().execute(file_path="/etc/passwd", operation="head")
+        assert res.success is False
+
+    async def test_ocr_blocks_ssh_key(self):
+        from effgen.tools.builtin.ocr import OCRTool
+
+        res = await OCRTool().execute(
+            operation="extract", image_path="/etc/shadow"
+        )
+        assert res.success is False
+        assert "protected" in str(res.error).lower() or "refus" in str(res.error).lower()
+
+    async def test_ordinary_file_allowed_by_default(self, tmp_path):
+        # A normal (non-sensitive) file is readable by default — the tools stay
+        # usable; confinement only fails on a *format* error here, never on the
+        # path policy.
+        from effgen.tools.builtin.data_analysis import DataFrameTool
+
+        good = tmp_path / "data.csv"
+        good.write_text("a,b\n1,2\n3,4\n")
+        res = await DataFrameTool().execute(file_path=str(good), operation="head", n=1)
+        assert res.success is True
+
+    async def test_allowed_directories_strict_allowlist(self, tmp_path):
+        # When configured, only the granted roots are readable; everything else
+        # (even an ordinary temp file elsewhere) is refused.
+        from effgen.tools.builtin.data_analysis import DataFrameTool
+
+        good = tmp_path / "data.csv"
+        good.write_text("a,b\n1,2\n")
+        tool = DataFrameTool(allowed_directories=[str(tmp_path)])
+        assert (await tool.execute(file_path=str(good), operation="head", n=1)).success
+
+        other = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False)
+        other.write("a,b\n1,2\n")
+        other.close()
+        try:
+            res = await tool.execute(file_path=other.name, operation="head")
+            assert res.success is False
+            assert "outside" in str(res.error).lower()
+        finally:
+            os.unlink(other.name)
+
+    def test_confine_path_helper(self, tmp_path):
+        from effgen.tools.builtin._fs import (
+            PathNotAllowedError,
+            confine_path,
+            normalize_allowed_dirs,
+        )
+
+        # default (deny-list) posture: ordinary file ok, sensitive refused
+        inside = tmp_path / "ok.txt"
+        inside.write_text("x")
+        assert confine_path(str(inside), None) == inside.resolve()
+        with pytest.raises(PathNotAllowedError):
+            confine_path("/etc/passwd", None)
+        # a symlink that resolves into a denied tree is refused
+        link = tmp_path / "escape"
+        link.symlink_to("/etc/passwd")
+        with pytest.raises(PathNotAllowedError):
+            confine_path(str(link), None)
+
+        # strict allow-list posture
+        roots = normalize_allowed_dirs([str(tmp_path)])
+        assert confine_path(str(inside), roots) == inside.resolve()
+        with pytest.raises(PathNotAllowedError):
+            confine_path("/etc/passwd", roots)
+        with pytest.raises(PathNotAllowedError):
+            confine_path(str(link), roots)

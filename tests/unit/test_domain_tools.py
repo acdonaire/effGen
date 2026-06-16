@@ -222,7 +222,9 @@ def test_dataframe_csv_head_filter_aggregate(tmp_path):
         w.writerow(["carol", "SF", 35, 120000])
         w.writerow(["dave", "SF", 40, 150000])
 
-    tool = DataFrameTool()
+    # Exercise the strict allow-list mode: confine reads to the temp dir, as a
+    # caller hardening the tool to a single root would.
+    tool = DataFrameTool(allowed_directories=[str(tmp_path)])
 
     head = _ok(_run(tool.execute(file_path=str(csv_path), operation="head", n=2)))
     assert head["rows"] == 4
@@ -252,7 +254,7 @@ def test_dataframe_csv_head_filter_aggregate(tmp_path):
 
 def test_dataframe_missing_file_fails(tmp_path):
     pytest.importorskip("pandas")
-    r = _run(DataFrameTool().execute(
+    r = _run(DataFrameTool(allowed_directories=[str(tmp_path)]).execute(
         file_path=str(tmp_path / "nope.csv"), operation="head",
     ))
     assert not r.success
@@ -263,7 +265,8 @@ def test_dataframe_filter_requires_column_and_op(tmp_path):
     pytest.importorskip("pandas")
     csv_path = tmp_path / "d.csv"
     csv_path.write_text("a,b\n1,2\n")
-    r = _run(DataFrameTool().execute(file_path=str(csv_path), operation="filter"))
+    r = _run(DataFrameTool(allowed_directories=[str(tmp_path)]).execute(
+        file_path=str(csv_path), operation="filter"))
     assert not r.success
 
 

@@ -19,7 +19,6 @@ import os
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -28,8 +27,13 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
+
+# NewsAPI is the only fixed third-party host this module pins; RSS feeds come
+# from the curated source list below and additionally pass the SSRF guard.
+_NEWSAPI_HOSTS = frozenset({"newsapi.org"})
 
 # ---------------------------------------------------------------------------
 # Curated RSS sources by category
@@ -83,15 +87,12 @@ def _user_agent() -> str:
 
 
 def _download_feed(url: str, timeout: int = 15) -> bytes:
-    req = Request(
-        url,
-        headers={
-            "User-Agent": _user_agent(),
-            "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
-        },
-    )
+    headers = {
+        "User-Agent": _user_agent(),
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+    }
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(url, headers=headers, timeout=timeout) as resp:
             return resp.read()
     except HTTPError as exc:
         raise ConnectionError(f"HTTP {exc.code}: {exc.reason}") from exc
@@ -175,9 +176,11 @@ def _newsapi_search(
 
 
 def _newsapi_request(url: str) -> list[dict[str, Any]]:
-    req = Request(url, headers={"User-Agent": _user_agent()})
+    headers = {"User-Agent": _user_agent()}
     try:
-        with urlopen(req, timeout=15) as resp:
+        with safe_urlopen(
+            url, headers=headers, timeout=15, allowed_hosts=_NEWSAPI_HOSTS
+        ) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except HTTPError as e:
         raise ConnectionError(f"NewsAPI HTTP {e.code}: {e.reason}")

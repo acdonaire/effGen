@@ -26,6 +26,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._fs import confine_path, normalize_allowed_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,14 @@ class ImageInfoTool(BaseTool):
       - thumbnail : fit within max_dim × max_dim (preserves aspect ratio)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, allowed_directories: list[str] | None = None) -> None:
+        """Args:
+            allowed_directories: Roots a file path may be read from. By default
+                any path is allowed except protected system and credential
+                locations (/etc, /proc, ~/.ssh, cloud creds, …), which are
+                always refused. Pass a list to confine reads to those roots only.
+        """
+        self._allowed_dirs = normalize_allowed_dirs(allowed_directories)
         super().__init__(
             metadata=ToolMetadata(
                 name="image_info",
@@ -284,10 +292,7 @@ class ImageInfoTool(BaseTool):
         if image_path and image_bytes:
             raise ValueError("Provide image_path OR image_bytes, not both.")
         if image_path:
-            p = Path(image_path)
-            if not p.exists():
-                raise FileNotFoundError(f"Image not found: {image_path}")
-            return str(p)
+            return str(confine_path(image_path, self._allowed_dirs))
         if image_bytes is not None:
             if isinstance(image_bytes, bytes | bytearray):
                 return bytes(image_bytes)

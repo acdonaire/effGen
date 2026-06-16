@@ -21,6 +21,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._fs import confine_path, normalize_allowed_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,14 @@ class DataFrameTool(BaseTool):
       * ``aggregate`` — group by column, compute aggregation
     """
 
-    def __init__(self):
+    def __init__(self, allowed_directories: list[str] | None = None):
+        """Args:
+            allowed_directories: Roots a data file may be read from. By default
+                any path is allowed except protected system and credential
+                locations (/etc, /proc, ~/.ssh, cloud creds, …), which are
+                always refused. Pass a list to confine reads to those roots only.
+        """
+        self._allowed_dirs = normalize_allowed_dirs(allowed_directories)
         super().__init__(
             metadata=ToolMetadata(
                 name="dataframe",
@@ -123,13 +131,12 @@ class DataFrameTool(BaseTool):
 
     def _load(self, file_path: str):
         pd = _require_pandas()
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
-        lower = file_path.lower()
+        safe_path = str(confine_path(file_path, self._allowed_dirs))
+        lower = safe_path.lower()
         if lower.endswith(".csv"):
-            return pd.read_csv(file_path)
+            return pd.read_csv(safe_path)
         if lower.endswith(".json") or lower.endswith(".jsonl"):
-            return pd.read_json(file_path, lines=lower.endswith(".jsonl"))
+            return pd.read_json(safe_path, lines=lower.endswith(".jsonl"))
         raise ValueError(f"Unsupported file format: {file_path}")
 
     async def _execute(

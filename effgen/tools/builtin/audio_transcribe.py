@@ -41,6 +41,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._fs import confine_path, normalize_allowed_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +376,15 @@ class AudioTranscribeTool(BaseTool):
       conda         : conda install -c conda-forge ffmpeg
     """
 
-    def __init__(self) -> None:
+    def __init__(self, allowed_directories: list[str] | None = None) -> None:
+        """Args:
+            allowed_directories: Roots an audio path may be read from. By
+                default any path is allowed except protected system and
+                credential locations (/etc, /proc, ~/.ssh, cloud creds, …),
+                which are always refused. Pass a list to confine reads to
+                those roots only.
+        """
+        self._allowed_dirs = normalize_allowed_dirs(allowed_directories)
         super().__init__(
             metadata=ToolMetadata(
                 name="audio_transcribe",
@@ -485,10 +494,7 @@ class AudioTranscribeTool(BaseTool):
         if audio_path and audio_bytes is not None:
             raise ValueError("Provide audio_path OR audio_bytes, not both.")
         if audio_path:
-            p = Path(audio_path)
-            if not p.exists():
-                raise FileNotFoundError(f"Audio file not found: {audio_path}")
-            return str(p)
+            return str(confine_path(audio_path, self._allowed_dirs))
         if audio_bytes is not None:
             if isinstance(audio_bytes, bytes | bytearray):
                 return bytes(audio_bytes)

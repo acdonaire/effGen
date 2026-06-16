@@ -25,7 +25,6 @@ import os
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 from ...errors import MissingCredentialsError
 from ..base_tool import (
@@ -35,6 +34,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,14 @@ class SlackWebhookTool(BaseTool):
     Set SLACK_WEBHOOK_URL env var, or pass webhook_url per call.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, allow_private: bool = False) -> None:
+        """Args:
+            allow_private: Allow posting to private/loopback/link-local/metadata
+                addresses. Default ``False`` blocks them (SSRF protection); the
+                webhook URL is user/model-suppliable, so this prevents using the
+                tool to reach internal services.
+        """
+        self.allow_private = allow_private
         super().__init__(
             metadata=ToolMetadata(
                 name="slack_webhook",
@@ -157,16 +164,17 @@ class SlackWebhookTool(BaseTool):
         return url
 
     @staticmethod
-    def _post_sync(url: str, payload: dict) -> tuple[bool, str]:
+    def _post_sync(url: str, payload: dict, allow_private: bool = False) -> tuple[bool, str]:
         body = json.dumps(payload).encode("utf-8")
-        req = Request(
-            url,
-            data=body,
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            method="POST",
-        )
         try:
-            with urlopen(req, timeout=_TIMEOUT) as resp:
+            with safe_urlopen(
+                url,
+                data=body,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                method="POST",
+                timeout=_TIMEOUT,
+                allow_private=allow_private,
+            ) as resp:
                 resp_body = resp.read().decode("utf-8", errors="replace")
                 ok = resp.status == 200 and resp_body.strip() == "ok"
                 return ok, resp_body
@@ -211,7 +219,7 @@ class SlackWebhookTool(BaseTool):
 
         try:
             ok, resp_body = await asyncio.get_event_loop().run_in_executor(
-                None, self._post_sync, url, payload
+                None, self._post_sync, url, payload, self.allow_private
             )
             return {
                 "success": ok,

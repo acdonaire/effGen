@@ -229,7 +229,7 @@ def test_reddit_429_backoff_mock():
     fake_resp.status_code = 429
     fake_resp.reason = "Too Many Requests"
 
-    with patch.object(reddit_mod.requests, "get", return_value=fake_resp) as m_get, \
+    with patch.object(reddit_mod, "safe_requests_get", return_value=fake_resp) as m_get, \
          patch.object(reddit_mod.time, "sleep", side_effect=fake_sleep):
         r = _run(RedditTool().execute(operation="subreddit_top", subreddit="python"))
 
@@ -251,10 +251,11 @@ def test_reddit_403_falls_back_to_www_mock():
     ok.status_code = 200
     ok.json.return_value = _make_listing([_make_post(title="Fallback Post")])
 
-    with patch.object(reddit_mod.requests, "get", side_effect=[blocked, ok]) as m_get:
+    with patch.object(reddit_mod, "safe_requests_get", side_effect=[blocked, ok]) as m_get:
         r = _run(RedditTool().execute(operation="subreddit_top", subreddit="python", n=5))
 
-    called_urls = [call.args[0] for call in m_get.call_args_list]
+    # safe_requests_get(requests_module, url, ...): the URL is the 2nd positional.
+    called_urls = [call.args[1] for call in m_get.call_args_list]
     assert called_urls[0].startswith("https://old.reddit.com/")
     assert called_urls[1].startswith("https://www.reddit.com/")
     assert r.output["success"] is True

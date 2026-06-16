@@ -24,7 +24,6 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -33,10 +32,13 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
 _NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
+# Fixed API host (pinned; the shared SSRF guard also blocks internal targets).
+_ALLOWED_HOSTS = frozenset({"nominatim.openstreetmap.org"})
 
 
 def _user_agent() -> str:
@@ -79,12 +81,11 @@ _BUCKET = _TokenBucket(rate=1.0)   # module-level singleton
 
 def _fetch_json(url: str) -> dict | list:
     _BUCKET.acquire()
-    req = Request(url, headers={
-        "User-Agent": _user_agent(),
-        "Accept-Language": "en",
-    })
+    headers = {"User-Agent": _user_agent(), "Accept-Language": "en"}
     try:
-        with urlopen(req, timeout=10) as resp:
+        with safe_urlopen(
+            url, headers=headers, timeout=10, allowed_hosts=_ALLOWED_HOSTS
+        ) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except URLError as exc:
         raise ConnectionError(f"Nominatim request failed: {exc}") from exc

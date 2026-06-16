@@ -13,7 +13,6 @@ import os
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -22,8 +21,17 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
+
+# Fixed third-party API endpoints this module talks to (host-pinned; a redirect
+# may not leave these hosts, and the shared SSRF guard blocks internal targets).
+_ALLOWED_HOSTS = frozenset({
+    "api.stackexchange.com",
+    "api.github.com",
+    "api.wolframalpha.com",
+})
 
 
 def _user_agent() -> str:
@@ -35,9 +43,11 @@ def _user_agent() -> str:
 
 
 def _fetch(url: str, timeout: int = 15, accept: str = "application/json") -> bytes:
-    req = Request(url, headers={"User-Agent": _user_agent(), "Accept": accept})
+    headers = {"User-Agent": _user_agent(), "Accept": accept}
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(
+            url, headers=headers, timeout=timeout, allowed_hosts=_ALLOWED_HOSTS
+        ) as resp:
             return resp.read()
     except HTTPError as e:
         raise ConnectionError(f"HTTP {e.code} from {url}: {e.reason}")

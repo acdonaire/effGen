@@ -33,6 +33,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._fs import confine_path, normalize_allowed_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -458,6 +459,7 @@ class ImageCaptionTool(BaseTool):
         self,
         provider: str | None = None,
         model_id: str | None = None,
+        allowed_directories: list[str] | None = None,
     ) -> None:
         """
         Args:
@@ -465,9 +467,16 @@ class ImageCaptionTool(BaseTool):
             model_id: Force a specific model (e.g. "gpt-4o-mini").
                       If provider is given but model_id is not, the default
                       vision model for that provider is auto-selected.
+            allowed_directories: Roots an image path may be read from. By
+                default any path is allowed except protected system and
+                credential locations (/etc, /proc, ~/.ssh, cloud creds, …),
+                which are always refused. Pass a list to confine reads to
+                those roots only. This bounds what bytes may be uploaded to
+                the vision provider.
         """
         self._forced_provider = provider
         self._forced_model = model_id
+        self._allowed_dirs = normalize_allowed_dirs(allowed_directories)
 
         super().__init__(
             metadata=ToolMetadata(
@@ -539,10 +548,7 @@ class ImageCaptionTool(BaseTool):
         if image_path and image_bytes:
             raise ValueError("Provide image_path OR image_bytes, not both.")
         if image_path:
-            p = Path(image_path)
-            if not p.exists():
-                raise FileNotFoundError(f"Image not found: {image_path}")
-            return str(p)
+            return str(confine_path(image_path, self._allowed_dirs))
         if image_bytes is not None:
             if isinstance(image_bytes, bytes | bytearray):
                 return bytes(image_bytes)

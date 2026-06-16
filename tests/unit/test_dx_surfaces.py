@@ -147,6 +147,9 @@ class TestDebugExitCodes:
 
 class TestMagicsDefaultModel:
     def test_no_hardcoded_default(self, monkeypatch):
+        # Importing the magics module requires IPython; skip cleanly where the
+        # unit lane runs without it (same pattern as the matplotlib/faiss tests).
+        pytest.importorskip("IPython")
         monkeypatch.delenv("EFFGEN_JUPYTER_MODEL", raising=False)
         monkeypatch.delenv("EFFGEN_DEFAULT_MODEL", raising=False)
         from effgen.jupyter.magics import _default_model

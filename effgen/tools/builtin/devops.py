@@ -15,7 +15,6 @@ import subprocess
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -24,6 +23,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +286,13 @@ class SystemInfoTool(BaseTool):
 class HTTPTool(BaseTool):
     """Make simple HTTP GET/POST requests."""
 
-    def __init__(self):
+    def __init__(self, allow_private: bool = False):
+        """Args:
+            allow_private: Allow requests to private/loopback/link-local/metadata
+                addresses. Default ``False`` blocks them (SSRF protection); the
+                target URL is user/model-suppliable.
+        """
+        self.allow_private = allow_private
         super().__init__(
             metadata=ToolMetadata(
                 name="http",
@@ -369,9 +375,15 @@ class HTTPTool(BaseTool):
             data = json.dumps(json_body).encode("utf-8")
             req_headers.setdefault("Content-Type", "application/json")
 
-        req = Request(url, data=data, headers=req_headers, method=method)
         try:
-            with urlopen(req, timeout=timeout) as resp:
+            with safe_urlopen(
+                url,
+                data=data,
+                headers=req_headers,
+                method=method,
+                timeout=timeout,
+                allow_private=self.allow_private,
+            ) as resp:
                 body_bytes = resp.read()
                 status = resp.getcode()
                 resp_headers = dict(resp.getheaders())

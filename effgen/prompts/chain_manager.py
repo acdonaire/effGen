@@ -7,8 +7,10 @@ iterative, and parallel execution patterns optimized for Small Language Models.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import logging
+import operator as _op
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -19,6 +21,134 @@ from typing import Any
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------- #
+# Safe condition evaluator
+#
+# Chain conditions ("quality_score >= 0.8") can reference variables that hold
+# prior step results — i.e. *model output*. Evaluating them with eval() turns a
+# prompt-injected step result into code execution, and an empty-builtins sandbox
+# is escapable via attribute traversal on literals
+# (``().__class__.__base__.__subclasses__()``). Instead we parse the condition to
+# an AST and walk a strict whitelist: comparisons, boolean/arith ops, literals,
+# variable *names* (bound to values, never interpolated into evaluable text), and
+# a fixed set of safe builtins. Attribute access and arbitrary calls are refused,
+# so a value like ``"__import__('os')"`` is only ever compared as a data string.
+# --------------------------------------------------------------------------- #
+class _UnsafeCondition(ValueError):
+    """Raised when a chain condition uses a construct outside the whitelist."""
+
+
+_BINOPS = {
+    ast.Add: _op.add,
+    ast.Sub: _op.sub,
+    ast.Mult: _op.mul,
+    ast.Div: _op.truediv,
+    ast.FloorDiv: _op.floordiv,
+    ast.Mod: _op.mod,
+}
+_UNARYOPS = {ast.UAdd: _op.pos, ast.USub: _op.neg, ast.Not: _op.not_}
+_CMPOPS = {
+    ast.Eq: _op.eq,
+    ast.NotEq: _op.ne,
+    ast.Lt: _op.lt,
+    ast.LtE: _op.le,
+    ast.Gt: _op.gt,
+    ast.GtE: _op.ge,
+    ast.Is: _op.is_,
+    ast.IsNot: _op.is_not,
+    ast.In: lambda a, b: a in b,
+    ast.NotIn: lambda a, b: a not in b,
+}
+# Calls are limited to these side-effect-free builtins (by bare name only).
+_SAFE_CALLS = {
+    "len": len, "str": str, "int": int, "float": float, "bool": bool,
+    "abs": abs, "min": min, "max": max, "round": round, "sum": sum,
+    "any": any, "all": all, "sorted": sorted,
+}
+# A {var} reference binds the variable as a name; it is NOT string-substituted.
+_BRACE_VAR_RE = re.compile(r"\{([A-Za-z_]\w*)\}")
+
+
+def _eval_condition_node(node: ast.AST, names: dict[str, Any]) -> Any:
+    """Recursively evaluate a whitelisted AST node (no eval/compile, ever)."""
+    if isinstance(node, ast.BoolOp):
+        if isinstance(node.op, ast.And):
+            result: Any = True
+            for value in node.values:
+                result = _eval_condition_node(value, names)
+                if not result:
+                    return result
+            return result
+        result = False
+        for value in node.values:
+            result = _eval_condition_node(value, names)
+            if result:
+                return result
+        return result
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARYOPS:
+        return _UNARYOPS[type(node.op)](_eval_condition_node(node.operand, names))
+    if isinstance(node, ast.BinOp) and type(node.op) in _BINOPS:
+        return _BINOPS[type(node.op)](
+            _eval_condition_node(node.left, names),
+            _eval_condition_node(node.right, names),
+        )
+    if isinstance(node, ast.Compare):
+        left = _eval_condition_node(node.left, names)
+        for op, comparator in zip(node.ops, node.comparators):
+            op_fn = _CMPOPS.get(type(op))
+            if op_fn is None:
+                raise _UnsafeCondition(f"comparison '{type(op).__name__}' not allowed")
+            right = _eval_condition_node(comparator, names)
+            if not op_fn(left, right):
+                return False
+            left = right
+        return True
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id in names:
+            return names[node.id]
+        raise _UnsafeCondition(f"unknown variable '{node.id}'")
+    if isinstance(node, ast.List | ast.Tuple | ast.Set):
+        items = [_eval_condition_node(e, names) for e in node.elts]
+        if isinstance(node, ast.Tuple):
+            return tuple(items)
+        if isinstance(node, ast.Set):
+            return set(items)
+        return items
+    if isinstance(node, ast.Dict):
+        return {
+            _eval_condition_node(k, names): _eval_condition_node(v, names)
+            for k, v in zip(node.keys, node.values)
+        }
+    if isinstance(node, ast.Subscript):
+        container = _eval_condition_node(node.value, names)
+        key = _eval_condition_node(node.slice, names)
+        return container[key]
+    if isinstance(node, ast.Call):
+        if not isinstance(node.func, ast.Name) or node.func.id not in _SAFE_CALLS:
+            raise _UnsafeCondition("only safe builtin calls are allowed")
+        if node.keywords:
+            raise _UnsafeCondition("keyword arguments are not allowed")
+        args = [_eval_condition_node(a, names) for a in node.args]
+        return _SAFE_CALLS[node.func.id](*args)
+    # Anything else — Attribute, Lambda, comprehensions, walrus, f-strings, … —
+    # is refused. This is what blocks ``().__class__`` style escapes.
+    raise _UnsafeCondition(f"unsupported expression '{type(node).__name__}'")
+
+
+def safe_eval_condition(expression: str, names: dict[str, Any]) -> bool:
+    """Evaluate a chain condition string safely.
+
+    ``{var}`` references are rewritten to the bare name ``var`` and resolved from
+    ``names`` (values are bound, never interpolated into the evaluated text), so
+    model-supplied values can only act as data, never as code.
+    """
+    expr = _BRACE_VAR_RE.sub(r"\1", expression)
+    tree = ast.parse(expr, mode="eval")
+    return bool(_eval_condition_node(tree.body, names))
 
 
 class ChainType(Enum):
@@ -165,25 +295,15 @@ class ChainState:
         if not condition:
             return True
 
+        names = {**self.variables, 'iteration_count': self.iteration_count}
         try:
-            # Replace variables in condition
-            interpolated = self.interpolate_string(condition)
-
-            # Evaluate the condition
-            # Note: Using eval with restricted globals/locals for safety
-            safe_globals = {
-                '__builtins__': {},
-                'len': len,
-                'str': str,
-                'int': int,
-                'float': float,
-            }
-
-            safe_locals = {**self.variables, 'iteration_count': self.iteration_count}
-
-            result = eval(interpolated, safe_globals, safe_locals)
-            return bool(result)
-
+            return safe_eval_condition(condition, names)
+        except _UnsafeCondition as e:
+            logger.error(f"Rejected unsafe condition '{condition}': {e}")
+            return False
+        except SyntaxError as e:
+            logger.error(f"Could not parse condition '{condition}': {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to evaluate condition '{condition}': {e}")
             return False

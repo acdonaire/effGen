@@ -16,7 +16,6 @@ import asyncio
 import logging
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from ..base_tool import (
     BaseTool,
@@ -25,6 +24,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +59,15 @@ def _parse_entry(entry: Any) -> dict[str, Any]:
     }
 
 
-def _download_feed(url: str, timeout: int = 15) -> bytes:
-    req = Request(url, headers={"User-Agent": _user_agent(), "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"})
+def _download_feed(url: str, timeout: int = 15, allow_private: bool = False) -> bytes:
+    headers = {
+        "User-Agent": _user_agent(),
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+    }
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(
+            url, headers=headers, timeout=timeout, allow_private=allow_private
+        ) as resp:
             return resp.read()
     except HTTPError as exc:
         raise ConnectionError(f"HTTP {exc.code} fetching feed: {exc.reason}") from exc
@@ -70,7 +75,7 @@ def _download_feed(url: str, timeout: int = 15) -> bytes:
         raise ConnectionError(f"Network error fetching feed: {exc.reason}") from exc
 
 
-def _fetch_feed(url: str) -> dict[str, Any]:
+def _fetch_feed(url: str, allow_private: bool = False) -> dict[str, Any]:
     """Synchronous feed fetch — runs in thread via asyncio.to_thread."""
     try:
         import feedparser
@@ -80,7 +85,7 @@ def _fetch_feed(url: str) -> dict[str, Any]:
         ) from e
 
     try:
-        raw = _download_feed(url)
+        raw = _download_feed(url, allow_private=allow_private)
         feed = feedparser.parse(raw)
     except Exception as exc:
         return {
@@ -131,7 +136,12 @@ def _fetch_feed(url: str) -> dict[str, Any]:
 class RSSFeedTool(BaseTool):
     """Fetch and search RSS/Atom feeds from any URL."""
 
-    def __init__(self) -> None:
+    def __init__(self, allow_private: bool = False) -> None:
+        """Args:
+            allow_private: Allow fetching private/loopback/link-local/metadata
+                addresses. Default ``False`` blocks them (SSRF protection).
+        """
+        self.allow_private = allow_private
         super().__init__(
             metadata=ToolMetadata(
                 name="rss_feed",
@@ -204,7 +214,7 @@ class RSSFeedTool(BaseTool):
         if op == "search_in_feed" and not query:
             raise ValueError("operation='search_in_feed' requires 'query'")
 
-        result = await asyncio.to_thread(_fetch_feed, url)
+        result = await asyncio.to_thread(_fetch_feed, url, self.allow_private)
         if not result["success"]:
             return result
 

@@ -30,12 +30,16 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._net import safe_requests_get
 
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://old.reddit.com"
 _FALLBACK_BASE_URL = "https://www.reddit.com"
 _DEFAULT_TIMEOUT = 20
+# Reddit read-only JSON hosts (pinned; the shared SSRF guard also blocks
+# internal targets and re-validates every redirect hop).
+_ALLOWED_HOSTS = frozenset({"*.reddit.com"})
 
 
 def _user_agent() -> str:
@@ -72,7 +76,13 @@ def _get_json(url: str, timeout: int = _DEFAULT_TIMEOUT, retries: int = 3) -> An
     tried_fallback = False
     for attempt in range(retries):
         try:
-            resp = requests.get(current_url, headers=headers, timeout=timeout)
+            resp = safe_requests_get(
+                requests,
+                current_url,
+                headers=headers,
+                timeout=timeout,
+                allowed_hosts=_ALLOWED_HOSTS,
+            )
         except requests.RequestException as exc:
             raise ConnectionError(f"Network error: {exc}") from exc
 

@@ -33,6 +33,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._fs import confine_path, normalize_allowed_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +273,14 @@ class PDFTool(BaseTool):
     Raises CorruptDocumentError on malformed input.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, allowed_directories: list[str] | None = None) -> None:
+        """Args:
+            allowed_directories: Roots a file path may be read from. By default
+                any path is allowed except protected system and credential
+                locations (/etc, /proc, ~/.ssh, cloud creds, …), which are
+                always refused. Pass a list to confine reads to those roots only.
+        """
+        self._allowed_dirs = normalize_allowed_dirs(allowed_directories)
         super().__init__(
             metadata=ToolMetadata(
                 name="pdf",
@@ -340,7 +348,7 @@ class PDFTool(BaseTool):
     ) -> dict[str, Any]:
         source: str | bytes | Path
         if path:
-            source = path
+            source = str(confine_path(path, self._allowed_dirs))
         elif pdf_bytes is not None:
             source = pdf_bytes
         else:
