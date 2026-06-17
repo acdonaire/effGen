@@ -47,7 +47,9 @@ myst-parser>=2.0.0
 build>=1.0.0
 twine>=4.0.0
 wheel>=0.42.0
-setuptools>=69.0.0
+# setuptools>=77 required for PEP 639 license expressions (see [build-system]);
+# also lets `pip install -e . --no-build-isolation` work in a dev env.
+setuptools>=77.0.0
 
 # ==============================================================================
 # Development Utilities

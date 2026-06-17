@@ -1,5 +1,10 @@
 [build-system]
-requires = ["setuptools>=69.0.0", "wheel>=0.42.0"]
+# setuptools>=77 is required for PEP 639 license expressions (the SPDX
+# `license = "Apache-2.0"` string below). Older setuptools rejects it with
+# "invalid pyproject.toml config: project.license", which surfaces on
+# `pip install -e . --no-build-isolation` against an env with an older
+# setuptools (default isolated installs fetch a recent build backend and work).
+requires = ["setuptools>=77.0.0", "wheel>=0.42.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -112,10 +117,13 @@ dependencies = [
     "scikit-learn>=1.3.0",
     # Security
     "cryptography>=41.0.0",
-    # starlette pinned >= patched release per PYSEC-2026-161
-    # (host-header injection — transitively pulled by fastapi). Upper bound
-    # caps the next major (2.x) which is untested for this release.
-    "starlette>=1.0.1,<2.0",
+    # starlette pinned >= patched release (transitively pulled by fastapi).
+    # 1.3.1 is the minimum that clears all currently-known advisories:
+    #   - PYSEC-2026-161               (host-header injection)
+    #   - CVE-2026-54282 / GHSA-jp82-jpqv-5vv3  (URL authority poisoning, fixed 1.3.0)
+    #   - CVE-2026-54283 / GHSA-82w8-qh3p-5jfq  (form() limit DoS, fixed 1.3.1)
+    # Upper bound caps the next major (2.x) which is untested for this release.
+    "starlette>=1.3.1,<2.0",
     # API Server
     # 0.136.3 is excluded: that release was flagged malicious (MAL-2026-4750)
     # and injects an undocumented 'fastar' dependency. The <0.140 ceiling keeps
