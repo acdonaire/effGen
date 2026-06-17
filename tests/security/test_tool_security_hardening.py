@@ -237,16 +237,21 @@ class TestRetrievalPickle:
 # --------------------------------------------------------------------------- #
 class TestBashSecurity:
     async def test_timeout_kills_process_group(self):
+        # Use a process-unique sleep duration (a large float, valid for `sleep`)
+        # as a sentinel so the system-wide pgrep matches ONLY this test's own
+        # children — never a co-tenant's plain `sleep 120` on a shared host.
+        # The bash kill itself is correct; this keeps the TEST hermetic.
+        marker = f"7777.{os.getpid() % 1000:03d}{int(time.time() * 1000) % 1000:03d}"
         bash = BashTool(timeout=2)
         t0 = time.time()
-        res = await bash.execute(command="sleep 120 & exec sleep 120")
+        res = await bash.execute(command=f"sleep {marker} & exec sleep {marker}")
         assert res.success is False
         assert (time.time() - t0) < 6
         await asyncio.sleep(0.5)
         out = subprocess.run(
-            ["pgrep", "-af", "sleep 120"], capture_output=True, text=True
+            ["pgrep", "-af", f"sleep {marker}"], capture_output=True, text=True
         ).stdout
-        leftovers = [ln for ln in out.splitlines() if "sleep 120" in ln and "pgrep" not in ln]
+        leftovers = [ln for ln in out.splitlines() if marker in ln and "pgrep" not in ln]
         assert leftovers == [], f"orphaned children after timeout: {leftovers}"
 
     async def test_argv_execution_when_no_shell_features(self):

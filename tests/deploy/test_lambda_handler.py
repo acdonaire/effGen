@@ -153,12 +153,34 @@ def _make_http_v2_event(
 
 
 def _load_handler():
-    """Import the handler module with dev mode enabled."""
+    """Import the handler module with dev mode enabled.
+
+    Path-anchored at the repo root so this is robust to suite ordering: another
+    test putting ``tests/`` on ``sys.path`` would otherwise shadow the repo-root
+    ``deploy`` *namespace* package with the ``tests/deploy`` *regular* package
+    (which has no ``aws_lambda`` submodule). We force the repo root to the front
+    of ``sys.path`` and evict any cached ``deploy`` module that does not resolve
+    under the repo root before importing.
+    """
     os.environ.setdefault("EFFGEN_DEV_MODE", "1")
-    # Ensure the repo root is importable so `deploy.aws_lambda.handler` resolves.
     repo_root_str = str(REPO_ROOT)
-    if repo_root_str not in sys.path:
-        sys.path.insert(0, repo_root_str)
+    # Force the repo root ahead of any stray tests/ entry on sys.path.
+    while repo_root_str in sys.path:
+        sys.path.remove(repo_root_str)
+    sys.path.insert(0, repo_root_str)
+    # Evict a stale top-level `deploy` (and submodules) cached from a different
+    # location (e.g. tests/deploy) so import resolves the repo-root package.
+    deploy_mod = sys.modules.get("deploy")
+    deploy_path = getattr(deploy_mod, "__file__", None) or ""
+    deploy_ns_paths = list(getattr(deploy_mod, "__path__", []) or [])
+    anchored = str(REPO_ROOT / "deploy")
+    if deploy_mod is not None and not (
+        deploy_path.startswith(anchored)
+        or any(p.startswith(anchored) for p in deploy_ns_paths)
+    ):
+        for name in list(sys.modules):
+            if name == "deploy" or name.startswith("deploy."):
+                del sys.modules[name]
     return importlib.import_module(HANDLER_MODULE)
 
 

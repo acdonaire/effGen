@@ -138,6 +138,43 @@ jobs:
             --ignore=tests/e2e \
             --tb=short --no-header
 
+  test-order-independence:
+    # The per-directory jobs above each run in their own process, which cannot
+    # catch cross-directory test pollution (a test that only fails depending on
+    # what ran before it — e.g. a teardown that empties a global registry, or an
+    # import that mutates sys.path). This job runs the WHOLE offline suite in a
+    # single process, then again in a randomized order, so such isolation
+    # regressions fail CI instead of flaking a future release run.
+    name: Order-independence (single-process offline suite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Full offline suite, single process (fixed order)
+        # No provider keys are set in CI, so the key-gated live tests skip.
+        run: |
+          pytest tests \
+            -m "not gpu and not api and not live and not docker and not expensive" \
+            --tb=short --no-header -q
+
+      - name: Full offline suite, single process (randomized order)
+        # Drop the default `-p no:randomly` (see pyproject addopts) so the run
+        # shuffles; the printed seed reproduces any failing order exactly.
+        run: |
+          pytest tests \
+            -m "not gpu and not api and not live and not docker and not expensive" \
+            -o "addopts=" -p randomly --tb=short -q
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest

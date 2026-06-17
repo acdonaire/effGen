@@ -151,6 +151,10 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-timeout>=2.2.0",
     "pytest-forked>=1.6.0",
+    # Randomized test ordering catches cross-test isolation regressions (a test
+    # that only fails depending on what ran before it). Used by the
+    # order-independence CI lane; see docs/guides/testing.md.
+    "pytest-randomly>=3.12.0",
     "pexpect>=4.9.0",
     "black>=23.12.0",
     "isort>=5.13.0",
@@ -551,6 +555,11 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--tb=short",
+    # Keep ordering fixed by default so every lane is reproducible even when
+    # pytest-randomly (in the dev extra) is installed. The dedicated
+    # order-independence lane shuffles explicitly; to fuzz ordering locally,
+    # drop this via `-o "addopts=" -p randomly`. See docs/guides/testing.md.
+    "-p", "no:randomly",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",

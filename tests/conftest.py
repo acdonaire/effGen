@@ -90,6 +90,81 @@ from effgen.tools.builtin import Calculator, DateTimeTool, JSONTool, TextProcess
 from tests.fixtures.mock_models import MockModel, MockStreamingModel, MockToolCallingModel
 
 # ---------------------------------------------------------------------------
+# ProviderRegistry isolation (suite order-independence).
+#
+# Several model tests reset the global ProviderRegistry singleton in their own
+# teardown. Because the adapter modules are imported only once per process,
+# they do not self-register again, so a bare reset() leaves the registry EMPTY
+# for every test that runs afterwards. Capability-gating lookups then return an
+# empty set() and fail only when the suite runs in a particular order (the same
+# tests pass in isolation).
+#
+# This autouse fixture restores the full provider catalog at the START of every
+# test, so the offline suite is order-independent regardless of what a previous
+# test left behind. It is defined in the root conftest, so it is set up before
+# any module-level reset fixture and torn down after it; restoring at setup also
+# makes it immune to teardown ordering — tests that deliberately reset to an
+# empty registry (e.g. tests/models/test_auth_check.py) still get their empty
+# registry because their own fixture runs after this one.
+# ---------------------------------------------------------------------------
+
+def _force_register_all_providers() -> None:
+    """Re-run every adapter's ``_register()`` even if the module is already imported."""
+    from effgen.models import (
+        anthropic_adapter,
+        cerebras_adapter,
+        fireworks_adapter,
+        gemini_adapter,
+        groq_adapter,
+        hf_inference_adapter,
+        openai_adapter,
+        replicate_adapter,
+        together_adapter,
+    )
+
+    for mod in (
+        anthropic_adapter,
+        cerebras_adapter,
+        fireworks_adapter,
+        gemini_adapter,
+        groq_adapter,
+        hf_inference_adapter,
+        openai_adapter,
+        replicate_adapter,
+        together_adapter,
+    ):
+        register = getattr(mod, "_register", None)
+        if callable(register):
+            register()
+
+
+@pytest.fixture(scope="session")
+def _provider_registry_snapshot():
+    """Canonical full snapshot of the provider catalog, captured once per session."""
+    from effgen.models.registry import ProviderRegistry
+
+    _force_register_all_providers()
+    return {
+        "providers": dict(ProviderRegistry._providers),
+        "model_index": {k: list(v) for k, v in ProviderRegistry._model_index.items()},
+    }
+
+
+@pytest.fixture(autouse=True)
+def _restore_provider_registry(_provider_registry_snapshot):
+    """Restore the full ProviderRegistry before every test (order-independence)."""
+    from effgen.models.registry import ProviderRegistry
+
+    ProviderRegistry._providers.clear()
+    ProviderRegistry._providers.update(_provider_registry_snapshot["providers"])
+    ProviderRegistry._model_index.clear()
+    ProviderRegistry._model_index.update(
+        {k: list(v) for k, v in _provider_registry_snapshot["model_index"].items()}
+    )
+    yield
+
+
+# ---------------------------------------------------------------------------
 # Mock Model Fixtures
 # ---------------------------------------------------------------------------
 

@@ -12,8 +12,6 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from effgen import load_model
 from effgen.presets import create_agent
 
@@ -218,4 +216,9 @@ def main():
 
 
 if __name__ == "__main__":
+    # Only needed when running this file as a standalone script (not under
+    # pytest). Done here — never at import time — so test collection cannot
+    # leave tests/ on sys.path, which would shadow the repo-root ``deploy``
+    # namespace package with tests/deploy/ and break the lambda import tests.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     main()

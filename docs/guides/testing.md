@@ -85,6 +85,44 @@ suites.
 Select or deselect with `-m`, e.g. `pytest -m "security"` or
 `pytest -m "not gpu and not live"`.
 
+## Order-independence (the single-process lane)
+
+The per-marker CI jobs above each run **one directory** (`tests/unit`,
+`tests/integration`, `tests/security`, …). That sharding is fast, but it hides a
+class of bug: a test that only fails depending on **what ran before it** in the
+same process. Two examples that slipped past the sharded jobs:
+
+- a model test reset the global `ProviderRegistry` in its teardown without
+  restoring it, so a later `tests/core` capability check saw an empty registry;
+- a `tests/e2e` module put `tests/` on `sys.path` at import time, so a later
+  `tests/deploy` lambda import resolved `deploy` to `tests/deploy/` instead of
+  the repo-root `deploy/` namespace package.
+
+Both **passed in isolation** and only failed in a full run. To catch this class,
+run the whole offline suite in a **single process**:
+
+```bash
+# Order-independence guard — one process, whole offline suite
+pytest tests -m "not gpu and not api and not live and not docker and not expensive" -q
+```
+
+This lane runs in CI as the `test-order-independence` job. Install
+`pytest-randomly` (in the `dev` extra) to also shuffle the run order and surface
+ordering coupling that a fixed order would hide:
+
+```bash
+pip install -e ".[dev]"
+# Random order; the printed seed reproduces a failing order exactly
+pytest tests -m "not gpu and not api and not live and not docker and not expensive" -p randomly -q
+# Reproduce a specific order (use the seed printed in the failing run's header)
+pytest tests -p randomly --randomly-seed=12345 -m "not gpu and not api and not live and not docker and not expensive"
+```
+
+The other lanes opt out of shuffling with `-p no:randomly` so their order stays
+fixed and reproducible. Global isolation is enforced in `tests/conftest.py`: an
+autouse fixture restores the full `ProviderRegistry` before every test, so a
+teardown that empties it can no longer poison later tests.
+
 ### "Green offline" is not "release ready"
 
 A green `pytest -m "not live and not gpu"` run only proves the offline surface.
