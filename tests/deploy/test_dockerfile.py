@@ -194,9 +194,16 @@ class TestDockignoreStructure:
 IMAGE_TAG = "effgen:test-ci"
 
 
+@pytest.mark.docker
 @requires_docker
 class TestDockerBuild:
-    """Build the Docker image and verify it runs."""
+    """Build the Docker image and verify it runs.
+
+    Marked ``docker`` (not just gated by ``requires_docker``) so the offline /
+    order-independence lanes that run ``-m "not docker"`` skip the real
+    ``docker build`` entirely — on runners where the daemon exists the build
+    would otherwise run and blow past the per-test timeout.
+    """
 
     @pytest.fixture(scope="class", autouse=True)
     def build_image(self) -> None:  # type: ignore[override]

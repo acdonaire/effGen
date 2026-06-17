@@ -9,6 +9,11 @@ import pytest
 from effgen.errors import CorruptDocumentError
 from effgen.tools.builtin import DOCXTool
 
+# python-docx is an optional dependency (the ``tools-docs`` extra); these
+# round-trip tests build real .docx fixtures, so skip cleanly when it is absent
+# (e.g. the lean ``[dev]`` install used by the offline CI lane).
+pytest.importorskip("docx", reason="python-docx not installed (pip install effgen[tools-docs])")
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

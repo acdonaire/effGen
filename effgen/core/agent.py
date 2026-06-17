@@ -399,6 +399,16 @@ Question: {task}
                 agent loads/creates a Session in ~/.effgen/sessions/ and
                 appends each run() turn to it.
         """
+        # Fail fast on the bare-constructor trap: ``Agent("groq:model")`` stores
+        # the str unvalidated and only crashes deep in run(). Point users at the
+        # real construction paths instead.
+        if not isinstance(config, AgentConfig):
+            raise TypeError(
+                "Agent(config=...) expects an AgentConfig, not "
+                f"{type(config).__name__}. Build one with "
+                "AgentConfig(name=..., model=...), or use the preset helper "
+                "create_agent('minimal', 'groq:llama-3.1-8b-instant')."
+            )
         self.config = config
         self.name = config.name
         self._closed = False
@@ -450,6 +460,16 @@ Question: {task}
                     "require_model=False; the agent will fail on first inference. "
                     "Set require_model=True (the default) to fail fast at construction."
                 )
+        elif config.model is not None:
+            # A non-None value that is neither a model id string nor a loaded
+            # BaseModel (e.g. an int, a list, or a Pydantic class). Fail fast
+            # with a clear message instead of silently building a model-less
+            # agent that only crashes at run().
+            raise TypeError(
+                f"AgentConfig.model must be a model-id str or a loaded model "
+                f"instance, not {type(config.model).__name__}. "
+                "e.g. model='gpt-5-nano' or model=load_model('Qwen/Qwen2.5-1.5B-Instruct')."
+            )
         else:
             # No model provided
             self.model_name = None
@@ -805,8 +825,10 @@ Question: {task}
                 path.
             mode: Execution mode (single, sub_agents, auto)
             context: Optional context
-            output_schema: JSON Schema dict — when provided, the final output
-                is guaranteed to be valid JSON matching this schema.
+            output_schema: A JSON-Schema ``dict`` **or** a Pydantic
+                ``BaseModel`` subclass — when provided, the final output is
+                guaranteed to be valid JSON matching this schema. A model class
+                is converted automatically; any other type raises ``TypeError``.
             output_model: Pydantic BaseModel class — when provided, output is
                 validated and the parsed instance is stored in
                 ``response.metadata["parsed"]``.
@@ -855,10 +877,14 @@ Question: {task}
             if gr.modified_content is not None:
                 task = gr.modified_content
 
-        # Resolve structured output schema
-        effective_schema = output_schema or self.config.output_schema
+        # Resolve structured output schema. Accept either a JSON-Schema dict or
+        # a Pydantic model class for `output_schema` (and the config default),
+        # converting the class instead of letting it reach JSON serialization.
+        from .structured_output import normalize_output_schema, pydantic_model_to_schema
+        effective_schema = normalize_output_schema(
+            output_schema if output_schema is not None else self.config.output_schema
+        )
         if output_model is not None and effective_schema is None:
-            from .structured_output import pydantic_model_to_schema
             effective_schema = pydantic_model_to_schema(output_model)
 
         # Track task start

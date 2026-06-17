@@ -7,6 +7,7 @@ Uses cheap/small models where possible to reduce cost.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from pathlib import Path
@@ -45,6 +46,18 @@ def _xfail_if_fireworks_transient(exc: Exception) -> None:
         pytest.xfail(f"Fireworks transient service failure: {exc}")
 
 
+@contextlib.contextmanager
+def _guard_transient():
+    """Convert a transient Fireworks service error (500/503/429/timeout) into an
+    xfail instead of a hard failure, so a provider-side outage doesn't redden the
+    live suite. Real (non-transient) errors still propagate."""
+    try:
+        yield
+    except RuntimeError as exc:
+        _xfail_if_fireworks_transient(exc)
+        raise
+
+
 @pytest.fixture(scope="module")
 def small_adapter():
     from effgen.models.fireworks_adapter import FireworksAdapter
@@ -72,14 +85,11 @@ class TestFireworksLiveGenerate:
     def test_basic_generate(self, small_adapter):
         from effgen.models.base import GenerationConfig
 
-        try:
+        with _guard_transient():
             result = small_adapter.generate(
                 "What is the capital of France? Answer in one word.",
                 config=GenerationConfig(max_tokens=256, temperature=0.0),
             )
-        except RuntimeError as exc:
-            _xfail_if_fireworks_transient(exc)
-            raise
         assert isinstance(result.text, str)
         assert len(result.text) > 0
         assert "paris" in result.text.lower() or "France" in result.text
@@ -87,10 +97,11 @@ class TestFireworksLiveGenerate:
 
     def test_usage_populated(self, small_adapter):
         from effgen.models.base import GenerationConfig
-        result = small_adapter.generate(
-            "Say hello.",
-            config=GenerationConfig(max_tokens=20),
-        )
+        with _guard_transient():
+            result = small_adapter.generate(
+                "Say hello.",
+                config=GenerationConfig(max_tokens=20),
+            )
         assert result.metadata["prompt_tokens"] > 0
         assert result.metadata["completion_tokens"] > 0
         assert result.metadata["total_tokens"] > 0
@@ -98,29 +109,32 @@ class TestFireworksLiveGenerate:
 
     def test_generation_config_max_tokens(self, small_adapter):
         from effgen.models.base import GenerationConfig
-        result = small_adapter.generate(
-            "Count slowly from 1 to 100.",
-            config=GenerationConfig(max_tokens=15),
-        )
+        with _guard_transient():
+            result = small_adapter.generate(
+                "Count slowly from 1 to 100.",
+                config=GenerationConfig(max_tokens=15),
+            )
         # Reasoning models may emit reasoning_content beyond max_tokens visible cap.
         assert result.tokens_used > 0
 
     def test_finish_reason(self, small_adapter):
         from effgen.models.base import GenerationConfig
-        result = small_adapter.generate(
-            "What is 1 + 1?",
-            config=GenerationConfig(max_tokens=200),
-        )
+        with _guard_transient():
+            result = small_adapter.generate(
+                "What is 1 + 1?",
+                config=GenerationConfig(max_tokens=200),
+            )
         assert result.finish_reason in ("stop", "length", "eos_token")
 
 
 class TestFireworksLiveStream:
     def test_stream_yields_multiple_chunks(self, small_adapter):
         from effgen.models.base import GenerationConfig
-        chunks = list(small_adapter.generate_stream(
-            "Count from 1 to 5 slowly.",
-            config=GenerationConfig(max_tokens=300),
-        ))
+        with _guard_transient():
+            chunks = list(small_adapter.generate_stream(
+                "Count from 1 to 5 slowly.",
+                config=GenerationConfig(max_tokens=300),
+            ))
         assert len(chunks) > 1, "Expected multiple streaming chunks"
         full_text = "".join(chunks)
         assert len(full_text) > 5
@@ -138,7 +152,8 @@ class TestFireworksLiveStream:
                 timestamps.append(time.monotonic())
                 yield chunk
 
-        list(timed_stream())
+        with _guard_transient():
+            list(timed_stream())
         assert len(timestamps) >= 2, "Should receive multiple chunk timestamps"
 
 
@@ -163,11 +178,12 @@ class TestFireworksLiveTools:
 
     def test_native_tool_call(self, tool_adapter):
         from effgen.models.base import GenerationConfig
-        result = tool_adapter.generate_with_tools(
-            "What is 17 multiplied by 23? Use the calculator tool.",
-            tools=self._CALCULATOR_TOOL,
-            config=GenerationConfig(max_tokens=200, temperature=0.0),
-        )
+        with _guard_transient():
+            result = tool_adapter.generate_with_tools(
+                "What is 17 multiplied by 23? Use the calculator tool.",
+                tools=self._CALCULATOR_TOOL,
+                config=GenerationConfig(max_tokens=200, temperature=0.0),
+            )
         tc = result.metadata.get("tool_calls", [])
         assert len(tc) >= 1, f"Expected at least 1 tool call, got: {tc}"
         assert tc[0]["function"]["name"] == "calculator"

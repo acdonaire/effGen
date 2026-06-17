@@ -224,13 +224,15 @@ class TestAgentNativeToolIncompatibility:
         from unittest.mock import MagicMock
 
         from effgen.core.agent import Agent, AgentConfig
+        from effgen.models.base import BaseModel
         from effgen.models.errors import ToolIncompatibleError
         from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
 
-        mock_model = MagicMock()
+        # spec=BaseModel makes this a faithful loaded-model double (a real
+        # CerebrasAdapter *is* a BaseModel), so the Agent ctor accepts it as a
+        # loaded instance — but it's still not an OpenAIAdapter.
+        mock_model = MagicMock(spec=BaseModel)
         mock_model.model_name = "llama3.1-8b"
-        # Make isinstance check for OpenAIAdapter return False
-        mock_model.__class__.__name__ = "CerebrasAdapter"
 
         # Patch the OpenAIAdapter import path
         from unittest.mock import patch

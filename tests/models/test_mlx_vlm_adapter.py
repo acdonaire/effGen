@@ -142,7 +142,8 @@ def test_messages_to_prompt_back_compat_string_content():
 
 def test_messages_to_prompt_image_part_converted(monkeypatch):
     """ImagePart bytes should become a PIL.Image in the images list."""
-    # Fake PIL.Image module
+    # Fake PIL.Image module (Pillow is optional; skip if it can't be imported).
+    pytest.importorskip("PIL", reason="Pillow not installed (pip install effgen[tools])")
     fake_pil_image = MagicMock()
     fake_image_open = MagicMock(return_value=fake_pil_image)
 
@@ -166,6 +167,7 @@ def test_messages_to_prompt_image_part_converted(monkeypatch):
 
 def test_messages_to_prompt_multiple_image_parts(monkeypatch):
     """Multiple ImagePart objects should all appear in the images list."""
+    pytest.importorskip("PIL", reason="Pillow not installed (pip install effgen[tools])")
     fake_pil_image = MagicMock()
     import PIL.Image as PILImage
     monkeypatch.setattr(PILImage, "open", MagicMock(return_value=fake_pil_image))

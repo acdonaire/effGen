@@ -507,7 +507,13 @@ def create_agent(
         session_id: Optional persistent session id. When set, the agent loads or
             creates a stored conversation session so multi-turn context carries
             across processes (the same `--session-id` the CLI exposes).
-        **config_overrides: Extra keyword arguments forwarded to AgentConfig.
+        **config_overrides: Extra keyword arguments. Model-loading options
+            (``engine``, ``quantization``, ``tensor_parallel_size``,
+            ``gpu_memory_utilization``, ``apply_chat_template``,
+            ``trust_remote_code``) are routed to ``load_model`` when ``model``
+            is an id string; everything else is forwarded to ``AgentConfig``.
+            An unrecognized keyword raises a clear ``TypeError`` listing what is
+            accepted (rather than a cryptic dataclass error).
 
     Returns:
         A configured Agent ready to run.
@@ -523,6 +529,30 @@ def create_agent(
     if model is None:
         model = _resolve_default_model(preset)
 
+    # Route load_model-only kwargs (engine, quantization, ...) to load_model
+    # instead of letting them fall into AgentConfig and raise a cryptic
+    # "unexpected keyword argument 'engine'". These only apply to a model *id*
+    # string; for a pre-loaded instance the user already chose the engine.
+    _load_kwargs = {
+        k: config_overrides.pop(k)
+        for k in (
+            "engine", "engine_config", "tensor_parallel_size",
+            "gpu_memory_utilization", "apply_chat_template",
+            "quantization", "trust_remote_code",
+        )
+        if k in config_overrides
+    }
+    if _load_kwargs:
+        if not isinstance(model, str):
+            raise TypeError(
+                f"{sorted(_load_kwargs)} only apply when `model` is a model-id "
+                "string; you passed an already-loaded model. Load it yourself "
+                "with load_model(id, engine=...) and pass the instance."
+            )
+        from ..models import load_model
+        _prov = config_overrides.pop("provider", None)
+        model = load_model(model, provider=_prov, **_load_kwargs)
+
     cfg = get_preset(preset)
 
     tools = _instantiate_tools(cfg.tool_names)
@@ -537,17 +567,33 @@ def create_agent(
     if extra_tools:
         tools.extend(extra_tools)
 
-    agent_config = AgentConfig(
-        name=agent_name or f"{cfg.name}-agent",
-        model=model,
-        tools=tools,
-        system_prompt=system_prompt or cfg.system_prompt,
-        max_iterations=max_iterations if max_iterations is not None else cfg.max_iterations,
-        temperature=temperature if temperature is not None else cfg.temperature,
-        enable_sub_agents=cfg.enable_sub_agents,
-        enable_memory=enable_memory if enable_memory is not None else cfg.enable_memory,
-        **config_overrides,
-    )
+    try:
+        agent_config = AgentConfig(
+            name=agent_name or f"{cfg.name}-agent",
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt or cfg.system_prompt,
+            max_iterations=max_iterations if max_iterations is not None else cfg.max_iterations,
+            temperature=temperature if temperature is not None else cfg.temperature,
+            enable_sub_agents=cfg.enable_sub_agents,
+            enable_memory=enable_memory if enable_memory is not None else cfg.enable_memory,
+            **config_overrides,
+        )
+    except TypeError as exc:
+        # Turn the raw dataclass "unexpected keyword argument" into an
+        # actionable message listing what create_agent actually accepts.
+        import dataclasses
+        accepted = sorted(
+            f.name for f in dataclasses.fields(AgentConfig)
+            if f.name not in {"name", "model", "tools"}
+        )
+        raise TypeError(
+            f"create_agent() got an unsupported keyword: {exc}. "
+            "Pass a model-loading option (engine, quantization, "
+            "tensor_parallel_size, gpu_memory_utilization, apply_chat_template, "
+            "trust_remote_code) to choose the backend, or an AgentConfig field: "
+            f"{', '.join(accepted)}."
+        ) from exc
 
     logger.info(
         "Created '%s' preset agent with %d tools: %s",

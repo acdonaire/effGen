@@ -16,6 +16,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Pillow is an optional dependency (image/vision extras); these tests build real
+# PIL images, so skip cleanly when it is absent (e.g. the lean ``[dev]`` install
+# used by the offline CI lane).
+pytest.importorskip("PIL", reason="Pillow not installed (pip install effgen[tools])")
+
 
 def run(coro):
     return asyncio.run(coro)

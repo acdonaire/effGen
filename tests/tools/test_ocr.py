@@ -14,6 +14,12 @@ from unittest.mock import patch
 
 import pytest
 
+# Pillow is an optional dependency (the ``tools`` extra); these tests build real
+# PIL images, so skip cleanly when it is absent (e.g. the lean ``[dev]`` install
+# used by the offline CI lane). Tesseract-backed cases are additionally gated by
+# the pytesseract/binary skipif checks below.
+pytest.importorskip("PIL", reason="Pillow not installed (pip install effgen[tools])")
+
 
 def run(coro):
     return asyncio.run(coro)

@@ -10,6 +10,13 @@ from pathlib import Path
 
 import pytest
 
+# QR tooling relies on optional dependencies (the ``qr`` extra: qrcode[pil] +
+# pyzbar, which also needs the system zbar library). Skip cleanly when any are
+# absent (e.g. the lean ``[dev]`` install used by the offline CI lane).
+pytest.importorskip("qrcode", reason="qrcode not installed (pip install effgen[qr])")
+pytest.importorskip("PIL", reason="Pillow not installed (pip install effgen[qr])")
+pytest.importorskip("pyzbar", reason="pyzbar/zbar not installed (pip install effgen[qr])")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

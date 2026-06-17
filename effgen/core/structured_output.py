@@ -611,6 +611,39 @@ def pydantic_model_to_schema(model_class: Any) -> dict[str, Any]:
     return schema
 
 
+def normalize_output_schema(schema: Any) -> dict[str, Any] | None:
+    """Coerce an ``output_schema`` argument into a JSON-Schema dict.
+
+    ``output_schema`` is documented as a JSON-Schema ``dict``, but passing a
+    Pydantic model *class* directly is one of the most natural things a user
+    tries. Accept both instead of letting the class reach JSON serialization
+    (which fails with a cryptic ``Object of type ModelMetaclass is not JSON
+    serializable``).
+
+    Accepts:
+      - ``None`` → ``None``
+      - a ``dict`` → returned as-is
+      - a Pydantic ``BaseModel`` subclass (v1 ``schema()`` / v2
+        ``model_json_schema()``) → converted via
+        :func:`pydantic_model_to_schema`
+
+    Raises:
+        TypeError: for any other type, naming the accepted shapes.
+    """
+    if schema is None or isinstance(schema, dict):
+        return schema
+    # A Pydantic model class exposes model_json_schema()/schema() as callables.
+    if isinstance(schema, type) and (
+        hasattr(schema, "model_json_schema") or hasattr(schema, "schema")
+    ):
+        return pydantic_model_to_schema(schema)
+    raise TypeError(
+        "output_schema must be a JSON-Schema dict or a Pydantic model class, "
+        f"not {type(schema).__name__}. Pass output_schema={{...}} (a dict) or "
+        "output_schema=YourModel (a pydantic.BaseModel subclass)."
+    )
+
+
 def _strip_title_fields(schema: dict[str, Any]) -> None:
     """Remove ``title`` fields from a JSON Schema in-place.
 

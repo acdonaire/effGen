@@ -156,9 +156,15 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        # This lane runs the WHOLE tests/ tree in one process, so it needs the
+        # optional-feature deps those suites exercise (docs/image/audio/maps/rss/
+        # youtube/sql/jupyter/lambda/extra-provider SDKs/server metrics). They are
+        # CPU-friendly, pure-Python extras — the GPU-only stacks (vllm/local) and
+        # heavy vector DBs stay out. Tests whose backend needs a *system* library
+        # (zbar, tesseract, ffmpeg) skip cleanly via importorskip when it's absent.
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,jupyter,api,lambda,translate,audio,prompts-data,youtube,tools-docs,rss,geo,server,tools,qr]"
 
       - name: Full offline suite, single process (fixed order)
         # No provider keys are set in CI, so the key-gated live tests skip.
