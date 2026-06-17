@@ -4,7 +4,7 @@ These exercise the pure logic — model↔tool compatibility filtering, the
 model/tool-aware prompt, slash-command routing, the event-aware trace
 formatter, and session save/load file mechanics — without any live model
 calls. The live streaming/animation/Ctrl-C behavior is verified end-to-end with
-real models in ``build_plan/outputs/36-*``.
+real models.
 """
 
 from __future__ import annotations

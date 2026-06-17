@@ -329,7 +329,7 @@ def test_chaos_injects_when_enabled_with_rule():
 
 
 # --------------------------------------------------------------------------- #
-# CircuitBreaker — one canonical home (Phase 24 consolidation stays put)
+# CircuitBreaker — one canonical home (single consolidated implementation)
 # --------------------------------------------------------------------------- #
 
 def test_single_circuit_breaker_home():

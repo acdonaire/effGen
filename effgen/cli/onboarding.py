@@ -94,7 +94,7 @@ def is_interactive() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Tip system (D-9)
+# Tip system
 # ---------------------------------------------------------------------------
 
 # Curated, genuinely-useful tips. Kept short, actionable, and free of internal
@@ -170,7 +170,7 @@ def maybe_print_tip(*, quiet: bool = False, force: bool = False, stream=None) ->
 
 
 # ---------------------------------------------------------------------------
-# First-run welcome (D-11)
+# First-run welcome
 # ---------------------------------------------------------------------------
 
 _WELCOME_TEXT = """\
@@ -222,7 +222,7 @@ def maybe_show_first_run_welcome(*, quiet: bool = False, stream=None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# "Did you mean …?" — shared fuzzy suggester (D-10)
+# "Did you mean …?" — shared fuzzy suggester
 # ---------------------------------------------------------------------------
 
 def suggest(name: str, candidates, *, n: int = 1, cutoff: float = 0.6) -> list[str]:
@@ -264,7 +264,7 @@ def did_you_mean(name: str, candidates, *, n: int = 1, cutoff: float = 0.6) -> s
 
 
 # ---------------------------------------------------------------------------
-# Errors that teach (D-14)
+# Errors that teach
 # ---------------------------------------------------------------------------
 
 def teach(cause: str, fix: str | None = None, doc: str | None = None) -> str:

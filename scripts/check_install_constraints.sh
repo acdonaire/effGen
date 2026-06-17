@@ -3,7 +3,7 @@
 # Install-matrix check: torch-preservation constraints flow (CUDA 12.4).
 #
 # Proves that the documented constraints flow stops an extras install from
-# silently replacing a driver-compatible torch (the GA10 trap):
+# silently replacing a driver-compatible torch:
 #
 #   1. install a cu124 torch (driver-compatible on any CUDA 12.x host),
 #   2. install effGen + an extra WITH `-c constraints-cu124.txt`,

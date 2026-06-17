@@ -1,4 +1,4 @@
-"""Phase 35 — rich output & result presentation.
+"""Rich output & result presentation.
 
 Covers ``AgentResponse`` presentation (``__str__``/``__repr__``/``_repr_html_``/
 ``show()``/``trace()``), the shared Rich theme + console factory (``NO_COLOR``
@@ -38,7 +38,7 @@ def _sample(success: bool = True, output: str = "Paris") -> AgentResponse:
     )
 
 
-# --- D-15: __str__ → answer, detailed-but-compact __repr__ ------------------
+# --- __str__ → answer, detailed-but-compact __repr__ ------------------
 
 
 def test_str_is_the_answer():
@@ -65,7 +65,7 @@ def test_repr_truncates_long_output():
     assert len(repr(r)) < 400
 
 
-# --- D-16: Jupyter _repr_html_ card ----------------------------------------
+# --- Jupyter _repr_html_ card ----------------------------------------
 
 
 def test_repr_html_has_answer_metrics_and_trace():
@@ -93,7 +93,7 @@ def test_repr_html_failed_run():
     assert "failed" in html.lower()
 
 
-# --- D-17: show() / trace() -------------------------------------------------
+# --- show() / trace() -------------------------------------------------
 
 
 def test_show_prints_answer_and_footer():
@@ -129,7 +129,7 @@ def test_trace_with_no_steps_is_graceful():
     assert "hi" in out
 
 
-# --- D-18 / D-19: markdown rendering + theme + NO_COLOR ----------------------
+# --- markdown rendering + theme + NO_COLOR ----------------------
 
 
 def test_theme_exists_with_semantic_keys():

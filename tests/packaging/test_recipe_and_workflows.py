@@ -123,7 +123,7 @@ def test_recipe_run_deps_track_pyproject():
 
 
 # --------------------------------------------------------------------------- #
-# torch constraints (GA10)
+# torch constraints
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize("name", [

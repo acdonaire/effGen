@@ -3,8 +3,7 @@
 These exercise the *decision* logic (when to animate), the pure formatting
 (summary line, model labels, sticky tool labels), the execution-tracker
 listener wiring, and the streaming soft-cursor — all without any live model
-calls. The animated rendering itself is verified end-to-end with real models in
-``build_plan/outputs/33-*``.
+calls. The animated rendering itself is verified end-to-end with real models.
 """
 
 from __future__ import annotations

@@ -131,21 +131,21 @@ class TestCircuitBreakerStateTransitions:
         """CLOSED → OPEN → HALF_OPEN → CLOSED full cycle."""
         cb = self._new_cb(failure_threshold=2, recovery_timeout=0.05, half_open_probes=1)
 
-        # Phase 1: CLOSED → OPEN
+        # Step 1: CLOSED → OPEN
         cb.on_failure()
         cb.on_failure()
         assert cb.state == CircuitState.OPEN
 
-        # Phase 2: OPEN → HALF_OPEN
+        # Step 2: OPEN → HALF_OPEN
         time.sleep(0.07)
         assert cb.is_call_permitted()
         assert cb.state == CircuitState.HALF_OPEN
 
-        # Phase 3: HALF_OPEN → CLOSED
+        # Step 3: HALF_OPEN → CLOSED
         cb.on_success()
         assert cb.state == CircuitState.CLOSED
 
-        # Phase 4: normal operation again
+        # Step 4: normal operation again
         assert cb.is_call_permitted()
 
 

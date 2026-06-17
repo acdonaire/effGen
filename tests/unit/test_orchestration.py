@@ -67,7 +67,7 @@ class FakeAgent:
 
 
 # --------------------------------------------------------------------------- #
-# Public surface (GA2)
+# Public surface
 # --------------------------------------------------------------------------- #
 def test_entry_points_exported_top_level():
     import effgen
@@ -81,7 +81,7 @@ def test_entry_points_exported_top_level():
 
 
 # --------------------------------------------------------------------------- #
-# WorkflowDAG type-guard + topology (GA1)
+# WorkflowDAG type-guard + topology
 # --------------------------------------------------------------------------- #
 def _two_node_dag(a_ok=True, b_ok=True):
     from effgen.core.workflow import WorkflowDAG, WorkflowNode
@@ -128,7 +128,7 @@ def test_empty_workflow_async_is_honest_failure():
 
 
 def test_real_dag_still_runs_after_empty_guard():
-    # Don't regress GA1: a non-empty DAG with a bare-string task still works.
+    # A non-empty DAG with a bare-string task still works.
     dag = _two_node_dag()
     res = dag.run("do the task")
     assert res.success is True
@@ -160,7 +160,7 @@ def test_node_failure_fails_workflow_and_redacts():
 
 
 # --------------------------------------------------------------------------- #
-# Orchestrator shapes + honest failure (GA2 + Phase-0 bar)
+# Orchestrator shapes + honest failure
 # --------------------------------------------------------------------------- #
 def _orch_with_team(name="team", agents=None, pattern=None):
     from effgen.core.orchestrator import MultiAgentOrchestrator, OrchestrationPattern

@@ -192,7 +192,7 @@ def test_env_search_paths_include_override_and_home(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# "Did you mean?" on mistyped subcommands and choice-based options (D-10)
+# "Did you mean?" on mistyped subcommands and choice-based options
 # --------------------------------------------------------------------------- #
 def test_unknown_subcommand_suggests_and_exits_2(capsys):
     parser = _main.create_parser()

@@ -5,7 +5,7 @@ These guard the developer-experience surfaces (Jupyter magics, shell completion,
 hand-listed subcommands that fall out of sync, and exit codes that always say 0.
 
 The deeper live behaviour (magics in a real kernel, debug/compare against real
-models) is exercised by the evidence scripts under build_plan/outputs; these are
+models) is exercised by separate evidence scripts; these are
 the fast, offline guards.
 """
 
@@ -140,7 +140,7 @@ class TestDebugExitCodes:
         assert isinstance(code, int)
 
     def test_parser_accepts_provider_flag(self):
-        """`effgen debug -m <id> --provider <name>` parses (PR4) — used to
+        """`effgen debug -m <id> --provider <name>` parses — used to
         argparse-error 2 with 'unrecognized arguments: --provider'."""
         from effgen.cli._main import create_parser
 

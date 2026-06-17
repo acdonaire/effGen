@@ -763,7 +763,7 @@ class TestRagPreset:
     def test_create_rag_agent_missing_kb_dir_fails_loud(self, tmp_path: Path):
         # A knowledge_base path that doesn't exist is a typo, not an empty
         # index: it must raise a clear error rather than silently indexing the
-        # literal path string (the PR1 silent-no-op trap).
+        # literal path string (the silent-no-op trap).
         import pytest
 
         from effgen.presets import create_agent

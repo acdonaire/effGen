@@ -29,7 +29,7 @@ def test_state_dir_honors_env(isolated_home):
 
 
 # --------------------------------------------------------------------------- #
-# tips (D-9)
+# tips
 # --------------------------------------------------------------------------- #
 def test_tips_are_curated_and_nonempty():
     assert len(ob.TIPS) >= 5
@@ -91,7 +91,7 @@ def test_maybe_print_tip_is_throttled(isolated_home, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# first-run welcome (D-11)
+# first-run welcome
 # --------------------------------------------------------------------------- #
 def test_first_run_welcome_shows_once(isolated_home, monkeypatch):
     monkeypatch.setattr(ob, "is_interactive", lambda: True)
@@ -117,7 +117,7 @@ def test_first_run_welcome_silent_when_quiet_but_records_flag(isolated_home, mon
 
 
 # --------------------------------------------------------------------------- #
-# did you mean (D-10)
+# did you mean
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "name,pool,expected",
@@ -145,7 +145,7 @@ def test_did_you_mean_phrasing():
 
 
 # --------------------------------------------------------------------------- #
-# errors that teach (D-14)
+# errors that teach
 # --------------------------------------------------------------------------- #
 def test_teach_formats_cause_fix_doc():
     out = ob.teach("Something broke", "Do X", "docs/y.md")

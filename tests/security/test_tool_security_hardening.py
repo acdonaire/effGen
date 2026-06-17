@@ -309,7 +309,7 @@ class TestFileOpsPathSafety:
 
 
 # --------------------------------------------------------------------------- #
-# SEC2 — PromptChain condition evaluation (no eval of model output)           #
+# PromptChain condition evaluation (no eval of model output)           #
 # --------------------------------------------------------------------------- #
 class TestChainConditionSafety:
     def _state(self):
@@ -366,7 +366,7 @@ class TestChainConditionSafety:
 
 
 # --------------------------------------------------------------------------- #
-# SEC3 — shared SSRF guard used by every URL-taking tool                       #
+# shared SSRF guard used by every URL-taking tool                       #
 # --------------------------------------------------------------------------- #
 class TestSharedSSRFGuard:
     INTERNAL = [
@@ -437,7 +437,7 @@ class TestSharedSSRFGuard:
 
 
 # --------------------------------------------------------------------------- #
-# SEC4 — file-path tools may not read sensitive locations; tighten on demand    #
+# file-path tools may not read sensitive locations; tighten on demand    #
 # --------------------------------------------------------------------------- #
 class TestFilePathConfinement:
     # Sensitive targets an attacker actually wants (refused by default).

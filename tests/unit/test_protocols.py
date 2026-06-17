@@ -131,7 +131,7 @@ class TestMCPOfficialBridgeTypes:
 
 
 class TestACPSecureDefaults:
-    """SEC5: ACP server must default to loopback and no wildcard CORS."""
+    """ACP server must default to loopback and no wildcard CORS."""
 
     def test_default_host_is_loopback(self):
         from effgen.tools.protocols.acp.server import ACPServerConfig
