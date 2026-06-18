@@ -33,7 +33,7 @@ class TestTogetherModelsRegistry:
         assert len(available_models()) > 0
 
     def test_chat_models_count(self):
-        assert len(chat_models()) == 149
+        assert len(chat_models()) == 133
 
     def test_serverless_models_nonempty(self):
         assert len(serverless_models()) > 0

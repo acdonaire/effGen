@@ -251,18 +251,6 @@ OPENAI_MODELS: dict[str, dict] = {
         "cached_input_price_per_1m": None,
         "output_price_per_1m": 30.00,
     },
-    "gpt-4-turbo-preview": {
-        "family": "chat",
-        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
-        "context": 128_000,
-        "max_output": 4_096,
-        "supports_reasoning": False,
-        "supports_native_tools": True,
-        "supports_prompt_caching": False,
-        "input_price_per_1m": 10.00,
-        "cached_input_price_per_1m": None,
-        "output_price_per_1m": 30.00,
-    },
     "gpt-4-turbo-2024-04-09": {
         "family": "chat",
         "context": 128_000,
@@ -295,18 +283,6 @@ OPENAI_MODELS: dict[str, dict] = {
         "input_price_per_1m": 30.00,
         "cached_input_price_per_1m": None,
         "output_price_per_1m": 60.00,
-    },
-    "gpt-4-32k": {
-        "family": "chat",
-        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
-        "context": 32_768,
-        "max_output": 4_096,
-        "supports_reasoning": False,
-        "supports_native_tools": True,
-        "supports_prompt_caching": False,
-        "input_price_per_1m": 60.00,
-        "cached_input_price_per_1m": None,
-        "output_price_per_1m": 120.00,
     },
     # ------------------------------------------------------------------
     # Legacy GPT-3.5 (kept for back-compat)
@@ -344,18 +320,6 @@ OPENAI_MODELS: dict[str, dict] = {
         "cached_input_price_per_1m": None,
         "output_price_per_1m": 4.00,
     },
-    "gpt-3.5-turbo-16k-0613": {
-        "family": "chat",
-        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
-        "context": 16_385,
-        "max_output": 4_096,
-        "supports_reasoning": False,
-        "supports_native_tools": True,
-        "supports_prompt_caching": False,
-        "input_price_per_1m": 3.00,
-        "cached_input_price_per_1m": None,
-        "output_price_per_1m": 4.00,
-    },
     # ------------------------------------------------------------------
     # o1 series (reasoning)
     # ------------------------------------------------------------------
@@ -380,30 +344,6 @@ OPENAI_MODELS: dict[str, dict] = {
         "input_price_per_1m": 150.00,
         "cached_input_price_per_1m": None,
         "output_price_per_1m": 600.00,
-    },
-    "o1-mini": {
-        "family": "reasoning",
-        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
-        "context": 128_000,
-        "max_output": 65_536,
-        "supports_reasoning": True,
-        "supports_native_tools": True,
-        "supports_prompt_caching": True,
-        "input_price_per_1m": 1.10,
-        "cached_input_price_per_1m": 0.55,
-        "output_price_per_1m": 4.40,
-    },
-    "o1-preview": {
-        "family": "reasoning",
-        "deprecated": True,  # retired by OpenAI; returns 404 model_not_found
-        "context": 128_000,
-        "max_output": 32_768,
-        "supports_reasoning": True,
-        "supports_native_tools": False,
-        "supports_prompt_caching": True,
-        "input_price_per_1m": 15.00,
-        "cached_input_price_per_1m": 7.50,
-        "output_price_per_1m": 60.00,
     },
     # ------------------------------------------------------------------
     # o3 series (reasoning)

@@ -124,3 +124,67 @@ def test_cerebras_wrong_id_suggests_live_alternative():
         CerebrasAdapter(model_name="llama3.1-8b")  # the retired default
     msg = str(ei.value)
     assert "gpt-oss-120b" in msg  # nearest live alternative suggested
+
+
+# ---------------------------------------------------------------------------
+# Live refresh/drift is filtered to chat models (no ft:/embedding/audio/image)
+# ---------------------------------------------------------------------------
+
+# Providers whose list-models endpoint returns a comprehensive surface we can
+# assert is filtered down to chat models.  (Fireworks' endpoint is account
+# scoped — it returns only a handful of ids — so it is not a useful fixture.)
+_FILTERED_PROVIDERS = ["openai", "together", "gemini", "groq", "cerebras"]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.parametrize("provider", _FILTERED_PROVIDERS)
+def test_live_drift_is_chat_only(provider):
+    """check_drift over the live API never reports a private fine-tune or a
+    non-chat (embedding/audio/image/moderation/…) id as drift."""
+    if not R.has_credentials(provider) and provider != "hf":
+        pytest.skip(_key_reason(provider))
+
+    diff = R.check_drift(provider, warn=False)
+    # No private fine-tune id may surface anywhere in the drift.
+    assert not [m for m in diff["added"] if C.is_finetune(m)]
+    # Every "added" id must classify as chat (genuine new chat models only).
+    non_chat = [m for m in diff["added"] if not C.is_chat_model(provider, m)]
+    assert not non_chat, f"{provider}: non-chat ids reported as added: {non_chat[:10]}"
+
+
+@pytest.mark.integration
+@pytest.mark.api
+def test_openai_refresh_persists_only_chat_models(tmp_path):
+    """A persisted OpenAI refresh contains only chat models and never a private
+    ``ft:`` fine-tune id (the FN-1 privacy guarantee)."""
+    if not R.has_credentials("openai"):
+        pytest.skip(_key_reason("openai"))
+
+    rep = R.refresh_models("openai", persist=False)
+    ids = [r.id for r in rep["records"]]
+    assert ids, "no records returned"
+    assert not [i for i in ids if C.is_finetune(i)], "fine-tune id leaked into refresh"
+    # Every persisted id is either already curated or classifies as chat.
+    from effgen.models.openai_models import OPENAI_MODELS
+
+    leaked = [i for i in ids if i not in OPENAI_MODELS and not C.is_chat_model("openai", i)]
+    assert not leaked, f"non-chat ids in refresh: {leaked[:10]}"
+
+    # Persisting to a temp path writes the same clean set, no fine-tunes.
+    out = tmp_path / "openai.json"
+    C.save_snapshot("openai", rep["records"], path=out)
+    written = {m["id"] for m in C.load_snapshot("openai", path=out)["models"]}
+    assert not any(C.is_finetune(i) for i in written)
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.parametrize("provider", ["openai", "together"])
+def test_pruned_providers_have_no_stale_removed_drift(provider):
+    """After pruning the confirmed-retired ids, live drift reports no 'removed'
+    chat models for the keyed providers we re-verified."""
+    if not R.has_credentials(provider):
+        pytest.skip(_key_reason(provider))
+    diff = R.check_drift(provider, warn=False)
+    assert diff["removed"] == [], f"{provider}: stale removed drift {diff['removed']}"

@@ -39,6 +39,8 @@ from effgen.models._catalog import (
     _load_models_dict,
     build_records,
     diff_records,
+    is_chat_model,
+    is_finetune,
     known_providers,
     load_snapshot_records,
     normalize_record,
@@ -264,6 +266,32 @@ def refreshable_providers() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _filter_chat_live(
+    provider: str,
+    live: list[tuple[str, dict[str, Any]]],
+    bundled: dict[str, dict[str, Any]],
+) -> list[tuple[str, dict[str, Any]]]:
+    """Drop non-chat ids from a live listing, keeping ids effGen already curates.
+
+    A provider's list-models endpoint returns its whole surface (embeddings,
+    speech, image/video, moderation, rerankers and — for OpenAI — the caller's
+    private ``ft:`` fine-tunes).  Reconciling that raw against the curated chat
+    catalog would balloon a snapshot and leak private fine-tune ids, and would
+    perpetually report non-chat models as "added" drift.  Keep an id when it is
+    already curated (so a deliberately-listed model — e.g. a transcription or
+    image endpoint a catalog ships — never shows as spurious "removed") or when
+    it classifies as a chat/text-generation model.  A private ``ft:`` id is
+    never kept, even if somehow already present.
+    """
+    out: list[tuple[str, dict[str, Any]]] = []
+    for mid, raw in live:
+        if is_finetune(mid):
+            continue
+        if mid in bundled or is_chat_model(provider, mid):
+            out.append((mid, raw))
+    return out
+
+
 def _records_from_live(
     provider: str,
     live: list[tuple[str, dict[str, Any]]],
@@ -272,11 +300,13 @@ def _records_from_live(
 ) -> list[ModelRecord]:
     """Turn a live ``[(id, raw)]`` list into normalized records.
 
-    Curated fields are carried for ids effGen already ships (so refresh never
-    loses hand-verified pricing/capabilities); new ids get a best-effort record
-    marked ``price_source = live-api``.
+    The live listing is first filtered to chat/text-generation models (see
+    :func:`_filter_chat_live`).  Curated fields are carried for ids effGen
+    already ships (so refresh never loses hand-verified pricing/capabilities);
+    new ids get a best-effort record marked ``price_source = live-api``.
     """
     bundled = _load_models_dict(provider)
+    live = _filter_chat_live(provider, live, bundled)
     records: list[ModelRecord] = []
     seen: set[str] = set()
     for mid, live_raw in live:
@@ -319,7 +349,9 @@ def available_models_live(provider: str, api_key: str | None = None) -> list[str
         raise PermissionError(
             f"No API key for '{provider}'. Set {_KEY_ENVS.get(provider, ('<KEY>',))[0]}."
         )
-    return sorted(mid for mid, _ in _call_fetcher(provider, key))
+    bundled = _load_models_dict(provider)
+    live = _filter_chat_live(provider, _call_fetcher(provider, key), bundled)
+    return sorted(mid for mid, _ in live)
 
 
 def refresh_models(

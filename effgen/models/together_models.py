@@ -26,7 +26,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Date this bundled registry was last fetched from the Together API
-REGISTRY_FETCH_DATE = "2026-04-28"
+REGISTRY_FETCH_DATE = "2026-06-17"
 
 # ---------------------------------------------------------------------------
 # Chat models (149 total as of 2026-04-28)
@@ -370,53 +370,8 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Deepseek",
     },
     # Deepseek — Deepseek V3
-    "deepseek-ai/DeepSeek-V3-DE": {
-        "family": "deepseek-v3",
-        "context": 163840,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Deepseek",
-    },
     # Deepseek — Deepseek V3.1 Base
-    "deepseek-ai/DeepSeek-V3.1-Base": {
-        "family": "deepseek-v3",
-        "context": 163840,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Deepseek",
-    },
     # Deepseek — Deepseek V3.2 Exp
-    "deepseek-ai/DeepSeek-V3.2-Exp": {
-        "family": "deepseek-v3",
-        "context": 163840,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Deepseek",
-    },
     # Meta — Llama 3.2 1B
     "meta-llama/Llama-3.2-1B": {
         "family": "llama",
@@ -642,21 +597,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Qwen",
     },
     # Qwen — Qwen3 235B A22B FP8
-    "Qwen/Qwen3-235B-A22B-fp8": {
-        "family": "qwen-3",
-        "context": 40960,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Qwen",
-    },
     # Qwen — Qwen3 8B
     "Qwen/Qwen3-8B": {
         "family": "qwen-3",
@@ -755,21 +695,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Meta",
     },
     # Qwen — Qwen3.5 397B A17b Fp8
-    "Qwen/Qwen3.5-397B-A17B-FP8": {
-        "family": "qwen-3",
-        "context": 262144,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Qwen",
-    },
     # Google — Gemma 2B It
     "google/gemma-2b-it": {
         "family": "gemma",
@@ -819,37 +744,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Mistralai",
     },
     # DeepSeek — DeepSeek R1 (Original)
-    "deepseek-ai/DeepSeek-R1-Original": {
-        "family": "deepseek-r1",
-        "context": 163840,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "DeepSeek",
-    },
     # Deepseek — Deepseek V3.1 Terminus
-    "deepseek-ai/DeepSeek-V3.1-Terminus": {
-        "family": "deepseek-v3",
-        "context": 163840,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Deepseek",
-    },
     # Qwen — Qwen3 30B A3B Instruct 2507 Lora
     "Qwen/Qwen3-30B-A3B-Instruct-2507-Lora": {
         "family": "qwen-3",
@@ -931,37 +826,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Meta",
     },
     # Deepseek — Deepseek V3.2
-    "deepseek-ai/DeepSeek-V3.2": {
-        "family": "deepseek-v3",
-        "context": 163840,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Deepseek",
-    },
     # Meta — Llama 4 Maverick 17B 128E
-    "meta-llama/Llama-4-Maverick-17B-128E": {
-        "family": "llama-4",
-        "context": 262144,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Meta",
-    },
     # Mistral — nim/mistralai/mixtral-8x22b-instruct-v01
     "nim/mistralai/mixtral-8x22b-instruct-v01": {
         "family": "mistral",
@@ -1764,21 +1629,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Meta",
     },
     # Meta — Llama 4 Maverick Instruct (17Bx128E) FP8
-    "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": {
-        "family": "llama-4",
-        "context": 1048576,
-        "max_output": 4_096,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.27,
-        "pricing_per_1m_output": 0.85,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Meta",
-    },
     # MiniMaxAI — MiniMax M2.7 FP4
     "MiniMaxAI/MiniMax-M2.7": {
         "family": "minimax",
@@ -1796,21 +1646,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "MiniMaxAI",
     },
     # MiniMaxAI — MiniMax M2.5 FP4
-    "MiniMaxAI/MiniMax-M2.5": {
-        "family": "minimax",
-        "context": 196608,
-        "max_output": 4_096,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "serverless": True,
-        "pricing_per_1m_input": 0.3,
-        "pricing_per_1m_output": 1.2,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "MiniMaxAI",
-    },
     # Qwen — Qwen2.5 7B Instruct Turbo
     "Qwen/Qwen2.5-7B-Instruct-Turbo": {
         "family": "qwen",
@@ -1844,21 +1679,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Zai Org",
     },
     # Moonshot AI — Kimi K2.5
-    "moonshotai/Kimi-K2.5": {
-        "family": "kimi",
-        "context": 262144,
-        "max_output": 4_096,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "serverless": True,
-        "pricing_per_1m_input": 0.5,
-        "pricing_per_1m_output": 2.8,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Moonshot AI",
-    },
     # Qwen — Qwen3 Coder Next Fp8
     "Qwen/Qwen3-Coder-Next-FP8": {
         "family": "qwen-3",
@@ -1988,21 +1808,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "mistralai",
     },
     # Qwen — Qwen3 235B A22B Thinking 2507 FP8
-    "Qwen/Qwen3-235B-A22B-Thinking-2507": {
-        "family": "qwen-3",
-        "context": 262144,
-        "max_output": 4_096,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 0.65,
-        "pricing_per_1m_output": 3.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Qwen",
-    },
     # Deepseek — Deepseek Coder 33B Instruct
     "deepseek-ai/deepseek-coder-33b-instruct": {
         "family": "deepseek",
@@ -2164,21 +1969,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Moonshot AI",
     },
     # Moonshot AI — Kimi K2 Thinking
-    "moonshotai/Kimi-K2-Thinking": {
-        "family": "kimi",
-        "context": 262144,
-        "max_output": 4_096,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 1.2,
-        "pricing_per_1m_output": 4.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Moonshot AI",
-    },
     # Qwen — Qwen QwQ-32B
     "Qwen/QwQ-32B": {
         "family": "qwen",
@@ -2260,21 +2050,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Deepcogito",
     },
     # Deepseek — Deepseek V3 0324
-    "deepseek-ai/DeepSeek-V3-0324": {
-        "family": "deepseek-v3",
-        "context": 163840,
-        "max_output": 4_096,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "serverless": False,
-        "pricing_per_1m_input": 1.25,
-        "pricing_per_1m_output": 1.25,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Deepseek",
-    },
     # Zai Org — GLM 5.1 FP4
     "zai-org/GLM-5.1": {
         "family": "glm-5",
@@ -2372,21 +2147,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "organization": "Deepseek AI",
     },
     # DeepSeek — DeepSeek R1-0528
-    "deepseek-ai/DeepSeek-R1": {
-        "family": "deepseek-r1",
-        "context": 163840,
-        "max_output": 4_096,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "serverless": True,
-        "pricing_per_1m_input": 3.0,
-        "pricing_per_1m_output": 7.0,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "DeepSeek",
-    },
     # Deepseek — DeepSeek R1 0528
     "deepseek-ai/DeepSeek-R1-0528": {
         "family": "deepseek-r1",

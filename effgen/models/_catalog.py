@@ -286,6 +286,75 @@ def build_records(provider: str, *, verified_on: str | None = None) -> list[Mode
 
 
 # ---------------------------------------------------------------------------
+# Chat/text-generation classifier
+# ---------------------------------------------------------------------------
+#
+# A provider's list-models endpoint returns its *entire* surface: chat models
+# alongside embeddings, speech (whisper/tts/realtime), image and video
+# generators, moderation/safety classifiers, rerankers and — for OpenAI — the
+# caller's own private ``ft:`` fine-tunes.  When the refresh path reconciles a
+# live listing against the curated catalog, those non-chat ids must be filtered
+# out: they are not models effGen's chat/agent path can drive, they would balloon
+# a curated snapshot, and an ``ft:`` id is private data that must never be written
+# to a shipped catalog file.  The classifier below is the single shared rule.
+
+# A substring (matched case-insensitively against the full id) that marks a model
+# as a non-chat modality.  Conservative by construction: it only catches families
+# that are unambiguously not text chat, so a genuinely new chat model is kept.
+_NON_CHAT_SUBSTRINGS: tuple[str, ...] = (
+    # embeddings / retrieval encoders
+    "embedding", "embed-", "-embed", "bge", "gte-", "-e5-", "multilingual-e5",
+    "m2-bert", "mxbai", "uae-large",
+    # rerankers
+    "rerank", "-rank", "llama-rank",
+    # speech / audio / tts / asr / music
+    "whisper", "tts", "audio", "realtime", "transcribe", "speech", "asr",
+    "sonic", "orpheus", "kokoro", "aura", "nova-3", "parakeet", "rime-", "lyria",
+    # image generation
+    "dall-e", "dalle", "image", "stable-diffusion", "sdxl", "flux", "seedream",
+    "imagen", "ideogram", "juggernaut", "nano-banana", "playground-v",
+    # video generation
+    "veo", "sora", "seedance", "wan2", "wan-ai", "kling", "hailuo", "pixverse",
+    "vidu", "video", "happyhorse", "i2v", "t2v", "r2v",
+    # moderation / safety classifiers
+    "moderation", "guard", "shield",
+    # specialized non-chat task models
+    "computer-use", "robotics", "deep-research", "antigravity", "live-translate",
+    # legacy completion-only base models
+    "babbage", "davinci", "turbo-instruct",
+)
+
+# Ids that are exactly a non-chat endpoint but carry no telltale substring.
+_NON_CHAT_EXACT: frozenset[str] = frozenset({"aqa"})
+
+
+def is_finetune(model_id: str) -> bool:
+    """True if *model_id* is a private/per-account fine-tune id.
+
+    OpenAI fine-tunes are namespaced ``ft:<base>:<org>:<suffix>``; such ids are
+    caller-private and must never be persisted to a shipped catalog snapshot.
+    """
+    return model_id.startswith("ft:")
+
+
+def is_chat_model(provider: str, model_id: str) -> bool:
+    """True if *model_id* looks like a chat / text-generation base model.
+
+    Used to filter a provider's full list-models response down to the models
+    effGen's chat/agent path can actually drive, dropping embeddings, speech,
+    image/video generators, moderation classifiers, rerankers and private
+    fine-tunes.  The rule is a conservative denylist so a genuinely new chat
+    model is kept; the caller separately preserves already-curated ids.
+    """
+    if is_finetune(model_id):
+        return False
+    low = model_id.lower()
+    if low in _NON_CHAT_EXACT:
+        return False
+    return not any(frag in low for frag in _NON_CHAT_SUBSTRINGS)
+
+
+# ---------------------------------------------------------------------------
 # Snapshot store: models/_data/<provider>.json
 # ---------------------------------------------------------------------------
 
@@ -308,6 +377,16 @@ def save_snapshot(
     Returns the path written.  ``verified_on`` defaults to today (UTC).
     """
     recs = list(records)
+    # Privacy guard: a private/per-account fine-tune id must never reach a
+    # shipped catalog file, regardless of how the records were built.
+    private = [r for r in recs if is_finetune(r.id)]
+    if private:
+        logger.warning(
+            "Refusing to persist %d private fine-tune id(s) to the %s snapshot.",
+            len(private),
+            provider,
+        )
+        recs = [r for r in recs if not is_finetune(r.id)]
     when = verified_on or datetime.date.today().isoformat()
     payload = {
         "provider": provider,
@@ -691,6 +770,8 @@ __all__ = [
     "default_model",
     "normalize_record",
     "build_records",
+    "is_chat_model",
+    "is_finetune",
     "snapshot_path",
     "save_snapshot",
     "load_snapshot",

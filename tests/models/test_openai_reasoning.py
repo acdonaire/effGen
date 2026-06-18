@@ -41,7 +41,7 @@ class TestOpenAIModelRegistry:
         rm = reasoning_models()
         assert "o3-mini" in rm
         assert "o4-mini" in rm
-        assert "o1-mini" in rm
+        assert "o1" in rm
 
     def test_chat_models_present(self):
         cm = chat_models()
