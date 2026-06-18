@@ -1,12 +1,21 @@
 """
 Backend parity tests — parametrized across all effGen providers.
 
-Each test:
-  1. Loads the provider's cheapest/fastest model.
-  2. Runs the canonical "(17 * 23) + sqrt(144) = 403" task via Agent + Calculator.
-  3. Asserts the answer contains "403" and ≥2 tool_calls were made.
+The suite checks two independent guarantees so they never get conflated:
 
-Tests are individually skipped when the provider's API key is absent.
+  * Answer correctness — every backend solves "(17 * 23) + sqrt(144) = 403",
+    by whatever path it picks. A capable reasoning model may do the trivial
+    arithmetic in its head; requiring a Calculator call here would falsely fail
+    such a model, so this assertion does not look at tool counts.
+
+  * Tool calling works — every backend that advertises native tool calling must
+    answer a question whose value is unknowable without invoking the tool (an
+    opaque inventory count). Reaching that value is honest proof the tool path
+    is wired up, and it stays a fair test even for a model clever enough to
+    shortcut arithmetic.
+
+Tests make live API calls and are individually skipped when the provider's API
+key is absent.
 
 Run:
     pytest tests/integration/parity/test_backend_parity.py -v
@@ -171,9 +180,17 @@ def _load_adapter(provider: str, model_id: str):
 
 @pytest.mark.integration
 @pytest.mark.api
+@pytest.mark.live
 @pytest.mark.parametrize("provider,model_id", PARITY_PARAMS)
 def test_canonical_task_parity(provider, model_id):
-    """All backends must solve (17*23)+sqrt(144)=403 via Agent+Calculator."""
+    """Every backend reaches (17*23)+sqrt(144)=403, by whatever path it picks.
+
+    This is the answer-correctness guarantee. It deliberately does not require a
+    Calculator call: a capable model that does the arithmetic in its reasoning
+    is just as correct as one that delegates to the tool, and demanding a tool
+    call here would falsely fail the former. Tool calling is proved separately by
+    ``test_tool_required_parity``.
+    """
     from tests.integration.parity.canonical_task import run_canonical_task
 
     adapter = _load_adapter(provider, model_id)
@@ -194,10 +211,6 @@ def test_canonical_task_parity(provider, model_id):
     )
     assert result["answer_correct"], (
         f"{provider}/{model_id} answer missing '403'. Got: {result['answer_text']!r}"
-    )
-    # Models may solve in 1 combined call or multiple calls; ≥1 is sufficient proof of tool use.
-    assert result["tool_calls"] >= 1, (
-        f"{provider}/{model_id} expected ≥1 tool call, got {result['tool_calls']}"
     )
 
 
@@ -241,6 +254,7 @@ NATIVE_PARAMS = [
 
 @pytest.mark.integration
 @pytest.mark.api
+@pytest.mark.live
 @pytest.mark.parametrize("provider,model_id", NATIVE_PARAMS)
 def test_native_strategy_parity(provider, model_id):
     """Native tool-calling providers must also solve the canonical task."""
@@ -264,4 +278,54 @@ def test_native_strategy_parity(provider, model_id):
     )
     assert result["answer_correct"], (
         f"{provider}/{model_id} (native) answer missing '403'. Got: {result['answer_text']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool-calling proof — a question only the tool can answer
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.live
+@pytest.mark.parametrize("provider,model_id", NATIVE_PARAMS)
+def test_tool_required_parity(provider, model_id):
+    """Every native-tool backend must actually call a tool when it has to.
+
+    The question asks for an opaque inventory count that exists only inside the
+    tool, so the answer cannot be guessed or reasoned out — reaching it proves
+    the backend's tool-calling path works. Unlike the canonical arithmetic task,
+    this stays a fair tool-use proof even for a model capable enough to shortcut
+    simple math. The backend passes if it calls the tool through any of its
+    tool-calling modes (native first, then the scaffolded react loop).
+    """
+    from tests.integration.parity.canonical_task import (
+        TOOL_REQUIRED_SENTINEL,
+        run_tool_required_task,
+    )
+
+    adapter = _load_adapter(provider, model_id)
+    try:
+        result = run_tool_required_task(adapter)
+    finally:
+        try:
+            adapter.unload()
+        except Exception:
+            pass
+
+    # Skip on provider-side transient errors, not framework behavior.
+    if _is_transient_provider_error(result["error"], result["answer_text"]):
+        pytest.skip(f"{provider}/{model_id} (tool-required) transient provider error — re-run after cooldown")
+
+    assert result["error"] is None, (
+        f"{provider}/{model_id} (tool-required) raised an error: {result['error']}"
+    )
+    assert result["tool_calls"] >= 1, (
+        f"{provider}/{model_id} answered without calling the tool in any mode "
+        f"(last tried {result.get('strategy')!r}, got {result['tool_calls']} calls); "
+        f"the value is unknowable otherwise. Answer: {result['answer_text']!r}"
+    )
+    assert result["answer_correct"], (
+        f"{provider}/{model_id} called the tool but the answer is missing "
+        f"{TOOL_REQUIRED_SENTINEL}. Got: {result['answer_text']!r}"
     )

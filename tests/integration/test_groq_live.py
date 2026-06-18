@@ -106,7 +106,12 @@ class TestGroqLive:
         }]
         try:
             try:
-                result = adapter.generate_with_tools("What is 17 * 23?", tools)
+                # Ask explicitly to use the tool: this proves the native
+                # tool-call decode path, not whether the model bothers to
+                # delegate trivial arithmetic it could do in its head.
+                result = adapter.generate_with_tools(
+                    "What is 17 * 23? Use the calculator tool.", tools
+                )
             except Exception as exc:
                 _skip_rate_limit(exc)
             assert len(result.metadata["tool_calls"]) >= 1
