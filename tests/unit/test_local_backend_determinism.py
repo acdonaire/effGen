@@ -105,6 +105,40 @@ def test_per_call_zero_temperature_kwarg_is_greedy(gpt2_engine):
     assert isinstance(result.text, str)
 
 
+def test_per_call_greedy_override_folds_to_conflict_free_config(gpt2_engine):
+    """Folding a per-call temperature<=0 override into a config that defaulted to
+    sampling must overwrite the sampling fields with no-op values — not merely
+    flip do_sample — or Transformers warns "generation flags are not valid for
+    do_sample=False" on every such call."""
+    base, _ = gpt2_engine._create_generation_config(
+        GenerationConfig(max_tokens=8, temperature=0.7)
+    )
+    assert base.do_sample is True
+    folded, extra = gpt2_engine._fold_into_generation_config(
+        base,
+        gpt2_engine._sanitize_generation_kwargs({"temperature": 0, "max_tokens": 8}),
+    )
+    assert folded.do_sample is False
+    assert folded.temperature == 1.0
+    assert folded.top_p == 1.0
+    assert folded.top_k == 50
+    assert extra == {}
+
+
+def test_per_call_positive_temperature_enables_sampling(gpt2_engine):
+    """A positive per-call temperature folded into a greedy base config must
+    enable sampling so the override is honoured, not silently ignored."""
+    base, _ = gpt2_engine._create_generation_config(
+        GenerationConfig(max_tokens=8, temperature=0.0)
+    )
+    assert base.do_sample is False
+    folded, _ = gpt2_engine._fold_into_generation_config(
+        base, gpt2_engine._sanitize_generation_kwargs({"temperature": 0.8})
+    )
+    assert folded.do_sample is True
+    assert folded.temperature == 0.8
+
+
 def test_clean_up_tokenization_spaces_disabled_on_decode(gpt2_engine):
     """gpt2 uses a BPE tokenizer; decoding must not strip spaces before
     punctuation (clean_up_tokenization_spaces must be False)."""

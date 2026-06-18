@@ -465,6 +465,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
+                "cost_usd": cost,
                 "cost": cost,
                 "total_cost": self.total_cost,
                 # Prompt caching usage (0 when not used).
@@ -789,6 +790,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
+                "cost_usd": cost,
                 "cost": cost,
                 "total_cost": self.total_cost,
                 "cached_input_tokens": cached_input,
@@ -898,6 +900,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
+                "cost_usd": cost,
                 "cost": cost,
                 "total_cost": self.total_cost,
                 "cached_input_tokens": cached_input,

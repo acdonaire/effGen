@@ -1,7 +1,8 @@
 """Ergonomics + correctness tests for guardrails and keyword expansion.
 
-Covers three reported issues:
+Covers these reported issues:
 - KeywordExpander.expand() char-iterates a bare string into off-domain nonsense.
+- KeywordExpander.expand() emits grammatically broken query variants ("how to python").
 - get_guardrail_preset("default") raises instead of mapping to "standard".
 - PIIGuardrail redacts dotted-quad version numbers as IP addresses.
 
@@ -30,13 +31,22 @@ class TestKeywordExpander:
         for junk in ("hydrogen", "oxygen", "atomic number", "alphabetic", "nitrogen"):
             assert junk not in joined
 
-    def test_expand_python_yields_domain_terms_not_chemistry(self):
+    def test_expand_python_yields_query_variants_not_chemistry(self):
         out = KeywordExpander().expand(["python"])
         assert "python" in out
+        # Related search-query variants, on the seed's topic.
         assert "python tutorial" in out
         assert "what is python" in out
         # No chemistry / element noise.
         assert not any("atomic number" in t for t in out)
+
+    def test_query_variants_read_naturally(self):
+        # The expander produces search-query phrasings, which must read
+        # naturally for an arbitrary noun keyword — never the grammatically
+        # broken bare "how to <noun>".
+        out = KeywordExpander().expand(["python"])
+        assert "how to python" not in out
+        assert "how to use python" in out
 
     def test_list_input_preserved(self):
         out = KeywordExpander().expand(["python", "machine learning"])

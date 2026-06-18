@@ -188,6 +188,45 @@ class TestStructuredErrors:
                    json={"model": "x", "messages": [{"role": "user", "content": "hi"}]})
         assert "sk-abcdef123456" not in json.dumps(r.json())
 
+    def test_missing_upstream_key_is_503_not_401(self):
+        """A server-side missing provider key is the server's problem, not the
+        caller's. With the client correctly authenticated, it must surface as a
+        gateway error (503), never 401 — 401 would wrongly blame the caller's
+        credentials."""
+        from effgen.models.errors import ModelAuthError
+
+        def no_upstream_key(prompt, *, model, tools=None, stream=False, **kw):
+            raise ModelAuthError("Groq API key not found. Set the GROQ_API_KEY variable")
+
+        c = _client(api_key="k", runner=no_upstream_key)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "groq:llama-3.1-8b-instant",
+                         "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 503, r.status_code
+        assert r.json()["error"]["type"] == "upstream_unavailable"
+
+    def test_rejected_upstream_key_is_502_not_401(self):
+        """A present-but-rejected upstream key is a bad-gateway condition (502),
+        not a client-auth failure (401)."""
+        from effgen.models.errors import ModelAuthError
+
+        def rejected_upstream(prompt, *, model, tools=None, stream=False, **kw):
+            raise ModelAuthError("Incorrect API key provided by the upstream provider")
+
+        c = _client(api_key="k", runner=rejected_upstream)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "groq:llama-3.1-8b-instant",
+                         "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 502, r.status_code
+
+    def test_forged_client_token_still_401(self):
+        """Phase-18 regression guard: the server's own client-auth rejection
+        stays 401 even though upstream auth failures now map to 502/503."""
+        c = _client(api_key="secret", runner=_ok_runner)
+        r = c.post("/v1/chat/completions", headers={"Authorization": "Bearer forged"},
+                   json={"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 401, r.status_code
+
 
 class TestWebSocketAuth:
     """Static API-key auth must apply to websocket handshakes too, and reject

@@ -1,8 +1,15 @@
 """
-Keyword Expander for effGen domains.
+Search-query expander for effGen domains.
 
-Expands N seed keywords to 10N+ using three strategies:
-1. **Template-based** — deterministic pattern expansion (on by default).
+This expands a few seed keywords into a larger set of **search-query variants**
+— phrasings a user might type into a search engine or a retrieval index — to
+broaden recall. It is a query expander, not a thesaurus: the default output is
+related *queries* (``"python tutorial"``, ``"what is python"``), not one-word
+synonyms. For true synonyms, enable the opt-in WordNet strategy.
+
+Three strategies are available:
+1. **Template-based** — deterministic search-query patterns (on by default),
+   e.g. ``"{kw} tutorial"``, ``"what is {kw}"``, ``"how to use {kw}"``.
 2. **LLM-based** — uses the agent's own model to generate related terms.
 3. **WordNet synonyms** — free, offline (requires ``nltk``; **opt-in**).
 
@@ -19,6 +26,7 @@ Usage:
     expanded = expander.expand(["Python", "machine learning"], factor=10)
     # A bare string is treated as a single keyword (not iterated char-by-char):
     expanded = expander.expand("python")
+    # -> ['python', 'python tutorial', 'what is python', 'how to use python', ...]
 """
 
 from __future__ import annotations
@@ -29,24 +37,32 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Default query templates — {kw} is the keyword, {alt} is another keyword
+# Default search-query templates — {kw} is the keyword, {alt} is another
+# keyword. Each must read naturally for an arbitrary noun keyword (so
+# "how to use {kw}", not the grammatically broken "how to {kw}").
 _DEFAULT_TEMPLATES: list[str] = [
-    "best {kw}",
     "{kw} tutorial",
-    "{kw} vs {alt}",
-    "how to {kw}",
     "{kw} examples",
     "{kw} guide",
     "what is {kw}",
+    "how to use {kw}",
+    "learn {kw}",
+    "best {kw} tools",
+    "{kw} vs {alt}",
     "{kw} for beginners",
 ]
 
 
 class KeywordExpander:
-    """Expand seed keywords using multiple strategies.
+    """Expand seed keywords into related **search-query variants**.
+
+    This is a query expander (broadens recall), not a synonym thesaurus: the
+    default template strategy returns related queries like ``"python tutorial"``
+    and ``"what is python"`` rather than one-word synonyms. Enable WordNet for
+    actual synonyms.
 
     Strategies gracefully degrade:
-    - Templates: always available; the sensible, on-domain default.
+    - Templates: always available; deterministic search-query variants.
     - LLM: skipped if no model is provided.
     - WordNet: opt-in (``use_wordnet=True``); skipped with a note if ``nltk``
       is not installed.
@@ -101,7 +117,11 @@ class KeywordExpander:
         return cleaned
 
     def expand(self, keywords: list[str] | str, factor: int = 10) -> list[str]:
-        """Expand *keywords* aiming for ``len(keywords) * factor`` terms.
+        """Expand *keywords* into related search-query variants.
+
+        Returns related *queries* (e.g. ``"python tutorial"``), not one-word
+        synonyms, aiming for ``len(keywords) * factor`` terms. For synonyms,
+        construct the expander with ``use_wordnet=True``.
 
         Args:
             keywords: A list of seed keywords, or a single keyword string. A
@@ -109,7 +129,7 @@ class KeywordExpander:
                 character by character.
             factor: Target multiplier (aim for ``len(keywords) * factor`` terms).
 
-        Returns a deduplicated, sorted list of expanded terms.
+        Returns a deduplicated, sorted list of expanded query terms.
         The original seed keywords are always included.
         """
         keywords = self._normalize_keywords(keywords)
@@ -209,12 +229,17 @@ class KeywordExpander:
     # ------------------------------------------------------------------
 
     def _expand_templates(self, keywords: list[str]) -> set[str]:
-        """Generate queries from templates."""
+        """Generate search-query variants from templates."""
         terms: set[str] = set()
+        multi = len(keywords) > 1
         for i, kw in enumerate(keywords):
-            # Pick an alternative keyword for {alt} templates
-            alt = keywords[(i + 1) % len(keywords)] if len(keywords) > 1 else kw
+            # Pick a *distinct* alternative keyword for {alt} templates.
+            alt = keywords[(i + 1) % len(keywords)] if multi else kw
             for tmpl in self.templates:
+                # Skip comparison templates ("{kw} vs {alt}") when there is no
+                # distinct alternative — "python vs python" is meaningless.
+                if "{alt}" in tmpl and not multi:
+                    continue
                 expanded = tmpl.replace("{kw}", kw).replace("{alt}", alt)
                 terms.add(expanded)
         return terms

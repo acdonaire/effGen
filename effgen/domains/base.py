@@ -4,7 +4,8 @@ Domain base class for effGen.
 A Domain bundles seed keywords, tools, system prompts, and guardrails
 for a particular knowledge area. The ``expand_keywords`` method
 delegates to :class:`~effgen.domains.expander.KeywordExpander` to
-grow N seed keywords into 10N+ expanded terms.
+grow N seed keywords into a larger set of related **search-query
+variants** (a query expander, not a synonym thesaurus).
 
 Usage:
     from effgen.domains.base import Domain
@@ -48,13 +49,14 @@ class Domain:
     tool_names: list[str] = field(default_factory=list)
     guardrails: Any = None
     templates: list[str] = field(default_factory=lambda: [
-        "best {kw}",
         "{kw} tutorial",
-        "{kw} vs {alt}",
-        "how to {kw}",
         "{kw} examples",
         "{kw} guide",
         "what is {kw}",
+        "how to use {kw}",
+        "learn {kw}",
+        "best {kw} tools",
+        "{kw} vs {alt}",
         "{kw} for beginners",
     ])
     metadata: dict[str, Any] = field(default_factory=dict)

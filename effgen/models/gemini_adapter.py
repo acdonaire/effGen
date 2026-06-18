@@ -787,6 +787,9 @@ class GeminiAdapter(FunctionCallingModel):
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
                 "thoughts_token_count": thoughts_tokens,
+                # ``cost_usd`` is the canonical per-call cost key shared by every
+                # adapter; ``cost``/``total_cost`` are retained for back-compat.
+                "cost_usd": cost,
                 "cost": cost,
                 "total_cost": self.total_cost,
                 "safety_ratings": getattr(response, "safety_ratings", None),

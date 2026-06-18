@@ -403,6 +403,78 @@ class TransformersEngine(BatchModel):
         # at the first token match, not the full sequence match
         return hf_config, config.stop_sequences if config.stop_sequences else []
 
+    # HuggingFace GenerationConfig fields effGen forwards from per-call kwargs.
+    _HF_GEN_PARAMS = (
+        "temperature", "top_p", "top_k", "repetition_penalty",
+        "num_beams", "do_sample", "pad_token_id", "eos_token_id",
+        "max_new_tokens",
+    )
+
+    def _sanitize_generation_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Translate per-call OpenAI-style generation kwargs to HuggingFace names.
+
+        ``max_tokens`` becomes ``max_new_tokens``; recognised HuggingFace
+        generation params pass through; a non-positive ``temperature`` collapses
+        to greedy decoding; a positive ``temperature`` enables sampling. Unknown
+        keys are logged and skipped so a stray kwarg never crashes generation.
+
+        These values are folded INTO an existing ``GenerationConfig`` (see
+        :meth:`_fold_into_generation_config`), so a per-call override must fully
+        supersede the config's sampling fields — not merely add ``do_sample`` —
+        or a config that defaulted to sampling (``temperature=0.7``) would keep
+        ``temperature``/``top_p`` set alongside ``do_sample=False`` and trip the
+        Transformers "generation flags are not valid" warning.
+        """
+        sanitized: dict[str, Any] = {}
+        for key, value in kwargs.items():
+            try:
+                if key == "max_tokens":
+                    sanitized["max_new_tokens"] = value
+                    logger.debug("Converted max_tokens=%s to max_new_tokens", value)
+                elif key in self._HF_GEN_PARAMS:
+                    sanitized[key] = value
+                else:
+                    logger.warning("Skipping unknown generation parameter: %s=%s", key, value)
+            except Exception as e:
+                logger.error("Error processing generation parameter %s: %s", key, e)
+                continue
+
+        if "temperature" in sanitized:
+            temp = sanitized["temperature"]
+            if temp is None or temp <= 0:
+                # Greedy decoding. Overwrite the sampling fields with their no-op
+                # defaults (not just do_sample=False) so they override whatever
+                # the base config carried — mirroring the greedy branch of
+                # _create_generation_config and keeping the call warning-free.
+                sanitized["temperature"] = 1.0
+                sanitized["top_p"] = 1.0
+                sanitized["top_k"] = 50
+                sanitized["do_sample"] = False
+            else:
+                # A positive per-call temperature is an explicit request to
+                # sample; enable it so the override isn't silently ignored when
+                # the base config was greedy.
+                sanitized.setdefault("do_sample", True)
+        return sanitized
+
+    def _fold_into_generation_config(
+        self, generation_config: HFGenerationConfig, params: dict[str, Any]
+    ) -> tuple[HFGenerationConfig, dict[str, Any]]:
+        """Merge generation *params* INTO *generation_config*; return leftover kwargs.
+
+        Passing a ``generation_config`` together with generation-related keyword
+        arguments is deprecated in Transformers 5.x and prints a warning on every
+        call. Folding the recognised parameters into the config object — and
+        forwarding only genuinely non-generation kwargs (e.g. ``streamer``,
+        ``stopping_criteria``) separately — keeps each call quiet with identical
+        decoding behaviour (per-call values still override the config). Returns
+        the mutated config and the kwargs it did not consume.
+        """
+        if not params:
+            return generation_config, {}
+        unused = generation_config.update(**params)
+        return generation_config, unused or {}
+
     def _apply_chat_template(self, prompt: str, tools_for_template: Any = None) -> str:
         """Wrap *prompt* with the tokenizer's chat template when one exists.
 
@@ -476,37 +548,14 @@ class TransformersEngine(BatchModel):
             # passed to the chat template, not to HF generate()
             tools_for_template = kwargs.pop("tools", None)
 
-            # Sanitize kwargs for HuggingFace Transformers compatibility
-            # Convert OpenAI-style parameters to HuggingFace format
-            sanitized_kwargs = {}
-            for key, value in kwargs.items():
-                try:
-                    if key == "max_tokens":
-                        # Convert max_tokens to max_new_tokens for Transformers
-                        sanitized_kwargs["max_new_tokens"] = value
-                        logger.debug(f"Converted max_tokens={value} to max_new_tokens={value}")
-                    elif key in ["temperature", "top_p", "top_k", "repetition_penalty",
-                                "num_beams", "do_sample", "pad_token_id", "eos_token_id"]:
-                        # These are valid HuggingFace parameters
-                        sanitized_kwargs[key] = value
-                    else:
-                        # Log and skip unknown parameters to avoid errors
-                        logger.warning(f"Skipping unknown generation parameter: {key}={value}")
-                except Exception as e:
-                    logger.error(f"Error processing generation parameter {key}: {e}")
-                    # Continue processing other parameters
-                    continue
-
-            # Normalize a per-call temperature<=0 override to greedy decoding so
-            # an explicit generate(..., temperature=0) doesn't crash Transformers
-            # 5.x or warn about sampling params with do_sample=False.
-            if "temperature" in sanitized_kwargs and (
-                sanitized_kwargs["temperature"] is None
-                or sanitized_kwargs["temperature"] <= 0
-            ):
-                for sampling_key in ("temperature", "top_p", "top_k"):
-                    sanitized_kwargs.pop(sampling_key, None)
-                sanitized_kwargs["do_sample"] = False
+            # Sanitize per-call kwargs (OpenAI-style → HuggingFace) and fold them
+            # into the GenerationConfig. Passing generation params alongside a
+            # generation_config is deprecated in Transformers 5.x, so we merge
+            # them in and forward only the leftover non-generation kwargs.
+            sanitized_kwargs = self._sanitize_generation_kwargs(kwargs)
+            generation_config, extra_kwargs = self._fold_into_generation_config(
+                generation_config, sanitized_kwargs
+            )
 
             # Apply chat template if available for better model compatibility
             # Many modern models like Qwen expect a specific format
@@ -529,7 +578,7 @@ class TransformersEngine(BatchModel):
                 outputs = self.model.generate(
                     **inputs,
                     generation_config=generation_config,
-                    **sanitized_kwargs
+                    **extra_kwargs
                 )
 
             # Decode output
@@ -675,13 +724,20 @@ class TransformersEngine(BatchModel):
             # Note: stop_sequences not fully supported in streaming mode
             # They would need to be checked in the consumer of the stream
 
+            # Fold any per-call generation kwargs into the config (Transformers
+            # 5.x deprecates passing them alongside a generation_config); forward
+            # only leftover non-generation kwargs.
+            generation_config, extra_kwargs = self._fold_into_generation_config(
+                generation_config, self._sanitize_generation_kwargs(kwargs)
+            )
+
             # Generate in a separate thread
             generation_kwargs = {
                 **inputs,
                 "generation_config": generation_config,
                 "stopping_criteria": stopping_criteria,
                 "streamer": streamer,
-                **kwargs
+                **extra_kwargs
             }
 
             gen_exception: list[BaseException] = []
@@ -761,12 +817,19 @@ class TransformersEngine(BatchModel):
             if self.device != "cpu":
                 inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
+            # Fold per-call generation kwargs into the config (Transformers 5.x
+            # deprecates passing them alongside a generation_config); forward only
+            # leftover non-generation kwargs.
+            generation_config, extra_kwargs = self._fold_into_generation_config(
+                generation_config, self._sanitize_generation_kwargs(kwargs)
+            )
+
             # Generate
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
                     generation_config=generation_config,
-                    **kwargs
+                    **extra_kwargs
                 )
 
             # Decode outputs

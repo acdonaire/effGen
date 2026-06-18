@@ -21,7 +21,8 @@ Compatibility level
   the answer comes back already resolved. A non-streaming response may carry a
   ``tool_calls`` array when a runner surfaces one.
 * **Errors** use the OpenAI error envelope (``{"error": {...}}``) with a sane
-  status (404 model-not-found, 401 auth, 429 rate-limit, …) and are redacted.
+  status (404 model-not-found, 401 client-auth, 502/503 upstream-provider
+  failure, 429 rate-limit, …) and are redacted.
 """
 from __future__ import annotations
 
@@ -358,8 +359,10 @@ def _classify_http(exc: Exception) -> tuple[int, str, str | None]:
     """Map an exception to (http_status, openai_error_type, code).
 
     Reuses effGen's provider-error taxonomy so the OpenAI-compatible surface
-    fails with the right status (404 for a bad model, 401 for auth, 429 for
-    rate limits, …) instead of a blanket 500.
+    fails with the right status (404 for a bad model, 502/503 for an upstream
+    provider-auth/config failure, 429 for rate limits, …) instead of a blanket
+    500. The server's own client-auth rejection (a forged/absent caller token)
+    is handled upstream of this runner and stays 401.
     """
     category = "unknown"
     try:
@@ -370,7 +373,19 @@ def _classify_http(exc: Exception) -> tuple[int, str, str | None]:
         pass
     low = str(exc).lower()
     if category == "auth":
-        return 401, "authentication_error", "invalid_api_key"
+        # The server's own client-auth layer rejects bad caller credentials with
+        # 401 *before* the runner is ever invoked. An auth failure that surfaces
+        # HERE therefore comes from the upstream provider — the server is missing
+        # or holding a rejected provider key — so it is the server's problem, not
+        # the caller's. Returning 401 would wrongly blame the client's
+        # credentials; report a gateway error instead. A missing key is a
+        # configuration gap (503 Service Unavailable); a present-but-rejected key
+        # is an upstream failure (502 Bad Gateway).
+        if any(k in low for k in (
+            "not found", "not set", "no api key", "set the", "missing", "not configured",
+        )):
+            return 503, "upstream_unavailable", "upstream_key_missing"
+        return 502, "upstream_error", "upstream_auth_failed"
     if category == "not_found":
         return 404, "model_not_found", "model_not_found"
     if category == "rate_limited":
