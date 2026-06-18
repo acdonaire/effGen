@@ -157,7 +157,8 @@ def test_live_drift_is_chat_only(provider):
 @pytest.mark.api
 def test_openai_refresh_persists_only_chat_models(tmp_path):
     """A persisted OpenAI refresh contains only chat models and never a private
-    ``ft:`` fine-tune id (the FN-1 privacy guarantee)."""
+    ``ft:`` fine-tune id (a privacy guarantee: a user's fine-tunes must not be
+    written into the bundled catalog snapshot)."""
     if not R.has_credentials("openai"):
         pytest.skip(_key_reason("openai"))
 

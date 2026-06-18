@@ -1,8 +1,8 @@
-"""Live proof for construction/run input ergonomics (VF5/VF7).
+"""Live proof for construction/run input ergonomics.
 
-* VF5: ``run(output_schema=PydanticClass)`` produces valid JSON matching the
+* ``run(output_schema=PydanticClass)`` produces valid JSON matching the
   model on a real provider (skipped without GROQ_API_KEY).
-* VF7: ``create_agent(..., engine="transformers")`` actually loads a local model
+* ``create_agent(..., engine="transformers")`` actually loads a local model
   via the transformers engine (gpu marker).
 """
 from __future__ import annotations

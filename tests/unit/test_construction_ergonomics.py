@@ -29,7 +29,7 @@ class _Capital(BaseModel):
     capital: str
 
 
-# ── VF5: output_schema accepts a JSON-Schema dict or a Pydantic class ──────────
+# ── output_schema accepts a JSON-Schema dict or a Pydantic class ──────────────
 
 class TestOutputSchemaNormalization:
     def test_none_passthrough(self):
@@ -64,7 +64,7 @@ class TestOutputSchemaNormalization:
             agent.run("hi", output_schema=12345)
 
 
-# ── VF6: Agent(...) constructor validates its config ──────────────────────────
+# ── Agent(...) constructor validates its config ───────────────────────────────
 
 class TestAgentConstructorGuard:
     @pytest.mark.parametrize("bad", ["groq:llama-3.1-8b-instant", None, 123, ["x"]])
@@ -88,7 +88,7 @@ class TestAgentConstructorGuard:
         assert "AgentConfig.model" in str(exc.value)
 
 
-# ── VF7: create_agent routes load_model kwargs / errors clearly ───────────────
+# ── create_agent routes load_model kwargs / errors clearly ────────────────────
 
 class TestCreateAgentKwargs:
     def test_engine_kwarg_with_loaded_instance_raises(self):
