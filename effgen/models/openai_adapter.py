@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 
 from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
@@ -74,6 +75,53 @@ def _pick_default_max_output(model_id: str) -> int:
 def _supports_sampling_params(model_id: str, is_reasoning_model: bool) -> bool:
     """Return whether the model accepts non-default sampling parameters."""
     return not is_reasoning_model and not model_id.startswith(_FIXED_SAMPLING_PREFIXES)
+
+
+# Per-call generation kwargs that map onto a GenerationConfig field. Folding
+# these into the config (rather than forwarding them raw to the API) lets the
+# model-aware request builder gate them per family — e.g. emitting
+# max_completion_tokens instead of the deprecated max_tokens and dropping
+# temperature/top_p/stop for gpt-5 and the reasoning models that reject them.
+_GENERATION_KWARG_TO_FIELD = {
+    "max_tokens": "max_tokens",
+    "temperature": "temperature",
+    "top_p": "top_p",
+    "top_k": "top_k",
+    "presence_penalty": "presence_penalty",
+    "frequency_penalty": "frequency_penalty",
+    "repetition_penalty": "repetition_penalty",
+    "seed": "seed",
+    "stop": "stop_sequences",
+    "stop_sequences": "stop_sequences",
+    "reasoning_effort": "reasoning_effort",
+    "max_reasoning_tokens": "max_reasoning_tokens",
+}
+
+
+def _fold_generation_kwargs(
+    config: GenerationConfig, kwargs: dict[str, Any]
+) -> GenerationConfig:
+    """Move recognized generation kwargs out of *kwargs* into a copy of *config*.
+
+    A per-call ``generate(..., temperature=0)`` (or ``max_tokens=``/``top_p=``/
+    ``stop=``) must travel the same model-aware path as ``GenerationConfig`` so the
+    request builder can gate it per model family. This pops every recognized
+    generation kwarg from *kwargs* (mutated in place) and returns a config carrying
+    those overrides; genuinely-unknown kwargs are left in *kwargs* to forward raw.
+    """
+    overrides: dict[str, Any] = {}
+    for kwarg, field in _GENERATION_KWARG_TO_FIELD.items():
+        if kwarg not in kwargs:
+            continue
+        value = kwargs.pop(kwarg)
+        # The OpenAI API accepts a bare string for `stop`; GenerationConfig
+        # carries a list, so normalize for consistent downstream handling.
+        if field == "stop_sequences" and isinstance(value, str):
+            value = [value]
+        overrides[field] = value
+    if not overrides:
+        return config
+    return replace(config, **overrides)
 
 
 class OpenAIAdapter(FunctionCallingModel):
@@ -551,6 +599,7 @@ class OpenAIAdapter(FunctionCallingModel):
                 **kwargs,
             )
 
+        config = _fold_generation_kwargs(config, kwargs)
         messages = self._create_messages(prompt)
         request_params = self._build_request_params(messages, config)
         request_params.update(kwargs)
@@ -660,6 +709,7 @@ class OpenAIAdapter(FunctionCallingModel):
             hint="Use 'gpt-4o-mini' or 'gpt-4o' for video inputs (frames sent as images).",
         )
 
+        config = _fold_generation_kwargs(config, kwargs)
         messages = self._create_messages(prompt)
         request_params = self._build_request_params(messages, config, stream=True)
         # Ask for a final usage chunk so streamed turns are costed/counted just
@@ -750,6 +800,7 @@ class OpenAIAdapter(FunctionCallingModel):
             messages.append({"role": "system", "content": system_prompt})
         messages.extend(self._create_messages(prompt))
 
+        config = _fold_generation_kwargs(config, kwargs)
         request_params = self._build_request_params(messages, config)
         request_params["response_format"] = response_format
         request_params.update(kwargs)
@@ -824,6 +875,7 @@ class OpenAIAdapter(FunctionCallingModel):
         if config is None:
             config = GenerationConfig()
 
+        config = _fold_generation_kwargs(config, kwargs)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
@@ -906,6 +958,7 @@ class OpenAIAdapter(FunctionCallingModel):
             else:
                 messages = list(messages) + self._create_messages(prompt)
 
+        config = _fold_generation_kwargs(config, kwargs)
         request_params = self._build_request_params(messages, config)
         request_params["tools"] = tools
         request_params.update(kwargs)
@@ -997,6 +1050,13 @@ class OpenAIAdapter(FunctionCallingModel):
         self.validate_prompt(prompt)
         if config is None:
             config = GenerationConfig()
+
+        # Fold per-call generation kwargs into the config so they travel the
+        # model-aware path: max_tokens becomes max_output_tokens below and the
+        # sampling params are gated by family, instead of being merged raw into
+        # the Responses API (which uses a different parameter vocabulary and
+        # 400s on a raw max_tokens / temperature for gpt-5 / o-series).
+        config = _fold_generation_kwargs(config, kwargs)
 
         # Build the tools list for the Responses API.
         # The Responses API uses a flat format for function tools:
@@ -1156,6 +1216,7 @@ class OpenAIAdapter(FunctionCallingModel):
         if last_user:
             self.validate_prompt(last_user)
 
+        config = _fold_generation_kwargs(config, kwargs)
         request_params = self._build_request_params(messages, config)
         if tools:
             request_params["tools"] = tools
