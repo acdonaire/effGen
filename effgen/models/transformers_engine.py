@@ -44,6 +44,40 @@ warnings.filterwarnings('ignore', message='.*Some parameters are on the meta dev
 logger = logging.getLogger(__name__)
 
 
+# Native tool-call delimiters that the downstream parser (core.tool_calling)
+# needs to see; these must survive the special-token strip on the tool path.
+_TOOL_CALL_DELIMITERS = frozenset({
+    "<tool_call>", "</tool_call>", "<|python_tag|>", "[TOOL_CALLS]", "<function=",
+})
+# Markers that render as literal text on some tokenizers even though they are
+# not always registered as special tokens (belt-and-suspenders).
+_COMMON_END_MARKERS = frozenset({
+    "<|im_end|>", "</s>", "<|eot_id|>", "<|end_of_text|>", "<|endoftext|>",
+})
+
+
+def _strip_special_tokens_keep_tool_calls(text: str, tokenizer) -> str:
+    """Remove chat-template special tokens from decoded tool-path text.
+
+    On the native-tool-calling path the model output is decoded with
+    ``skip_special_tokens=False`` so that tool-call delimiters survive for the
+    parser. That also lets chat-template turn/end markers through, which must
+    not reach the user-visible answer. The strip set is derived from the
+    tokenizer's own ``all_special_tokens`` (minus the tool-call delimiters) so
+    it stays correct across model families — e.g. Gemma's ``<end_of_turn>`` /
+    ``<eos>`` / ``<start_of_turn>`` and Qwen's ``<|im_start|>``, which a fixed
+    list silently let leak through.
+    """
+    strip = set(getattr(tokenizer, "all_special_tokens", ()) or ())
+    strip -= _TOOL_CALL_DELIMITERS
+    strip |= _COMMON_END_MARKERS
+    # Strip longest-first so a marker that contains another is removed whole.
+    for marker in sorted(strip, key=len, reverse=True):
+        if marker:
+            text = text.replace(marker, "")
+    return text.strip()
+
+
 @contextmanager
 def _quiet_model_load():
     """Silence Transformers' load-time chatter (weight-loading progress bars and
@@ -591,15 +625,16 @@ class TransformersEngine(BatchModel):
             # Passing False explicitly preserves spacing and silences the warning.
             generated_ids = outputs[0][inputs["input_ids"].shape[1]:]
             if tools_for_template:
+                # Preserve native tool-call delimiters for the parser, then
+                # strip every other special token so chat-template turn/end
+                # markers never leak into the answer (see helper docstring).
                 generated_text = self.tokenizer.decode(
                     generated_ids, skip_special_tokens=False,
                     clean_up_tokenization_spaces=False,
                 )
-                # Strip common chat-template end tokens
-                for end_marker in ("<|im_end|>", "</s>", "<|eot_id|>",
-                                   "<|end_of_text|>", "<|endoftext|>"):
-                    generated_text = generated_text.replace(end_marker, "")
-                generated_text = generated_text.strip()
+                generated_text = _strip_special_tokens_keep_tool_calls(
+                    generated_text, self.tokenizer,
+                )
             else:
                 generated_text = self.tokenizer.decode(
                     generated_ids, skip_special_tokens=True,
