@@ -180,14 +180,31 @@ def extract_json_from_text(text: str) -> str | None:
     Returns:
         Extracted JSON string, or None if not found.
     """
-    # Try markdown code fence first
-    fence_match = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', text)
-    if fence_match:
-        return _clean_json(fence_match.group(1).strip())
+    # Prefer a markdown code fence: locate the fence *opener* and scan the text
+    # that follows for a bracket-balanced object/array (string-aware). We do not
+    # rely on a lazy ``...```...``` regex to delimit the content, because a fence
+    # whose own JSON contains a ``` (e.g. as a string value) would be truncated
+    # at that inner backtick. The fence is a strong "JSON is here" signal, so it
+    # takes priority over a stray brace earlier in surrounding prose.
+    opener = re.search(r'```(?:json)?[ \t]*\n?', text)
+    if opener:
+        balanced = _extract_balanced(text[opener.end():])
+        if balanced is not None:
+            return _clean_json(balanced)
 
-    # Try to find a JSON object or array. Start from whichever opening bracket
-    # appears *earliest* so that a top-level array of objects (``[{...}]``) is
-    # extracted whole rather than collapsing to its first inner object.
+    # No usable fence: find the first balanced JSON object/array anywhere.
+    balanced = _extract_balanced(text)
+    return _clean_json(balanced) if balanced is not None else None
+
+
+def _extract_balanced(text: str) -> str | None:
+    """Return the first bracket-balanced JSON object/array substring, or None.
+
+    String-aware (ignores brackets/backticks inside JSON string literals).
+    Starts from whichever opening bracket appears *earliest* so a top-level
+    array of objects (``[{...}]``) is extracted whole rather than collapsing to
+    its first inner object.
+    """
     brace = text.find("{")
     bracket = text.find("[")
     if brace == -1 and bracket == -1:
@@ -227,7 +244,7 @@ def extract_json_from_text(text: str) -> str | None:
             elif c == end_char:
                 depth -= 1
                 if depth == 0:
-                    return _clean_json(text[start:i + 1])
+                    return text[start:i + 1]
     return None
 
 

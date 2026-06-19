@@ -154,6 +154,28 @@ def test_extract_and_validate_roundtrip():
     assert valid is True and err is None
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # A ``` inside a JSON string value must not truncate fence extraction.
+        ("```json\n{\"```\": null}\n```", {"```": None}),
+        ("{\"note\": \"see ```code``` block\"}", {"note": "see ```code``` block"}),
+        # The fence is a stronger "JSON is here" signal than a stray prose brace.
+        ("intro { not json } ```json\n{\"real\": 1}\n```", {"real": 1}),
+        # Plain fenced / prose / array still work.
+        ("```json\n{\"a\": 1, \"b\": [1, 2]}\n```", {"a": 1, "b": [1, 2]}),
+        ("Here is {\"x\": 5} thanks", {"x": 5}),
+        ("[{\"id\": 1}, {\"id\": 2}]", [{"id": 1}, {"id": 2}]),
+    ],
+)
+def test_extract_json_handles_backticks_and_fences(text, expected):
+    import json as _json
+
+    out = extract_json_from_text(text)
+    assert out is not None
+    assert _json.loads(out) == expected
+
+
 # --------------------------------------------------------------------------- #
 # Agent-level metadata mapping (attempt surfacing + honest failure)
 # --------------------------------------------------------------------------- #
