@@ -673,6 +673,17 @@ class CLIInterface:
         except KeyboardInterrupt:
             self.print("\n\nWizard cancelled")
             return 130
+        except EOFError:
+            # No interactive terminal (piped stdin, CI, Docker, IDE run button).
+            # This is an expected condition, not a crash — give a clean,
+            # actionable message instead of dumping a traceback.
+            self.print_error(
+                "No interactive terminal detected, so the setup wizard can't "
+                "prompt for input. Pass your task directly, e.g.:\n"
+                "    effgen run \"What is the capital of France?\"\n"
+                "  (add --provider/--model to pick a backend; see 'effgen run --help')."
+            )
+            return 2
         except Exception as e:
             self.print_error(f"Error in interactive wizard: {e}")
             import traceback
