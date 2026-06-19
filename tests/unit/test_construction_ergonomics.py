@@ -113,3 +113,22 @@ class TestCreateAgentKwargs:
     def test_real_config_field_passthrough_still_works(self):
         agent = create_agent("minimal", "x", require_model=False, max_context_length=2048)
         assert agent.config.max_context_length == 2048
+
+    def test_name_is_accepted_as_alias_for_agent_name(self):
+        # `name` is the natural way to name an agent (and a real AgentConfig
+        # field). It must set the agent name rather than colliding with the
+        # internally-supplied name and raising "got multiple values for 'name'".
+        agent = create_agent("minimal", "x", require_model=False, name="researcher")
+        assert agent.name == "researcher"
+        assert agent.config.name == "researcher"
+
+    def test_agent_name_takes_precedence_over_name_alias(self):
+        # When both are given, the explicit `agent_name=` wins.
+        agent = create_agent(
+            "minimal", "x", require_model=False, agent_name="winner", name="loser"
+        )
+        assert agent.name == "winner"
+
+    def test_default_name_when_neither_given(self):
+        agent = create_agent("minimal", "x", require_model=False)
+        assert agent.name.endswith("-agent")

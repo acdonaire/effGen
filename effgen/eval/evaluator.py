@@ -43,6 +43,7 @@ class TestCase:
         query: The input query for the agent. ``input=`` is accepted as an
             ergonomic alias when constructing a TestCase.
         expected_output: Expected output text (used for exact/contains/regex).
+            ``expected=`` is accepted as an ergonomic alias.
         expected_tools: Tool names the agent should invoke.
         tags: Arbitrary tags for filtering / grouping.
         difficulty: Difficulty level (a plain string like ``"easy"`` is coerced).
@@ -54,13 +55,17 @@ class TestCase:
     tags: list[str] = field(default_factory=list)
     difficulty: Difficulty = Difficulty.MEDIUM
     metadata: dict[str, Any] = field(default_factory=dict)
-    # Ergonomic alias for ``query``; never stored, reconciled in __post_init__.
+    # Ergonomic aliases; never stored, reconciled in __post_init__.
     input: str | None = field(default=None, repr=False, compare=False)
+    expected: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.input is not None and not self.query:
             self.query = self.input
         self.input = None
+        if self.expected is not None and not self.expected_output:
+            self.expected_output = self.expected
+        self.expected = None
         if isinstance(self.difficulty, str):
             self.difficulty = Difficulty(self.difficulty)
         if not self.query:

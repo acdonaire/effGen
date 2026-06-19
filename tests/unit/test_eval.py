@@ -102,6 +102,22 @@ class TestScoring:
 # EvalResult & SuiteResults
 # ---------------------------------------------------------------------------
 
+class TestTestCaseAliases:
+    def test_expected_is_alias_for_expected_output(self):
+        # The natural ``expected=`` keyword must populate expected_output rather
+        # than raising a raw "unexpected keyword argument" TypeError.
+        tc = TestCase(query="2+2?", expected="4")
+        assert tc.expected_output == "4"
+
+    def test_expected_output_takes_precedence_over_expected_alias(self):
+        tc = TestCase(query="x", expected_output="canonical", expected="alias")
+        assert tc.expected_output == "canonical"
+
+    def test_input_alias_still_works(self):
+        tc = TestCase(input="hello", expected="hi")
+        assert tc.query == "hello" and tc.expected_output == "hi"
+
+
 class TestEvalResult:
     def test_defaults(self):
         tc = TestCase(query="test")
