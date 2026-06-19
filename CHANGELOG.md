@@ -7,6 +7,166 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-06-19
+
+### Highlights
+
+**effGen v0.3.0** is a major **stabilization & hardening** release. It adds no new providers, tools, prompt
+templates, or subsystems — instead it makes everything already in effGen **robust, predictable, fast,
+secure, and pleasant to use**. Failures are now loud and typed instead of silently succeeding; the
+model catalog updates itself and warns when it drifts; local GPUs work out of the box; the API server
+fails closed; the built-in tools are sandboxed and SSRF-safe; streaming and the agent loop are
+dramatically faster; the CLI is quiet and scriptable; and `import effgen` is effectively instant. No
+breaking API changes — every ergonomic addition is an additive alias.
+
+### Changed — fail-closed behavior
+
+- **No more silent success.** `Agent.run()` never returns `success=True` with empty output. Both the
+  direct and tool paths now return the *same* shape on failure: `success=False`, a typed redacted
+  error, `metadata["error"]`, and a consistent `metadata["reason"]`. A new
+  `classify_provider_error()` maps provider exceptions to a stable taxonomy (`auth`, `not_found`,
+  `rate_limited`, `retryable`, `fatal`).
+- **Smarter retries.** Retries fire only on retryable / rate-limited errors; auth and not-found errors
+  fast-stop with a single clear message instead of a retry storm. `AgentConfig.raise_on_error` lets
+  callers opt into exceptions.
+- **Helpful not-found.** A wrong or 404 model id suggests the nearest live alternative instead of
+  crashing (`Unknown Cerebras model 'llama3.1-8b'. Did you mean: gpt-oss-120b, zai-glm-4.7?`).
+- **Engine import errors** distinguish "module not installed" from "installed but failed to import
+  (ABI/CUDA mismatch)".
+
+### Added — self-updating, drift-aware model catalog
+
+- Every provider ships a **local catalog snapshot** (id, context window, max output, input/output
+  price per 1M tokens, tool/vision/audio support, free-tier flag, rate limits) with a **count** and a
+  **"verified on" date**.
+- **`effgen models refresh [--provider X]`** fetches the live list, updates the snapshot, and reports
+  models added / removed / changed. `check_drift()` reports divergence; effGen shows a single,
+  non-spammy warning when its catalog looks stale.
+- Refresh/drift now **filter to chat/text-generation base models** and never persist private `ft:`
+  fine-tune ids, embeddings, audio, or image models.
+- **Pricing completeness** — every record is priced or explicitly flagged free/unpriced; the cost
+  tracker reads pricing from the catalog (no silent `$0`), and token accounting prefers provider
+  usage over heuristics.
+
+### Changed — real GPU support
+
+- The documented GPU install selects a **driver-compatible torch**; a runtime guard warns once when
+  NVML sees GPUs but `torch.cuda` cannot (CPU fallback). CPU / CUDA-12.4 / CUDA-13 / vLLM install
+  matrices are documented.
+- **`temperature=0` works** — `temperature <= 0` is treated as greedy decoding (`do_sample=False`)
+  across local backends instead of raising "temperature must be strictly positive".
+- **GPU allocator** no longer deadlocks on `reset()`, reads real free memory via NVML /
+  `torch.cuda.mem_get_info` (respecting other processes), and no longer mutates the global CUDA
+  device during discovery.
+- Local tool answers no longer leak chat-template special tokens (e.g. Gemma `<end_of_turn>`/`<eos>`,
+  Qwen `<|im_start|>`); the strip set is derived from the tokenizer while preserving tool-call
+  delimiters.
+
+### Security — server fails closed
+
+- Outside dev mode with no configured issuer/JWKS, the server **rejects all bearer tokens** — a forged
+  HS256 JWT can no longer reach `/whoami` or `/v1/chat/completions`. `/v1/*` return 401 without
+  credentials.
+- Production CORS no longer combines wildcard origin with credentials; metrics and the dashboard
+  require auth unless explicitly opened; the `viewer` role can no longer run tools and unknown roles
+  are rejected (strict mode).
+- Budget enforcement **reserves then reconciles** so failed calls are not charged; request bodies are
+  size-limited before buffering; the server version is sourced from `effgen.__version__`.
+- Upstream/provider-auth/missing-key failures map to **502/503** (server-side) — `401` is reserved for
+  genuine client-auth failures.
+
+### Security — hardened built-in tools
+
+- **PythonREPL** runs user code in a worker subprocess with a hard wall-clock timeout, process-group
+  kill, and memory/output caps enforced *outside* the executed code (`while True: pass` now dies at
+  its timeout, not ~30 s later).
+- **One shared SSRF guard** (`tools/builtin/_net.py`) — DNS resolution, per-IP classification, and
+  re-validation on every redirect — protects *every* URL-taking builtin; private/loopback/link-local/
+  metadata addresses are blocked by default (opt-out for user-URL tools, host-pinned for fixed
+  endpoints).
+- **Path confinement** (`tools/builtin/_fs.py`) on every file-path tool; the un-gated `pickle.load`
+  path was removed (JSON-only state); prompt-chain conditions are evaluated with an AST-whitelist
+  comparator instead of `eval()` over interpolated model output. A security-pattern gate test prevents
+  regressions.
+
+### Performance
+
+- **`import effgen` is effectively instant** — the public surface is resolved lazily, so a bare import
+  / version check dropped from ~7.5 s / ~800 MB to **~0.02 s / ~12 MB**; heavy provider/torch imports
+  are deferred until first use.
+- **Faster streaming** — removed per-chunk overhead, true incrementality across OpenAI/Gemini/Groq and
+  local backends, typed mid-stream errors (no longer buffered into one final chunk), and
+  optional usage in the final chunk.
+- **Efficient agent loop** — repeated identical tool calls are short-circuited and the loop stops once
+  a confident answer exists ("compute 15 squared" went from **6 tool calls / 66 s** to **1 tool call**).
+- **Faster, structured output** — native JSON modes are preferred; unmatched schemas return
+  `success=False` with the raw text and validation error instead of silently reprompting.
+
+### Changed — consistent, scriptable surfaces
+
+- **Input robustness** — `Agent.run()` accepts `str | Message | list[ContentPart]` and a first-class
+  `inputs=` kwarg for media; clear `TypeError` otherwise.
+- **CLI** — quiet by default (clean tables, no INFO spam); `--json` on `doctor`/`models`/`tools`/
+  `cost`; `run`/`chat`/`debug` accept `--provider`; `models list`/`info`/`refresh` are catalog-backed
+  with split views (cached / configured / live) showing status, price, context, deprecation, and
+  verified-on; `doctor` distinguishes "key present" from "key usable" and gains `doctor --live
+  --cheap` plus a CUDA/torch/vLLM system report; user errors exit non-zero.
+- **Construction ergonomics** — the obvious calls work: `create_agent(preset, model, name="X")`,
+  `TemplateManager()` is populated by default, `ConfigLoader.load`, `ShortTermMemory.get_messages`,
+  `TestCase(input=, expected=)`, and a `@tool` / `Tool.from_function()` helper. A bare/invalid
+  constructor raises a clear accepted-kwargs error instead of a cryptic dataclass `TypeError`.
+- **KeywordExpander** validates its input (a bare string is one keyword, not character-iterated) and
+  `get_guardrail_preset("default")` resolves.
+- **Tool registry auto-discovers** lazily (no INFO spam); `effgen tools info/test` discover tools and
+  exit non-zero on failure; the plugin scaffold round-trips (create → install → import → run).
+
+### Changed — internals & DX
+
+- One implementation per concern: a single `CircuitBreaker`, metrics/logging/tracing consolidated with
+  import-compatible shims, a `NullHandler` on the package logger, and **no INFO logging on import**.
+- Multi-agent teams, workflows, and the DAG are exported top-level, reconciled to consistent shapes,
+  and **fail honestly** (a failing node/sub-agent → `success=False` with a typed per-node error; an
+  empty workflow → `success=False, reason="empty_workflow"`).
+- The MCP server round-trips with the **official `mcp` client** (stdio + HTTP) behind a fail-closed
+  tool allowlist; sessions, checkpoints, and `effgen resume` are durable with clear errors on
+  corrupt/absent files; Jupyter magics, the dashboard, `effgen debug`/`compare`, and shell completion
+  all work against real runs.
+- **Live progress UX** — TTY-aware "thinking"/working status, a live elapsed/tokens/cost meter that
+  freezes into a final summary, graceful Ctrl-C (partial result + "Stopped."), rotating tips,
+  "did you mean?" suggestions, a first-run welcome, `effgen quickstart`, rich Markdown/code rendering,
+  `print(result)` → the answer, a Jupyter `_repr_html_` card, and a polished `effgen chat` REPL with
+  slash commands and per-turn cost. All animation honors `NO_COLOR`, `--no-animation`, `--quiet`, and
+  non-interactive/CI output.
+
+### Packaging & dependency security
+
+- Reconciled extras with a single source of truth (`[api]`, `[server]`, `[rag]`, `[tools-web]`,
+  `[tools-docs]`, `[local]`, `[vllm]`, `[all]`), tested upper bounds for fast-moving deps, a
+  `constraints-cu1xx.txt` flow that prevents an extras re-install from replacing a working torch, one
+  canonical installer, and a conda recipe that sources the real version.
+- `pip-audit` runs clean across the documented extras; `pypdf` was bumped to `>=6.13.3`
+  (GHSA-jm82-fx9c-mx94). The `requirements-all-lock.txt` reproduces `.[all]` on Python 3.11.
+
+### Quick start
+
+```python
+from effgen import Agent, load_model
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator, PythonREPL
+
+model = load_model("Qwen/Qwen2.5-1.5B-Instruct", quantization="4bit")
+agent = Agent(config=AgentConfig(name="math_agent", model=model, tools=[Calculator(), PythonREPL()]))
+
+result = agent.run("What is 24344 * 334?")
+print(result.output)
+```
+
+```bash
+effgen models refresh                 # update the catalog from the live provider APIs
+effgen doctor --live --cheap          # check which provider keys are actually usable
+effgen run --provider groq "Summarize the theory of relativity in two sentences."
+```
+
 ## [0.2.10] - 2026-05-27
 
 ### Highlights

@@ -8,11 +8,11 @@ effGen ships a production-grade Docker image built with a multi-stage Dockerfile
 # Dev mode (auth disabled — fine for local testing)
 docker build -f deploy/docker/Dockerfile \
   --build-arg EXTRAS=server \
-  -t effgen:0.2.10 .
+  -t effgen:0.3.0 .
 
 docker run --rm -p 8080:8080 \
   -e EFFGEN_DEV_MODE=1 \
-  effgen:0.2.10
+  effgen:0.3.0
 
 curl http://localhost:8080/health
 # {"status":"ok"}
@@ -22,22 +22,22 @@ curl http://localhost:8080/health
 
 | Tag | Description |
 |-----|-------------|
-| `effgen:0.2.10` | Exact release |
-| `effgen:0.2` | Latest 0.2.x |
+| `effgen:0.3.0` | Exact release |
+| `effgen:0.3` | Latest 0.3.x |
 | `effgen:latest` | Latest release |
 
 ## Build arguments
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `VERSION` | `0.2.10` | Label baked into image metadata |
+| `VERSION` | `0.3.0` | Label baked into image metadata |
 | `EXTRAS` | `server` | pip extras to install (auth + Prometheus metrics; FastAPI/uvicorn are core) |
 
 To add a provider SDK (e.g. Cerebras):
 ```bash
 docker build -f deploy/docker/Dockerfile \
   --build-arg EXTRAS=server,cerebras \
-  -t effgen:0.2.10-full .
+  -t effgen:0.3.0-full .
 ```
 
 ## Production run
@@ -52,7 +52,7 @@ docker run --rm -p 8080:8080 \
   --read-only \
   --tmpfs /tmp \
   --tmpfs /home/effgen/.effgen/audit \
-  effgen:0.2.10
+  effgen:0.3.0
 ```
 
 ## Security posture
@@ -99,6 +99,6 @@ services:
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f deploy/docker/Dockerfile \
-  -t effgen:0.2.10 \
+  -t effgen:0.3.0 \
   --push .
 ```

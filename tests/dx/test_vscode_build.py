@@ -67,9 +67,11 @@ class TestPackageJson:
         assert "effgen.defaultModel" in props
 
     def test_version_matches_effgen(self):
+        import effgen
+
         pkg = json.loads((VSCODE_DIR / "package.json").read_text())
-        # Extension version should be 0.2.10 (the release version)
-        assert pkg["version"] == "0.2.10"
+        # The extension version tracks the effGen package release version.
+        assert pkg["version"] == effgen.__version__
 
 
 class TestTsConfig:

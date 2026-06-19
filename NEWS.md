@@ -1,5 +1,66 @@
 # effGen Release Notes
 
+## v0.3.0 — June 19, 2026
+
+**effGen v0.3.0 is the stabilization release.** It adds no new features — instead it takes everything
+effGen already does and makes it *robust, predictable, fast, secure, and genuinely pleasant to use*.
+There are no breaking API changes; every ergonomic improvement is an additive alias.
+
+### robust failures, never silent
+
+The biggest change is one you'll feel immediately: effGen no longer lies about success. `Agent.run()`
+can no longer return `success=True` with an empty answer. A bad model id, a missing key, or a provider
+outage now produces `success=False` with a typed, redacted error and a consistent `reason` — the same
+shape whether you used tools or not. Retries fire only when retrying could help; an auth error stops
+once, clearly, instead of storming. A 404 model id suggests the nearest live alternative.
+
+### A model catalog that updates itself
+
+effGen ships a local snapshot of every provider's models — prices, context windows, capabilities,
+free-tier flags — with a count and a "verified on" date. `effgen models refresh` pulls the live list
+and tells you exactly what changed; effGen warns (once, never spammily) when its catalog looks stale.
+Cerebras, OpenAI, and the rest now reflect what the live APIs actually serve, and private fine-tune
+ids and non-chat models never pollute the catalog.
+
+### Real GPU support, secure server, hardened tools
+
+The documented GPU install now yields a usable GPU (or a loud, correct warning), `temperature=0`
+decodes greedily instead of crashing, and the GPU allocator no longer deadlocks. The API server
+**fails closed** — a forged JWT can't reach a protected route, CORS and the metrics dashboard are
+locked down, and a missing upstream key returns 502, not a misleading 401. Built-in tools are
+sandboxed: the Python REPL enforces its timeout from outside the code, every URL tool shares one
+SSRF guard, file tools are path-confined, and unsafe pickle/`eval` paths are gone.
+
+### Fast, consistent, and a joy to use
+
+`import effgen` dropped from ~7.5 s to about **20 ms** thanks to lazy loading. Streaming is genuinely
+incremental, the agent loop stops calling tools once it has a confident answer (a task that took 6
+tool calls and 66 seconds now takes 1), and structured output is faster and honest about failures.
+The CLI is quiet and scriptable (`--json` everywhere, `--provider` on `run`/`chat`/`debug`, non-zero
+exit codes), the obvious constructor calls just work, and a new live "thinking" UX, rotating tips,
+"did you mean?" suggestions, rich Markdown rendering, and a polished `effgen chat` make the first five
+minutes feel easy. `pip-audit` is clean across the documented extras and `pypdf` is patched.
+
+### Try it
+
+```python
+from effgen import Agent, load_model
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator, PythonREPL
+
+model = load_model("Qwen/Qwen2.5-1.5B-Instruct", quantization="4bit")
+agent = Agent(config=AgentConfig(name="math_agent", model=model, tools=[Calculator(), PythonREPL()]))
+print(agent.run("What is 24344 * 334?").output)
+```
+
+```bash
+effgen models refresh                 # update the catalog from the live provider APIs
+effgen doctor --live --cheap          # check which provider keys are actually usable
+effgen run --provider groq "Summarize the theory of relativity in two sentences."
+```
+
+---
+
 ## v0.2.10 — May 27, 2026
 
 **effGen v0.2.10** ships the **Security, Edge & Developer Experience** layer — hardening effGen end-to-end from secret scanning to production deployment to everyday developer ergonomics.

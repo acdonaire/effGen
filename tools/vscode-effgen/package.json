@@ -2,7 +2,7 @@
   "name": "vscode-effgen",
   "displayName": "effGen",
   "description": "effGen — Efficient Agent Framework: prompt-template completion, run code lens, hover docs",
-  "version": "0.2.10",
+  "version": "0.3.0",
   "publisher": "effgen",
   "repository": {
     "type": "git",

@@ -47,6 +47,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| 🎯 | **19 Jun 2026** | **v0.3.0 Released**: Stabilization & Hardening — robust, fail-closed `Agent.run()` (no silent success; typed redacted errors; smart retries), a self-updating drift-aware model catalog (`effgen models refresh`), real GPU support (`temperature=0`, deadlock-free allocator), a fail-closed API server (forged-JWT rejected, secure CORS/metrics/RBAC/budget), hardened built-in tools (REPL timeout, one shared SSRF guard, path confinement, no unsafe pickle/eval), `import effgen` in ~20 ms, faster streaming + agent loop, a quiet scriptable CLI, and a live "thinking" UX. No breaking changes. [See changelog](CHANGELOG.md#030---2026-06-19) |
 | 🔒 | **27 May 2026** | **v0.2.10 Released**: Security, Edge & DX — secret scanning (gitleaks), SBOM (CycloneDX), pip-audit CI, sandboxed CodeExecutor (SubprocessSandbox + DockerSandbox), OAuth2/OIDC + RBAC + audit log, Docker + Helm, AWS Lambda (Mangum), Cloudflare Worker edge proxy, VSCode extension, Jupyter magics, live dashboard. [See changelog](CHANGELOG.md#0210---2026-05-27) |
 | 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [See changelog](CHANGELOG.md#029---2026-05-23) |
 | 🖼️ | **21 May 2026** | **v0.2.8 Released**: First-class multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [See changelog](CHANGELOG.md#028---2026-05-21) |
@@ -56,7 +57,7 @@
 | 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [See changelog](CHANGELOG.md#024---2026-05-14) |
 | 🚀 | **4 May 2026** | **v0.2.3 Released**: 5 new cloud backends (Groq, Together AI, Fireworks, Replicate, HuggingFace Inference) — 9 providers total. Unified ProviderRegistry, `effgen doctor` auth check, backend parity matrix. [See changelog](CHANGELOG.md#023---2026-05-04) |
 | 🚀 | **28 Apr 2026** | **v0.2.2 Released**: Gemini 3.x/2.5/2.0 registry, `thinking_budget`, Google Search grounding, Files API, Gemini native tools (GoogleSearch, UrlContext, CodeExecution). Anthropic Claude 4.7 registry, extended thinking, prompt caching (`cache_control`), streaming polish, experimental native tools. [See changelog](CHANGELOG.md#022---2026-04-28) |
-| 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (4 free-tier models, streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](CHANGELOG.md#021---2026-04-25) |
+| 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](CHANGELOG.md#021---2026-04-25) |
 | 🚀 | **9 Apr 2026** | **v0.2.0 Released**: Major release — native tool calling, guardrails, multi-agent orchestration, RAG pipeline, 31 tools, eval framework, production API server, MLX Apple Silicon support, Python & TypeScript SDKs. [See changelog](CHANGELOG.md#020---2026-04-09) |
 | 🍎 | **8 Apr 2026** | **MLX & Apple Silicon support merged** (PR #4): Native Metal GPU acceleration via MLX & MLX-VLM backends, hardware detection, 5 Gradio GUI examples. `pip install effgen[mlx]` |
 | 🔧 | **25 Mar 2026** | **v0.1.3 Released**: Verification hardening — smarter loop detection, "skip the tool" prompting, model-aware token counting, sub-agent depth limits, circuit breaker persistence. [See changelog](CHANGELOG.md#013---2026-03-25) |
@@ -308,7 +309,7 @@ Observability<br/>
 ```python
 from effgen.observability import get_logger
 log = get_logger(__name__)
-log.event("model.call.started", provider="cerebras", model="llama3.1-8b", cached_tokens=0)
+log.event("model.call.started", provider="cerebras", model="gpt-oss-120b", cached_tokens=0)
 # → {"ts": "2026-05-23T...", "level": "INFO", "event": "model.call.started", ...}
 ```
 
@@ -366,24 +367,21 @@ See [docs/observability/overview.md](docs/observability/overview.md) for full se
 **5 cookbook walkthroughs** — image Q&A, audio transcribe + reason, video summarize, OCR + LLM structured extraction, chart reading from an image. All in `docs/cookbook/`.
 
 ```python
-from effgen import image_from, audio_from, video_from
-from effgen.core.messages import Message, Role
+from effgen import image_from, audio_from
 from effgen.presets import create_agent
 from effgen import load_model
 
-model = load_model("gemini-2.0-flash", provider="gemini")
+model = load_model("gemini-3.1-flash-lite", provider="gemini")
 agent = create_agent("multimodal", model)
 
-# Image question
-img = image_from("https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/240px-PNG_transparency_demonstration_1.png")
-msg = Message(role=Role.USER, content=[img, "What is in this image?"])
-result = agent.run_message(msg)
+# Image question — pass media through inputs=
+img = image_from("https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png")
+result = agent.run("What is in this image?", inputs=[img])
 print(result.output)
 
 # Audio transcription
 aud = audio_from("/tmp/clip.mp3")
-msg = Message(role=Role.USER, content=[aud, "Transcribe and summarize."])
-result = agent.run_message(msg)
+result = agent.run("Transcribe and summarize.", inputs=[aud])
 ```
 
 ```bash
@@ -426,7 +424,7 @@ effgen prompts list --format markdown
 # Inspect and evaluate
 effgen prompts show research.literature_review.v1.cot
 effgen prompts eval
-effgen prompts eval --domain coding --live --model llama3.1-8b
+effgen prompts eval --domain coding --live --model gpt-oss-120b
 
 # Interactive playground
 effgen prompts playground
@@ -455,16 +453,18 @@ See [docs/prompts/gallery.md](docs/prompts/gallery.md) for the full template cat
 1. **OCR** — `OCRTool` (Tesseract local + OCR.space fallback; `OCRBackendUnavailable` raised with install instructions).
 
    ```python
+   import asyncio
    from effgen.tools.builtin.ocr import OCRTool
-   result = OCRTool().execute({"operation": "extract", "image_path": "/tmp/scan.png"})
-   print(result["data"]["text"])
+   result = asyncio.run(OCRTool().execute(operation="extract", image_path="/tmp/scan.png"))
+   print(result.output["text"])
    ```
 
 2. **Audio Transcription** — `AudioTranscribeTool` (faster-whisper local; HF Inference fallback; GPU auto-detected).
 
    ```python
+   import asyncio
    from effgen.tools.builtin.audio_transcribe import AudioTranscribeTool
-   result = AudioTranscribeTool().execute({"operation": "transcribe", "audio_path": "/tmp/clip.mp3"})
+   result = asyncio.run(AudioTranscribeTool().execute(operation="transcribe", audio_path="/tmp/clip.mp3"))
    ```
 
 3. **Image Analysis** — `ImageInfoTool` (Pillow metadata, zero network) + `ImageCaptionTool` (vision-capable model router).
@@ -472,25 +472,28 @@ See [docs/prompts/gallery.md](docs/prompts/gallery.md) for the full template cat
 4. **Document Parsing** — `PDFTool` (pypdf + pdfplumber), `DOCXTool` (python-docx), `ExcelTool` (openpyxl + pandas). All added to `research` and `general` presets.
 
    ```python
+   import asyncio
    from effgen.tools.builtin.pdf import PDFTool
-   result = PDFTool().execute({"operation": "text", "path": "/tmp/paper.pdf"})
+   result = asyncio.run(PDFTool().execute(operation="text", path="/tmp/paper.pdf"))
    ```
 
 5. **Geo / Weather** — `WeatherTool` (Open-Meteo, free, no auth), `GeocodeTool` (Nominatim/OSM, 1 req/s), `MapsTool` (staticmap PNG renderer).
 
    ```python
+   import asyncio
    from effgen.tools.builtin.geocode import GeocodeTool
-   result = GeocodeTool().execute({"operation": "geocode", "address": "San Francisco, CA"})
+   result = asyncio.run(GeocodeTool().execute(operation="geocode", address="San Francisco, CA"))
    ```
 
 6. **Email & Webhooks** — `EmailSMTPTool`, `EmailIMAPTool`, `SlackWebhookTool`, `DiscordWebhookTool`. All in new `notify` preset. Webhook URLs are redacted in logs.
 
    ```python
+   import asyncio
    from effgen.tools.builtin.slack_webhook import SlackWebhookTool
-   result = SlackWebhookTool().execute({"operation": "post", "text": "Deploy complete!"})
+   result = asyncio.run(SlackWebhookTool().execute(operation="post", text="Deploy complete!"))
    ```
 
-See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for all 58+ tools.
+See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for all 66 tools.
 
 </details>
 
@@ -502,16 +505,18 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
 1. **Academic Research** — `PubMedTool` (NCBI, 3 ops, built-in rate limiting), `ArXivTool` (Atom feed + PDF download), `SemanticScholarTool` (search + citations + references).
 
    ```python
+   import asyncio
    from effgen.tools.builtin.arxiv import ArXivTool
    tool = ArXivTool()
-   result = tool.execute({"operation": "search", "query": "transformer attention", "max_results": 5})
+   result = asyncio.run(tool.execute(operation="search", query="transformer attention", max_results=5))
    ```
 
 2. **News & RSS** — `RSSFeedTool` (any RSS/Atom feed), `NewsTool` (BBC, Reuters, HN, NPR, etc. + optional NewsAPI.org key).
 
    ```python
+   import asyncio
    from effgen.tools.builtin.news import NewsTool
-   result = NewsTool().execute({"operation": "top_headlines", "category": "technology"})
+   result = asyncio.run(NewsTool().execute(operation="top_headlines", category="technology"))
    ```
 
 3. **YouTube** — `YouTubeTranscriptTool` (captions without Google API key), `YouTubeMetadataTool` (via yt-dlp, public content only).
@@ -522,7 +527,7 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
 
 6. **QR Codes** — `QRGenerateTool` (generate locally), `QRReadTool` (decode from image, with OpenCV fallback if zbar is unavailable).
 
-See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for all 58+ tools.
+See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for all 66 tools.
 
 </details>
 
@@ -543,7 +548,7 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
        required_capabilities={Capability.chat},
    )
    decision = router.route(ctx)
-   print(decision.chosen)      # e.g., ProviderModelPair("cerebras", "llama3.1-8b")
+   print(decision.chosen)      # e.g., ProviderModelPair("cerebras", "gpt-oss-120b")
    print(decision.eliminated)  # [(pair, reason), ...] — fully explainable
    ```
 
@@ -625,11 +630,11 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
 <details>
 <summary><b>Top 5 features from v0.2.1</b></summary>
 
-1. **Cerebras backend** — 4 free-tier models (`llama3.1-8b`, `qwen-3-235b-a22b-instruct-2507`, `gpt-oss-120b`, `zai-glm-4.7`) with streaming, native function-calling, automatic RPM/TPM/RPD/TPD rate-limit coordination, and per-call cost tracking. `pip install effgen[cerebras]` and set `CEREBRAS_API_KEY`.
+1. **Cerebras backend** — the models the live API currently serves (`gpt-oss-120b`, `zai-glm-4.7`) with streaming, native function-calling, automatic RPM/TPM/RPD/TPD rate-limit coordination, and per-call cost tracking. `pip install effgen[cerebras]` and set `CEREBRAS_API_KEY`. Run `effgen models refresh --provider cerebras` to pick up catalog changes.
 
    ```python
    from effgen import load_model
-   model = load_model("llama3.1-8b", provider="cerebras")
+   model = load_model("gpt-oss-120b", provider="cerebras")
    ```
 
 2. **OpenAI gpt-5 / gpt-5.4-nano / o-series reasoning models** — full registry coverage with `reasoning_effort` (`minimal`/`low`/`medium`/`high`) and `max_reasoning_tokens` on `GenerationConfig`. Reasoning payloads are routed only to reasoning-capable models.
@@ -686,7 +691,7 @@ effgen run --preset research "Tell me about quantum computing"
 
 ---
 
-## 🛠️ Built-in Tools (58+)
+## 🛠️ Built-in Tools (66)
 
 <div align="center">
 
@@ -947,7 +952,7 @@ sql_prompts = registry.search(domain="data")
 python examples/basic/chat_gui_mlx.py              # MLX Chat — streaming chat with Apple Silicon models (port 7860)
 python examples/basic/agent_viz_mlx.py             # Agent Visualizer — step-by-step reasoning + code editor (port 7860)
 python examples/basic/tool_builder_gui.py          # Tool Builder — visually create custom tools (port 7863)
-python examples/basic/tool_tester_gui.py           # Tool Tester — browse, test, inspect all 58+ tools (port 7864)
+python examples/basic/tool_tester_gui.py           # Tool Tester — browse, test, inspect all 66 tools (port 7864)
 ```
 
 ### 🍎 Apple Silicon (MLX)
@@ -1071,9 +1076,9 @@ effGen supports **9 cloud inference providers** + 4 local backends, tested acros
 | **OpenAI** | Cloud API | *(bundled)* | gpt-5/gpt-5.4/o-series, reasoning_effort, structured outputs, native tools |
 | **Anthropic** | Cloud API | *(bundled)* | Claude 4.7/4.x, extended thinking, prompt caching, native tools |
 | **Google Gemini** | Cloud API | *(bundled)* | Gemini 3.x/2.5/2.0, thinking_budget, grounding, Files API, native tools |
-| **Cerebras** | Cloud API | `effgen[cerebras]` | 4 free-tier models (llama3.1-8b, qwen-3-235b), ultra-low latency |
+| **Cerebras** | Cloud API | `effgen[cerebras]` | live models (gpt-oss-120b, zai-glm-4.7), ultra-low latency |
 | **Groq** | Cloud API | `effgen[groq]` | 16 models (llama-3.3-70b, mixtral, qwen3-32b), ultra-fast free-tier inference |
-| **Together AI** | Cloud API | `effgen[together]` | 163-model catalog (llama, deepseek, qwen, mistral), per-model pricing |
+| **Together AI** | Cloud API | `effgen[together]` | 130+-model catalog (llama, deepseek, qwen, mistral), per-model pricing |
 | **Fireworks** | Cloud API | `effgen[fireworks]` | 80 chat models (54 tool-capable), serverless + dedicated |
 | **Replicate** | Cloud API | `effgen[replicate]` | 38 models, async run-poll, SSE streaming, compute-second billing |
 | **HuggingFace** | Cloud API | `effgen[hf]` | 124-model HF Router catalog, custom Inference Endpoints, free serverless tier |
@@ -1156,15 +1161,15 @@ Rate Limiting<br/>
 
 ## 🚀 Deployment
 
-effGen v0.2.10 ships production-ready deployment recipes for every major target:
+effGen v0.3.0 ships production-ready deployment recipes for every major target:
 
 ### 🐳 Docker
 
 Multi-stage build with a non-root user, read-only filesystem, and `/health` healthcheck. See [`docs/deploy/docker.md`](docs/deploy/docker.md).
 
 ```bash
-docker build -f deploy/docker/Dockerfile -t effgen:0.2.10 .
-docker run -p 8000:8000 --env-file .env effgen:0.2.10
+docker build -f deploy/docker/Dockerfile -t effgen:0.3.0 .
+docker run -p 8000:8000 --env-file .env effgen:0.3.0
 curl http://localhost:8000/health
 ```
 
@@ -1174,7 +1179,7 @@ Full Helm chart with Deployment, Service, Ingress, NetworkPolicy, PDB, and HPA (
 
 ```bash
 helm lint deploy/k8s/helm/effgen/
-helm install effgen deploy/k8s/helm/effgen/ --set image.tag=0.2.10
+helm install effgen deploy/k8s/helm/effgen/ --set image.tag=0.3.0
 ```
 
 ### λ AWS Lambda
