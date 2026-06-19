@@ -491,7 +491,8 @@ def create_agent(
         model: A loaded model instance or a model identifier string. If omitted,
             ``EFFGEN_DEFAULT_MODEL`` is used when set, otherwise a clear error
             tells you how to pick one (effGen never silently picks a paid model).
-        agent_name: Optional override for the agent name.
+        agent_name: Optional override for the agent name (the keyword ``name``
+            is accepted as an alias).
         extra_tools: Additional tool instances to add beyond the preset.
         knowledge_base: Only used by the ``rag`` preset. A document source, or
             a list of them, indexed into the agent's retrieval tool at
@@ -526,6 +527,15 @@ def create_agent(
         >>> # or a local small model:
         >>> agent = create_agent("math", "Qwen/Qwen2.5-1.5B-Instruct")
     """
+    # `name` is the natural way to name an agent (and a real AgentConfig field),
+    # so accept it as an alias for `agent_name`. Without this it would fall into
+    # **config_overrides and collide with the internally-supplied name, raising a
+    # cryptic "got multiple values for keyword argument 'name'".
+    if "name" in config_overrides:
+        _alias_name = config_overrides.pop("name")
+        if agent_name is None:
+            agent_name = _alias_name
+
     if model is None:
         model = _resolve_default_model(preset)
 
