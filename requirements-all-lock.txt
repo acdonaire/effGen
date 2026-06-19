@@ -820,7 +820,7 @@ pyparsing==3.3.2
     #   httplib2
     #   matplotlib
     #   pip-requirements-parser
-pypdf==6.12.1
+pypdf==6.13.3
     # via effgen (pyproject.toml)
 pypdfium2==5.8.0
     # via pdfplumber

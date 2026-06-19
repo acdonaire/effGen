@@ -36,11 +36,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 OUTPUT_DIR = REPO_ROOT / "dist"
 
-# Last full pip-audit sweep across core + [all]: verified 2026-06-16 — a fresh
+# Last full pip-audit sweep across core + [all]: verified 2026-06-18 — a fresh
 # install resolves every non-exempt dependency to a patched release (e.g.
 # starlette 1.3.1 clears CVE-2026-54282/54283, aiohttp 3.14.1, cryptography
-# 49.x, python-multipart 0.0.32, tornado 6.5.7), so this gate is green out of
-# the box. The pinned lock files are frozen snapshots and are bumped separately.
+# 49.x, python-multipart 0.0.32, tornado 6.5.7, pypdf 6.13.3 clears
+# GHSA-jm82-fx9c-mx94), so this gate is green out of the box. The pinned lock
+# files are frozen snapshots and are bumped separately.
 #
 # Packages excluded from the HIGH/CRITICAL gate:
 #   - packaging toolchain (pip, setuptools) — not shipped runtime deps
