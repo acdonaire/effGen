@@ -165,6 +165,39 @@ class TestRagKnowledgeBase:
         results = res.output["results"] if isinstance(res.output, dict) else []
         assert any("Mercury" in r["content"] for r in results)
 
+    def test_pdf_knowledge_base_is_indexed(self, tmp_path):
+        """A PDF knowledge base ingests out of the box (pypdf/pdfplumber),
+        not only when pymupdf happens to be installed."""
+        import asyncio
+
+        pytest.importorskip("reportlab")
+        pytest.importorskip("pypdf")
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        pdf = tmp_path / "facts.pdf"
+        c = canvas.Canvas(str(pdf), pagesize=letter)
+        c.drawString(72, 720, "Neptune is the farthest planet from the Sun.")
+        c.save()
+
+        agent = create_agent("rag", self._mock_model(), knowledge_base=str(pdf))
+        rt = self._retrieval_tool(agent)
+        res = asyncio.run(
+            rt.execute(operation="search", query="farthest planet", top_k=1)
+        )
+        assert res.success
+        results = res.output["results"] if isinstance(res.output, dict) else []
+        assert any("Neptune" in r["content"] for r in results)
+
+    def test_unparseable_file_surfaces_skip_reason(self, tmp_path):
+        """When nothing indexes, the error names *why* each file was skipped
+        instead of a bare "0 documents"."""
+        pytest.importorskip("pypdf")
+        bad = tmp_path / "broken.pdf"
+        bad.write_text("not a real pdf")
+        with pytest.raises(ValueError, match="Skipped:.*broken.pdf"):
+            create_agent("rag", self._mock_model(), knowledge_base=str(bad))
+
     def test_empty_knowledge_base_fails_loud(self):
         """Blank entries must raise, never silently build an empty index."""
         with pytest.raises(ValueError, match="0 documents"):

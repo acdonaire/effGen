@@ -416,6 +416,7 @@ def _ingest_rag_knowledge_base(
     chunks = []
     n_files = 0
     n_inline = 0
+    skipped: list[tuple[str, str]] = []
     for src in sources:
         s = str(src)
         # A blank entry has no content; skip it (and never let "" become
@@ -425,6 +426,7 @@ def _ingest_rag_knowledge_base(
         path = Path(s).expanduser()
         if path.exists():
             chunks.extend(ingester.ingest(path))
+            skipped.extend(ingester.last_skipped)
             n_files += 1
         elif _looks_like_path(s):
             # Looks like a path but isn't on disk -> almost certainly a typo.
@@ -444,11 +446,19 @@ def _ingest_rag_knowledge_base(
         for c in chunks
     ]
     if not docs:
+        reason = ""
+        if skipped:
+            # Surface *why* each file was skipped (e.g. a missing PDF backend)
+            # instead of a bare "0 documents" — the actionable hint already
+            # exists, it was just being logged and thrown away.
+            details = "; ".join(f"{p} — {why}" for p, why in skipped)
+            reason = f" Skipped: {details}."
         raise ValueError(
             "knowledge_base produced 0 documents to index. Pass existing file "
             "or directory paths, or raw text strings with content. Got "
             f"{len(sources)} entr{'y' if len(sources) == 1 else 'ies'} "
             f"({n_files} treated as path(s), {n_inline} as inline text)."
+            + reason
         )
 
     retrieval_tool = next(

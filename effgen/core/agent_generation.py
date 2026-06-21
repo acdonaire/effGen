@@ -13,6 +13,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from ..models._adapter_utils import FINISH_LENGTH, default_max_output_tokens
 from ..models.base import BaseModel, GenerationConfig
 from ..models.errors import (
     InvalidRequestError,
@@ -25,6 +26,13 @@ from ..observability import get_logger as _get_obs_logger
 from ..utils.structured_logging import (
     get_structured_logger,
 )
+
+# When a reasoning model returns an empty, "length"-truncated result with the
+# default budget, grow the budget and retry once (×4, capped) before giving up
+# with an actionable message — the user never pinned max_tokens, so escalating
+# is safe and far better than a misleading "empty response" they were billed for.
+_TRUNCATION_ESCALATION_FACTOR = 4
+_TRUNCATION_MAX_TOKENS_CEILING = 8192
 
 if TYPE_CHECKING:
     pass
@@ -231,7 +239,11 @@ class AgentGenerationMixin:
         ]
 
         last_error = None
+        truncation_detail: dict[str, Any] | None = None
         total_tokens = 0
+        # Whether the caller pinned max_tokens; if they didn't we may grow the
+        # budget to recover a reasoning model from a "length"-truncated empty.
+        user_pinned_max_tokens = kwargs.get("max_tokens") is not None
         # Build ordered list of models to try: selected first, then others
         failover_models = [active_model] + [
             m for m in self._all_models if m is not active_model
@@ -241,6 +253,14 @@ class AgentGenerationMixin:
             if current_model is None:
                 continue
 
+            # Model-aware default budget: reasoning families (gpt-5*, o-series)
+            # burn output budget on hidden reasoning, so 1024 can leave zero
+            # visible tokens. Give them room unless the caller pinned a value.
+            current_max_tokens = (
+                kwargs["max_tokens"] if user_pinned_max_tokens
+                else default_max_output_tokens(current_model)
+            )
+
             for attempt in range(max_retries):
                 try:
                     # Slightly increase temperature on retries to get different output
@@ -248,7 +268,7 @@ class AgentGenerationMixin:
 
                     gen_config = GenerationConfig(
                         temperature=retry_temperature,
-                        max_tokens=kwargs.get('max_tokens', 1024),
+                        max_tokens=current_max_tokens,
                         top_p=kwargs.get('top_p', 0.9),
                         stop_sequences=kwargs.get('stop_sequences', default_stop_sequences)
                     )
@@ -265,6 +285,9 @@ class AgentGenerationMixin:
                     finish_reason = result.finish_reason if result and hasattr(result, 'finish_reason') else "unknown"
                     total_tokens += tokens_used
                     result_metadata = result.metadata if result and hasattr(result, 'metadata') else {}
+                    # Surface per-run cost/token usage on the eventual response
+                    # (every call counts — including a billed empty one).
+                    self._accumulate_run_cost(result_metadata)
 
                     # Native tool-calls can arrive with empty text (finish_reason="tool_calls").
                     # Return the call to the agent loop instead of treating it as an empty
@@ -280,6 +303,33 @@ class AgentGenerationMixin:
                             "tool_calls": native_tool_calls,
                             "metadata": result_metadata or {},
                         }
+
+                    # Empty result with finish_reason="length" is deterministic
+                    # truncation, not a flaky empty: the whole budget was spent
+                    # (reasoning models on internal reasoning) before any visible
+                    # token. Retrying at the same budget can never recover and
+                    # bills again, so grow the budget once (caller didn't pin it)
+                    # or fail with an actionable hint — never the misleading
+                    # "empty response after retries".
+                    if finish_reason == FINISH_LENGTH:
+                        grown = min(
+                            current_max_tokens * _TRUNCATION_ESCALATION_FACTOR,
+                            _TRUNCATION_MAX_TOKENS_CEILING,
+                        )
+                        if not user_pinned_max_tokens and grown > current_max_tokens:
+                            logger.info(
+                                "Empty 'length'-truncated response from '%s' at "
+                                "max_tokens=%d; retrying with max_tokens=%d",
+                                getattr(current_model, "model_name", "?"),
+                                current_max_tokens, grown,
+                            )
+                            current_max_tokens = grown
+                            continue
+                        truncation_detail = self._truncation_error_detail(
+                            current_model, current_max_tokens,
+                        )
+                        logger.warning("Generation failed: %s", truncation_detail["message"])
+                        break  # deterministic for this model; outer loop may failover
 
                     # Empty response — retry
                     if attempt < max_retries - 1:
@@ -327,6 +377,8 @@ class AgentGenerationMixin:
         # so callers (both the tool loop and the direct path) can fail honestly.
         if last_error is not None:
             detail = self._build_error_detail(last_error, current_model)
+        elif truncation_detail is not None:
+            detail = truncation_detail
         else:
             detail = {
                 "type": "EmptyResponse",
@@ -351,6 +403,66 @@ class AgentGenerationMixin:
             if isinstance(val, str) and val:
                 return val
         return "unknown"
+
+    def _truncation_error_detail(self, model: Any, max_tokens: int) -> dict[str, Any]:
+        """Structured error for a deterministic ``max_tokens`` truncation.
+
+        Distinct from the generic empty-response error: the model produced no
+        visible text because it hit ``max_tokens`` (reasoning models can spend
+        the whole budget on internal reasoning). The message tells the caller
+        exactly how to recover, and it is *not* retryable at the same budget.
+        """
+        name = getattr(model, "model_name", None) or self.model_name or "unknown"
+        hint = (
+            f"Model '{name}' hit the max_tokens limit ({max_tokens}) and "
+            "produced no output (finish_reason='length'). Increase max_tokens — "
+            "e.g. agent.run(task, max_tokens=8192); reasoning models can spend "
+            "the whole budget on internal reasoning before any visible token."
+        )
+        return {
+            "type": "TruncatedResponse",
+            "category": "truncation",
+            "provider": self._model_provider(model),
+            "model": name,
+            "message": hint,
+            "retryable": False,
+        }
+
+    def _accumulate_run_cost(self, result_metadata: dict[str, Any] | None) -> None:
+        """Fold one model call's cost/token usage into the per-run accumulator.
+
+        Lets :meth:`Agent.run` surface ``cost_usd`` and prompt/completion token
+        counts on the response metadata for every run (tool loops included),
+        without each call site reaching into the underlying GenerationResult.
+        """
+        if not result_metadata:
+            return
+        accum = getattr(self, "_run_cost_accum", None)
+        if accum is None:
+            return
+        for key in ("cost_usd", "prompt_tokens", "completion_tokens", "total_tokens"):
+            val = result_metadata.get(key)
+            if isinstance(val, int | float):
+                accum[key] = accum.get(key, 0) + val
+        accum["calls"] = accum.get("calls", 0) + 1
+
+    def _finalize_cost_metadata(self, response: AgentResponse) -> None:
+        """Fold the per-run cost accumulator onto ``response.metadata``.
+
+        Surfaces ``cost_usd`` and ``prompt_tokens`` / ``completion_tokens`` /
+        ``total_tokens`` for the whole run (every model call summed, tool loops
+        included). Existing keys win, so a path that already set its own cost is
+        left untouched. Cost is rounded to whole microdollars.
+        """
+        accum = getattr(self, "_run_cost_accum", None)
+        if not accum or not accum.get("calls"):
+            return
+        meta = response.metadata
+        if "cost_usd" in accum and "cost_usd" not in meta:
+            meta["cost_usd"] = round(float(accum["cost_usd"]), 8)
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            if key in accum and key not in meta:
+                meta[key] = int(accum[key])
 
     def _build_error_detail(self, exc: Exception, model: Any) -> dict[str, Any]:
         """Build a structured, redacted error record from an exception.
@@ -486,7 +598,7 @@ class AgentGenerationMixin:
 
         gen_config = GenerationConfig(
             temperature=base_temperature,
-            max_tokens=kwargs.get('max_tokens', 1024),
+            max_tokens=kwargs.get('max_tokens', default_max_output_tokens(self.model)),
             top_p=kwargs.get('top_p', 0.9),
             stop_sequences=kwargs.get('stop_sequences', default_stop_sequences),
         )

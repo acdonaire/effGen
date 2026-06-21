@@ -196,13 +196,8 @@ def _load_html(path: Path) -> list[dict[str, Any]]:
 # Optional loaders
 # ---------------------------------------------------------------------------
 
-def _load_pdf(path: Path) -> list[dict[str, Any]]:
-    try:
-        import fitz  # type: ignore  # pymupdf
-    except ImportError as e:
-        raise ImportError(
-            "PDF support requires pymupdf. Install with: pip install pymupdf"
-        ) from e
+def _load_pdf_pymupdf(path: Path) -> list[dict[str, Any]]:
+    import fitz  # type: ignore  # pymupdf
 
     doc = fitz.open(str(path))
     pages: list[str] = []
@@ -219,6 +214,64 @@ def _load_pdf(path: Path) -> list[dict[str, Any]]:
         pages.append(page.get_text())
     doc.close()
     return [{"content": "\n\n".join(pages), "metadata": metadata}]
+
+
+def _load_pdf_pypdf(path: Path) -> list[dict[str, Any]]:
+    import pypdf  # type: ignore
+
+    reader = pypdf.PdfReader(str(path))
+    pages = [(p.extract_text() or "") for p in reader.pages]
+    metadata: dict[str, Any] = {"type": "pdf", "pages": len(reader.pages)}
+    try:
+        info = reader.metadata or {}
+        for raw_key, dest in (("/Title", "title"), ("/Author", "author"),
+                              ("/Subject", "subject"), ("/CreationDate", "date")):
+            v = info.get(raw_key)
+            if v:
+                metadata[dest] = str(v)
+    except Exception:  # best-effort metadata; the document still ingests without it
+        pass
+    return [{"content": "\n\n".join(pages), "metadata": metadata}]
+
+
+def _load_pdf_pdfplumber(path: Path) -> list[dict[str, Any]]:
+    import pdfplumber  # type: ignore
+
+    pages: list[str] = []
+    with pdfplumber.open(str(path)) as pdf:
+        for page in pdf.pages:
+            pages.append(page.extract_text() or "")
+        metadata: dict[str, Any] = {"type": "pdf", "pages": len(pdf.pages)}
+    return [{"content": "\n\n".join(pages), "metadata": metadata}]
+
+
+def _load_pdf(path: Path) -> list[dict[str, Any]]:
+    """Load a PDF, preferring pymupdf but falling back to pypdf / pdfplumber.
+
+    The standalone ``pdf`` tool extracts text with pypdf/pdfplumber, so a PDF
+    that works there should ingest here too — we no longer hard-require pymupdf
+    and silently skip the file when only the other backends are installed.
+    """
+    backends = (
+        ("pymupdf", _load_pdf_pymupdf),
+        ("pypdf", _load_pdf_pypdf),
+        ("pdfplumber", _load_pdf_pdfplumber),
+    )
+    last_runtime_error: Exception | None = None
+    for _name, loader in backends:
+        try:
+            return loader(path)
+        except ImportError:
+            continue  # backend not installed — try the next one
+        except Exception as e:  # backend installed but failed on this file
+            last_runtime_error = e
+            continue
+    if last_runtime_error is not None:
+        raise last_runtime_error
+    raise ImportError(
+        "PDF support requires a PDF backend. Install one with: "
+        "pip install pypdf  (or 'effgen[documents]', or pymupdf)."
+    )
 
 
 def _load_docx(path: Path) -> list[dict[str, Any]]:
@@ -329,6 +382,9 @@ class DocumentIngester:
         self.dedupe = dedupe
         self.show_progress = show_progress
         self._seen_hashes: set[str] = set()
+        # Files skipped during the most recent ingest(), as (path, reason). Lets
+        # callers report *why* nothing was indexed instead of a bare "0 docs".
+        self.last_skipped: list[tuple[str, str]] = []
 
     def _iter_with_progress(self, items: list[Any], desc: str) -> Iterable[Any]:
         if not self.show_progress:
@@ -365,14 +421,25 @@ class DocumentIngester:
         else:
             paths.extend(self._expand(Path(source), recursive))
 
+        self.last_skipped = []
         chunks: list[IngestedChunk] = []
         for path in self._iter_with_progress(paths, "Ingesting"):
             try:
-                chunks.extend(self._ingest_file(path))
+                file_chunks = self._ingest_file(path)
+                if file_chunks:
+                    chunks.extend(file_chunks)
+                else:
+                    # Loaded but produced nothing (e.g. unsupported extension or
+                    # an empty/scanned PDF with no extractable text).
+                    self.last_skipped.append(
+                        (str(path), "no extractable text or unsupported file type")
+                    )
             except ImportError as e:
                 logger.warning("Skipping %s: %s", path, e)
+                self.last_skipped.append((str(path), str(e)))
             except Exception as e:
                 logger.warning("Failed to ingest %s: %s", path, e)
+                self.last_skipped.append((str(path), str(e)))
 
         logger.info("Ingested %d chunks from %d files", len(chunks), len(paths))
         return chunks

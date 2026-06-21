@@ -153,6 +153,47 @@ def normalize_finish_reason(raw: Any, *, default: str = FINISH_STOP) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Output-token budgeting
+# ---------------------------------------------------------------------------
+
+# Reasoning models (OpenAI gpt-5 family, o-series) spend part of their output
+# budget on hidden internal reasoning before emitting any visible text. A small
+# default budget can be entirely consumed by that reasoning, leaving zero output
+# tokens and a "length" finish reason — an empty result the caller was still
+# billed for. These families need a larger default and an escalation path. The
+# name prefixes catch models whose adapter does not flag ``_is_reasoning_model``
+# but still reason internally (notably gpt-5*, which the catalog lists as a
+# non-reasoning chat model yet which burns output budget on reasoning).
+_REASONING_NAME_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def needs_reasoning_headroom(model: Any) -> bool:
+    """Return True if *model* spends output budget on hidden reasoning tokens.
+
+    Such models can return an empty, billed result when ``max_tokens`` is too
+    small (the budget is consumed by reasoning before any visible token), so the
+    agent gives them a larger default budget and treats a ``"length"``-truncated
+    empty as truncation rather than a retryable empty response.
+    """
+    if getattr(model, "_is_reasoning_model", False):
+        return True
+    name = (getattr(model, "model_name", "") or "").lower()
+    name = name.split(":", 1)[-1]  # drop any "provider:" prefix
+    return name.startswith(_REASONING_NAME_PREFIXES)
+
+
+def default_max_output_tokens(
+    model: Any, *, base: int = 1024, reasoning: int = 4096
+) -> int:
+    """Pick a sensible default output-token budget for *model*.
+
+    Reasoning families get ``reasoning`` (they burn budget on internal
+    reasoning); everything else keeps the historical ``base``.
+    """
+    return reasoning if needs_reasoning_headroom(model) else base
+
+
+# ---------------------------------------------------------------------------
 # Structured, redacted provider errors
 # ---------------------------------------------------------------------------
 
@@ -247,6 +288,8 @@ def attach_error_context(
 __all__ = [
     "CANONICAL_FINISH_REASONS",
     "normalize_finish_reason",
+    "needs_reasoning_headroom",
+    "default_max_output_tokens",
     "build_error_context",
     "provider_runtime_error",
     "attach_error_context",

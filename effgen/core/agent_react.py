@@ -14,6 +14,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from ..models._adapter_utils import default_max_output_tokens
 from ..models.base import GenerationConfig
 from ..observability import get_logger as _get_obs_logger
 from ..observability.spans import ModelAttrs, ToolAttrs
@@ -1791,7 +1792,7 @@ class AgentReActMixin:
 
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=kwargs.get("max_tokens", 2048),
+            max_tokens=kwargs.get("max_tokens", default_max_output_tokens(self.model, base=2048)),
         )
 
         system_note = ""

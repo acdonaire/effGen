@@ -338,6 +338,15 @@ class ModelLoader:
             self.loaded_models[model_name] = model
             return model
         if provider in ("hf_inference", "hf"):
+            # `hf:` is the remote HuggingFace Inference API, not local execution.
+            # A privacy-conscious user expecting their data to stay on-box should
+            # know they need a local engine instead — nudge once, don't spam.
+            logger.info(
+                "Loading '%s' via the HuggingFace Inference API (remote). For "
+                "local GPU execution of this model, load it with "
+                "engine='transformers' (or 'vllm') instead of the 'hf:' prefix.",
+                model_name,
+            )
             HFInferenceAdapter = _get_hf_inference_adapter()
             api_token = kwargs.pop("api_token", kwargs.pop("api_key", None))
             endpoint_url = kwargs.pop("endpoint_url", None)
@@ -1050,6 +1059,12 @@ def load_model(
 ) -> BaseModel:
     """
     Convenience function to quickly load a model.
+
+    Provider prefixes route to a remote API (``"openai:..."``, ``"gemini:..."``,
+    ``"hf:..."`` etc.). In particular ``"hf:<repo>"`` is the **remote**
+    HuggingFace Inference API — to run the same repo **locally** on your GPU,
+    pass ``engine="transformers"`` (or ``"vllm"``) with a bare model id instead
+    of the ``hf:`` prefix.
 
     Args:
         model_name: Model identifier

@@ -2594,6 +2594,8 @@ Model id formats:
     batch_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
     batch_parser.add_argument('--query-field', default='query', help='Field name for queries in JSONL/CSV (default: query)')
+    batch_parser.add_argument('--max-tokens', type=int, default=None,
+                              help='Max output tokens per query (raise for token-heavy or reasoning models)')
     batch_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
                               help='Disable the live progress bar (plain output)')
 
@@ -3340,7 +3342,13 @@ def _handle_batch_command(args, cli) -> int:
     model_name = getattr(args, 'model', None) or 'Qwen/Qwen2.5-1.5B-Instruct'
     preset_name = getattr(args, 'preset', None)
     query_field = getattr(args, 'query_field', 'query')
+    max_tokens = getattr(args, 'max_tokens', None)
+    # Extra kwargs forwarded to each agent.run() call.
+    run_kwargs: dict = {}
+    if max_tokens is not None:
+        run_kwargs['max_tokens'] = max_tokens
 
+    agent = None
     try:
         # Create agent
         if preset_name:
@@ -3381,6 +3389,7 @@ def _handle_batch_command(args, cli) -> int:
             )
             result = runner.run_from_file(
                 input_path, config=batch_config, query_field=query_field,
+                **run_kwargs,
             )
 
         cli.print(
@@ -3400,6 +3409,14 @@ def _handle_batch_command(args, cli) -> int:
     except Exception as e:
         cli.print(f"Batch execution failed: {e}")
         return 1
+    finally:
+        # Release the agent's resources so the CLI never trips its own
+        # "garbage-collected without close()" warning.
+        if agent is not None:
+            try:
+                agent.close()
+            except Exception:
+                logging.getLogger(__name__).debug("Batch agent close() failed", exc_info=True)
 
 
 def _handle_eval_command(args, cli) -> int:

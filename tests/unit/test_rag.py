@@ -178,6 +178,46 @@ class TestDocumentIngester:
         chunks3 = ingester.ingest(tmp_path)
         assert len(chunks3) == 1
 
+    def _write_pdf(self, path: Path, lines: list[str]) -> None:
+        reportlab = pytest.importorskip("reportlab")  # noqa: F841
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        c = canvas.Canvas(str(path), pagesize=letter)
+        y = 720
+        for ln in lines:
+            c.drawString(72, y, ln)
+            y -= 20
+        c.save()
+
+    def test_ingest_pdf_without_pymupdf(self, tmp_path: Path):
+        # PDFs ingest via pypdf/pdfplumber when pymupdf is absent — the ingester
+        # no longer hard-requires pymupdf the way the standalone pdf tool never
+        # did. (Skips only if no PDF backend at all is installed.)
+        pytest.importorskip("pypdf")
+        pdf = tmp_path / "doc.pdf"
+        self._write_pdf(pdf, ["Revenue was 1284.6 million dollars.",
+                              "EPS was 1.47 dollars."])
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(pdf)
+        assert len(chunks) >= 1
+        assert "1284.6" in chunks[0].content
+        assert ingester.last_skipped == []
+
+    def test_ingest_records_skip_reason(self, tmp_path: Path):
+        # A file that cannot be parsed is recorded with its reason so callers can
+        # surface *why* nothing was indexed instead of a bare "0 documents".
+        pytest.importorskip("pypdf")
+        bad = tmp_path / "broken.pdf"
+        bad.write_text("this is not a real pdf")
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(bad)
+        assert chunks == []
+        assert len(ingester.last_skipped) == 1
+        skipped_path, reason = ingester.last_skipped[0]
+        assert "broken.pdf" in skipped_path
+        assert reason  # a non-empty explanation
+
 
 # ---------------------------------------------------------------------------
 # Chunkers

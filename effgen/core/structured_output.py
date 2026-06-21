@@ -458,12 +458,13 @@ def _native_json_call(
     validated JSON; otherwise it is ``None`` and ``raw_text``/``error`` carry the
     last model text and the reason so the caller can fall back honestly.
     """
+    from ..models._adapter_utils import default_max_output_tokens
     from ..models.base import GenerationConfig
 
     name = type(model).__name__
     config = GenerationConfig(
         temperature=gen_kwargs.get("temperature", 0.2),
-        max_tokens=gen_kwargs.get("max_tokens", 2048),
+        max_tokens=gen_kwargs.get("max_tokens", default_max_output_tokens(model, base=2048)),
     )
     enhanced = _schema_prompt(prompt, schema)
     text: str | None = None
@@ -524,6 +525,7 @@ def _reprompt_once(
     Returns ``(json_str, parsed, raw_text, error)`` — ``json_str`` is non-None only
     when the produced JSON validates against *schema*.
     """
+    from ..models._adapter_utils import default_max_output_tokens
     from ..models.base import GenerationConfig
 
     if attempt == 0:
@@ -545,7 +547,7 @@ def _reprompt_once(
 
     config = GenerationConfig(
         temperature=max(0.1, gen_kwargs.get("temperature", 0.3) - (attempt * 0.1)),
-        max_tokens=gen_kwargs.get("max_tokens", 2048),
+        max_tokens=gen_kwargs.get("max_tokens", default_max_output_tokens(model, base=2048)),
     )
 
     try:
@@ -628,6 +630,17 @@ def pydantic_model_to_schema(model_class: Any) -> dict[str, Any]:
     return schema
 
 
+def is_pydantic_model_class(obj: Any) -> bool:
+    """Return True if *obj* is a Pydantic model **class** (v1 or v2).
+
+    A Pydantic model class exposes ``model_json_schema()`` (v2) or ``schema()``
+    (v1) as a callable on the class itself.
+    """
+    return isinstance(obj, type) and (
+        hasattr(obj, "model_json_schema") or hasattr(obj, "schema")
+    )
+
+
 def normalize_output_schema(schema: Any) -> dict[str, Any] | None:
     """Coerce an ``output_schema`` argument into a JSON-Schema dict.
 
@@ -649,10 +662,7 @@ def normalize_output_schema(schema: Any) -> dict[str, Any] | None:
     """
     if schema is None or isinstance(schema, dict):
         return schema
-    # A Pydantic model class exposes model_json_schema()/schema() as callables.
-    if isinstance(schema, type) and (
-        hasattr(schema, "model_json_schema") or hasattr(schema, "schema")
-    ):
+    if is_pydantic_model_class(schema):
         return pydantic_model_to_schema(schema)
     raise TypeError(
         "output_schema must be a JSON-Schema dict or a Pydantic model class, "

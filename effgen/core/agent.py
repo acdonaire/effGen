@@ -28,6 +28,7 @@ from ..memory.long_term import (
     SQLiteStorageBackend,
 )
 from ..memory.short_term import MessageRole, ShortTermMemory
+from ..models._adapter_utils import default_max_output_tokens
 from ..models.base import BaseModel, GenerationConfig
 from ..models.model_loader import ModelLoader
 from ..observability import get_logger as _get_obs_logger
@@ -850,6 +851,9 @@ Question: {task}
             kwargs["inputs"] = inputs
         self._current_depth = 0  # Reset depth at the start of each top-level run()
         self._collected_citations = []  # Reset retrieved-evidence accumulator
+        # Per-run cost/token accumulator — folded onto the response metadata so
+        # every run reports its own cost_usd + token counts (see _finalize_cost).
+        self._run_cost_accum = {}
         debug = kwargs.pop("debug", False)
         run_id = generate_run_id()
         # Capture checkpoint args here so the outer run() can use
@@ -880,12 +884,20 @@ Question: {task}
         # Resolve structured output schema. Accept either a JSON-Schema dict or
         # a Pydantic model class for `output_schema` (and the config default),
         # converting the class instead of letting it reach JSON serialization.
-        from .structured_output import normalize_output_schema, pydantic_model_to_schema
-        effective_schema = normalize_output_schema(
-            output_schema if output_schema is not None else self.config.output_schema
+        from .structured_output import (
+            is_pydantic_model_class,
+            normalize_output_schema,
+            pydantic_model_to_schema,
         )
+        raw_schema = output_schema if output_schema is not None else self.config.output_schema
+        effective_schema = normalize_output_schema(raw_schema)
         if output_model is not None and effective_schema is None:
             effective_schema = pydantic_model_to_schema(output_model)
+        # If output_schema is itself a Pydantic class, treat it as the output_model
+        # too so metadata["parsed"] is a typed instance — the class is right here,
+        # and output_schema=Model / output_model=Model should behave the same.
+        if output_model is None and is_pydantic_model_class(raw_schema):
+            output_model = raw_schema
 
         # Track task start
         self.execution_tracker.track_event(ExecutionEvent(
@@ -960,6 +972,9 @@ Question: {task}
                 response.execution_trace = self.execution_tracker.get_trace()
                 response.execution_tree = self.execution_tracker.generate_execution_tree()
                 response.metadata["run_id"] = run_id
+                # Surface this run's cost + token usage on the result so callers
+                # can budget per call without a side channel.
+                self._finalize_cost_metadata(response)
 
                 # Surface retrieved evidence: if the run consulted a knowledge
                 # base / search tool, expose its passages as sources + inline
@@ -1528,7 +1543,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
         # through so callers can request "minimal" for trivial prompts.
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=kwargs.get("max_tokens", 1024),
+            max_tokens=kwargs.get("max_tokens", default_max_output_tokens(self.model)),
             top_p=kwargs.get("top_p", 0.9),
             stop_sequences=kwargs.get("stop_sequences"),
             reasoning_effort=kwargs.get("reasoning_effort"),
@@ -1658,7 +1673,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
 
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=kwargs.get("max_tokens", 1024),
+            max_tokens=kwargs.get("max_tokens", default_max_output_tokens(self.model)),
             top_p=kwargs.get("top_p", 0.9),
             stop_sequences=kwargs.get("stop_sequences", default_stop_sequences),
         )
