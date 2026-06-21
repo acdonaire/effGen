@@ -461,16 +461,33 @@ jobs:
                       "If all roses are flowers and all flowers need water, "
                       "do roses need water? Answer with just 'yes' or 'no' first, "
                       "then a one-sentence explanation.",
-                      # gpt-oss-120b is a reasoning model: a tiny max_tokens cap is
-                      # spent on reasoning tokens and leaves the visible answer
-                      # empty, so give it room for the final content.
-                      config=GenerationConfig(temperature=0.0, max_tokens=512),
+                      # gpt-oss-120b is a reasoning model: reasoning tokens are
+                      # spent before any visible content, so a tight max_tokens
+                      # cap truncates (finish_reason=length) and leaves the
+                      # answer empty. Give it ample room for the final content.
+                      config=GenerationConfig(temperature=0.0, max_tokens=2048),
                   )
                   best_text = (result.text or "").strip()
                   if is_correct(best_text):
                       correct = True
                       break
-                  # Wrong content is not retriable — different problem entirely.
+                  # Empty visible content is a truncation symptom (reasoning
+                  # consumed the token budget), not a logic error — retry it
+                  # rather than failing the smoke outright.
+                  if not best_text:
+                      last_exc = RuntimeError(
+                          f"empty visible content (finish_reason="
+                          f"{getattr(result, 'finish_reason', '?')}; likely truncated reasoning)"
+                      )
+                      print(f"WARN[{model_id}] attempt {attempt+1}/{MAX_ATTEMPTS} "
+                            f"empty content — retrying")
+                      if attempt < MAX_ATTEMPTS - 1:
+                          d = backoff(attempt)
+                          print(f"     sleeping {d:.1f}s before retry…")
+                          time.sleep(d)
+                          continue
+                      break
+                  # Non-empty but wrong content is a genuine miss — not retriable.
                   last_exc = RuntimeError(f"unexpected text: {best_text!r}")
                   break
               except Exception as exc:

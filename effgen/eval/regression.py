@@ -24,7 +24,15 @@ _DEFAULT_BASELINES_DIR = Path(__file__).resolve().parents[2] / "tests" / "benchm
 
 
 class RegressionAlert:
-    """A single regression alert."""
+    """A single regression alert.
+
+    ``blocking`` distinguishes a genuine quality regression (accuracy,
+    tool-accuracy) — which should fail CI and open an issue — from an
+    advisory *performance notice* (latency). Latency on a shared free-tier
+    API endpoint is dominated by upstream queue/network jitter rather than
+    effGen code, so a latency increase is reported but never blocks. See
+    :pyattr:`ComparisonReport.has_regressions`.
+    """
 
     def __init__(
         self,
@@ -33,12 +41,14 @@ class RegressionAlert:
         current_value: float,
         threshold: float,
         suite: str,
+        blocking: bool = True,
     ) -> None:
         self.metric = metric
         self.baseline_value = baseline_value
         self.current_value = current_value
         self.threshold = threshold
         self.suite = suite
+        self.blocking = blocking
 
     @property
     def delta(self) -> float:
@@ -57,8 +67,9 @@ class RegressionAlert:
 
     def __str__(self) -> str:
         sign = "+" if self.delta >= 0 else ""
+        tag = self.severity.upper() if self.blocking else "NOTICE"
         return (
-            f"[{self.severity.upper()}] {self.suite}/{self.metric}: "
+            f"[{tag}] {self.suite}/{self.metric}: "
             f"{self.baseline_value:.4f} -> {self.current_value:.4f} "
             f"({sign}{self.delta * 100:.1f}%, threshold: {self.threshold * 100:.0f}%)"
         )
@@ -84,8 +95,25 @@ class ComparisonReport:
         self.current_summary = current_summary
 
     @property
+    def blocking_alerts(self) -> list[RegressionAlert]:
+        """Quality regressions that should fail CI / open an issue."""
+        return [a for a in self.alerts if a.blocking]
+
+    @property
+    def notices(self) -> list[RegressionAlert]:
+        """Advisory (non-blocking) alerts, e.g. latency drift."""
+        return [a for a in self.alerts if not a.blocking]
+
+    @property
     def has_regressions(self) -> bool:
-        return len(self.alerts) > 0
+        """True only when a *blocking* quality regression is present.
+
+        A latency-only notice does not count as a regression: it is
+        advisory and must not fail the nightly job (see issue history of
+        chronic false-positive "regression" reports driven by free-tier
+        API latency jitter).
+        """
+        return any(a.blocking for a in self.alerts)
 
     def to_markdown(self) -> str:
         lines = [
@@ -112,9 +140,18 @@ class ComparisonReport:
                 change = "N/A"
             lines.append(f"| {m} | {bv:.4f} | {cv:.4f} | {change} |")
 
-        if self.alerts:
-            lines.extend(["", "## Alerts", ""])
-            for a in self.alerts:
+        if self.blocking_alerts:
+            lines.extend(["", "## Regressions", ""])
+            for a in self.blocking_alerts:
+                lines.append(f"- {a}")
+
+        if self.notices:
+            lines.extend([
+                "",
+                "## Performance notices (advisory — do not fail CI)",
+                "",
+            ])
+            for a in self.notices:
                 lines.append(f"- {a}")
 
         return "\n".join(lines)
@@ -126,6 +163,8 @@ class ComparisonReport:
             "current_version": self.current_version,
             "has_regressions": self.has_regressions,
             "alerts": [str(a) for a in self.alerts],
+            "regressions": [str(a) for a in self.blocking_alerts],
+            "notices": [str(a) for a in self.notices],
             "baseline": self.baseline_summary,
             "current": self.current_summary,
         }
@@ -237,7 +276,10 @@ class RegressionTracker:
                 suite=suite,
             ))
 
-        # Latency increase (higher is worse)
+        # Latency increase (higher is worse). Advisory only: latency on a
+        # shared free-tier API endpoint is dominated by upstream queue/network
+        # jitter, so it is reported as a non-blocking notice rather than a
+        # regression that fails CI and opens an issue.
         b_lat = baseline.get("avg_latency", 0)
         c_lat = current.get("avg_latency", 0)
         if b_lat > 0 and (c_lat - b_lat) / b_lat > self.latency_threshold:
@@ -247,6 +289,7 @@ class RegressionTracker:
                 current_value=c_lat,
                 threshold=self.latency_threshold,
                 suite=suite,
+                blocking=False,
             ))
 
         # Tool accuracy drop

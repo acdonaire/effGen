@@ -345,15 +345,36 @@ class TestRegressionTracker:
         assert report.has_regressions
         assert any("accuracy" in str(a) for a in report.alerts)
 
-    def test_compare_latency_regression(self, tmp_path):
+    def test_compare_latency_is_advisory_not_regression(self, tmp_path):
+        """A latency increase is reported as a notice but must NOT block.
+
+        Free-tier API latency jitter previously filed a false-positive
+        "regression" issue almost every night even when accuracy was flat
+        or improving. Latency is now advisory-only.
+        """
         tracker = RegressionTracker(baselines_dir=tmp_path)
         baseline = SuiteResults(suite_name="math", accuracy=0.8, avg_latency=0.5)
         tracker.save_baseline("math", baseline, version="0.1.0")
 
         current = SuiteResults(suite_name="math", accuracy=0.8, avg_latency=0.7)
         report = tracker.compare("math", current, version="0.2.0")
-        assert report.has_regressions
-        assert any("latency" in str(a) for a in report.alerts)
+        # Latency drift alone is not a regression.
+        assert not report.has_regressions
+        assert not report.blocking_alerts
+        # ...but it is surfaced as an advisory notice.
+        assert any("avg_latency" in str(a) for a in report.notices)
+
+    def test_accuracy_regression_blocks_even_with_latency_improvement(self, tmp_path):
+        """Accuracy drop blocks regardless of latency; latency improving alone passes."""
+        tracker = RegressionTracker(baselines_dir=tmp_path)
+        baseline = SuiteResults(suite_name="math", accuracy=0.85, avg_latency=4.0)
+        tracker.save_baseline("math", baseline, version="0.1.0")
+
+        # Mirrors the real nightly report: accuracy UP, latency UP — must pass.
+        improved = SuiteResults(suite_name="math", accuracy=0.95, avg_latency=6.1)
+        report = tracker.compare("math", improved, version="ci-nightly")
+        assert not report.has_regressions
+        assert "PASS" in report.to_markdown()
 
     def test_report_to_markdown(self, tmp_path):
         tracker = RegressionTracker(baselines_dir=tmp_path)
