@@ -83,6 +83,9 @@ jobs:
               "diskcache",
               # optional [vector-db] extra; no upstream fix for CVE-2026-45829
               "chromadb",
+              # optional transitive dep via argostranslate; no upstream fix for
+              # CVE-2026-54499 (unsafe pickle in torch.load fallback)
+              "stanza",
           }
 
           try:

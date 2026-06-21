@@ -59,6 +59,9 @@ _EXEMPT = {
     "xgrammar",
     "diskcache",  # no fix available upstream (CVE-2025-69872, pickle serialization)
     "chromadb",  # optional [vector-db] extra; no upstream fix for CVE-2026-45829
+    "stanza",  # optional transitive dep (via argostranslate); no upstream fix for
+    # CVE-2026-54499 (unsafe pickle in torch.load fallback); effgen never loads
+    # untrusted stanza checkpoints
 }
 
 def _pip_audit_runnable() -> bool:
@@ -215,6 +218,10 @@ class TestExemptPackagesKnownVulns:
                          "effgen does not use pickle-deserialization paths",
             "chromadb": "optional [vector-db] extra (not a core dependency); no "
                         "upstream fix for CVE-2026-45829",
+            "stanza": "optional transitive dep via argostranslate (not a core "
+                      "dependency); no upstream fix for CVE-2026-54499 (unsafe "
+                      "pickle in torch.load fallback); effgen never loads untrusted "
+                      "stanza checkpoints",
         }
         missing = _EXEMPT - set(rationale.keys())
         assert not missing, (
