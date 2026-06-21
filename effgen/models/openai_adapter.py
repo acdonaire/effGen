@@ -1112,16 +1112,28 @@ class OpenAIAdapter(FunctionCallingModel):
         # Extract the output text from the response
         output_text = ""
         tool_call_results: list[dict[str, Any]] = []
+        # Grounded source URLs the model actually cited (web_search url_citation
+        # annotations). Surfaced uniformly as ``grounding_chunks`` so the Agent
+        # can fill AgentResponse.sources / .citations from real provider data.
+        grounding_chunks: list[dict[str, Any]] = []
 
         for item in response.output:
             item_type = getattr(item, "type", None)
             if item_type == "message":
                 for content_block in getattr(item, "content", []):
                     block_type = getattr(content_block, "type", None)
-                    if block_type == "output_text":
+                    if block_type in ("output_text", "text"):
                         output_text += getattr(content_block, "text", "")
-                    elif block_type == "text":
-                        output_text += getattr(content_block, "text", "")
+                    for ann in getattr(content_block, "annotations", None) or []:
+                        if getattr(ann, "type", None) != "url_citation":
+                            continue
+                        url = getattr(ann, "url", None)
+                        if not url:
+                            continue
+                        grounding_chunks.append({
+                            "url": url,
+                            "title": getattr(ann, "title", None),
+                        })
             elif item_type == "web_search_call":
                 tool_call_results.append({"type": "web_search_call", "id": getattr(item, "id", "")})
             elif item_type == "code_interpreter_call":
@@ -1185,6 +1197,7 @@ class OpenAIAdapter(FunctionCallingModel):
                 "response_id": getattr(response, "id", None),
                 "tool_calls": tool_call_results,
                 "native_tool_results": tool_call_results,
+                "grounding_chunks": grounding_chunks,
             },
         )
 

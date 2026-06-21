@@ -170,12 +170,19 @@ def sanitize_final_answer(text: str | None) -> str | None:
     # 3. Drop trailing Observation/Thought/Question/Action bleed.
     s = _TRAILING_BLEED_RE.sub("", s)
     # 4. If a line-anchored answer label is present, the real answer is what
-    #    follows the LAST such label (when that tail is non-empty).
+    #    follows the LAST such label (when that tail is non-empty). A dangling
+    #    label with nothing after it (e.g. native web-search replies sometimes
+    #    end with a bare "Final Answer:") is scaffolding — drop the label and
+    #    keep the content before it.
     labels = list(_ANSWER_LABEL_RE.finditer(s))
     if labels:
         tail = s[labels[-1].end():].strip()
         if tail:
             s = tail
+        else:
+            head = s[:labels[-1].start()].strip()
+            if head:
+                s = head
     # 5. Tidy separators left by removed scaffolding, without disturbing
     #    multi-line content (tables/code): collapse empty "| |" fragments and
     #    runs of spaces, then strip a dangling leading/trailing bare pipe.
@@ -421,12 +428,28 @@ class AgentRuntimeMixin:
         elif not isinstance(inputs, list):
             inputs = [inputs]
 
+        from pathlib import Path as _Path
+
         content: list[ContentPart] = [TextPart(text=task)]
         for index, part in enumerate(inputs):
-            if not hasattr(part, "type"):
+            # Convenience: a bare path or URL string (or Path) is auto-wrapped
+            # by extension into the matching image/audio/video part, so
+            # inputs=["photo.png"] works without importing image_from().
+            if isinstance(part, str | _Path):
+                from effgen.core.multimodal import part_from
+                from effgen.errors import InvalidMultimodalContent
+                try:
+                    part = part_from(part)
+                except InvalidMultimodalContent as exc:
+                    raise TypeError(
+                        f"Agent.run(inputs=[...]) item {index}: {exc}. "
+                        "Import the helper with: from effgen import image_from"
+                    ) from exc
+            elif not hasattr(part, "type"):
                 raise TypeError(
                     "Agent.run(inputs=[...]) expects effGen multimodal parts "
-                    f"(image_from/audio_from/video_from); item {index} is {type(part).__name__}"
+                    f"(image_from/audio_from/video_from); item {index} is {type(part).__name__}. "
+                    "Import them with: from effgen import image_from, audio_from, video_from"
                 )
             content.append(part)
 

@@ -80,7 +80,10 @@ _RESEARCH_PRESET = PresetConfig(
         "Prefer academic sources for scientific or medical questions. For current events, "
         "use news, rss_feed, reddit, or hackernews tools. For video content, use "
         "youtube_transcript to read captions and youtube_metadata for video details. "
-        "Cite your sources and synthesize findings into clear answers."
+        "Synthesize findings into clear answers. When you cite a source URL, use "
+        "ONLY a URL that one of your tools actually returned in this conversation — "
+        "copy it verbatim. Never invent, guess, or reconstruct a URL from memory; "
+        "if you have no tool-returned URL for a claim, say so rather than fabricate one."
     ),
     max_iterations=10,
     temperature=0.5,

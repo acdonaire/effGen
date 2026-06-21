@@ -36,6 +36,14 @@ from effgen.core.agent import sanitize_final_answer as sanitize
         ("[calculator({'expression': '15*15'})] → 225", "225"),
         # List-prefixed final-answer label.
         ("- Final Answer: done", "done"),
+        # OpenAI native web-search replies sometimes end with a bare, dangling
+        # "Final Answer:" label and nothing after it — strip the label, keep the
+        # real answer that precedes it.
+        (
+            "The outage happened on July 19, 2024. ([blogs.microsoft.com](https://x))\n\nFinal Answer:",
+            "The outage happened on July 19, 2024. ([blogs.microsoft.com](https://x))",
+        ),
+        ("Paris.\nFinal Answer: ", "Paris."),
     ],
 )
 def test_strips_scaffolding(leaked, expected):

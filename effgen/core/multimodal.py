@@ -274,3 +274,74 @@ def video_from(
         return VideoPart(frames=[frame.image for frame in frames], fps=fps, mime=mime)
     finally:
         vs.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Bare-path / URL coercion
+# ---------------------------------------------------------------------------
+
+# Extension → media kind, for the common cases where mimetypes can't help
+# (or guesses differently across platforms).
+_AUDIO_EXTS = frozenset({
+    ".mp3", ".wav", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".opus", ".webm", ".weba",
+})
+_VIDEO_EXTS = frozenset({
+    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".mpeg", ".mpg", ".wmv", ".flv",
+})
+_IMAGE_EXTS = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".heic", ".heif",
+})
+
+
+def _media_kind_from_name(name: str) -> str | None:
+    """Best-effort image/audio/video classification from a path or URL string.
+
+    Returns ``"image"``, ``"audio"``, ``"video"`` or ``None`` (unknown).
+    """
+    # Strip any URL query/fragment before looking at the extension.
+    base = name.split("?", 1)[0].split("#", 1)[0]
+    ext = os.path.splitext(base)[1].lower()
+    # ``.webm`` is overloaded (audio or video); the extension maps are checked
+    # video-first so a bare ``clip.webm`` becomes a VideoPart.
+    if ext in _VIDEO_EXTS:
+        return "video"
+    if ext in _AUDIO_EXTS:
+        return "audio"
+    if ext in _IMAGE_EXTS:
+        return "image"
+    guessed, _ = mimetypes.guess_type(base)
+    if guessed:
+        top = guessed.split("/", 1)[0]
+        if top in ("image", "audio", "video"):
+            return top
+    return None
+
+
+def part_from(source: str | Path) -> ImagePart | AudioPart | VideoPart:
+    """Wrap a bare file path or URL as the matching multimodal ContentPart.
+
+    Detects image/audio/video from the file extension (falling back to the
+    MIME type) and delegates to :func:`image_from`, :func:`audio_from`, or
+    :func:`video_from`. Use this when you have a path/URL and don't want to pick
+    the specific helper yourself; :meth:`Agent.run` applies it automatically to
+    bare paths passed in ``inputs=``.
+
+    Raises:
+        InvalidMultimodalContent: if the media kind can't be determined from the
+            name — pass ``image_from(...)`` / ``audio_from(...)`` /
+            ``video_from(...)`` explicitly in that case.
+    """
+    name = str(source)
+    kind = _media_kind_from_name(name)
+    if kind == "image":
+        return image_from(source)
+    if kind == "audio":
+        return audio_from(source)
+    if kind == "video":
+        return video_from(source)
+    raise InvalidMultimodalContent(
+        "source",
+        f"Could not infer the media type of {name!r} from its extension. "
+        "Wrap it explicitly with image_from(...), audio_from(...), or "
+        "video_from(...) (importable from effgen).",
+    )

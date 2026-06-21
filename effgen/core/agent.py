@@ -266,6 +266,22 @@ class AgentResponse:
         """
         return self.output if self.output is not None else ""
 
+    def __await__(self):
+        """Fail clearly if someone ``await``s the result of the sync ``run()``.
+
+        ``Agent.run()`` is synchronous and returns this object directly, so
+        ``await agent.run(...)`` would otherwise raise the opaque
+        ``object AgentResponse can't be used in 'await' expression``. Point the
+        caller at the async entry point instead.
+        """
+        raise TypeError(
+            "Agent.run() is synchronous and already returns the AgentResponse — "
+            "don't await it. Use `result = agent.run(...)`, or for async code "
+            "`result = await agent.run_async(...)`."
+        )
+        # Unreachable; makes this a generator function so it's a valid __await__.
+        yield  # pragma: no cover
+
     def __repr__(self) -> str:
         """A detailed-but-compact developer view.
 
@@ -1492,9 +1508,19 @@ Provide a well-structured, comprehensive response that integrates all findings."
         """Async context manager entry."""
         return self
 
+    async def aclose(self) -> None:
+        """Async-friendly alias for :meth:`close`.
+
+        Cleanup is synchronous (it closes SQLite handles and stops worker
+        threads), so this simply awaits nothing and calls :meth:`close`. It
+        exists so ``await agent.aclose()`` works symmetrically with
+        ``await agent.run_async(...)`` and inside ``async with agent:``.
+        """
+        self.close()
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit — clean up resources."""
-        self.close()
+        await self.aclose()
         return False
 
     def __del__(self):

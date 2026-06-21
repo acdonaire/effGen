@@ -1081,21 +1081,30 @@ class AgentReActMixin:
         if not self._is_retrieval_tool(tool, tool_name):
             return
 
-        # Unwrap ToolResult → output dict (skip failed calls).
+        # Unwrap ToolResult → output (skip failed calls).
         output = result
         if hasattr(result, "output"):
             if hasattr(result, "success") and not result.success:
                 return
             output = result.output
-        if not isinstance(output, dict):
-            return
 
+        # Find the list of source items. Tools surface them three ways:
+        #   - a bare list of rows (web_search → [{title, url, snippet}, ...]);
+        #   - a dict wrapping a list under a well-known key (RAG/retrieval);
+        #   - a single-document dict (url_fetch → {url, title, text}).
         items = None
-        for key in ("results", "documents", "chunks", "matches", "passages", "sources"):
-            val = output.get(key)
-            if isinstance(val, list) and val:
-                items = val
-                break
+        if isinstance(output, list):
+            items = output
+        elif isinstance(output, dict):
+            for key in ("results", "documents", "chunks", "matches", "passages", "sources"):
+                val = output.get(key)
+                if isinstance(val, list) and val:
+                    items = val
+                    break
+            if items is None and (
+                output.get("url") or output.get("source") or output.get("file_path")
+            ):
+                items = [output]
         if not items:
             return
 
@@ -1143,8 +1152,31 @@ class AgentReActMixin:
         Populate ``response.sources`` / ``response.citations`` from the evidence
         collected during the run (deduplicated, 1-based citation indices). Only
         fills fields the assembly path left empty, so explicit callers win.
+
+        Two evidence sources are merged: passages mined from local retrieval/
+        search tools (``_collected_citations``), and grounded URLs a provider
+        cited natively (``metadata["grounding_chunks"]`` — OpenAI web_search
+        ``url_citation`` annotations and Gemini search grounding). Only real,
+        retrieved URLs land here — never URLs scraped from the model's prose.
         """
-        raw = getattr(self, "_collected_citations", None)
+        raw = list(getattr(self, "_collected_citations", None) or [])
+        # Fold provider-native grounding chunks ({url, title}) into the same
+        # accumulator shape so the dedup/assembly below handles every path.
+        meta = response.metadata if isinstance(response.metadata, dict) else {}
+        for chunk in meta.get("grounding_chunks") or []:
+            if not isinstance(chunk, dict):
+                continue
+            url = chunk.get("url") or chunk.get("uri") or chunk.get("source")
+            if not url:
+                continue
+            raw.append({
+                "source": str(url),
+                "chunk_id": "",
+                "score": 0.0,
+                "quote": str(chunk.get("title") or chunk.get("snippet") or "").strip(),
+                "page": None,
+                "section": None,
+            })
         if not raw:
             return
 
