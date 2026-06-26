@@ -73,6 +73,12 @@ class GenerationResult:
     model_name: str
     metadata: dict[str, Any] | None = None
 
+    def __str__(self) -> str:
+        """The generated text, so ``print(model.generate(...))`` shows the
+        answer rather than the full dataclass repr — mirroring ``AgentResponse``.
+        The unambiguous ``repr()`` still shows every field for debugging."""
+        return self.text
+
 
 @dataclass
 class TokenCount:

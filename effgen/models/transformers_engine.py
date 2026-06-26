@@ -13,6 +13,7 @@ with features including:
 from __future__ import annotations
 
 import logging
+import threading
 import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -183,6 +184,12 @@ class TransformersEngine(BatchModel):
         self.model = None
         self.tokenizer = None
         self.device = None
+        # HuggingFace "fast" (Rust) tokenizers are NOT thread-safe: two threads
+        # encoding/decoding on the same tokenizer raise "Already borrowed". A
+        # single local model can't parallelize across threads on one GPU anyway,
+        # so serialize every tokenizer-touching call on this engine. Reentrant so
+        # a method that internally counts tokens while holding the lock is safe.
+        self._tokenizer_lock = threading.RLock()
 
     def load(self) -> None:
         """
@@ -577,6 +584,9 @@ class TransformersEngine(BatchModel):
 
         generation_config, stop_sequences = self._create_generation_config(config)
 
+        # Serialize fast-tokenizer + generate so concurrent local calls (e.g.
+        # batch at concurrency>1) never trip the tokenizer's "Already borrowed".
+        self._tokenizer_lock.acquire()
         try:
             # Extract tool definitions before sanitizing kwargs — these are
             # passed to the chat template, not to HF generate()
@@ -676,6 +686,8 @@ class TransformersEngine(BatchModel):
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             raise RuntimeError(f"Generation failed: {e}") from e
+        finally:
+            self._tokenizer_lock.release()
 
     def generate_stream(
         self,
@@ -838,6 +850,8 @@ class TransformersEngine(BatchModel):
 
         generation_config, stop_sequences = self._create_generation_config(config)
 
+        # Serialize fast-tokenizer + generate (see generate(): thread-safety).
+        self._tokenizer_lock.acquire()
         try:
             # Tokenize all inputs
             inputs = self.tokenizer(
@@ -897,6 +911,8 @@ class TransformersEngine(BatchModel):
         except Exception as e:
             logger.error(f"Batch generation failed: {e}")
             raise RuntimeError(f"Batch generation failed: {e}") from e
+        finally:
+            self._tokenizer_lock.release()
 
     def count_tokens(self, text: str) -> TokenCount:
         """
@@ -914,12 +930,14 @@ class TransformersEngine(BatchModel):
         if not self._is_loaded or self.tokenizer is None:
             raise RuntimeError("Model is not loaded. Call load() first.")
 
-        try:
-            tokens = self.tokenizer.encode(text, add_special_tokens=False)
-            return TokenCount(count=len(tokens), model_name=self.model_name)
-        except Exception as e:
-            logger.error(f"Token counting failed: {e}")
-            raise RuntimeError(f"Token counting failed: {e}") from e
+        # Serialize tokenizer access (see generate(): "Already borrowed").
+        with self._tokenizer_lock:
+            try:
+                tokens = self.tokenizer.encode(text, add_special_tokens=False)
+                return TokenCount(count=len(tokens), model_name=self.model_name)
+            except Exception as e:
+                logger.error(f"Token counting failed: {e}")
+                raise RuntimeError(f"Token counting failed: {e}") from e
 
     def get_context_length(self) -> int:
         """

@@ -13,6 +13,7 @@ The main Agent class with:
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 from collections.abc import Callable, Iterator
@@ -206,6 +207,38 @@ class AgentConfig:
     # These flags have no effect when the model is not an AnthropicAdapter.
     cache_system_prompt: bool = True
     cache_tools: bool = True
+
+
+# Model-loading options belong to the engine (load_model), not the agent. Passing
+# one straight to AgentConfig otherwise raises a cryptic dataclass
+# "unexpected keyword argument 'engine'"; intercept it with an actionable hint.
+_MODEL_LOAD_KWARGS = frozenset({
+    "engine", "engine_config", "tensor_parallel_size", "gpu_memory_utilization",
+    "apply_chat_template", "quantization", "trust_remote_code",
+})
+
+
+def _agentconfig_init_guard(_dataclass_init):
+    """Wrap AgentConfig.__init__ to translate a stray model-loading kwarg into a
+    one-line "here's how to do it" instead of a bare dataclass TypeError."""
+    @functools.wraps(_dataclass_init)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        bad = _MODEL_LOAD_KWARGS.intersection(kwargs)
+        if bad:
+            opt = sorted(bad)
+            raise TypeError(
+                f"AgentConfig does not accept model-loading option(s) {opt}: "
+                "they configure the engine, not the agent. Either load the model "
+                "first — load_model(model_id, engine=\"transformers\") — and pass "
+                "the instance as model=, or use "
+                "create_agent(preset, model_id, engine=\"transformers\"), which "
+                "routes these to load_model for you."
+            )
+        _dataclass_init(self, *args, **kwargs)
+    return __init__
+
+
+AgentConfig.__init__ = _agentconfig_init_guard(AgentConfig.__init__)
 
 
 @dataclass

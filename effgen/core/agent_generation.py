@@ -447,17 +447,24 @@ class AgentGenerationMixin:
         accum["calls"] = accum.get("calls", 0) + 1
 
     def _finalize_cost_metadata(self, response: AgentResponse) -> None:
-        """Fold the per-run cost accumulator onto ``response.metadata``.
+        """Fold per-run latency + the cost accumulator onto ``response.metadata``.
 
-        Surfaces ``cost_usd`` and ``prompt_tokens`` / ``completion_tokens`` /
-        ``total_tokens`` for the whole run (every model call summed, tool loops
-        included). Existing keys win, so a path that already set its own cost is
+        Surfaces ``latency_ms`` / ``duration_s`` (always available) and, when the
+        run made billable model calls, ``cost_usd`` plus ``prompt_tokens`` /
+        ``completion_tokens`` / ``total_tokens`` (every call summed, tool loops
+        included). Existing keys win, so a path that already set its own value is
         left untouched. Cost is rounded to whole microdollars.
         """
+        meta = response.metadata
+        # Per-run latency, mirrored from execution_time so callers can read it
+        # off metadata alongside cost/tokens — no need to wrap each call in a
+        # timer. (The eval layer already measures the same number.)
+        if response.execution_time:
+            meta.setdefault("latency_ms", round(response.execution_time * 1000.0, 1))
+            meta.setdefault("duration_s", round(response.execution_time, 4))
         accum = getattr(self, "_run_cost_accum", None)
         if not accum or not accum.get("calls"):
             return
-        meta = response.metadata
         if "cost_usd" in accum and "cost_usd" not in meta:
             meta["cost_usd"] = round(float(accum["cost_usd"]), 8)
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):

@@ -2617,6 +2617,8 @@ Model id formats:
     eval_parser.add_argument('-o', '--output', help='Output file for results (JSON)')
     eval_parser.add_argument('--difficulty', choices=['easy', 'medium', 'hard'],
                               help='Filter test cases by difficulty')
+    eval_parser.add_argument('--max-cases', type=int, default=None,
+                              help='Only run the first N cases (quick subsample)')
     eval_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
                               help='Disable the live progress bar (plain output)')
 
@@ -2628,11 +2630,18 @@ Model id formats:
                                       'for a bare id (e.g. '
                                       'groq:llama-3.1-8b-instant,gpt-5-nano).')
     compare_parser.add_argument('--suite', required=True,
-                                 help='Test suite name')
+                                 help='Built-in suite name (math, tool_use, '
+                                      'reasoning, safety, conversation) OR a path '
+                                      'to your own .jsonl/.json test cases')
     compare_parser.add_argument('--scoring', choices=['exact_match', 'contains', 'regex', 'semantic_similarity', 'llm_judge'],
                                  default='contains', help='Scoring mode (default: contains)')
     compare_parser.add_argument('--threshold', type=float, default=0.5,
                                  help='Pass threshold (default: 0.5)')
+    compare_parser.add_argument('--max-cases', type=int, default=None,
+                                 help='Only run the first N cases (quick bake-off '
+                                      'on a big suite)')
+    compare_parser.add_argument('--difficulty', choices=['easy', 'medium', 'hard'],
+                                 help='Filter test cases by difficulty')
     compare_parser.add_argument('-o', '--output', help='Output file for results (JSON or Markdown)')
     compare_parser.add_argument('--preset', choices=_preset_choices,
                                  help='Use a preset agent configuration')
@@ -3419,9 +3428,50 @@ def _handle_batch_command(args, cli) -> int:
                 logging.getLogger(__name__).debug("Batch agent close() failed", exc_info=True)
 
 
+def _resolve_eval_suite(suite_arg: str, difficulty=None, max_cases=None):
+    """Resolve a ``--suite`` argument to a ``TestSuite``.
+
+    Accepts a built-in suite name **or** a path to a ``.jsonl`` / ``.json`` file
+    of your own test cases (each an object with ``query``/``expected_output`` and
+    optional ``difficulty``/``tags``), so a bake-off can run on your own data —
+    not just the bundled suites. Optionally filters by ``difficulty`` and trims to
+    the first ``max_cases``. Raises ``KeyError`` (with the list of valid names)
+    for an unknown name, or ``FileNotFoundError`` / ``ValueError`` for a bad file.
+    """
+    from effgen.eval import get_suite
+    from effgen.eval.suites import TestSuite
+
+    p = Path(suite_arg)
+    if p.suffix.lower() in (".jsonl", ".json") or p.exists():
+        if not p.exists():
+            raise FileNotFoundError(f"Test-case file not found: {suite_arg}")
+        from effgen.eval.evaluator import TestCase
+        raw = p.read_text(encoding="utf-8")
+        records = []
+        if p.suffix.lower() == ".json":
+            data = json.loads(raw)
+            records = data if isinstance(data, list) else [data]
+        else:
+            records = [json.loads(line) for line in raw.splitlines() if line.strip()]
+        cases = [TestCase.from_dict(r) for r in records]
+        if not cases:
+            raise ValueError(f"No test cases found in {suite_arg}")
+        suite = TestSuite(test_cases=cases)
+        suite.name = p.stem
+    else:
+        suite = get_suite(suite_arg)
+
+    if difficulty:
+        from effgen.eval.evaluator import Difficulty
+        suite.test_cases = suite.filter(difficulty=Difficulty(difficulty))
+    if max_cases is not None and max_cases > 0:
+        suite.test_cases = suite.test_cases[:max_cases]
+    return suite
+
+
 def _handle_eval_command(args, cli) -> int:
     """Handle 'effgen eval' subcommand."""
-    from effgen.eval import AgentEvaluator, RegressionTracker, get_suite, list_suites
+    from effgen.eval import AgentEvaluator, RegressionTracker, list_suites
     from effgen.eval.evaluator import ScoringMode
 
     suite_name = args.suite
@@ -3430,6 +3480,7 @@ def _handle_eval_command(args, cli) -> int:
     scoring = ScoringMode(args.scoring)
     threshold = args.threshold
     difficulty = getattr(args, 'difficulty', None)
+    max_cases = getattr(args, 'max_cases', None)
 
     try:
         # List suites if requested
@@ -3439,13 +3490,13 @@ def _handle_eval_command(args, cli) -> int:
                 cli.print(f"  {name:16s} — {desc}")
             return 0
 
-        suite = get_suite(suite_name)
+        suite = _resolve_eval_suite(suite_name, difficulty=difficulty, max_cases=max_cases)
 
-        # Filter by difficulty if specified
+        # Report any narrowing applied
         if difficulty:
-            from effgen.eval.evaluator import Difficulty
-            suite.test_cases = suite.filter(difficulty=Difficulty(difficulty))
             cli.print(f"Filtered to {len(suite.test_cases)} {difficulty} test cases")
+        if max_cases:
+            cli.print(f"Limited to first {len(suite.test_cases)} cases")
 
         cli.print(f"Loading model {model_name}...")
 
@@ -3533,7 +3584,7 @@ def _handle_eval_command(args, cli) -> int:
 
 def _handle_compare_command(args, cli) -> int:
     """Handle 'effgen compare' subcommand."""
-    from effgen.eval import ModelComparison, get_suite
+    from effgen.eval import ModelComparison
     from effgen.eval.evaluator import ScoringMode
 
     model_names = [m.strip() for m in args.models.split(',')]
@@ -3541,14 +3592,21 @@ def _handle_compare_command(args, cli) -> int:
     scoring = ScoringMode(args.scoring)
     threshold = args.threshold
     preset_name = getattr(args, 'preset', None)
+    difficulty = getattr(args, 'difficulty', None)
+    max_cases = getattr(args, 'max_cases', None)
 
     # Unknown suite is a user error, not a crash — report cleanly (no traceback)
-    # and exit 2 with the list of valid suites.
+    # and exit 2 with the list of valid suites. A bad data file is reported the
+    # same way.
     try:
-        suite = get_suite(suite_name)
-    except (KeyError, ValueError):
+        suite = _resolve_eval_suite(suite_name, difficulty=difficulty, max_cases=max_cases)
+    except (KeyError, ValueError, FileNotFoundError) as exc:
         from effgen.eval import list_suites
-        cli.print(f"Unknown suite '{suite_name}'. Available: {', '.join(list_suites())}.")
+        cli.print(
+            f"Could not load suite '{suite_name}' ({exc}). "
+            f"Use a built-in suite ({', '.join(list_suites())}) "
+            "or a path to a .jsonl/.json file of test cases."
+        )
         return 2
 
     agents: dict = {}

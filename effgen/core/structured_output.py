@@ -334,9 +334,21 @@ def structured_generate(
         if raw is not None:
             last_raw = raw
 
+    final_error = last_error or "could not produce schema-valid output"
+    # Teachable failure: a local Transformers model that couldn't be coaxed into
+    # schema-valid JSON by prompting alone can be *guaranteed* to conform with
+    # grammar-constrained decoding — but only if ``outlines`` is installed. When
+    # it isn't, point the user at the one-line fix instead of leaving a dead end.
+    if _is_transformers_model(model) and not _outlines_available():
+        final_error += (
+            " — this local model did not follow the JSON schema by prompting. "
+            "Install grammar-constrained decoding (`pip install effgen[grammar]`) "
+            "for guaranteed schema-valid output, or use a stronger "
+            "instruction-following model."
+        )
     return StructuredOutcome(
         success=False, attempts=attempts, method="reprompt",
-        error=last_error or "could not produce schema-valid output",
+        error=final_error,
         raw_text=last_raw,
     )
 
@@ -387,7 +399,22 @@ def _outlines_available() -> bool:
     Checks the concrete symbols ``_try_grammar_constrained`` relies on (not just
     that the package exists), so an incompatible ``outlines`` build is never
     counted as a real grammar attempt — keeping the surfaced attempt count honest.
+    Supports both the current ``outlines`` 1.x API (``from_transformers`` +
+    ``Generator`` + ``types.JsonSchema``) and the legacy 0.0.x API
+    (``generate.json`` + ``models.Transformers``).
     """
+    try:
+        import outlines  # noqa: F401
+    except Exception:
+        return False
+    # outlines 1.x
+    if hasattr(outlines, "from_transformers") and hasattr(outlines, "Generator"):
+        try:
+            from outlines.types import JsonSchema  # noqa: F401
+        except Exception:
+            return False
+        return True
+    # legacy outlines 0.0.x
     try:
         from outlines import generate, models  # noqa: F401
     except Exception:
@@ -571,30 +598,61 @@ def _reprompt_once(
     return None, None, text, f"schema validation failed: {err}"
 
 
+def _grammar_max_new_tokens(gen_kwargs: dict[str, Any]) -> int:
+    """Token budget for one grammar-constrained call.
+
+    Honours an explicit ``max_new_tokens``/``max_tokens`` from the caller so a
+    long structured object isn't truncated mid-JSON; otherwise a sensible default
+    that comfortably fits a typical extraction record.
+    """
+    for key in ("max_new_tokens", "max_tokens"):
+        val = gen_kwargs.get(key)
+        if isinstance(val, int) and val > 0:
+            return val
+    return 512
+
+
 def _try_grammar_constrained(
     model: Any,
     prompt: str,
     schema: dict[str, Any],
     gen_kwargs: dict[str, Any],
 ) -> tuple[str, Any] | None:
-    """Try grammar-constrained decoding via outlines library."""
+    """Try grammar-constrained decoding via the ``outlines`` library.
+
+    The output is structurally guaranteed to match *schema* in one call, so even
+    weak instruction-followers (small Llama/Gemma/Phi locals) emit schema-valid
+    JSON. Supports both the current ``outlines`` 1.x API and the legacy 0.0.x API;
+    returns ``None`` (caller falls back to reprompting) if neither is usable.
+    """
+    # outlines drives the underlying HF model + tokenizer directly.
+    if not (hasattr(model, "model") and hasattr(model, "tokenizer")):
+        return None
     try:
-        import outlines  # noqa: F401
+        import outlines
+    except ImportError:
+        logger.debug("outlines not installed, skipping grammar-constrained decoding")
+        return None
+    try:
+        logger.debug("Using outlines grammar-constrained decoding for structured output")
+        if hasattr(outlines, "from_transformers") and hasattr(outlines, "Generator"):
+            # outlines 1.x
+            from outlines.types import JsonSchema
+
+            om = outlines.from_transformers(model.model, model.tokenizer)
+            generator = outlines.Generator(om, JsonSchema(schema))
+            raw = generator(prompt, max_new_tokens=_grammar_max_new_tokens(gen_kwargs))
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            json_str = raw if isinstance(raw, str) else json.dumps(raw)
+            return json_str, parsed
+        # legacy outlines 0.0.x
         from outlines import generate
         from outlines import models as outlines_models
 
-        logger.debug("Using outlines grammar-constrained decoding for structured output")
-        # outlines requires access to the underlying HF model
-        if hasattr(model, 'model') and hasattr(model, 'tokenizer'):
-            hf_model = outlines_models.Transformers(model.model, model.tokenizer)
-            schema_str = json.dumps(schema)
-            generator = generate.json(hf_model, schema_str)
-            result = generator(prompt)
-            # result is already a parsed object
-            json_str = json.dumps(result)
-            return json_str, result
-    except ImportError:
-        logger.debug("outlines not installed, skipping grammar-constrained decoding")
+        hf_model = outlines_models.Transformers(model.model, model.tokenizer)
+        generator = generate.json(hf_model, json.dumps(schema))
+        result = generator(prompt)
+        return json.dumps(result), result
     except Exception as e:
         logger.warning(f"Grammar-constrained decoding failed: {e}")
     return None

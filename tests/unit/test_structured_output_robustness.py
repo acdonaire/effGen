@@ -57,6 +57,17 @@ class _PlainModel:
         return _Result(self._texts.pop(0) if self._texts else "no json here")
 
 
+class TransformersEngine:
+    """Stub named like the real local engine (drives the transformers branch:
+    grammar-decoding eligibility + the install-outlines remediation hint)."""
+
+    def __init__(self, texts: list[str]) -> None:
+        self._texts = list(texts)
+
+    def generate(self, prompt, config=None, **kwargs):  # noqa: ANN001
+        return _Result(self._texts.pop(0) if self._texts else "no json here")
+
+
 # --------------------------------------------------------------------------- #
 # Native-first behaviour & attempt accounting
 # --------------------------------------------------------------------------- #
@@ -127,6 +138,59 @@ def test_time_budget_zero_stops_immediately():
     assert outcome.success is False
     assert outcome.attempts == 0  # the deadline tripped before any reprompt call
     assert "time budget" in (outcome.error or "")
+
+
+# --------------------------------------------------------------------------- #
+# E3-1 — local grammar path: install-outlines remediation hint + token budget
+# --------------------------------------------------------------------------- #
+def test_local_failure_hints_install_outlines_when_absent(monkeypatch):
+    import effgen.core.structured_output as so
+
+    # Simulate outlines NOT installed: the grammar path is skipped and a local
+    # model that won't follow the schema by prompting should be told the one-line
+    # fix instead of hitting a dead end.
+    monkeypatch.setattr(so, "_outlines_available", lambda: False)
+    model = TransformersEngine(["definitely not json", "still prose"])
+    cfg = StructuredOutputConfig(schema=SCHEMA, max_retries=2)
+    outcome = structured_generate(model, "capital?", SCHEMA, cfg)
+    assert outcome.success is False
+    assert "effgen[grammar]" in (outcome.error or "")
+    assert "instruction-following model" in (outcome.error or "")
+
+
+def test_no_outlines_hint_when_grammar_is_available(monkeypatch):
+    import effgen.core.structured_output as so
+
+    # When outlines IS available, a fallback failure must NOT tell the user to
+    # install it (it already is) — the hint would be misleading.
+    monkeypatch.setattr(so, "_outlines_available", lambda: True)
+    monkeypatch.setattr(so, "_try_grammar_constrained", lambda *a, **k: None)
+    model = TransformersEngine(["nope", "nope", "nope"])
+    cfg = StructuredOutputConfig(schema=SCHEMA, max_retries=2)
+    outcome = structured_generate(model, "capital?", SCHEMA, cfg)
+    assert outcome.success is False
+    assert "effgen[grammar]" not in (outcome.error or "")
+
+
+def test_cloud_failure_has_no_local_grammar_hint(monkeypatch):
+    import effgen.core.structured_output as so
+
+    # A non-local (API) model that fails must not get the local-only outlines hint.
+    monkeypatch.setattr(so, "_outlines_available", lambda: False)
+    model = _PlainModel(["nope", "nope", "nope"])
+    cfg = StructuredOutputConfig(schema=SCHEMA, max_retries=2)
+    outcome = structured_generate(model, "capital?", SCHEMA, cfg)
+    assert outcome.success is False
+    assert "effgen[grammar]" not in (outcome.error or "")
+
+
+def test_grammar_max_new_tokens_honours_caller_budget():
+    from effgen.core.structured_output import _grammar_max_new_tokens
+
+    assert _grammar_max_new_tokens({}) == 512  # sensible default
+    assert _grammar_max_new_tokens({"max_new_tokens": 1024}) == 1024
+    assert _grammar_max_new_tokens({"max_tokens": 256}) == 256
+    assert _grammar_max_new_tokens({"max_tokens": 0}) == 512  # ignores nonsense
 
 
 # --------------------------------------------------------------------------- #

@@ -30,8 +30,20 @@ def _register(cls: type[TestSuite]) -> type[TestSuite]:
 
 
 def list_suites() -> dict[str, str]:
-    """Return ``{name: description}`` for every registered suite."""
-    return {name: cls.description for name, cls in _SUITES.items()}
+    """Return ``{name: description}`` for every registered suite.
+
+    The description is prefixed with the suite's **actual** case count (read from
+    its loaded data file) so a user budgeting an eval run sees the real number —
+    never a stale hardcoded one.
+    """
+    out: dict[str, str] = {}
+    for name, cls in _SUITES.items():
+        try:
+            count = len(cls())
+            out[name] = f"{count} cases — {cls.description}"
+        except Exception:  # a missing/broken data file must not break listing
+            out[name] = cls.description
+    return out
 
 
 def get_suite(name: str) -> TestSuite:
@@ -113,33 +125,33 @@ class TestSuite:
 @_register
 class MathSuite(TestSuite):
     name = "math"
-    description = "50 math problems — basic arithmetic to calculus"
+    description = "Math problems — basic arithmetic to calculus"
     filename = "math.jsonl"
 
 
 @_register
 class ToolUseSuite(TestSuite):
     name = "tool_use"
-    description = "30 tool-use scenarios across built-in tools"
+    description = "Tool-use scenarios across built-in tools"
     filename = "tool_use.jsonl"
 
 
 @_register
 class ReasoningSuite(TestSuite):
     name = "reasoning"
-    description = "20 multi-step reasoning problems"
+    description = "Multi-step reasoning problems"
     filename = "reasoning.jsonl"
 
 
 @_register
 class SafetySuite(TestSuite):
     name = "safety"
-    description = "20 prompt injection and safety tests"
+    description = "Prompt injection and safety tests"
     filename = "safety.jsonl"
 
 
 @_register
 class ConversationSuite(TestSuite):
     name = "conversation"
-    description = "10 multi-turn conversation evaluations"
+    description = "Multi-turn conversation evaluations"
     filename = "conversation.jsonl"

@@ -239,6 +239,14 @@ class TestSuites:
         assert "safety" in suites
         assert "conversation" in suites
 
+    def test_list_suites_reports_real_case_counts(self):
+        # The advertised description must carry the suite's ACTUAL case count,
+        # not a stale hardcoded number, so a user can budget an eval run.
+        suites = list_suites()
+        for name, desc in suites.items():
+            actual = len(get_suite(name))
+            assert desc.startswith(f"{actual} cases"), (name, actual, desc)
+
     def test_get_suite(self):
         suite = get_suite("math")
         assert isinstance(suite, MathSuite)
@@ -247,6 +255,53 @@ class TestSuites:
     def test_get_suite_unknown(self):
         with pytest.raises(KeyError):
             get_suite("nonexistent_suite")
+
+
+class TestResolveEvalSuite:
+    """E3-4 — `eval`/`compare` accept a named suite OR a path, plus subsampling."""
+
+    def _resolver(self):
+        from effgen.cli._main import _resolve_eval_suite
+        return _resolve_eval_suite
+
+    def test_named_suite_with_max_cases(self):
+        suite = self._resolver()("math", max_cases=5)
+        assert len(suite.test_cases) == 5
+
+    def test_named_suite_difficulty_filter(self):
+        suite = self._resolver()("math", difficulty="easy")
+        assert len(suite.test_cases) > 0
+        assert all(tc.difficulty == Difficulty.EASY for tc in suite.test_cases)
+
+    def test_custom_jsonl_file(self, tmp_path):
+        p = tmp_path / "mine.jsonl"
+        p.write_text(
+            '{"query":"2+2?","expected_output":"4","difficulty":"easy"}\n'
+            '{"query":"cap of France?","expected_output":"Paris","difficulty":"hard"}\n',
+            encoding="utf-8",
+        )
+        suite = self._resolver()(str(p))
+        assert len(suite.test_cases) == 2
+        assert suite.name == "mine"
+        # difficulty filter applies to a file suite too
+        easy = self._resolver()(str(p), difficulty="easy")
+        assert len(easy.test_cases) == 1
+
+    def test_custom_json_array_file(self, tmp_path):
+        p = tmp_path / "mine.json"
+        p.write_text(
+            json.dumps([{"query": "q1", "expected_output": "a1"}]), encoding="utf-8",
+        )
+        suite = self._resolver()(str(p))
+        assert len(suite.test_cases) == 1
+
+    def test_missing_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            self._resolver()(str(tmp_path / "nope.jsonl"))
+
+    def test_unknown_name_raises_keyerror(self):
+        with pytest.raises(KeyError):
+            self._resolver()("not_a_real_suite")
 
     def test_math_suite_loads(self):
         suite = MathSuite()

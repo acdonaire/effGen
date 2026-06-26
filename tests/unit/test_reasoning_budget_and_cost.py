@@ -208,6 +208,25 @@ def test_no_cost_key_when_provider_reports_none():
 
 
 # ---------------------------------------------------------------------------
+# E3-5 — per-run latency folded onto the response metadata (like cost/tokens)
+# ---------------------------------------------------------------------------
+
+
+def test_latency_on_response_metadata():
+    # Every run surfaces latency on metadata so callers can budget per call
+    # without wrapping each run in their own timer — even a local model with no
+    # cost data still reports latency.
+    m = _BudgetModel(name="local-model", text="answer",
+                     metadata={"completion_tokens": 5})
+    r = _agent(m).run("hi")
+    assert r.metadata.get("latency_ms") is not None
+    assert r.metadata.get("duration_s") is not None
+    # latency_ms is the millisecond mirror of duration_s / execution_time.
+    assert r.metadata["latency_ms"] == pytest.approx(r.metadata["duration_s"] * 1000.0, rel=0.01)
+    assert r.metadata["duration_s"] == pytest.approx(r.execution_time, rel=0.05, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
 # E1-4 — output_schema=PydanticModel populates metadata["parsed"]
 # ---------------------------------------------------------------------------
 
@@ -232,3 +251,43 @@ def test_output_schema_pydantic_populates_parsed():
     assert isinstance(parsed, _Figures)
     assert parsed.ticker == "ACME"
     assert parsed.revenue_musd == pytest.approx(1284.6)
+
+
+# ---------------------------------------------------------------------------
+# E3-6 — str(GenerationResult) is the text, mirroring AgentResponse
+# ---------------------------------------------------------------------------
+
+
+def test_generation_result_str_is_text():
+    g = GenerationResult(text="The answer is 42.", tokens_used=5,
+                         finish_reason="stop", model_name="m")
+    assert str(g) == "The answer is 42."
+    # print() / f-strings show the answer, not the dataclass repr...
+    assert f"{g}" == "The answer is 42."
+    # ...but repr() still carries every field for debugging.
+    assert "GenerationResult(" in repr(g)
+    assert "tokens_used=5" in repr(g)
+
+
+# ---------------------------------------------------------------------------
+# E3-7 — AgentConfig turns a stray engine= into an actionable error
+# ---------------------------------------------------------------------------
+
+
+def test_agentconfig_rejects_model_load_kwargs_with_hint():
+    with pytest.raises(TypeError) as ei:
+        AgentConfig(name="x", model="Qwen/Qwen2.5-1.5B-Instruct", engine="transformers")
+    msg = str(ei.value)
+    assert "engine" in msg
+    assert "load_model" in msg
+    assert "create_agent" in msg
+
+
+def test_agentconfig_normal_construction_still_works():
+    cfg = AgentConfig(name="ok", model="gpt-5-nano", require_model=False,
+                      temperature=0.3)
+    assert cfg.name == "ok"
+    assert cfg.temperature == pytest.approx(0.3)
+    # dataclasses.replace round-trips through the wrapped __init__
+    import dataclasses
+    assert dataclasses.replace(cfg, temperature=0.9).temperature == pytest.approx(0.9)

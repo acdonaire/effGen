@@ -332,6 +332,18 @@ local = [
     "bitsandbytes>=0.46.1",
     "llama-cpp-python>=0.2.0",
 ]
+grammar = [
+    # Grammar-constrained (schema-guaranteed) decoding for LOCAL Transformers
+    # models. With this installed, structured output is produced in one
+    # constrained pass, so even weak JSON-followers (small Llama/Gemma/Phi
+    # locals) emit schema-valid output instead of falling back to prompt-and-
+    # validate. Entirely optional: without it, structured output still works via
+    # the universal prompt+validate path (it just can't *guarantee* conformance
+    # on a model that won't follow the schema). The grammar code probes the
+    # concrete outlines symbols it needs, so an incompatible build degrades to
+    # the fallback rather than erroring.
+    "outlines>=1.0",
+]
 tools-web = [
     # Web-search / browsing tools (DuckDuckGo ships in the base install).
     "google-search-results>=2.4.2",
