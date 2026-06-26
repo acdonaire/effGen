@@ -47,12 +47,33 @@ from effgen.tools.builtin import (
 # helpers
 # ---------------------------------------------------------------------------
 
+def _reachable(host: str, port: int = 443, timeout: float = 3.0) -> bool:
+    """Bounded TCP reachability check for ``host``.
+
+    Runs the connect on a daemon thread joined with a wall-clock timeout so a
+    slow/dead host — or a hanging DNS lookup, which a plain socket timeout does
+    *not* bound — can never stall the caller past ``timeout``. An abandoned
+    daemon thread won't block interpreter exit.
+    """
+    import threading
+
+    result = {"ok": False}
+
+    def _connect() -> None:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                result["ok"] = True
+        except OSError:
+            pass
+
+    t = threading.Thread(target=_connect, daemon=True)
+    t.start()
+    t.join(timeout + 1.0)
+    return result["ok"]
+
+
 def _has_network(host: str = "api.github.com", port: int = 443, timeout: float = 3.0) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
+    return _reachable(host, port, timeout)
 
 
 NETWORK = _has_network()
@@ -371,10 +392,16 @@ def test_system_info_memory_only():
 
 @needs_net
 def test_http_get_json_response():
+    # httpbin.org is frequently overloaded/down; a stalled connect or DNS lookup
+    # would otherwise hang past the suite timeout. Bounded pre-check + a short
+    # request timeout keep a flaky host a clean skip, not a CI failure.
+    if not _reachable("httpbin.org"):
+        pytest.skip("httpbin.org unreachable")
     result = _run(HTTPTool().execute(
         url="https://httpbin.org/get",
         method="GET",
         headers={"User-Agent": "effGen-tests"},
+        timeout=10,
     ))
     if not result.success:
         pytest.skip(f"httpbin.org unreachable: {result.error}")

@@ -27,10 +27,46 @@ from effgen.models.transformers_engine import TransformersEngine
 TINY_MODEL = "gpt2"
 
 
+def _skip_if_not_cached(model_id: str) -> None:
+    """Skip when ``model_id`` isn't already in the local HF cache.
+
+    A *cold* download can stall a network-restricted CI runner well past the
+    per-test timeout (a hang reported as an error, not a clean skip). When the
+    weights aren't cached we skip up front rather than attempt the fetch; a warm
+    cache (the normal local/CI-with-prefetch case) runs as before. ``HF_HUB_OFFLINE``
+    is respected by letting ``load()`` fail fast into the fixture's skip path.
+    """
+    import os
+
+    if os.environ.get("HF_HUB_OFFLINE") not in (None, "", "0"):
+        return
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except Exception:  # huggingface_hub layout changed → let load() decide
+        return
+    # The "previously 404'd" sentinel moved from .constants to the package root
+    # across huggingface_hub versions; try both, else fall back to a never-equal
+    # object so the plain ``is None`` check below still works.
+    try:
+        from huggingface_hub import _CACHED_NO_EXIST
+    except Exception:
+        try:
+            from huggingface_hub.constants import _CACHED_NO_EXIST
+        except Exception:
+            _CACHED_NO_EXIST = object()
+    cached = try_to_load_from_cache(model_id, "config.json")
+    if cached is None or cached is _CACHED_NO_EXIST:
+        pytest.skip(
+            f"'{model_id}' not in local HF cache; skipping to avoid a cold "
+            "download that can hang CI"
+        )
+
+
 @pytest.fixture(scope="module")
 def gpt2_engine():
     """Load the tiny gpt2 model once for the module; skip cleanly if unavailable
     (offline / not cached). Runs on GPU when one is visible, else CPU."""
+    _skip_if_not_cached(TINY_MODEL)
     engine = TransformersEngine(TINY_MODEL, use_flash_attention=False)
     try:
         engine.load()
