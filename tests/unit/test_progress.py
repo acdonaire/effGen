@@ -151,6 +151,34 @@ def test_summary_line_failure_shows_reason():
 
 
 # ---------------------------------------------------------------------------
+# execution_trace_lines — the renderer the quickstart shares (E4-7)
+# ---------------------------------------------------------------------------
+
+def test_execution_trace_lines_reports_a_tool_call():
+    # The agent's trace is a list of typed events (tool_call_start/complete), not
+    # a ReAct action/observation shape. The shared renderer must surface the tool
+    # so the quickstart no longer says "answered directly" when a tool ran.
+    trace = [
+        {"type": "task_start", "message": "Starting task"},
+        {"type": "reasoning_step", "message": "Iteration 1"},
+        {"type": "tool_call_start",
+         "data": {"tool_name": "calculator", "tool_input": "25 * 17"}},
+        {"type": "tool_call_complete", "data": {"result": "425"}},
+    ]
+    lines = P.execution_trace_lines(trace)
+    text = " ".join(t for _style, t in lines)
+    assert "calculator" in text
+
+
+def test_execution_trace_lines_empty_for_direct_answer():
+    # A pure direct answer (no tool/reasoning events) yields no lines, so the
+    # quickstart correctly falls back to "answered directly, no tools needed".
+    assert P.execution_trace_lines([{"type": "task_start", "message": "x"}]) == []
+    assert P.execution_trace_lines([]) == []
+    assert P.execution_trace_lines(None) == []
+
+
+# ---------------------------------------------------------------------------
 # sticky status state
 # ---------------------------------------------------------------------------
 

@@ -343,6 +343,46 @@ def _instantiate_tools(tool_names: list[str]) -> list:
     return tools
 
 
+def _normalize_extra_tools(extra_tools: list, *, _arg: str = "extra_tools") -> list:
+    """Resolve ``extra_tools`` entries to tool instances.
+
+    Each entry may be a ready tool instance **or** a registry tool *name* string
+    (the same names the CLI's ``-t/--tools`` accepts, e.g. ``"calculator"``).
+    A name is resolved through the global registry; an unknown name raises a
+    ``ValueError`` with close-match suggestions instead of crashing later with the
+    opaque ``'str' object has no attribute 'metadata'``.
+    """
+    if not extra_tools:
+        return list(extra_tools or [])
+    from effgen.tools import get_registry
+
+    registry = None
+    resolved = []
+    for entry in extra_tools:
+        if isinstance(entry, str):
+            if registry is None:
+                registry = get_registry()
+            try:
+                resolved.append(registry.get_tool_sync(entry))
+            except KeyError:
+                import difflib
+
+                try:
+                    available = registry.list_tools()
+                except Exception:  # noqa: BLE001
+                    available = []
+                close = difflib.get_close_matches(entry, available, n=3, cutoff=0.5)
+                hint = f" Did you mean: {', '.join(close)}?" if close else ""
+                raise ValueError(
+                    f"{_arg}: unknown tool name {entry!r}.{hint} "
+                    "Pass a registered tool name (see get_registry().list_tools() "
+                    "or `effgen tools list`) or a Tool instance."
+                ) from None
+        else:
+            resolved.append(entry)
+    return resolved
+
+
 def _resolve_default_model(preset: str) -> str:
     """Resolve a model when the caller omitted one.
 
@@ -506,7 +546,11 @@ def create_agent(
             tells you how to pick one (effGen never silently picks a paid model).
         agent_name: Optional override for the agent name (the keyword ``name``
             is accepted as an alias).
-        extra_tools: Additional tool instances to add beyond the preset.
+        extra_tools: Additional tools to add beyond the preset. Each entry may be
+            a tool instance **or** a registry tool *name* string (the same names
+            the CLI's ``-t/--tools`` accepts, e.g. ``"calculator"``); an unknown
+            name raises a clear ``ValueError`` with suggestions. The keyword
+            ``tools`` is accepted as an alias for ``extra_tools``.
         knowledge_base: Only used by the ``rag`` preset. A document source, or
             a list of them, indexed into the agent's retrieval tool at
             creation. Each entry may be a file path, a directory path, **or**
@@ -549,6 +593,21 @@ def create_agent(
         if agent_name is None:
             agent_name = _alias_name
 
+    # `tools=` is the natural LangChain-style guess for "give the agent these
+    # tools". create_agent's parameter is `extra_tools` (added on top of the
+    # preset's own tools). Accept `tools=` as an alias so the obvious call works,
+    # rather than letting it collide with the internally-built `tools` list and
+    # raise a cryptic "got multiple values for keyword argument 'tools'".
+    if "tools" in config_overrides:
+        _alias_tools = config_overrides.pop("tools")
+        if extra_tools is not None:
+            raise TypeError(
+                "create_agent() got both `tools=` and `extra_tools=`. `tools=` is "
+                "an alias for `extra_tools` (tools added on top of the preset) — "
+                "pass only one."
+            )
+        extra_tools = _alias_tools
+
     if model is None:
         model = _resolve_default_model(preset)
 
@@ -588,7 +647,7 @@ def create_agent(
         _ingest_rag_knowledge_base(tools, knowledge_base)
 
     if extra_tools:
-        tools.extend(extra_tools)
+        tools.extend(_normalize_extra_tools(extra_tools))
 
     try:
         agent_config = AgentConfig(

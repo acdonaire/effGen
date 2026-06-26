@@ -93,15 +93,42 @@ def _safe_float_or_none(value: Any) -> float | None:
         return None
 
 
-# Literal loop-bookkeeping strings the ReAct scaffolding/prompts inject into the
-# scratchpad. These must never reach a user-facing answer. An adjacent newline is
-# consumed when present so removing a mid-line marker doesn't leave an orphan line.
+# Loop-bookkeeping nudges the ReAct scaffolding injects into the scratchpad to
+# steer a stalling model toward a final answer. They are defined here, in ONE
+# place, and imported by the injection sites (see ``agent_react``) so the set of
+# strings a loop can append can never drift out of sync with the set of strings
+# stripped from the user-facing answer below. Adding a new nudge => add a
+# constant here and reference it at the injection site; it is then stripped for
+# free. The injection sites prepend "\n" (and sometimes "Observation: "), which
+# the strip patterns tolerate.
+NUDGE_CONTINUE = "[Tool results computed above. Continue or provide Final Answer:]"
+NUDGE_HAVE_ANSWER = "[You have the answer from the tool. Please respond with 'Final Answer:' now.]"
+NUDGE_HAVE_RESULTS = (
+    "[You already have results from this tool. If you have "
+    "enough information, respond now with 'Final Answer:'.]"
+)
+NUDGE_ALREADY_COMPUTED = (
+    "You already computed this. Please provide your final response "
+    "using 'Final Answer:' now."
+)
+NUDGE_NO_TOOLS = "No tools available. Please provide your answer directly using 'Final Answer:'."
+NUDGE_NOT_USABLE = (
+    "That was not a usable answer. Call the tool correctly or give a "
+    "plain Final Answer."
+)
+
+# Literal loop-bookkeeping strings to strip — every injectable nudge above, plus a
+# couple of defensive bracketed/sub-phrase variants. These must never reach a
+# user-facing answer. An adjacent newline is consumed when present so removing a
+# mid-line marker doesn't leave an orphan line.
 _SCAFFOLD_LITERALS: tuple[str, ...] = (
-    "[Tool results computed above. Continue or provide Final Answer:]",
-    "[You have the answer from the tool. Please respond with 'Final Answer:' now.]",
-    "[You already computed this. Please provide your final response using 'Final Answer:' now.]",
-    "You already computed this. Please provide your final response using 'Final Answer:' now.",
-    "No tools available. Please provide your answer directly using 'Final Answer:'.",
+    NUDGE_CONTINUE,
+    NUDGE_HAVE_ANSWER,
+    NUDGE_HAVE_RESULTS,
+    f"[{NUDGE_ALREADY_COMPUTED}]",
+    NUDGE_ALREADY_COMPUTED,
+    NUDGE_NO_TOOLS,
+    NUDGE_NOT_USABLE,
     "Please provide your final response using 'Final Answer:' now.",
 )
 _SCAFFOLD_LITERAL_RES: tuple[re.Pattern[str], ...] = tuple(

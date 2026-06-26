@@ -711,6 +711,19 @@ class CLIInterface:
 
         self.print_header(f"effGen v{__version__} - Running Task")
 
+        # Resolve the model once so the preset and plain paths agree. With no
+        # -m/--model, mirror `quickstart`: prefer a detected cheap cloud model,
+        # else a small local model — and say why, so the choice is never a silent
+        # surprise (a paid cloud call or a multi-GB local download).
+        if args.model:
+            run_model = args.model
+            _preflight_model_hint(self, run_model, provider)
+        else:
+            run_model, _sugg_provider, _sugg_reason = _quickstart_suggest_model()
+            if provider is None and _sugg_provider:
+                provider = _sugg_provider
+            self.print(f"Using model {run_model} ({_sugg_reason}); override with -m/--model.")
+
         agent = None
         try:
             # Load configuration if provided
@@ -728,7 +741,7 @@ class CLIInterface:
             # Use preset if specified
             if getattr(args, 'preset', None):
                 from effgen.presets import create_agent as _create_preset_agent
-                model_id = args.model or "Qwen/Qwen2.5-3B-Instruct"
+                model_id = run_model
                 self.print(f"Using preset: {args.preset}")
                 _preset_overrides = {"provider": provider} if provider else {}
                 agent = _create_preset_agent(
@@ -777,7 +790,7 @@ class CLIInterface:
                 # Create agent configuration
                 agent_config = AgentConfig(
                     name=args.name or "cli-agent",
-                    model=args.model or "Qwen/Qwen2.5-3B-Instruct",
+                    model=run_model,
                     provider=provider,
                     tools=tools,
                     system_prompt=args.system_prompt or config.get("system_prompt",
@@ -3786,6 +3799,40 @@ def _quickstart_suggest_model() -> tuple[str, str | None, str]:
     return _QUICKSTART_LOCAL_MODEL, None, "no cloud key found — using a small local model"
 
 
+def _preflight_model_hint(cli: "CLIInterface", model_id: str, provider: str | None) -> None:
+    """Surface a clean "did you mean" for an unknown model id, once, up front.
+
+    When the user passes an explicit ``-m`` id that isn't in the local catalog,
+    a high-confidence typo (e.g. ``gpt-5-nanoo``) otherwise only reveals itself
+    mid-run as a provider 404 wall. This checks the local catalog first and, if
+    the id is unknown but has near matches, prints a single tidy suggestion line.
+    It never blocks — the catalog can be stale, so an unknown-but-real new id is
+    allowed through; we only inform.
+    """
+    try:
+        from effgen.models import _catalog
+
+        _bare = model_id.split(":", 1)[-1]
+        # Local / HF-hub ids ("org/model") are resolved by download, not via the
+        # cloud catalog, so a catalog miss there is meaningless — never warn on a
+        # legitimate local model (e.g. meta-llama/Llama-3.2-3B-Instruct). The hint
+        # targets slash-free cloud chat ids, where a typo is the likely cause.
+        if "/" in _bare:
+            return
+        if _catalog.lookup(model_id, provider) is not None:
+            return
+        alts = _catalog.nearest_alternatives(model_id, provider, n=3)
+        if not alts:
+            return
+        names = ", ".join(r.id for r in alts)
+        cli.print(
+            f"Note: '{_bare}' isn't in the local catalog. Did you mean: {names}? "
+            "Proceeding anyway — run 'effgen models refresh' if it's a new id."
+        )
+    except Exception:  # noqa: BLE001 - a hint must never break the run
+        pass
+
+
 def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
     """Handle 'effgen quickstart' / 'effgen tutorial' — a guided first run.
 
@@ -3903,17 +3950,19 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
             return 1
 
         # --- 4. Show the trace -------------------------------------------
-        if response.execution_trace:
-            cli.print_header("What the agent did")
-            for i, step in enumerate(response.execution_trace, 1):
-                action = step.get("action", step.get("tool", ""))
-                observation = step.get("observation", step.get("output", ""))
-                if action:
-                    cli.print(f"  {i}. used [cyan]{action}[/cyan] → {str(observation)[:80]}"
-                              if cli.console else
-                              f"  {i}. used {action} -> {str(observation)[:80]}")
-            if not any(s.get("action") or s.get("tool") for s in response.execution_trace):
-                cli.print("  (answered directly, no tools needed)")
+        # The agent's execution_trace is a list of event dicts (type/message/
+        # data) — not a ReAct action/observation shape — so render it with the
+        # shared formatter that understands those events. Hand-reading
+        # ``step["action"]`` here used to miss every tool call and wrongly print
+        # "answered directly" even when a tool ran (and tool_calls reported it).
+        cli.print_header("What the agent did")
+        _trace_lines = _progress.execution_trace_lines(response.execution_trace)
+        if _trace_lines:
+            for _style, _text in _trace_lines:
+                if cli.console:
+                    cli.console.print(f"  [{_style}]{_text}[/{_style}]")
+                else:
+                    cli.print(f"  {_text}")
         else:
             cli.print("  (answered directly, no tools needed)")
 

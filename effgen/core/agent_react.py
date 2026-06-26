@@ -46,6 +46,12 @@ from .agent import AgentMode, AgentResponse  # noqa: E402
 from .agent_runtime import (  # noqa: E402
     _SCAFFOLD_LITERAL_RES,
     _TOOL_ECHO_RE,
+    NUDGE_ALREADY_COMPUTED,
+    NUDGE_CONTINUE,
+    NUDGE_HAVE_ANSWER,
+    NUDGE_HAVE_RESULTS,
+    NUDGE_NO_TOOLS,
+    NUDGE_NOT_USABLE,
     _infer_provider_from_model,
     sanitize_final_answer,
 )
@@ -290,7 +296,7 @@ class AgentReActMixin:
                     else:
                         batch_observations.append(f"[{_tname}] → Tool not found")
                 # After batch execution, nudge model to synthesize a final answer.
-                scratchpad += "\n[Tool results computed above. Continue or provide Final Answer:]"
+                scratchpad += f"\n{NUDGE_CONTINUE}"
                 _batch_tool_runs += 1
                 parsed = {"thought": "", "action": None, "action_input": None, "final_answer": None}
                 cur_observation = "\n".join(batch_observations)
@@ -371,10 +377,7 @@ class AgentReActMixin:
                 logger.info(
                     "Discarding scaffolding-only final answer; continuing loop"
                 )
-                scratchpad += (
-                    "\nObservation: That was not a usable answer. "
-                    "Call the tool correctly or give a plain Final Answer."
-                )
+                scratchpad += f"\nObservation: {NUDGE_NOT_USABLE}"
                 final_answer = None
 
             if final_answer:
@@ -455,8 +458,7 @@ class AgentReActMixin:
                     scratchpad += (
                         f"\nAction: {action}"
                         f"\nAction Input: {action_input}"
-                        "\nObservation: You already computed this. "
-                        "Please provide your final response using 'Final Answer:' now."
+                        f"\nObservation: {NUDGE_ALREADY_COMPUTED}"
                     )
                     continue
 
@@ -468,7 +470,7 @@ class AgentReActMixin:
                     # Guide it to provide direct answer
                     scratchpad += f"\nAction: {action}"
                     scratchpad += f"\nAction Input: {action_input}"
-                    scratchpad += "\nObservation: No tools available. Please provide your answer directly using 'Final Answer:'."
+                    scratchpad += f"\nObservation: {NUDGE_NO_TOOLS}"
                 else:
                     # Execute tool inside tracing span
                     tool_start = time.time()
@@ -531,15 +533,12 @@ class AgentReActMixin:
 
                     # Nudge model to answer when iterations are running low
                     if iterations >= self.config.max_iterations - 2:
-                        scratchpad += "\n[You have the answer from the tool. Please respond with 'Final Answer:' now.]"
+                        scratchpad += f"\n{NUDGE_HAVE_ANSWER}"
                     elif action_call_count >= 1 and not tool_result.startswith("Error executing tool"):
                         # This tool has now run at least twice. The needed data is
                         # almost certainly in the scratchpad — nudge toward a final
                         # answer before the loop drifts into repeated re-planning.
-                        scratchpad += (
-                            "\n[You already have results from this tool. If you have "
-                            "enough information, respond now with 'Final Answer:'.]"
-                        )
+                        scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
 
             else:
                 # No action specified, prompt to continue

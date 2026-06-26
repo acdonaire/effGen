@@ -439,7 +439,7 @@ Begin!
 Question: {task}
 {scratchpad}"""
 
-    def __init__(self, config: AgentConfig, session_id: str | None = None):
+    def __init__(self, config: AgentConfig | None = None, session_id: str | None = None):
         """
         Initialize agent.
 
@@ -449,9 +449,16 @@ Question: {task}
                 agent loads/creates a Session in ~/.effgen/sessions/ and
                 appends each run() turn to it.
         """
-        # Fail fast on the bare-constructor trap: ``Agent("groq:model")`` stores
-        # the str unvalidated and only crashes deep in run(). Point users at the
-        # real construction paths instead.
+        # Fail fast on the bare-constructor traps and teach the fix. ``Agent()``
+        # (no args) and ``Agent("groq:model")`` (a bare id) would otherwise be a
+        # cryptic "missing argument" / a str stored unvalidated that crashes deep
+        # in run(). Point users at the real construction paths instead.
+        if config is None:
+            raise TypeError(
+                "Agent() needs an AgentConfig. Build one with "
+                "AgentConfig(name=..., model=...), or use the preset helper "
+                "create_agent('minimal', 'groq:llama-3.1-8b-instant')."
+            )
         if not isinstance(config, AgentConfig):
             raise TypeError(
                 "Agent(config=...) expects an AgentConfig, not "
@@ -501,6 +508,9 @@ Question: {task}
                 if config.require_model:
                     # Fail fast on a typo'd id / missing key rather than
                     # returning a working-looking agent (see AgentConfig docs).
+                    # Mark closed first so this never-returned, partially-built
+                    # agent doesn't tail the error with a GC-without-close warning.
+                    self._closed = True
                     logger.error(f"Failed to load model '{self.model_name}': {e}")
                     raise RuntimeError(
                         f"Failed to load model '{self.model_name}': {e}"
@@ -515,6 +525,7 @@ Question: {task}
             # BaseModel (e.g. an int, a list, or a Pydantic class). Fail fast
             # with a clear message instead of silently building a model-less
             # agent that only crashes at run().
+            self._closed = True
             raise TypeError(
                 f"AgentConfig.model must be a model-id str or a loaded model "
                 f"instance, not {type(config.model).__name__}. "
@@ -528,6 +539,7 @@ Question: {task}
                 # Fail at construction (not on the first run()) so a model-less
                 # agent doesn't look usable. Set require_model=False to defer
                 # model assignment (advanced/sub-agent use).
+                self._closed = True
                 raise ValueError(
                     f"Agent '{config.name}' was created without a model. "
                     "Pass a model id or instance, e.g. "

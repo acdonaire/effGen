@@ -240,6 +240,10 @@ class AgentGenerationMixin:
 
         last_error = None
         truncation_detail: dict[str, Any] | None = None
+        # A non-retryable failure (auth/not-found/invalid) is already logged once,
+        # in full, at ERROR below. Track that so the final summary doesn't re-log
+        # the same failure a second time at WARNING (the "logged 3×" noise).
+        nonretryable_logged = False
         total_tokens = 0
         # Whether the caller pinned max_tokens; if they didn't we may grow the
         # budget to recover a reasoning model from a "length"-truncated empty.
@@ -355,6 +359,7 @@ class AgentGenerationMixin:
                             getattr(current_model, "model_name", "?"),
                             e,
                         )
+                        nonretryable_logged = True
                         break  # stop retrying this model; outer loop may failover
                     if attempt < max_retries - 1:
                         logger.warning(
@@ -388,7 +393,11 @@ class AgentGenerationMixin:
                 "message": "Model returned an empty response after retries.",
                 "retryable": True,
             }
-        logger.warning("Generation failed: %s", detail["message"])
+        # Avoid re-logging a non-retryable failure already reported at ERROR above.
+        if nonretryable_logged:
+            logger.debug("Generation failed: %s", detail["message"])
+        else:
+            logger.warning("Generation failed: %s", detail["message"])
         return {
             "text": "",
             "tokens_used": total_tokens,

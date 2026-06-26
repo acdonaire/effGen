@@ -44,6 +44,20 @@ from effgen.core.agent import sanitize_final_answer as sanitize
             "The outage happened on July 19, 2024. ([blogs.microsoft.com](https://x))",
         ),
         ("Paris.\nFinal Answer: ", "Paris."),
+        # The "you already have results from this tool" nudge the loop injects
+        # when a tool has run twice — a small model (groq llama-3.1-8b) echoed it
+        # straight into a pipe-joined answer. Must be stripped like the others.
+        (
+            "79.96 | 86.3568 [You already have results from this tool. If you "
+            "have enough information, respond now with 'Final Answer:'.] | 85.49",
+            "79.96 | 86.3568 | 85.49",
+        ),
+        # The "you already computed this" nudge injected on a repeated action.
+        (
+            "42 You already computed this. Please provide your final response "
+            "using 'Final Answer:' now.",
+            "42",
+        ),
     ],
 )
 def test_strips_scaffolding(leaked, expected):
@@ -143,3 +157,41 @@ def test_only_label_returns_label_stripped_text():
     # If stripping a label would empty the string, keep the (stripped) content.
     # "Final Answer:" with nothing after → empty tail, label kept as-is content.
     assert sanitize("Final Answer:") == "Final Answer:"
+
+
+# --- Drift guard: injection sites and the strip-list share one source --------
+
+def test_every_injected_nudge_is_stripped():
+    """Each loop nudge the ReAct scaffolding can inject must be sanitized away.
+
+    The nudge strings are defined once in ``agent_runtime`` and referenced by
+    the injection sites in ``agent_react``; this guards against a future nudge
+    being added at an injection site without being added to the strip-list (the
+    bug that let "[You already have results from this tool…]" reach a user).
+    """
+    import effgen.core.agent_runtime as rt
+
+    nudges = [v for k, v in vars(rt).items() if k.startswith("NUDGE_")]
+    assert nudges, "expected NUDGE_* constants to exist"
+    for nudge in nudges:
+        # Embedded mid-answer (the way a small model echoes it) must vanish.
+        leaked = f"42 {nudge} done"
+        assert nudge not in sanitize(leaked), f"nudge not stripped: {nudge!r}"
+
+
+def test_injection_sites_use_the_shared_nudges():
+    """The agent_react injection sites must reference the shared NUDGE_* values.
+
+    Reading the source keeps the two files honest: every literal a loop appends
+    should be one of the named constants (so it is also on the strip-list).
+    """
+    import inspect
+
+    import effgen.core.agent_react as ar
+    import effgen.core.agent_runtime as rt
+
+    src = inspect.getsource(ar)
+    for name in ("NUDGE_CONTINUE", "NUDGE_HAVE_ANSWER", "NUDGE_HAVE_RESULTS",
+                 "NUDGE_ALREADY_COMPUTED", "NUDGE_NO_TOOLS", "NUDGE_NOT_USABLE"):
+        assert getattr(rt, name, None), f"missing nudge constant {name}"
+        assert name in src, f"agent_react no longer references {name}"

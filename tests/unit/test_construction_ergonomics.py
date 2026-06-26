@@ -79,6 +79,15 @@ class TestAgentConstructorGuard:
         agent = Agent(AgentConfig(name="t", model="x", require_model=False))
         assert agent.name == "t"
 
+    def test_no_arg_constructor_teaches(self):
+        # ``Agent()`` (a natural newcomer guess) must teach the fix the same way
+        # ``Agent("model")`` does, not raise a bare "missing argument 'config'".
+        with pytest.raises(TypeError) as exc:
+            Agent()
+        msg = str(exc.value)
+        assert "AgentConfig" in msg
+        assert "create_agent" in msg
+
     @pytest.mark.parametrize("bad_model", [12345, ["x"], _Capital])
     def test_unsupported_model_type_fails_fast(self, bad_model):
         # AgentConfig.model that is neither a str id nor a loaded instance must
@@ -86,6 +95,23 @@ class TestAgentConstructorGuard:
         with pytest.raises(TypeError) as exc:
             Agent(AgentConfig(name="t", model=bad_model))
         assert "AgentConfig.model" in str(exc.value)
+
+    def test_failed_construction_does_not_warn_on_gc(self, caplog):
+        # A construction that fails (e.g. missing model / unloadable id) builds a
+        # partial agent that is never returned to the caller; it must mark itself
+        # closed so __del__ doesn't tail the clean error with a confusing
+        # "garbage-collected without calling close()" warning. (A unique name
+        # isolates this from other tests' unclosed agents during gc.)
+        import gc
+
+        probe = "gc-close-guard-probe"
+        caplog.set_level("WARNING", logger="effgen.core.agent")
+        with pytest.raises(ValueError):
+            Agent(AgentConfig(name=probe, model=None, require_model=True))
+        gc.collect()
+        offenders = [r for r in caplog.records
+                     if "garbage-collected" in r.message and probe in r.message]
+        assert not offenders, offenders
 
 
 # ── create_agent routes load_model kwargs / errors clearly ────────────────────
@@ -132,3 +158,51 @@ class TestCreateAgentKwargs:
     def test_default_name_when_neither_given(self):
         agent = create_agent("minimal", "x", require_model=False)
         assert agent.name.endswith("-agent")
+
+
+# ── create_agent accepts tool *names* and a `tools=` alias ────────────────────
+
+class TestCreateAgentTools:
+    def test_extra_tools_accepts_name_strings(self):
+        # The CLI's -t/--tools accepts names; the Python extra_tools= path must
+        # too — resolving "calculator" via the registry rather than crashing with
+        # "'str' object has no attribute 'metadata'".
+        agent = create_agent(
+            "minimal", "x", require_model=False, extra_tools=["calculator"]
+        )
+        assert "calculator" in {t.metadata.name for t in agent.config.tools}
+
+    def test_extra_tools_mixes_names_and_instances(self):
+        from effgen.tools import get_registry
+
+        calc = get_registry().get_tool_sync("calculator")
+        agent = create_agent(
+            "minimal", "x", require_model=False, extra_tools=[calc, "wikipedia"]
+        )
+        names = {t.metadata.name for t in agent.config.tools}
+        assert {"calculator", "wikipedia"} <= names
+
+    def test_unknown_tool_name_raises_with_suggestion(self):
+        with pytest.raises(ValueError) as exc:
+            create_agent(
+                "minimal", "x", require_model=False, extra_tools=["calcualtor"]
+            )
+        msg = str(exc.value)
+        assert "extra_tools" in msg
+        assert "calculator" in msg  # close-match suggestion
+
+    def test_tools_kwarg_is_alias_for_extra_tools(self):
+        # The LangChain-style `tools=` guess must work as an alias for
+        # extra_tools, not collide into "got multiple values for 'tools'".
+        agent = create_agent(
+            "minimal", "x", require_model=False, tools=["calculator"]
+        )
+        assert "calculator" in {t.metadata.name for t in agent.config.tools}
+
+    def test_tools_and_extra_tools_together_raise(self):
+        with pytest.raises(TypeError) as exc:
+            create_agent(
+                "minimal", "x", require_model=False,
+                tools=["calculator"], extra_tools=["calculator"],
+            )
+        assert "extra_tools" in str(exc.value)
