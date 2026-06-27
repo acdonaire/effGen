@@ -1112,6 +1112,7 @@ class CLIInterface:
                 api_key=api_key or None,
                 cors_origins=cors_origins,
                 dev_mode=dev_mode,
+                rate_limit_per_minute=getattr(args, "rate_limit", None),
             )
 
             # Discover tools for the /run + /tools convenience routes and stash
@@ -2458,13 +2459,41 @@ Model id formats:
                              help='Disable live spinners/progress animation')
 
     # Serve command
-    serve_parser = subparsers.add_parser('serve', help='Start API server')
+    serve_parser = subparsers.add_parser(
+        'serve', help='Start API server',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Operational settings (environment variables):\n"
+            "  EFFGEN_API_KEY        static API key (Bearer or X-API-Key). If unset\n"
+            "                        and not in dev mode, an ephemeral key is minted\n"
+            "                        and printed once — never unauthenticated.\n"
+            "  EFFGEN_DEV_MODE=1     disable auth (loud warning; local dev only).\n"
+            "  EFFGEN_RATE_LIMIT     requests/minute per client IP (0 disables;\n"
+            "                        health probes are always exempt). Or use\n"
+            "                        --rate-limit.\n"
+            "  EFFGEN_CORS_ORIGINS   comma-separated allowed origins (default: none;\n"
+            "                        cross-origin is fail-closed for a backend API).\n"
+            "  EFFGEN_OIDC_ISSUER /  enable OIDC/JWT auth instead of a static key.\n"
+            "  EFFGEN_OIDC_CLIENT_ID\n"
+            "  EFFGEN_PUBLIC_METRICS=1   serve /metrics without auth (default: auth).\n"
+            "  EFFGEN_MODEL_POOL_SIZE    loaded models kept warm (default 4).\n"
+            "\n"
+            "Scaling: `effgen serve` runs a single worker. For multiple workers,\n"
+            "run the app factory under uvicorn/gunicorn, e.g.:\n"
+            "  uvicorn effgen.server.app:create_app --factory --workers 4 --port 8000\n"
+        ),
+    )
     serve_parser.add_argument(
         '--host', default='127.0.0.1',
         help='Host to bind to (default 127.0.0.1, loopback-only). '
              'Pass --host 0.0.0.0 to expose on all interfaces (set EFFGEN_API_KEY first).',
     )
     serve_parser.add_argument('-p', '--port', type=int, default=8000, help='Port to bind to')
+    serve_parser.add_argument(
+        '--rate-limit', type=int, default=None, metavar='N',
+        help='Requests/minute per client IP (overrides EFFGEN_RATE_LIMIT; '
+             '0 disables). Health probes are always exempt.',
+    )
 
     # Config commands
     config_parser = subparsers.add_parser('config', help='Configuration management')

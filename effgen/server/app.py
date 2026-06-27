@@ -138,6 +138,31 @@ def create_app(
         redoc_url="/redoc",
     )
 
+    # Request-validation errors (422) get the same OpenAI error envelope as model
+    # errors so an OpenAI client reads `err.type`/`err.code` uniformly instead of
+    # FastAPI's `{"detail": [...]}`. The field-level detail is folded into the
+    # message so nothing is lost.
+    try:
+        from fastapi.exceptions import RequestValidationError
+
+        from effgen.api.openai_compat import error_envelope
+
+        @app.exception_handler(RequestValidationError)
+        async def _validation_handler(request: Any, exc: RequestValidationError) -> Any:
+            errs = exc.errors()
+            try:
+                first = errs[0]
+                loc = ".".join(str(p) for p in first.get("loc", []) if p != "body")
+                msg = f"{loc}: {first.get('msg')}" if loc else str(first.get("msg"))
+            except Exception:  # noqa: BLE001 - fall back to a generic message
+                msg = "invalid request body"
+            return JSONResponse(
+                status_code=422,
+                content=error_envelope(422, msg, code="invalid_request_body", redact=False),
+            )
+    except Exception:  # noqa: BLE001 - validation handler is best-effort
+        logger.debug("Could not install validation exception handler", exc_info=True)
+
     # ------------------------------------------------------------------
     # Middleware stack. ``add_middleware`` is LIFO, so the *last* added wraps
     # as the outermost layer. We want, outer → inner:
@@ -376,6 +401,21 @@ def _extract_usage(response: Any) -> tuple[int | None, int | None]:
     return prompt, completion
 
 
+def _extract_cost(response: Any) -> float | None:
+    """Pull per-call ``cost_usd`` from an AgentResponse, if the model is priced.
+
+    effGen records the dollar cost of a run in ``metadata["cost_usd"]`` (from the
+    provider's pricing table). Returns ``None`` for unpriced/local models so the
+    response can omit cost rather than report a misleading zero.
+    """
+    meta = getattr(response, "metadata", None) or {}
+    raw = meta.get("cost_usd")
+    try:
+        return float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_default_runner() -> Any:
     """Construct an agent-backed runner for the OpenAI-compatible endpoints.
 
@@ -432,6 +472,7 @@ def _build_default_runner() -> Any:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 resolved_model=resolved_model,
+                cost_usd=_extract_cost(response),
                 finish_reason="stop" if getattr(response, "success", True) else "error",
             )
         finally:
@@ -476,13 +517,18 @@ def _resolve_tools(tools: Any) -> list[Any]:
 
     The OpenAI chat schema sends tools as ``{"type": "function", "function":
     {"name": ...}}`` dicts; effGen's :class:`Agent` expects tool *instances*.
-    Names are resolved against the built-in tool registry; anything that
-    cannot be resolved is skipped (RBAC has already authorized the names).
+    Names are resolved against the built-in tool registry (RBAC has already
+    authorized the names). A requested tool that the server does not host is
+    **not** silently dropped — that would leave a client expecting OpenAI
+    function-calling with prose and no ``tool_calls``. Instead the unhosted
+    names are collected and surfaced as an :class:`UnknownToolError`, which the
+    route turns into an honest ``400``.
     """
     if not tools:
         return []
     import asyncio
 
+    from effgen.api.openai_compat import UnknownToolError
     from effgen.tools.registry import ToolRegistry
 
     registry = ToolRegistry()
@@ -505,6 +551,7 @@ def _resolve_tools(tools: Any) -> list[Any]:
             return ex.submit(lambda: asyncio.run(coro)).result()
 
     resolved: list[Any] = []
+    unresolved: list[str] = []
     for tool in tools:
         if not isinstance(tool, str) and not isinstance(tool, dict):
             # Already a tool object.
@@ -513,10 +560,15 @@ def _resolve_tools(tools: Any) -> list[Any]:
         name = _tool_name(tool)
         try:
             obj = _get(name)
-            if obj is not None:
-                resolved.append(obj)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not resolve tool %r: %s", name, exc)
+            obj = None
+        if obj is not None:
+            resolved.append(obj)
+        else:
+            unresolved.append(name)
+    if unresolved:
+        raise UnknownToolError(unresolved)
     return resolved
 
 
@@ -680,10 +732,17 @@ class RBACBudgetMiddleware:
 
 
 async def _reject_json(send: Any, status: int, detail: str) -> None:
-    """Emit a JSON error response from an ASGI middleware."""
+    """Emit a JSON error response from an ASGI middleware.
+
+    Uses the shared OpenAI error envelope so RBAC/budget rejections (403/413/429)
+    carry the same ``{"error": {message, type, param, code}}`` shape as model
+    errors, letting a client branch on ``err.type``/``err.code`` uniformly.
+    """
     import json as _json
 
-    payload = _json.dumps({"detail": detail}).encode()
+    from effgen.api.openai_compat import error_envelope
+
+    payload = _json.dumps(error_envelope(status, detail)).encode()
     await send({
         "type": "http.response.start",
         "status": status,

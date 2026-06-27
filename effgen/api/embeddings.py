@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import os
 import re
@@ -25,6 +26,8 @@ import sqlite3
 import threading
 from collections import OrderedDict
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Model aliases — OpenAI-style names mapped to local models.
 MODEL_ALIASES = {
@@ -34,6 +37,38 @@ MODEL_ALIASES = {
     "text-embedding-3-large": "sentence-transformers/all-mpnet-base-v2",
 }
 DEFAULT_DIM = 384  # TF-IDF fallback dimension
+
+# Provider prefixes an OpenAI-compatible client may send (the same ``provider:``
+# prefix the chat endpoint accepts). They are stripped before the alias lookup so
+# that, e.g., ``openai:text-embedding-3-small`` resolves to the real neural model
+# exactly as the bare ``text-embedding-3-small`` does — instead of falling
+# through to the lexical fallback because the prefixed id matched no alias.
+_PROVIDER_PREFIXES = (
+    "openai",
+    "hf",
+    "huggingface",
+    "sentence-transformers",
+    "together",
+    "fireworks",
+    "cohere",
+    "voyage",
+)
+
+# Identifier reported on the response (and ``x-effgen-embedding-backend`` header)
+# when the requested neural backend could not load and the lexical TF-IDF
+# embedder served the request instead. Never silently substituted.
+TFIDF_FALLBACK_ID = "tfidf-fallback"
+
+
+def _strict_mode() -> bool:
+    """Whether to fail closed (503) rather than serve degraded TF-IDF vectors."""
+    return os.getenv("EFFGEN_EMBEDDINGS_STRICT", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+class EmbeddingBackendUnavailable(RuntimeError):
+    """The requested neural embedding backend could not be loaded (strict mode)."""
 
 
 # ---------------------------------------------------------------------------
@@ -194,19 +229,54 @@ class EmbeddingEngine:
             self.sqlite = None
         self._backends: dict = {}
         self._backend_lock = threading.Lock()
+        # Resolved model ids that fell back to the lexical TF-IDF embedder
+        # because their neural backend could not load — surfaced to callers.
+        self._fallback_models: set[str] = set()
 
     def _resolve_model(self, model: str) -> str:
-        return MODEL_ALIASES.get(model, model)
+        # Strip a known ``provider:`` prefix so a prefixed id resolves like the
+        # bare alias (``openai:text-embedding-3-small`` -> the MiniLM model).
+        bare = model
+        prefix, sep, rest = model.partition(":")
+        if sep and prefix.lower() in _PROVIDER_PREFIXES and rest:
+            bare = rest
+        return MODEL_ALIASES.get(bare, bare)
+
+    def is_fallback(self, model: str) -> bool:
+        """True when *model* is being served by the lexical TF-IDF fallback."""
+        return self._resolve_model(model) in self._fallback_models
 
     def _get_backend(self, model: str) -> Any:
         resolved = self._resolve_model(model)
         with self._backend_lock:
             if resolved in self._backends:
                 return self._backends[resolved]
-            try:
-                backend: Any = SentenceTransformerEmbedder(resolved)
-            except Exception:
+            backend: Any
+            if isinstance(resolved, str) and resolved.lower().startswith("tfidf"):
+                # The caller explicitly asked for the lexical embedder.
                 backend = TFIDFEmbedder()
+            else:
+                try:
+                    backend = SentenceTransformerEmbedder(resolved)
+                except Exception as exc:  # noqa: BLE001 - neural backend optional
+                    if _strict_mode():
+                        # Fail closed instead of quietly degrading the vectors.
+                        raise EmbeddingBackendUnavailable(
+                            f"embedding backend for {resolved!r} could not load "
+                            f"({exc}); set EFFGEN_EMBEDDINGS_STRICT=0 to allow the "
+                            "lexical TF-IDF fallback"
+                        ) from exc
+                    # Honest, non-spammy fallback: warn once per model, record it
+                    # so the response can tell the caller the vectors are lexical.
+                    self._fallback_models.add(resolved)
+                    logger.warning(
+                        "Embedding backend for %r could not load (%s); serving "
+                        "lexical TF-IDF fallback vectors. Install/repair "
+                        "sentence-transformers for neural embeddings, or set "
+                        "EFFGEN_EMBEDDINGS_STRICT=1 to fail closed instead.",
+                        resolved, exc,
+                    )
+                    backend = TFIDFEmbedder()
             self._backends[resolved] = backend
             return backend
 
@@ -249,6 +319,16 @@ class EmbeddingEngine:
 # ---------------------------------------------------------------------------
 # FastAPI router (optional dependency)
 # ---------------------------------------------------------------------------
+# Imported at module level so the ``response: Response`` route annotation
+# resolves under ``from __future__ import annotations`` (FastAPI reads type hints
+# from module globals; a function-local import would not be found and the param
+# would be misread as a query field).
+try:
+    from fastapi import Response  # type: ignore
+except Exception:  # pragma: no cover - fastapi optional
+    Response = None  # type: ignore
+
+
 try:
     from pydantic import BaseModel as _PydBaseModel  # type: ignore
     from pydantic import Field as _PydField
@@ -271,6 +351,11 @@ try:
         data: list[EmbeddingItem]
         model: str
         usage: EmbeddingUsage
+        # Non-standard extension (OpenAI clients ignore unknown keys): records
+        # the resolved model and flags when the lexical TF-IDF fallback served
+        # the request, so a caller building semantic search/RAG can tell the
+        # vectors are degraded rather than neural.
+        effgen: dict[str, Any] | None = None
 except Exception:  # pragma: no cover - pydantic optional
     EmbeddingRequest = None  # type: ignore
     EmbeddingItem = None  # type: ignore
@@ -291,19 +376,40 @@ def create_embeddings_router(engine: EmbeddingEngine | None = None) -> Any:
     router = APIRouter()
 
     @router.post("/v1/embeddings", response_model=EmbeddingResponse)
-    def create_embeddings(req: EmbeddingRequest = Body(...)) -> EmbeddingResponse:
+    def create_embeddings(
+        response: Response, req: EmbeddingRequest = Body(...)
+    ) -> EmbeddingResponse:
         texts = [req.input] if isinstance(req.input, str) else list(req.input)
         if not texts:
             raise HTTPException(status_code=400, detail="input must not be empty")
         try:
+            # Resolve the backend first so the fallback status is known even when
+            # every vector comes from the cache (a cache hit skips backend
+            # creation, so without this the honesty flag could go stale).
+            eng._get_backend(req.model)
             vecs = eng.embed(texts, model=req.model)
+        except EmbeddingBackendUnavailable as e:
+            # Strict mode: refuse to serve degraded vectors under a neural id.
+            raise HTTPException(status_code=503, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"embedding failed: {e}")
         total_tokens = sum(len(t.split()) for t in texts)
+        resolved = eng._resolve_model(req.model)
+        degraded = eng.is_fallback(req.model)
+        backend = TFIDF_FALLBACK_ID if degraded else "sentence-transformers"
+        # Reflect the real backend on a header *and* the body extension so the
+        # caller is never fooled into thinking lexical hash vectors are neural.
+        response.headers["x-effgen-embedding-backend"] = backend
         return EmbeddingResponse(
             data=[EmbeddingItem(index=i, embedding=v) for i, v in enumerate(vecs)],
             model=req.model,
             usage=EmbeddingUsage(prompt_tokens=total_tokens, total_tokens=total_tokens),
+            effgen={
+                "requested_model": req.model,
+                "resolved_model": resolved,
+                "backend": backend,
+                "degraded": degraded,
+            },
         )
 
     return router
@@ -311,10 +417,12 @@ def create_embeddings_router(engine: EmbeddingEngine | None = None) -> Any:
 
 __all__ = [
     "MODEL_ALIASES",
+    "TFIDF_FALLBACK_ID",
     "LRUCache",
     "SQLiteCache",
     "TFIDFEmbedder",
     "SentenceTransformerEmbedder",
+    "EmbeddingBackendUnavailable",
     "EmbeddingEngine",
     "create_embeddings_router",
 ]

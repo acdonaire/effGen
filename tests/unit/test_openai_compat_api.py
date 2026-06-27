@@ -295,3 +295,122 @@ class TestTextCompletions:
         body = r.json()
         assert body["choices"][0]["text"] == "Hello, world!"
         assert body["usage"]["completion_tokens"] == 4
+
+
+class TestClientDefinedToolsRejected:
+    """A tool the server does not host must be rejected with a clear 400, never
+    silently dropped — a silent drop returns prose and no ``tool_calls``, quietly
+    breaking any client that expects OpenAI function-calling."""
+
+    def test_resolve_tools_rejects_unhosted(self):
+        from effgen.api.openai_compat import UnknownToolError
+        from effgen.server.app import _resolve_tools
+
+        with pytest.raises(UnknownToolError) as exc:
+            _resolve_tools([{"type": "function", "function": {"name": "get_weather"}}])
+        assert "get_weather" in str(exc.value)
+        assert exc.value.tool_names == ["get_weather"]
+
+    def test_resolve_tools_accepts_builtin(self):
+        from effgen.server.app import _resolve_tools
+
+        resolved = _resolve_tools([{"type": "function", "function": {"name": "calculator"}}])
+        assert len(resolved) == 1  # the built-in calculator resolves and runs server-side
+
+    def test_classify_unknown_tool_is_400(self):
+        from effgen.api.openai_compat import UnknownToolError, _classify_http
+
+        status, etype, code = _classify_http(UnknownToolError(["foo"]))
+        assert status == 400 and etype == "invalid_request_error" and code == "unknown_tool"
+
+    def test_unhosted_tool_returns_400_envelope(self):
+        from effgen.api.openai_compat import RunnerResult
+        from effgen.server.app import _resolve_tools
+
+        def tool_runner(prompt, *, model, tools=None, stream=False, **kw):
+            _resolve_tools(tools)  # raises UnknownToolError for an unhosted tool
+            return RunnerResult(text="ok")
+
+        c = _client(api_key="k", runner=tool_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"}, json={
+            "model": "x", "tool_choice": "required",
+            "tools": [{"type": "function", "function": {"name": "get_weather"}}],
+            "messages": [{"role": "user", "content": "weather?"}]})
+        assert r.status_code == 400
+        err = r.json()["error"]
+        assert err["code"] == "unknown_tool"
+        assert "get_weather" in err["message"]
+
+
+class TestCostInExtension:
+    """Per-call ``cost_usd`` is surfaced in the ``effgen`` extension when the
+    model is priced, and omitted (not a misleading 0) when it is not."""
+
+    def test_cost_usd_surfaced(self):
+        from effgen.api.openai_compat import RunnerResult
+
+        def priced(prompt, *, model, tools=None, stream=False, **kw):
+            return RunnerResult(text="hi", prompt_tokens=1, completion_tokens=1,
+                                resolved_model=model, cost_usd=0.00042)
+
+        c = _client(api_key="k", runner=priced)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "x", "messages": [{"role": "user", "content": "hi"}]})
+        assert r.json()["effgen"]["cost_usd"] == 0.00042
+
+    def test_cost_omitted_when_unpriced(self):
+        # _ok_runner sets no cost (cost_usd=None) → key absent, not a fake 0.0.
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "x", "messages": [{"role": "user", "content": "hi"}]})
+        assert "cost_usd" not in r.json()["effgen"]
+
+
+class TestEmptyMessagesRejected:
+    """An empty ``messages`` array is a 400 (matching OpenAI), not a 200 with an
+    invented answer."""
+
+    def test_empty_messages_400(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "x", "messages": []})
+        assert r.status_code == 400
+        assert r.json()["error"]["code"] == "empty_messages"
+
+
+class TestUnifiedErrorEnvelope:
+    """Auth (401), validation (422), and rate-limit (429) rejections speak the
+    same OpenAI ``{"error": {...}}`` envelope as model errors, so a client can
+    branch on ``err.type``/``err.code`` uniformly."""
+
+    def test_401_uses_error_envelope(self):
+        c = _client(api_key="secret", runner=_ok_runner)
+        r = c.post("/v1/chat/completions",
+                   json={"model": "x", "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 401
+        err = r.json()["error"]
+        assert err["type"] == "invalid_request_error" and err["code"] == "invalid_api_key"
+        # The helpful header hint survives (not scrambled by the secret scrubber).
+        assert "Authorization" in err["message"]
+
+    def test_422_uses_error_envelope(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"}, json={"model": "x"})
+        assert r.status_code == 422
+        err = r.json()["error"]
+        assert err["type"] == "invalid_request_error"
+        assert "messages" in err["message"]
+
+    def test_429_rate_limit_uses_error_envelope(self):
+        from starlette.testclient import TestClient
+
+        from effgen.server.app import create_app
+
+        c = TestClient(create_app(api_key="k", rate_limit_per_minute=1, runner=_ok_runner))
+        h = {"X-API-Key": "k"}
+        body = {"model": "x", "messages": [{"role": "user", "content": "hi"}]}
+        c.post("/v1/chat/completions", headers=h, json=body)
+        r = c.post("/v1/chat/completions", headers=h, json=body)
+        assert r.status_code == 429
+        assert r.json()["error"]["type"] == "rate_limit_exceeded"
+        assert r.headers.get("retry-after")

@@ -240,9 +240,17 @@ class RateLimitMiddleware:
 
         import json as _json
 
-        body = _json.dumps(
-            {"detail": "Rate limit exceeded. Please retry later."}
-        ).encode()
+        try:
+            from effgen.api.openai_compat import error_envelope
+
+            payload = error_envelope(
+                429, "Rate limit exceeded. Please retry later.", redact=False
+            )
+        except Exception:  # noqa: BLE001 - keep the limiter working if the helper is unavailable
+            payload = {"error": {"message": "Rate limit exceeded. Please retry later.",
+                                 "type": "rate_limit_exceeded", "param": None,
+                                 "code": "rate_limit_exceeded"}}
+        body = _json.dumps(payload).encode()
         await send({
             "type": "http.response.start",
             "status": 429,

@@ -17,9 +17,12 @@ Compatibility level
   it, no usage chunk is sent (matching OpenAI's behaviour).
 * **Tools**: effGen runs tools **server-side** (its ReAct loop) and returns the
   final assistant message. It does **not** stream client-side ``tool_calls``
-  deltas for the client to execute — passing ``tools`` lets effGen *use* them;
-  the answer comes back already resolved. A non-streaming response may carry a
-  ``tool_calls`` array when a runner surfaces one.
+  deltas for the client to execute — passing ``tools`` lets effGen *use* its own
+  registered tools; the answer comes back already resolved. A non-streaming
+  response may carry a ``tool_calls`` array when a runner surfaces one. A tool
+  the server does not host is **rejected with a clear 400** (it is never
+  silently ignored), so a client expecting OpenAI function-calling is told
+  plainly rather than getting prose back.
 * **Errors** use the OpenAI error envelope (``{"error": {...}}``) with a sane
   status (404 model-not-found, 401 client-auth, 502/503 upstream-provider
   failure, 429 rate-limit, …) and are redacted.
@@ -88,6 +91,7 @@ class RunnerResult:
     resolved_model: str | None = None
     finish_reason: str = "stop"
     tool_calls: list[dict[str, Any]] | None = None
+    cost_usd: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -355,6 +359,28 @@ def _redact(text: str) -> str:
     return _SECRET_RE.sub("[REDACTED]", text or "")
 
 
+class UnknownToolError(ValueError):
+    """A client requested a tool the server does not host.
+
+    The OpenAI-compatible endpoint executes only effGen's *own* registered
+    tools server-side; it does not forward arbitrary client-defined function
+    specs to the model for the client to execute. Rather than silently dropping
+    an unhosted tool (and returning prose), the endpoint raises this so the
+    caller gets an honest ``400`` naming the offending tool(s).
+    """
+
+    def __init__(self, tool_names: list[str]) -> None:
+        self.tool_names = list(tool_names)
+        names = ", ".join(repr(n) for n in self.tool_names)
+        super().__init__(
+            f"tool(s) {names} are not available on this server. This endpoint "
+            "executes only its own registered tools server-side (run "
+            "`effgen tools list` to see them); pass one of those by name, or "
+            "omit `tools` and let the model answer directly. This server does "
+            "not forward client-defined function tools for the client to execute."
+        )
+
+
 def _classify_http(exc: Exception) -> tuple[int, str, str | None]:
     """Map an exception to (http_status, openai_error_type, code).
 
@@ -364,6 +390,8 @@ def _classify_http(exc: Exception) -> tuple[int, str, str | None]:
     500. The server's own client-auth rejection (a forged/absent caller token)
     is handled upstream of this runner and stays 401.
     """
+    if isinstance(exc, UnknownToolError):
+        return 400, "invalid_request_error", "unknown_tool"
     category = "unknown"
     try:
         from effgen.models.errors import classify_provider_error
@@ -410,6 +438,55 @@ def _error_payload(message: str, err_type: str, code: str | None) -> dict[str, A
             "code": code,
         }
     }
+
+
+# Map an HTTP status to an OpenAI error ``type``/``code`` so that *every* error
+# the server emits — including the ones raised by middleware before a route runs
+# (auth 401, rate-limit 429, RBAC 403, validation 422) — uses the same
+# ``{"error": {message, type, param, code}}`` envelope a model error uses. An
+# OpenAI client can then branch on ``err.type`` / ``err.code`` uniformly.
+_STATUS_ERROR_TYPE: dict[int, str] = {
+    400: "invalid_request_error",
+    401: "invalid_request_error",
+    403: "permission_error",
+    404: "model_not_found",
+    413: "invalid_request_error",
+    422: "invalid_request_error",
+    429: "rate_limit_exceeded",
+    500: "server_error",
+    502: "upstream_error",
+    503: "upstream_unavailable",
+    504: "timeout",
+}
+_STATUS_ERROR_CODE: dict[int, str] = {
+    401: "invalid_api_key",
+    403: "permission_denied",
+    413: "request_too_large",
+    429: "rate_limit_exceeded",
+}
+
+
+def error_envelope(
+    status: int, message: str, *, code: str | None = None, redact: bool = True
+) -> dict[str, Any]:
+    """Build the standard OpenAI error envelope for an HTTP *status*.
+
+    Shared by the OpenAI-compat routes **and** the ASGI middleware (auth,
+    rate-limit, RBAC/budget) so the whole server speaks one error shape. Set
+    ``redact=False`` for server-authored, secret-free messages (e.g. the auth
+    hint that legitimately spells out ``Authorization: Bearer <key>``) so the
+    key/secret scrubber does not mangle the guidance; provider/upstream error
+    text is always redacted (``redact=True``).
+    """
+    err_type = _STATUS_ERROR_TYPE.get(
+        status, "server_error" if status >= 500 else "invalid_request_error"
+    )
+    err_code = code if code is not None else _STATUS_ERROR_CODE.get(status)
+    if not redact:
+        return {
+            "error": {"message": message, "type": err_type, "param": None, "code": err_code}
+        }
+    return _error_payload(message, err_type, err_code)
 
 
 def _effgen_meta(requested: str, resolved: str) -> dict[str, Any]:
@@ -499,6 +576,15 @@ def create_openai_router(runner: Runner) -> Any:
 
     @router.post("/chat/completions")
     async def chat_completions(request: ChatCompletionRequest) -> Any:
+        # OpenAI rejects an empty `messages` array with a 400; match that instead
+        # of inventing a question and replying 200 to a content-free request.
+        if not request.messages:
+            return JSONResponse(
+                status_code=400,
+                content=error_envelope(
+                    400, "messages must not be empty", code="empty_messages"
+                ),
+            )
         resolved = resolve_model_alias(request.model)
         model = resolved  # echoed in the response 'model' field (what actually ran)
         prompt = _messages_to_prompt(request.messages)
@@ -603,6 +689,11 @@ def create_openai_router(runner: Runner) -> Any:
             completion_tokens = result.completion_tokens
             tool_calls = result.tool_calls
             finish_reason = result.finish_reason
+            # Surface per-call cost next to token usage so operators can bill
+            # and track. Lives in the non-standard `effgen` extension (OpenAI
+            # clients ignore unknown keys); `None` when the model has no pricing.
+            if result.cost_usd is not None:
+                effgen_meta = {**effgen_meta, "cost_usd": result.cost_usd}
         else:
             content = result if isinstance(result, str) else "".join(str(c) for c in result)
             completion_tokens = None

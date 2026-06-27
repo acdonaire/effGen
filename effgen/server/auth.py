@@ -588,7 +588,17 @@ class AuthMiddleware:
         if scope.get("type") == "websocket":
             await send({"type": "websocket.close", "code": 1008})  # policy violation
             return
-        body = json.dumps({"detail": detail}).encode()
+        try:
+            from effgen.api.openai_compat import error_envelope
+
+            # The auth messages are static, server-authored, secret-free hints
+            # (they literally spell out the header syntax) — don't run them
+            # through the key scrubber, which would corrupt the guidance.
+            envelope = error_envelope(status, detail, redact=False)
+        except Exception:  # noqa: BLE001 - keep auth working even if the helper is unavailable
+            envelope = {"error": {"message": detail, "type": "invalid_request_error",
+                                  "param": None, "code": None}}
+        body = json.dumps(envelope).encode()
         await send({
             "type": "http.response.start",
             "status": status,

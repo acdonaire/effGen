@@ -133,7 +133,8 @@ def test_reader_role_tool_use_forbidden_403(client, _keypair):
     body = dict(CHAT_BODY, tools=[{"type": "function", "function": {"name": "web_search"}}])
     r = client.post("/v1/chat/completions", headers=h, json=body)
     assert r.status_code == 403
-    assert "role reader does not permit tool web_search" in r.json()["detail"]
+    # RBAC rejections share the OpenAI error envelope (uniform with model errors).
+    assert "role reader does not permit tool web_search" in r.json()["error"]["message"]
 
 
 def test_reader_chat_without_tools_allowed(client, _keypair):
@@ -153,7 +154,7 @@ def test_cost_cap_triggers_429_budget_exceeded(client, _keypair):
     r2 = client.post("/v1/chat/completions", headers=h, json=CHAT_BODY)
     assert r1.status_code == 200
     assert r2.status_code == 429
-    assert "BudgetExceeded" in r2.json()["detail"]
+    assert "BudgetExceeded" in r2.json()["error"]["message"]
     _rbac.reset_registry(None)
 
 

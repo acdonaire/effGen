@@ -292,7 +292,11 @@ class TestAuthMiddleware:
         status, body = await self._call_middleware(mw, "/secure")
         assert status == 401
         data = json.loads(body)
-        assert "detail" in data
+        # Auth rejections share the OpenAI error envelope so a client can branch
+        # on err.type/err.code uniformly. The message stays a readable hint (it
+        # spells out the header syntax) — not mangled by the secret scrubber.
+        assert "error" in data and data["error"]["type"]
+        assert "Authorization" in data["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_valid_bearer_token_passes(
