@@ -7,6 +7,8 @@ ensuring consistent behavior across vLLM, Transformers, and API adapters.
 
 from __future__ import annotations
 
+import functools
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -87,6 +89,55 @@ class TokenCount:
     model_name: str
 
 
+def _stamp_latency(result: Any, elapsed_s: float) -> Any:
+    """Fold per-call wall-clock latency onto a ``GenerationResult``'s metadata.
+
+    Adds ``latency_ms`` and ``duration_s`` (via ``setdefault``, so an engine that
+    measures its own latency wins) so benchmarkers can read throughput straight off
+    a raw ``generate()`` result. Non-``GenerationResult`` values pass through
+    untouched.
+    """
+    if isinstance(result, GenerationResult):
+        meta = result.metadata
+        if meta is None:
+            meta = {}
+            result.metadata = meta
+        meta.setdefault("latency_ms", round(elapsed_s * 1000.0, 1))
+        meta.setdefault("duration_s", round(elapsed_s, 4))
+    return result
+
+
+def _timed_generate(func):
+    """Wrap a ``generate`` method so its result carries call latency."""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        start = time.perf_counter()
+        result = func(self, *args, **kwargs)
+        return _stamp_latency(result, time.perf_counter() - start)
+    wrapper.__effgen_timed__ = True
+    return wrapper
+
+
+def _timed_generate_batch(func):
+    """Wrap a ``generate_batch`` method so each result carries call latency.
+
+    The whole batch shares one wall-clock measurement (the per-item split isn't
+    knowable here); each result gets it via ``setdefault`` so an engine that
+    records true per-item latency keeps its own value.
+    """
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        start = time.perf_counter()
+        results = func(self, *args, **kwargs)
+        elapsed = time.perf_counter() - start
+        if isinstance(results, list):
+            for r in results:
+                _stamp_latency(r, elapsed)
+        return results
+    wrapper.__effgen_timed__ = True
+    return wrapper
+
+
 class BaseModel(ABC):
     """
     Abstract base class for all model implementations.
@@ -99,6 +150,26 @@ class BaseModel(ABC):
         model_type: The type of model engine
         context_length: Maximum context length supported by the model
     """
+
+    def __init_subclass__(cls, **kwargs):
+        """Auto-instrument each engine's ``generate``/``generate_batch`` with timing.
+
+        Every concrete engine that defines ``generate``/``generate_batch`` gets its
+        result(s) stamped with ``latency_ms``/``duration_s`` (see ``_stamp_latency``)
+        without each engine repeating the bookkeeping. Abstract or already-wrapped
+        methods are left alone, so this is safe across the engine hierarchy.
+        """
+        super().__init_subclass__(**kwargs)
+        for name, wrapper in (("generate", _timed_generate),
+                              ("generate_batch", _timed_generate_batch)):
+            func = cls.__dict__.get(name)
+            if (
+                func is not None
+                and callable(func)
+                and not getattr(func, "__isabstractmethod__", False)
+                and not getattr(func, "__effgen_timed__", False)
+            ):
+                setattr(cls, name, wrapper(func))
 
     def __init__(
         self,

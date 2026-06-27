@@ -29,6 +29,17 @@ class ModelScore:
     error: str | None = None
 
 
+def _recommendation_key(score: "ModelScore") -> tuple[float, float, float]:
+    """Sort key for "best model" — higher is better.
+
+    Primary: accuracy (higher wins). Tie-breaks: lower ``avg_latency`` then lower
+    ``total_tokens`` (negated so "higher is better" still holds). When latency and
+    tokens are also equal, the first-seen model is kept (strict ``>`` comparison),
+    preserving the prior stable ordering for genuine ties.
+    """
+    return (score.accuracy, -float(score.avg_latency), -float(score.total_tokens))
+
+
 @dataclass
 class ComparisonMatrix:
     """Comparison of multiple models across one or more suites.
@@ -179,14 +190,16 @@ class ModelComparison:
                         error=str(exc),
                     ))
 
-        # Generate recommendations (best accuracy per suite)
-        suite_best: dict[str, tuple[float, str]] = {}
+        # Generate recommendations: highest accuracy per suite, breaking ties on
+        # lower latency, then fewer tokens — so a "good enough" tie recommends the
+        # cheaper/faster model instead of whichever happened to be listed first.
+        suite_best: dict[str, ModelScore] = {}
         for s in matrix.scores:
             if s.error:
                 continue
-            key = s.suite_name
-            if key not in suite_best or s.accuracy > suite_best[key][0]:
-                suite_best[key] = (s.accuracy, s.model_name)
-        matrix.recommendations = {k: v[1] for k, v in suite_best.items()}
+            cur = suite_best.get(s.suite_name)
+            if cur is None or _recommendation_key(s) > _recommendation_key(cur):
+                suite_best[s.suite_name] = s
+        matrix.recommendations = {k: v.model_name for k, v in suite_best.items()}
 
         return matrix

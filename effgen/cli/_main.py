@@ -1728,22 +1728,58 @@ class CLIInterface:
         fmt = lambda v: ("?" if v is None else (f"${v:g}" if v else "$0"))  # noqa: E731
         return f"{fmt(pin)}/{fmt(pout)}"
 
+    # File extensions that count as actual model weights (an ".index.json" is a
+    # shard manifest, not weights — a repo with only a manifest is still partial).
+    _WEIGHT_SUFFIXES = (
+        ".safetensors", ".bin", ".gguf", ".pt", ".pth",
+        ".onnx", ".msgpack", ".h5", ".tflite", ".ot",
+    )
+
     def _local_cached_models(self) -> list[dict]:
-        """Models actually downloaded in the local HuggingFace cache (on disk)."""
+        """Models actually downloaded in the local HuggingFace cache (on disk).
+
+        Each entry carries a ``complete`` flag: a snapshot with no real weight
+        files (only an interrupted download, e.g. ``.incomplete`` blobs plus a
+        shard manifest) is reported as incomplete so it isn't mistaken for ready.
+        """
         out: list[dict] = []
         try:
             from huggingface_hub import scan_cache_dir
             info = scan_cache_dir()
             for repo in sorted(info.repos, key=lambda r: r.repo_id):
-                if repo.repo_type == "model":
-                    out.append({
-                        "id": repo.repo_id,
-                        "size_gb": repo.size_on_disk / (1024 ** 3),
-                        "path": str(repo.repo_path),
-                    })
+                if repo.repo_type != "model":
+                    continue
+                weight_files = {
+                    f.file_name
+                    for rev in repo.revisions
+                    for f in rev.files
+                    if f.file_name.endswith(self._WEIGHT_SUFFIXES)
+                    and not f.file_name.endswith(".index.json")
+                }
+                out.append({
+                    "id": repo.repo_id,
+                    "size_gb": repo.size_on_disk / (1024 ** 3),
+                    "path": str(repo.repo_path),
+                    "complete": bool(weight_files),
+                })
         except Exception as e:  # noqa: BLE001 - cache scan is best-effort
             logging.debug(f"HF cache scan failed: {e}")
         return out
+
+    def _local_model_context_window(self, path: str) -> int | None:
+        """Read the model's max context length from its on-disk ``config.json``."""
+        import glob
+        for cfg in glob.glob(os.path.join(path, "snapshots", "*", "config.json")):
+            try:
+                with open(cfg, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except Exception:
+                continue
+            for key in ("max_position_embeddings", "n_positions", "max_sequence_length"):
+                val = data.get(key)
+                if isinstance(val, int) and val > 0:
+                    return val
+        return None
 
     def _models_list(self, args):
         """List models from the drift-aware registry (not a static yaml).
@@ -1905,18 +1941,70 @@ class CLIInterface:
         # ---- Local HuggingFace cache view ----------------------------------
         local = self._local_cached_models()
         if local:
+            n_ready = sum(1 for m in local if m.get("complete", True))
             if self.console:
-                ltable = Table(title=f"Local HuggingFace cache ({len(local)} downloaded)")
+                ltable = Table(title=f"Local HuggingFace cache ({n_ready} ready)")
                 ltable.add_column("Model", style="cyan", overflow="fold")
                 ltable.add_column("Size", justify="right", style="white")
+                ltable.add_column("Status", justify="center")
                 for m in local:
-                    ltable.add_row(m["id"], f"{m['size_gb']:.1f} GB")
+                    ready = m.get("complete", True)
+                    ltable.add_row(
+                        m["id"], f"{m['size_gb']:.1f} GB",
+                        "ready" if ready else "[yellow]incomplete[/yellow]",
+                    )
                 self.console.print(ltable)
             else:
                 print("\nLocal HuggingFace cache:")
                 for m in local:
-                    print(f"  {m['id']}  ({m['size_gb']:.1f} GB)")
+                    tag = "" if m.get("complete", True) else "  (incomplete)"
+                    print(f"  {m['id']}  ({m['size_gb']:.1f} GB){tag}")
         return 0
+
+    def _local_model_payload(self, entry: dict) -> dict:
+        """Build the local-cache facts for one model: engines, size, ctx, status."""
+        import importlib.util
+        engines = ["transformers"]
+        if importlib.util.find_spec("vllm") is not None:
+            engines.append("vllm")
+        return {
+            "id": entry["id"],
+            "cached": True,
+            "complete": entry.get("complete", True),
+            "size_gb": entry["size_gb"],
+            "path": entry.get("path"),
+            "context_window": self._local_model_context_window(entry.get("path", "")),
+            "engines": engines,
+        }
+
+    def _render_local_model_info(self, payload: dict) -> None:
+        """Render the 'this model is in your local cache' block for `models info`."""
+        ctx = payload.get("context_window")
+        status = "ready" if payload.get("complete", True) else "incomplete download"
+        rows = {
+            "Local copy": "yes (HuggingFace cache)",
+            "Status": status,
+            "On-disk size": f"{payload['size_gb']:.1f} GB",
+            "Local engines": ", ".join(payload["engines"]),
+            "Context window": f"{ctx:,}" if ctx else "—",
+        }
+        run_hint = (f"effgen run -m {payload['id']} --engine transformers \"...\"")
+        if self.console:
+            from rich.table import Table
+            table = Table(show_header=False, title="Local cache")
+            table.add_column("Field", style="cyan")
+            table.add_column("Value", style="white", overflow="fold")
+            for k, v in rows.items():
+                table.add_row(k, str(v))
+            self.console.print(table)
+            self.console.print(f"\n[dim]Run locally: [cyan]{run_hint}[/cyan]"
+                               f"  ·  or [cyan]load_model(\"{payload['id']}\", "
+                               f"engine=\"transformers\")[/cyan][/dim]")
+        else:
+            print("\nLocal cache:")
+            for k, v in rows.items():
+                print(f"  {k}: {v}")
+            print(f"  Run locally: {run_hint}")
 
     def _models_info(self, args):
         """Show detailed information for one model from the registry."""
@@ -1926,8 +2014,25 @@ class CLIInterface:
 
         from effgen.models import _catalog, _refresh
 
+        # Is this id sitting in the local HF cache? If so we can describe it as
+        # locally-runnable even when the cloud catalog has no (or a different) row.
+        local_entry = next(
+            (m for m in self._local_cached_models() if m["id"] == args.name), None
+        )
+
         rec = _catalog.lookup(args.name)
         if rec is None:
+            if local_entry is not None:
+                # Downloaded locally but not in the cloud catalog: describe the local
+                # copy instead of a misleading "not found in catalog".
+                local_payload = self._local_model_payload(local_entry)
+                if getattr(args, "output_json", False):
+                    print(json.dumps({"id": args.name, "provider": None,
+                                       "local": local_payload}, indent=2))
+                    return 0
+                self.print_header(f"Model: {args.name} (local)")
+                self._render_local_model_info(local_payload)
+                return 0
             # Helpful not-found: suggest the nearest catalog ids + provider:id form.
             self.print_error(f"Model not found in catalog: {args.name}")
             alts = _catalog.nearest_alternatives(args.name, n=5)
@@ -1950,6 +2055,7 @@ class CLIInterface:
                 "rpm": rec.rpm, "tpm": rec.tpm, "rpd": rec.rpd,
                 "price_source": rec.price_source, "verified_on": rec.verified_on,
                 "notes": rec.notes,
+                "local": self._local_model_payload(local_entry) if local_entry else None,
             }, indent=2))
             return 0
 
@@ -1984,6 +2090,11 @@ class CLIInterface:
         else:
             for k, v in rows.items():
                 print(f"  {k}: {v}")
+
+        # If the same id is also downloaded locally, surface the local copy and a
+        # local invocation alongside the cloud row (don't pretend it's cloud-only).
+        if local_entry is not None:
+            self._render_local_model_info(self._local_model_payload(local_entry))
         return 0
 
     def _models_load(self, args):
@@ -2029,43 +2140,49 @@ class CLIInterface:
         """Show loaded models and GPU memory status."""
         self.print_header("Model & GPU Status")
 
-        # GPU memory info
+        # GPU memory info — physical (driver) view across all processes, so this
+        # reflects which GPUs are actually free, not just this process's usage.
         try:
-            import torch
-            if torch.cuda.is_available():
-                num_gpus = torch.cuda.device_count()
+            from effgen.gpu.cuda_compat import per_gpu_status
+            gpus = per_gpu_status()
+            gib = 1024 ** 3
+            if gpus:
                 if self.console:
                     from rich.table import Table
-                    gpu_table = Table(title="GPU Status")
+                    gpu_table = Table(title="GPU Status (physical, all processes)")
                     gpu_table.add_column("GPU", style="cyan")
                     gpu_table.add_column("Name", style="white")
                     gpu_table.add_column("Total", style="white")
                     gpu_table.add_column("Used", style="yellow")
                     gpu_table.add_column("Free", style="green")
+                    gpu_table.add_column("Util", justify="right")
 
-                    for i in range(num_gpus):
-                        props = torch.cuda.get_device_properties(i)
-                        total_gb = props.total_memory / (1024**3)
-                        reserved = torch.cuda.memory_reserved(i) / (1024**3)
-                        free_gb = total_gb - reserved
+                    for g in gpus:
+                        util = f"{g.utilization_pct:.0f}%" if g.utilization_pct is not None else "—"
                         gpu_table.add_row(
-                            str(i), props.name,
-                            f"{total_gb:.1f} GB",
-                            f"{reserved:.1f} GB",
-                            f"{free_gb:.1f} GB",
+                            str(g.index), g.name,
+                            f"{g.total_bytes / gib:.1f} GB",
+                            f"{g.used_bytes / gib:.1f} GB",
+                            f"{g.free_bytes / gib:.1f} GB",
+                            util,
                         )
                     self.console.print(gpu_table)
                 else:
-                    for i in range(num_gpus):
-                        props = torch.cuda.get_device_properties(i)
-                        total_gb = props.total_memory / (1024**3)
-                        reserved = torch.cuda.memory_reserved(i) / (1024**3)
-                        print(f"GPU {i}: {props.name} — "
-                              f"{total_gb:.1f} GB total, "
-                              f"{reserved:.1f} GB used, "
-                              f"{total_gb - reserved:.1f} GB free")
+                    for g in gpus:
+                        util = f", {g.utilization_pct:.0f}% util" if g.utilization_pct is not None else ""
+                        print(f"GPU {g.index}: {g.name} — "
+                              f"{g.total_bytes / gib:.1f} GB total, "
+                              f"{g.used_bytes / gib:.1f} GB used, "
+                              f"{g.free_bytes / gib:.1f} GB free{util}")
             else:
-                self.print_warning("CUDA not available")
+                try:
+                    import torch
+                    if not torch.cuda.is_available():
+                        self.print_warning("CUDA not available")
+                    else:
+                        self.print_warning("Could not query GPU memory status")
+                except ImportError:
+                    self.print_warning("PyTorch not installed — cannot query GPU status")
         except ImportError:
             self.print_warning("PyTorch not installed — cannot query GPU status")
 

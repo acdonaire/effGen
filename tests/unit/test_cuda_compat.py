@@ -80,6 +80,40 @@ class TestRealHardwareInvariants:
             assert st.physical_gpus > 0
 
 
+class TestPerGpuStatus:
+    """`per_gpu_status` reports *physical* (driver) memory, not per-process."""
+
+    def test_returns_consistent_physical_snapshot(self):
+        gpus = cc.per_gpu_status()
+        assert isinstance(gpus, list)
+        if not cc.cuda_usable():
+            # No usable CUDA → empty list, never a crash.
+            assert gpus == []
+            return
+        assert len(gpus) >= 1
+        for g in gpus:
+            assert isinstance(g, cc.GpuMemoryStatus)
+            assert g.total_bytes > 0
+            # used + free should reconcile to total (driver view).
+            assert g.used_bytes + g.free_bytes == g.total_bytes
+            assert 0 <= g.used_bytes <= g.total_bytes
+            assert g.utilization_pct is None or 0.0 <= g.utilization_pct <= 100.0
+
+    def test_used_reflects_driver_not_current_process(self):
+        # A fresh process reserves ~0 of its own memory, but the driver view
+        # (mem_get_info) must report whatever is physically allocated on the card.
+        # We can't force another tenant, but we can assert we are NOT reading the
+        # current process's reservation (which would be ~0 used on every card).
+        if not cc.cuda_usable():
+            pytest.skip("no usable CUDA on this host")
+        import torch
+        gpus = cc.per_gpu_status()
+        for g in gpus:
+            free, total = torch.cuda.mem_get_info(g.index)
+            assert g.free_bytes == int(free)
+            assert g.used_bytes == int(total) - int(free)
+
+
 class TestWarnOnceMechanism:
     def test_warns_exactly_once_on_mismatch(self, monkeypatch):
         monkeypatch.setattr(

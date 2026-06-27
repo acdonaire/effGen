@@ -180,6 +180,137 @@ def driver_cuda_version() -> str | None:
     return driver_cuda
 
 
+def _nvml_utilization() -> dict[int, float]:
+    """Map physical GPU index → GPU utilization percent (0–100) via NVML.
+
+    Returns ``{}`` if NVML is unavailable. Indices are *physical* (NVML's own
+    ordering), which matches ``nvidia-smi`` but not necessarily torch's device
+    ordering when ``CUDA_VISIBLE_DEVICES`` remaps it — callers should only trust
+    the mapping when that variable is unset.
+    """
+    try:
+        import pynvml  # noqa: PLC0415
+    except Exception:
+        return {}
+    out: dict[int, float] = {}
+    initialized = False
+    try:
+        pynvml.nvmlInit()
+        initialized = True
+        for i in range(int(pynvml.nvmlDeviceGetCount())):
+            try:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                out[i] = float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
+            except Exception:
+                continue
+    except Exception:
+        return out
+    finally:
+        if initialized:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
+    return out
+
+
+def _nvidia_smi_utilization() -> dict[int, float]:
+    """Fallback: physical GPU index → utilization percent via ``nvidia-smi``."""
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return {}
+    out: dict[int, float] = {}
+    try:
+        res = subprocess.run(
+            [smi, "--query-gpu=index,utilization.gpu", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if res.returncode != 0:
+            return {}
+        for line in res.stdout.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2 and parts[0].isdigit():
+                try:
+                    out[int(parts[0])] = float(parts[1])
+                except ValueError:
+                    continue
+    except Exception:
+        return {}
+    return out
+
+
+@dataclass
+class GpuMemoryStatus:
+    """Physical memory + utilization snapshot for one GPU.
+
+    ``used_bytes``/``free_bytes`` reflect the CUDA driver's view across *all*
+    processes (via ``torch.cuda.mem_get_info``), so this is the real "is this GPU
+    free?" picture — not just the current process's reservations.
+    """
+
+    index: int
+    name: str
+    total_bytes: int
+    free_bytes: int
+    used_bytes: int
+    utilization_pct: float | None = None
+
+
+def per_gpu_status() -> list[GpuMemoryStatus]:
+    """Per-GPU *physical* memory and utilization for the devices torch can see.
+
+    Uses ``torch.cuda.mem_get_info`` for true driver-level used/free (counting
+    every process on the card), and NVML/``nvidia-smi`` for utilization. Returns
+    an empty list if torch/CUDA is unavailable. Utilization is reported only when
+    it can be attributed to the right device — when ``CUDA_VISIBLE_DEVICES`` remaps
+    ordering, the per-device utilization is left as ``None`` rather than risk
+    mislabelling it.
+    """
+    torch = _torch_module()
+    if torch is None:
+        return []
+    try:
+        if not torch.cuda.is_available():
+            return []
+        num = int(torch.cuda.device_count())
+    except Exception:
+        return []
+
+    # Utilization is keyed by physical index; only trust it when the visible-device
+    # ordering is the identity mapping (no CUDA_VISIBLE_DEVICES remap).
+    util_map: dict[int, float] = {}
+    if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+        util_map = _nvml_utilization() or _nvidia_smi_utilization()
+
+    out: list[GpuMemoryStatus] = []
+    for i in range(num):
+        try:
+            props = torch.cuda.get_device_properties(i)
+            name = props.name
+            total = int(props.total_memory)
+        except Exception:
+            name, total = f"GPU {i}", 0
+        try:
+            free, total_drv = torch.cuda.mem_get_info(i)
+            free = int(free)
+            total = int(total_drv) or total
+        except Exception:
+            # Older torch without a live CUDA context: degrade to per-process view.
+            try:
+                free = max(total - int(torch.cuda.memory_reserved(i)), 0)
+            except Exception:
+                free = 0
+        used = max(total - free, 0)
+        out.append(GpuMemoryStatus(
+            index=i, name=name, total_bytes=total,
+            free_bytes=free, used_bytes=used,
+            utilization_pct=util_map.get(i),
+        ))
+    return out
+
+
 @dataclass(frozen=True)
 class CudaStatus:
     """A consistent snapshot of the CUDA usability picture."""

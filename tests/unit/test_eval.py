@@ -498,6 +498,48 @@ class TestModelComparison:
         assert len(matrix.scores) == 2
         assert matrix.recommendations.get("mini") == "model-a"
 
+    def test_recommendation_breaks_accuracy_tie_on_latency(self):
+        # Both agents always answer correctly -> tied accuracy. The recommendation
+        # must pick the lower-latency model, not whichever was listed first.
+        agent_a = self._make_agent(["Thought: done\nFinal Answer: 5"] * 5)
+        agent_b = self._make_agent(["Thought: done\nFinal Answer: 5"] * 5)
+
+        class FakeSuite:
+            name = "mini"
+            test_cases = [TestCase(query="2+3?", expected_output="5")]
+
+        matrix = ModelComparison().run(
+            agents={"a": agent_a, "b": agent_b}, suites=[FakeSuite()],
+        )
+        assert all(s.accuracy == 1.0 for s in matrix.scores)
+        fastest = min(matrix.scores, key=lambda s: s.avg_latency).model_name
+        assert matrix.recommendations["mini"] == fastest
+
+    def test_recommendation_key_order_independent_and_token_tiebreak(self):
+        from effgen.eval.comparison import _recommendation_key
+
+        def pick(scores):
+            best = {}
+            for s in scores:
+                cur = best.get(s.suite_name)
+                if cur is None or _recommendation_key(s) > _recommendation_key(cur):
+                    best[s.suite_name] = s
+            return {k: v.model_name for k, v in best.items()}
+
+        slow = ModelScore("slow", "math", accuracy=1.0, avg_latency=0.222, total_tokens=500)
+        fast = ModelScore("fast", "math", accuracy=1.0, avg_latency=0.059, total_tokens=400)
+        # Faster model wins regardless of listing order.
+        assert pick([slow, fast])["math"] == "fast"
+        assert pick([fast, slow])["math"] == "fast"
+        # Accuracy still dominates latency.
+        acc = ModelScore("acc", "math", accuracy=1.0, avg_latency=0.5, total_tokens=900)
+        quick = ModelScore("quick", "math", accuracy=0.8, avg_latency=0.01, total_tokens=100)
+        assert pick([acc, quick])["math"] == "acc"
+        # Latency tie -> fewer tokens wins.
+        a = ModelScore("a", "math", accuracy=1.0, avg_latency=0.1, total_tokens=500)
+        b = ModelScore("b", "math", accuracy=1.0, avg_latency=0.1, total_tokens=300)
+        assert pick([a, b])["math"] == "b"
+
     def test_comparison_matrix_to_markdown(self):
         matrix = ComparisonMatrix(
             scores=[

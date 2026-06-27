@@ -116,6 +116,72 @@ def test_models_info_unknown_suggests_and_exits_nonzero(capsys):
 
 
 # --------------------------------------------------------------------------- #
+# Local-cache awareness (models info / list)
+# --------------------------------------------------------------------------- #
+def _fake_local(entries):
+    """Build a fake _local_cached_models payload."""
+    return [
+        {"id": e["id"], "size_gb": e.get("size_gb", 1.0),
+         "path": e.get("path", "/tmp/x"), "complete": e.get("complete", True)}
+        for e in entries
+    ]
+
+
+def test_models_info_local_aware_when_not_in_catalog(capsys, monkeypatch):
+    # A bare HF id that's downloaded locally but absent from the cloud catalog
+    # must describe the local copy, not say "not found".
+    cli = _cli()
+    monkeypatch.setattr(cli, "_local_cached_models",
+                        lambda: _fake_local([{"id": "meta-llama/Llama-3.2-3B-Instruct",
+                                              "size_gb": 6.0}]))
+    monkeypatch.setattr(cli, "_local_model_context_window", lambda path: 131072)
+    args = SimpleNamespace(name="meta-llama/Llama-3.2-3B-Instruct", output_json=True)
+    code = cli._models_info(args)
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert code == 0
+    assert data["local"]["cached"] is True
+    assert "transformers" in data["local"]["engines"]
+    assert data["local"]["context_window"] == 131072
+
+
+def test_models_info_includes_local_block_alongside_cloud(capsys, monkeypatch):
+    # An id present in BOTH the catalog and the local cache shows the cloud row
+    # AND a local-copy block (non-JSON path), so the local copy isn't hidden.
+    cli = _cli()
+    monkeypatch.setattr(cli, "_local_cached_models",
+                        lambda: _fake_local([{"id": "gpt-5-nano", "size_gb": 2.0}]))
+    monkeypatch.setattr(cli, "_local_model_context_window", lambda path: 4096)
+    args = SimpleNamespace(name="gpt-5-nano", output_json=True)
+    code = cli._models_info(args)
+    data = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert data["provider"] == "openai"  # cloud row preserved
+    assert data["local"] is not None and data["local"]["cached"] is True
+
+
+def test_models_list_flags_incomplete_download(capsys, monkeypatch):
+    cli = _cli()
+    monkeypatch.setattr(cli, "_local_cached_models", lambda: _fake_local([
+        {"id": "Qwen/Qwen2.5-1.5B-Instruct", "size_gb": 2.9, "complete": True},
+        {"id": "Qwen/Qwen2.5-7B-Instruct", "size_gb": 0.01, "complete": False},
+    ]))
+    args = SimpleNamespace(provider=None, free=False, tools=False, output_json=False)
+    cli._models_list(args)
+    out = capsys.readouterr().out
+    assert "incomplete" in out.lower()
+    # the "ready" count excludes the incomplete one.
+    assert "(1 ready)" in out
+
+
+def test_local_cached_models_carries_complete_flag():
+    # Against the real HF cache on this host: every entry exposes a bool 'complete'.
+    for entry in _cli()._local_cached_models():
+        assert isinstance(entry.get("complete"), bool)
+        assert "id" in entry and "size_gb" in entry
+
+
+# --------------------------------------------------------------------------- #
 # --json outputs
 # --------------------------------------------------------------------------- #
 def test_tools_list_json(capsys):
