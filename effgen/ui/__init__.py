@@ -14,6 +14,9 @@ from __future__ import annotations
 
 from .render import (
     answer_renderable,
+    format_cost,
+    generation_result_html,
+    generation_result_markdown,
     response_html,
     response_show,
     response_trace,
@@ -26,6 +29,9 @@ __all__ = [
     "get_console",
     "rich_available",
     "answer_renderable",
+    "format_cost",
+    "generation_result_html",
+    "generation_result_markdown",
     "response_html",
     "response_show",
     "response_trace",

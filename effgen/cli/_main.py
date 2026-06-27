@@ -2575,6 +2575,12 @@ Model id formats:
              'Equivalent to the "provider:model" prefix.',
     )
     chat_parser.add_argument('--preset', help='Agent preset to label the session (e.g. math, research)')
+    chat_parser.add_argument(
+        '--system-prompt', '--persona', dest='system_prompt', metavar='TEXT',
+        help='Custom persona / system prompt for the session, e.g. '
+             '"You are a patient Socratic tutor who never gives the answer." '
+             'Steers every reply (unlike --preset, which only labels the session).',
+    )
     chat_parser.add_argument('--temperature', type=float, help='Temperature')
     chat_parser.add_argument('--no-sub-agents', action='store_true', help='Disable sub-agents')
     chat_parser.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS,
@@ -2854,6 +2860,8 @@ Model id formats:
     prompts_list.add_argument('--variant', help='Filter by variant')
     prompts_list.add_argument('--format', choices=['table', 'json', 'markdown'], default='table',
                               dest='list_format', help='Output format')
+    prompts_list.add_argument('--json', action='store_const', const='json', dest='list_format',
+                              help='Shorthand for --format json (consistent with `models list`, `cost`).')
 
     prompts_show = prompts_subparsers.add_parser('show', help='Show prompt details')
     prompts_show.add_argument('name', help='Prompt name')

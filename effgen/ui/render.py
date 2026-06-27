@@ -53,6 +53,35 @@ def _extract_cost(metadata: dict[str, Any] | None) -> float | None:
     return None
 
 
+def format_cost(cost: float | None) -> str | None:
+    """Format a USD cost so a real charge is never hidden behind ``$0.0000``.
+
+    The cheap small models effGen targets cost a tiny fraction of a cent per
+    turn, so a fixed ``${:.4f}`` collapses almost every real cost to ``$0.0000``
+    and guts the "show what it costs" story. This widens precision only when
+    needed:
+
+    - ``None`` → ``None`` (no cost info; the caller omits the field).
+    - ``0`` → ``"$0.00"`` (genuinely free / local — honest, not fabricated).
+    - ``>= $0.0001`` → ``"$0.0006"`` (the familiar 4-decimal form).
+    - ``< $0.0001`` (would round to ``$0.0000``) → 6 decimals (``"$0.000049"``),
+      falling back to scientific (``"$4.9e-07"``) for vanishingly small costs.
+    """
+    if cost is None:
+        return None
+    try:
+        c = float(cost)
+    except (TypeError, ValueError):
+        return None
+    if c <= 0:
+        return "$0.00"
+    if c >= 1e-4:
+        return f"${c:.4f}"
+    if c >= 1e-6:
+        return f"${c:.6f}"
+    return f"${c:.1e}"
+
+
 def _summary_parts(response: Any) -> list[str]:
     """The ``3.2s · 2 tools · 1,204 tokens · $0.0006`` metric fragments."""
     secs = float(getattr(response, "execution_time", 0.0) or 0.0)
@@ -64,8 +93,9 @@ def _summary_parts(response: Any) -> list[str]:
         parts.append(f"{tools} tool" + ("s" if tools != 1 else ""))
     if tokens:
         parts.append(f"{tokens:,} tokens")
-    if cost is not None:
-        parts.append(f"${cost:.4f}")
+    cost_str = format_cost(cost)
+    if cost_str is not None:
+        parts.append(cost_str)
     return parts
 
 
@@ -467,3 +497,67 @@ def response_html(response: Any) -> str:
   {trace_html}
 </div>
 """.strip()
+
+
+def _generation_metric_parts(result: Any) -> list[str]:
+    """Metric fragments for a raw model ``GenerationResult`` card/footer."""
+    meta = getattr(result, "metadata", None) or {}
+    parts: list[str] = []
+    model = getattr(result, "model_name", None)
+    if model:
+        parts.append(str(model))
+    secs = meta.get("duration_s")
+    if secs is None and isinstance(meta.get("latency_ms"), int | float):
+        secs = meta["latency_ms"] / 1000.0
+    if isinstance(secs, int | float) and secs > 0:
+        parts.append(f"{secs:.1f}s")
+    tokens = meta.get("total_tokens")
+    if not isinstance(tokens, int | float) or tokens <= 0:
+        tokens = getattr(result, "tokens_used", 0) or 0
+    if tokens:
+        parts.append(f"{int(tokens):,} tokens")
+    cost_str = format_cost(_extract_cost(meta))
+    if cost_str is not None:
+        parts.append(cost_str)
+    return parts
+
+
+def generation_result_html(result: Any) -> str:
+    """Compact HTML card for a raw model ``GenerationResult`` (Jupyter).
+
+    Mirrors the agent result card at the model layer so
+    ``load_model(...).generate(...)`` renders a tidy card in a notebook instead
+    of a dataclass repr. Simpler than :func:`response_html` — no tools or step
+    trace exist at this layer — but consistent in look and metric strip.
+    """
+    text = getattr(result, "text", "") or ""
+    finish = str(getattr(result, "finish_reason", "") or "")
+    ok = finish != "error"
+    accent = "#2e7d32" if ok else "#c62828"
+    answer_html = _markdown_to_html(text)
+    metrics = " &nbsp;·&nbsp; ".join(_generation_metric_parts(result))
+    finish_html = (
+        f" &nbsp;·&nbsp; finish: {_html.escape(finish)}" if finish and finish not in ("stop", "") else ""
+    )
+    return f"""
+<div style="border:1px solid #ddd;border-left:4px solid {accent};border-radius:8px;
+            padding:12px 16px;margin:6px 0;font-family:-apple-system,Segoe UI,sans-serif;
+            max-width:920px">
+  <div style="font-size:0.8em;color:{accent};font-weight:600;margin-bottom:6px">
+    effGen model output
+  </div>
+  <div style="color:#1a1a1a;line-height:1.5">{answer_html}</div>
+  <div style="font-size:0.8em;color:#666;margin-top:10px;border-top:1px solid #eee;
+              padding-top:6px">
+    {metrics}{finish_html}
+  </div>
+</div>
+""".strip()
+
+
+def generation_result_markdown(result: Any) -> str:
+    """Plain-markdown view of a ``GenerationResult`` (Jupyter ``_repr_markdown_``)."""
+    text = getattr(result, "text", "") or ""
+    metrics = " · ".join(_generation_metric_parts(result))
+    footer = f"\n\n<sub>{metrics}</sub>" if metrics else ""
+    return f"{text}{footer}"

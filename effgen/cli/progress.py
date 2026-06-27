@@ -334,8 +334,10 @@ def summary_line(response: Any) -> tuple[str, str]:
         parts.append(f"{tools} tool" + ("s" if tools != 1 else ""))
     if tokens:
         parts.append(f"{tokens:,} tokens")
-    if cost is not None:
-        parts.append(f"${cost:.4f}")
+    from effgen.ui.render import format_cost
+    cost_str = format_cost(cost)
+    if cost_str is not None:
+        parts.append(cost_str)
     body = " · ".join(parts)
 
     if success:

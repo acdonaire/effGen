@@ -66,6 +66,10 @@ class ChatREPL:
 
         self.model_id = getattr(args, "model", None) or self.DEFAULT_MODEL
         self.preset = getattr(args, "preset", None)
+        # Optional custom persona: steers every reply (e.g. a Socratic tutor),
+        # unlike --preset which only labels the session. Carried across /model
+        # and /tools rebuilds so the persona persists for the whole session.
+        self.system_prompt = getattr(args, "system_prompt", None)
         # Optional persistent session: when set, the chat agent loads prior turns
         # for this id and saves new ones (same store as `effgen run --session-id`
         # and `effgen sessions`), so a customer's conversation can be continued.
@@ -116,15 +120,18 @@ class ChatREPL:
         from effgen import Agent, AgentConfig
 
         tools = self._load_tools(self.tool_names)
-        config = AgentConfig(
-            name="chat-agent",
-            model=self.model_id,
-            provider=self.provider,
-            tools=tools,
-            temperature=self.temperature if self.temperature is not None else 0.7,
-            enable_sub_agents=not getattr(self.args, "no_sub_agents", False),
-            enable_streaming=True,
-        )
+        config_kwargs: dict[str, Any] = {
+            "name": "chat-agent",
+            "model": self.model_id,
+            "provider": self.provider,
+            "tools": tools,
+            "temperature": self.temperature if self.temperature is not None else 0.7,
+            "enable_sub_agents": not getattr(self.args, "no_sub_agents", False),
+            "enable_streaming": True,
+        }
+        if self.system_prompt:
+            config_kwargs["system_prompt"] = self.system_prompt
+        config = AgentConfig(**config_kwargs)
         # Attach the persistent session only on the FIRST build, so its saved
         # turns are loaded into memory exactly once. On a /model or /tools rebuild
         # we carry memory from the old agent instead (below) and reuse the same
@@ -555,7 +562,8 @@ class ChatREPL:
         if tok:
             parts.append(f"{tok:,} tok")
         if cost > 0:
-            parts.append(f"${cost:.4f}")
+            from effgen.ui.render import format_cost
+            parts.append(format_cost(cost))
         footer = "· " + " · ".join(parts)
         if interrupted:
             footer += " · stopped"
@@ -642,9 +650,13 @@ class ChatREPL:
 
     def _cmd_cost(self) -> None:
         self.cli.print_header("Session cost")
+        from effgen.ui.render import format_cost
+
         self.cli.print(f"Turns: {self.turns}")
         self.cli.print(f"Tokens: {self.session_tokens:,}")
-        self.cli.print(f"Cost: ${self.session_cost:.4f}")
+        # A $0.00 here is honest for free/local sessions; for cheap cloud turns
+        # the adaptive formatter keeps sub-cent spend visible instead of $0.0000.
+        self.cli.print(f"Cost: {format_cost(self.session_cost) if self.session_cost else '$0.00'}")
         # Cross-check against the process-wide cost tracker when keyed providers
         # reported real usage (local models stay $0).
         try:
@@ -653,7 +665,7 @@ class ChatREPL:
             tracker = CostTracker.get()
             total = tracker.total_cost()
             if total > 0:
-                self.cli.print(f"(process total across all models: ${total:.4f})")
+                self.cli.print(f"(process total across all models: {format_cost(total)})")
         except Exception:  # noqa: BLE001
             pass
 

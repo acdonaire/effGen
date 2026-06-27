@@ -676,18 +676,18 @@ class AgentGenerationMixin:
         """
         inputs = kwargs.pop("inputs", None)
         if inputs is not None:
+            # The multimodal builder already adds config.system_prompt as a
+            # dedicated system message, so the persona is honored there.
             prompt = self._build_multimodal_prompt(task, inputs)
         else:
-            # Include conversation history from short-term memory for multi-turn context
+            # Include conversation history from short-term memory for multi-turn
+            # context. A plain string prompt has no separate system slot, so a
+            # custom persona leads the prompt (and owns the response contract)
+            # instead of the framework's "answer directly" framing — without
+            # this a "respond only in French" / Socratic tutor persona is
+            # silently ignored on every provider. Default agents are unchanged.
             conversation_history = self._format_conversation_history()
-            if conversation_history:
-                prompt = (
-                    f"{conversation_history}\n\n"
-                    f"Based on the conversation above, answer this question directly and concisely:\n\n"
-                    f"{task}\n\nAnswer:"
-                )
-            else:
-                prompt = f"Answer this question directly and concisely:\n\n{task}\n\nAnswer:"
+            prompt = self._direct_prompt(task, conversation_history)
 
         try:
             response = self._generate(prompt, _task_hint=task, **kwargs)

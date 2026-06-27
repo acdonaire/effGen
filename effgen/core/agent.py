@@ -625,6 +625,17 @@ Question: {task}
             timeout=config.approval_timeout,
         )
 
+        # Remember whether the user supplied a custom persona via ``system_prompt``.
+        # Captured *before* the tool-aware default is auto-built below, so the
+        # framework's generated prompt for a plain default tool agent is never
+        # mistaken for a user persona. The no-tool direct path and the
+        # native/hybrid tool path use this to steer the model with the persona,
+        # the same way the ReAct-text and Gemini-native paths already do.
+        _user_sp = (config.system_prompt or "").strip()
+        self._custom_persona: str | None = (
+            _user_sp if _user_sp and _user_sp != "You are a helpful AI assistant." else None
+        )
+
         # Auto-generate system prompt if tools are present and using default prompt
         self._system_prompt_builder = AgentSystemPromptBuilder(
             model_name=self.model_name or "",
@@ -1599,15 +1610,12 @@ Provide a well-structured, comprehensive response that integrates all findings."
         tell success from failure. With ``include_events`` the same deltas are
         wrapped as :class:`StreamEvent` ``answer`` records.
         """
+        # Mirror ``_run_direct_inference``: a custom persona leads the prompt and
+        # owns the response contract; default agents keep the familiar framing.
+        # Otherwise a custom persona (e.g. an `effgen chat --persona` tutor) is
+        # silently ignored on the tool-free streaming path that chat uses.
         conversation_history = self._format_conversation_history()
-        if conversation_history:
-            prompt = (
-                f"{conversation_history}\n\n"
-                f"Based on the conversation above, answer this question directly "
-                f"and concisely:\n\n{task}\n\nAnswer:"
-            )
-        else:
-            prompt = f"Answer this question directly and concisely:\n\n{task}\n\nAnswer:"
+        prompt = self._direct_prompt(task, conversation_history)
 
         # No ReAct stop sequences here: there is no scaffold to trim, and the
         # GPT-5/reasoning families reject `stop`. reasoning_effort is threaded

@@ -81,6 +81,20 @@ class GenerationResult:
         The unambiguous ``repr()`` still shows every field for debugging."""
         return self.text
 
+    def _repr_html_(self) -> str:
+        """Rich HTML card for Jupyter/IPython — mirrors ``AgentResponse`` so a
+        raw ``load_model(...).generate(...)`` renders a tidy card (answer +
+        model · time · tokens · cost) in a notebook, not a dataclass repr."""
+        from effgen.ui import generation_result_html
+
+        return generation_result_html(self)
+
+    def _repr_markdown_(self) -> str:
+        """Plain-markdown notebook view (answer + a small metric footer)."""
+        from effgen.ui import generation_result_markdown
+
+        return generation_result_markdown(self)
+
 
 @dataclass
 class TokenCount:

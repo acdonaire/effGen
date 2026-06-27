@@ -190,6 +190,12 @@ class AgentReActMixin:
                 # branches below already inject this history).
                 if conversation_history:
                     prompt = f"{conversation_history}\n\n{prompt}"
+                # Steer the model with the user's custom persona. The native/
+                # hybrid path sends a bare user message (the chat template owns
+                # the system slot for tools), so prepend the persona — otherwise
+                # a custom persona is dropped the moment a tool is attached, even
+                # though the ReAct-text and Gemini-native paths honor it.
+                prompt = f"{self._persona_prefix()}{prompt}"
                 # Pass tool definitions for the chat template
                 tool_defs = self._tool_calling_strategy.format_tools_for_prompt(
                     list(self.tools.values())

@@ -287,3 +287,25 @@ def test_mistyped_completion_value_suggests(capsys):
         parser.parse_args(["--completion", "bsh"])
     err = capsys.readouterr().err
     assert "Did you mean 'bash'?" in err
+
+
+# --------------------------------------------------------------------------- #
+# prompts list --json alias and chat --system-prompt/--persona
+# --------------------------------------------------------------------------- #
+
+def test_prompts_list_json_is_alias_for_format_json():
+    parser = _main.create_parser()
+    args = parser.parse_args(["prompts", "list", "--json"])
+    assert args.list_format == "json"
+    # --format json still works and the default stays table.
+    assert parser.parse_args(["prompts", "list"]).list_format == "table"
+    assert parser.parse_args(["prompts", "list", "--format", "markdown"]).list_format == "markdown"
+
+
+def test_chat_accepts_system_prompt_and_persona_alias():
+    parser = _main.create_parser()
+    persona = "You are a patient Socratic tutor."
+    assert parser.parse_args(["chat", "--system-prompt", persona]).system_prompt == persona
+    assert parser.parse_args(["chat", "--persona", persona]).system_prompt == persona
+    # Absent by default (so a plain chat keeps the default assistant persona).
+    assert parser.parse_args(["chat"]).system_prompt is None

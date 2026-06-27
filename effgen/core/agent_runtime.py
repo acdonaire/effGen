@@ -486,6 +486,47 @@ class AgentRuntimeMixin:
         messages.append(Message(role=Role.USER, content=content))
         return messages
 
+    def _persona_prefix(self) -> str:
+        """Return the user's custom persona as a prompt prefix, or ``""``.
+
+        When the user set a custom ``system_prompt`` (anything other than the
+        default assistant prompt), the no-tool direct path and the native/hybrid
+        tool path prepend it to the user turn so the persona actually steers the
+        model — matching the ReAct-text and Gemini-native paths, which already
+        embed it. Adapters that take a string prompt have no separate system
+        slot, so prepending is the universal, family-agnostic way to deliver it.
+        Returns an empty string for the default persona so default agents are
+        byte-for-byte unchanged.
+        """
+        persona = getattr(self, "_custom_persona", None)
+        return f"{persona}\n\n" if persona else ""
+
+    def _direct_prompt(self, task: str, conversation_history: str = "") -> str:
+        """Build the user prompt for the no-tool direct/streaming paths.
+
+        Default agents keep the familiar ``"Answer this question directly and
+        concisely: … Answer:"`` framing byte-for-byte. When the user set a custom
+        persona, that persona *is* the response contract, so the framework's own
+        "answer directly / Answer:" boilerplate is dropped — it competes with the
+        persona (it literally commands "Answer:", which fights a Socratic "never
+        give the answer" tutor) and on the smallest models it can override the
+        persona entirely. The persona then leads, followed by any conversation
+        history and the raw task — exactly the shape that steers reliably across
+        cloud and local families.
+        """
+        persona = getattr(self, "_custom_persona", None)
+        if persona:
+            if conversation_history:
+                return f"{persona}\n\n{conversation_history}\n\n{task}"
+            return f"{persona}\n\n{task}"
+        if conversation_history:
+            return (
+                f"{conversation_history}\n\n"
+                f"Based on the conversation above, answer this question directly "
+                f"and concisely:\n\n{task}\n\nAnswer:"
+            )
+        return f"Answer this question directly and concisely:\n\n{task}\n\nAnswer:"
+
     @staticmethod
     def _prompt_to_task_hint(prompt: Any) -> str:
         if isinstance(prompt, str):
