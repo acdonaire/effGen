@@ -2419,10 +2419,19 @@ Model id formats:
     run_parser.add_argument('--checkpoint-dir', help='Directory to write agent checkpoints')
     run_parser.add_argument('--checkpoint-interval', type=int, default=0,
                             help='Checkpoint every N iterations (requires --checkpoint-dir)')
-    run_parser.add_argument('--session-id', help='Persistent session id')
+    run_parser.add_argument(
+        '--session-id', metavar='ID',
+        help='Persistent conversation session id (shared with `effgen chat '
+             '--session-id` and `effgen sessions`). Recalls prior turns and '
+             'saves new ones. (Distinct from `effgen resume --checkpoint`, which '
+             'restores a mid-run checkpoint snapshot.)',
+    )
 
     # Resume command
-    resume_parser = subparsers.add_parser('resume', help='Resume an agent run from a checkpoint')
+    resume_parser = subparsers.add_parser(
+        'resume',
+        help='Resume an interrupted agent run from a saved checkpoint snapshot '
+             '(distinct from a conversation session — see `--session-id`)')
     resume_parser.add_argument('--checkpoint', required=True,
                                help='Checkpoint id, JSON path, or directory (uses latest)')
     resume_parser.add_argument('-m', '--model', help='Model to use')
@@ -2457,6 +2466,12 @@ Model id formats:
                              help='Quiet output (errors only)')
     chat_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
                              help='Disable live spinners/progress animation')
+    chat_parser.add_argument(
+        '--session-id', '--resume', dest='session_id', metavar='ID',
+        help='Continue a persistent session by id (same store as '
+             '`effgen run --session-id` and `effgen sessions list`). Prior turns '
+             'are recalled and new turns are saved; a new id starts a fresh session.',
+    )
 
     # Serve command
     serve_parser = subparsers.add_parser(

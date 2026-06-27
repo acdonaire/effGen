@@ -292,5 +292,65 @@ def test_history_dir_respects_effgen_home(tmp_path, monkeypatch):
     assert d.exists()
 
 
+# ---------------------------------------------------------------------------
+# persistent session (effgen chat --session-id / --resume)
+# ---------------------------------------------------------------------------
+
+
+def test_session_id_picked_up_from_args():
+    repl, _ = _make_repl(session_id="cust-7788")
+    assert repl.session_id == "cust-7788"
+    # Absent arg -> no session (back-compat).
+    repl2, _ = _make_repl()
+    assert repl2.session_id is None
+
+
+def test_persist_session_turn_writes_to_store(tmp_path, monkeypatch):
+    # A streamed (plain) turn is persisted to the same session store that
+    # `effgen run --session-id` / `effgen sessions` use, so it can be resumed.
+    monkeypatch.setenv("EFFGEN_SESSIONS_DIR", str(tmp_path / "sess"))
+    from effgen.core.session import Session
+
+    repl, _ = _make_repl(session_id="cust-1")
+    session = Session.load_or_create("cust-1")
+    repl.agent = SimpleNamespace(session=session)
+    repl._persist_session_turn("my order is ORD-7788", "Noted, ORD-7788.")
+
+    # A brand-new load of the same id recalls the turn.
+    reloaded = Session.load_or_create("cust-1")
+    contents = [m["content"] for m in reloaded.messages]
+    assert "my order is ORD-7788" in contents
+    assert "Noted, ORD-7788." in contents
+
+
+def test_persist_session_turn_noop_without_session():
+    # No attached session -> nothing happens, no crash.
+    repl, _ = _make_repl()
+    repl.agent = SimpleNamespace(session=None)
+    repl._persist_session_turn("hi", "there")  # must not raise
+
+
+def test_banner_shows_session_resume_count(tmp_path, monkeypatch):
+    monkeypatch.setenv("EFFGEN_HOME", str(tmp_path / "eh"))
+    monkeypatch.setenv("EFFGEN_SESSIONS_DIR", str(tmp_path / "sess"))
+    from effgen.core.session import Session
+
+    s = Session.load_or_create("cust-9")
+    s.add_user_message("hello")
+    s.add_assistant_message("hi")
+    s.save()
+
+    repl, cli = _make_repl(session_id="cust-9")
+    repl._banner()
+    joined = "\n".join(cli.messages)
+    assert "Session: cust-9" in joined
+    assert "resuming 2 prior message" in joined
+
+    # A fresh id is announced as new.
+    repl2, cli2 = _make_repl(session_id="brand-new")
+    repl2._banner()
+    assert any("new (will be saved)" in m for m in cli2.messages)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

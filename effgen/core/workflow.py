@@ -364,17 +364,36 @@ class WorkflowDAG:
             for nid in level_nodes:
                 node = self._nodes[nid]
 
-                # Check if all incoming edges pass their conditions
+                # Decide whether to skip this node. Two reasons:
+                #  1. A required upstream did NOT complete (it failed or was
+                #     itself skipped) — running on its error text would turn an
+                #     internal failure into a (often customer-facing) answer, so
+                #     we skip honestly instead.
+                #  2. A conditional edge's predicate returned False.
                 skip = False
+                skip_reason: str | None = None
                 for edge in self._reverse.get(nid, []):
+                    src = self._nodes.get(edge.source)
+                    if src is not None and src.status in (
+                        NodeStatus.FAILED, NodeStatus.SKIPPED
+                    ):
+                        skip = True
+                        skip_reason = (
+                            f"upstream '{edge.source}' did not complete "
+                            f"({src.status.value})"
+                        )
+                        break
                     if edge.condition is not None:
                         source_output = outputs.get(edge.source)
                         if not edge.condition(source_output):
                             skip = True
+                            skip_reason = f"condition on edge from '{edge.source}' was not met"
                             break
 
                 if skip:
                     node.status = NodeStatus.SKIPPED
+                    if skip_reason:
+                        node.metadata = {**node.metadata, "skip_reason": skip_reason}
                     continue
 
                 # Build input for this node from upstream outputs + initial
@@ -417,12 +436,31 @@ class WorkflowDAG:
             for n in self._nodes.values()
         )
 
+        # Fold a running cost/token tab onto the result so a budget owner can read
+        # workflow spend without summing node_results by hand.
+        total_cost = 0.0
+        total_tokens = 0
+        for n in self._nodes.values():
+            try:
+                total_cost += float(n.metadata.get("cost_usd") or 0.0)
+            except (TypeError, ValueError):
+                pass
+            try:
+                total_tokens += int(n.metadata.get("tokens_used") or 0)
+            except (TypeError, ValueError):
+                pass
+
         return WorkflowResult(
             success=success,
             outputs=outputs,
             node_results=[n.to_dict() for n in self._nodes.values()],
             execution_time=elapsed,
-            metadata={"name": self.name, "node_count": len(self._nodes)},
+            metadata={
+                "name": self.name,
+                "node_count": len(self._nodes),
+                "cost_usd": round(total_cost, 6),
+                "tokens_used": total_tokens,
+            },
         )
 
     async def _run_node(self, node: WorkflowNode, task: str,
@@ -451,6 +489,16 @@ class WorkflowDAG:
                 )
 
             node.output = response.output if hasattr(response, "output") else str(response)
+
+            # Record this node's spend so the workflow can report a running tab
+            # (mirrors the per-run AgentResponse cost surface). Local models = $0.
+            r_meta = getattr(response, "metadata", None) or {}
+            raw_cost = r_meta.get("cost_usd", r_meta.get("cost"))
+            try:
+                node.metadata["cost_usd"] = float(raw_cost) if raw_cost is not None else 0.0
+            except (TypeError, ValueError):
+                node.metadata["cost_usd"] = 0.0
+            node.metadata["tokens_used"] = int(getattr(response, "tokens_used", 0) or 0)
 
             # Honour the agent's own success flag: a sub-agent that failed must
             # fail the node too (its error is already typed + redacted upstream).

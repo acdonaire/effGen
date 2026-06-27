@@ -36,6 +36,42 @@ def _redact(text: str) -> str:
         return text
 
 
+def _response_cost(response: Any) -> float:
+    """Pull the per-run cost (USD) off an ``AgentResponse``'s metadata.
+
+    The single-agent surface records cost under ``metadata["cost_usd"]`` (older
+    runs used ``"cost"``); local models report ``0.0``. Returns ``0.0`` when the
+    provider gave us no usable number so summing never crashes.
+    """
+    meta = getattr(response, "metadata", None) or {}
+    raw = meta.get("cost_usd", meta.get("cost"))
+    try:
+        return float(raw) if raw is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _aggregate_usage(responses: list[dict[str, Any]]) -> dict[str, Any]:
+    """Sum ``cost_usd``/``tokens_used`` across member-agent result dicts.
+
+    Mirrors the per-run ``AgentResponse.metadata`` cost surface so a
+    budget-conscious caller can read team/workflow spend without re-summing by
+    hand. Missing/non-numeric values count as zero.
+    """
+    cost = 0.0
+    tokens = 0
+    for r in responses:
+        try:
+            cost += float(r.get("cost_usd") or 0.0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            tokens += int(r.get("tokens_used") or 0)
+        except (TypeError, ValueError):
+            pass
+    return {"cost_usd": round(cost, 6), "tokens_used": tokens}
+
+
 class OrchestrationPattern(Enum):
     """Available orchestration patterns."""
     SEQUENTIAL = "sequential"
@@ -383,7 +419,8 @@ class MultiAgentOrchestrator:
                 "agent_name": agent.name,
                 "output": response.output,
                 "success": response.success,
-                "tokens_used": response.tokens_used
+                "tokens_used": response.tokens_used,
+                "cost_usd": _response_cost(response),
             }
             responses.append(agent_result)
 
@@ -424,7 +461,7 @@ class MultiAgentOrchestrator:
         # success only when at least one agent ran AND all that ran succeeded
         # AND the run was not cancelled — never a silent True on an empty/aborted run.
         success = bool(responses) and all(r["success"] for r in responses) and not cancelled
-        meta: dict[str, Any] = {}
+        meta: dict[str, Any] = dict(_aggregate_usage(responses))
         if cancelled:
             meta["reason"] = "cancelled"
             meta["error"] = "Workflow cancelled before completion."
@@ -433,8 +470,13 @@ class MultiAgentOrchestrator:
             failed = next((r for r in responses if not r["success"]), None)
             if failed is not None:
                 meta["error"] = failed.get("error", "A sub-agent failed.")
+        # On failure, never echo the customer's own input back as the answer —
+        # a caller who reads .output without checking .success must not mistake
+        # the input (or a stale partial) for a real result. Successful partials
+        # remain discoverable in agent_responses.
+        output = current_task if success else f"Error: {meta.get('error', 'team run did not succeed.')}"
         return TeamResponse(
-            output=current_task,
+            output=output,
             success=success,
             pattern=OrchestrationPattern.SEQUENTIAL,
             agent_responses=responses,
@@ -461,7 +503,7 @@ class MultiAgentOrchestrator:
 
         # Honest: success only if at least one agent actually succeeded.
         success = any(r["success"] for r in responses)
-        meta: dict[str, Any] = {}
+        meta: dict[str, Any] = dict(_aggregate_usage(responses))
         if not success:
             meta["reason"] = "sub_agent_failed"
             failed = next((r for r in responses if r.get("error")), None)
@@ -514,6 +556,7 @@ class MultiAgentOrchestrator:
                 "output": response.output,
                 "success": response.success,
                 "tokens_used": response.tokens_used,
+                "cost_usd": _response_cost(response),
             }
             if not response.success:
                 detail = (getattr(response, "metadata", None) or {}).get("error")
@@ -536,14 +579,20 @@ class MultiAgentOrchestrator:
         if not team.manager_agent:
             raise ValueError("Hierarchical pattern requires manager_agent")
 
-        # Manager decomposes task
-        decomposition_prompt = f"""You are a manager coordinating a team. Break down this task into subtasks for your team:
+        worker_names = [agent.name for agent in team.agents]
+
+        # Manager decomposes task. Ask it to *name the worker* on each subtask
+        # line ("<worker>: <what to do>") so subtasks are routed to the specialist
+        # the manager intended, not by list position.
+        decomposition_prompt = f"""You are a manager coordinating a team. Break down this task into subtasks for your team.
 
 Task: {task}
 
-Available workers: {', '.join(agent.name for agent in team.agents)}
+Available workers: {', '.join(worker_names)}
 
-Provide subtasks as a numbered list."""
+Provide subtasks as a numbered list. Start EACH line with the name of the worker \
+who should handle it, followed by a colon — for example "{worker_names[0]}: <subtask>". \
+Use only the worker names listed above."""
 
         manager_response = team.manager_agent.run(
             decomposition_prompt,
@@ -554,16 +603,29 @@ Provide subtasks as a numbered list."""
         # Parse subtasks (simple heuristic)
         subtasks = self._parse_subtasks(manager_response.output)
 
-        # Assign to workers
+        # Route each subtask to the worker the manager named (by label), falling
+        # back to round-robin only when a line carries no recognizable worker
+        # name. Every subtask runs — none are dropped because there are more
+        # subtasks than agents.
         responses = []
-        for _i, (subtask, agent) in enumerate(zip(subtasks, team.agents)):
+        rr = 0  # round-robin cursor for unlabeled subtasks
+        for subtask in subtasks:
+            agent = self._route_subtask(subtask, team.agents)
+            if agent is None:
+                agent = team.agents[rr % len(team.agents)]
+                rr += 1
             response = agent.run(subtask, mode=AgentMode.AUTO, context=context)
             responses.append({
                 "agent_name": agent.name,
                 "subtask": subtask,
                 "output": response.output,
-                "success": response.success
+                "success": response.success,
+                "tokens_used": response.tokens_used,
+                "cost_usd": _response_cost(response),
             })
+            if not response.success:
+                detail = (getattr(response, "metadata", None) or {}).get("error")
+                responses[-1]["error"] = detail or _redact(str(response.output))
 
         # Manager synthesizes
         synthesis_prompt = f"""Synthesize the results from your team into a final answer for: {task}
@@ -579,12 +641,31 @@ Provide a comprehensive final answer."""
             context=context
         )
 
+        # Honest success: the manager's synthesis must succeed AND no worker may
+        # have failed (a dropped/failed specialist must not pass silently).
+        worker_ok = all(r["success"] for r in responses) if responses else True
+        success = final_response.success and worker_ok
+        meta: dict[str, Any] = dict(_aggregate_usage(
+            [*responses,
+             {"tokens_used": final_response.tokens_used,
+              "cost_usd": _response_cost(final_response)}]
+        ))
+        meta["manager_decomposition"] = manager_response.output
+        if not success:
+            meta["reason"] = "synthesis_failed" if not final_response.success else "sub_agent_failed"
+            failed = next((r for r in responses if not r["success"]), None)
+            if not final_response.success:
+                detail = (getattr(final_response, "metadata", None) or {}).get("error")
+                meta["error"] = detail or _redact(str(final_response.output))
+            elif failed is not None:
+                meta["error"] = failed.get("error", "A worker agent failed.")
+        output = final_response.output if success else f"Error: {meta.get('error', 'team run did not succeed.')}"
         return TeamResponse(
-            output=final_response.output,
-            success=final_response.success,
+            output=output,
+            success=success,
             pattern=OrchestrationPattern.HIERARCHICAL,
             agent_responses=responses,
-            metadata={"manager_decomposition": manager_response.output}
+            metadata=meta,
         )
 
     def _execute_collaborative(self,
@@ -598,6 +679,8 @@ Provide a comprehensive final answer."""
         """
         max_rounds = team.max_rounds
         current_responses = []
+        any_failure = False
+        first_error: str | None = None
 
         for round_num in range(1, max_rounds + 1):
             round_responses = []
@@ -619,11 +702,23 @@ Consider the above viewpoints and provide your perspective or refined answer."""
                     prompt = task
 
                 response = agent.run(prompt, mode=AgentMode.AUTO, context=context)
-                round_responses.append({
+                # Capture per-agent success/error like the other patterns — a
+                # failed agent must be visible, never an invisible silent pass.
+                entry = {
                     "agent_name": agent.name,
                     "output": response.output,
-                    "round": round_num
-                })
+                    "round": round_num,
+                    "success": response.success,
+                    "tokens_used": response.tokens_used,
+                    "cost_usd": _response_cost(response),
+                }
+                if not response.success:
+                    any_failure = True
+                    detail = (getattr(response, "metadata", None) or {}).get("error")
+                    entry["error"] = detail or _redact(str(response.output))
+                    if first_error is None:
+                        first_error = entry["error"]
+                round_responses.append(entry)
 
             current_responses = round_responses
 
@@ -632,16 +727,28 @@ Consider the above viewpoints and provide your perspective or refined answer."""
             if consensus_score > 0.8:
                 break
 
-        # Synthesize final output
-        final_output = self._synthesize_collaborative_results(task, current_responses)
+        # Honest success: at least one agent ran and no agent failed at any point
+        # (fail-closed — a failing collaborator must not be hidden by a True).
+        success = bool(current_responses) and not any_failure
+        meta: dict[str, Any] = dict(_aggregate_usage(current_responses))
+        if not success:
+            meta["reason"] = "sub_agent_failed" if any_failure else "empty_team"
+            meta["error"] = first_error or "A collaborating agent failed."
+
+        # Synthesize final output (on failure, surface the error not a half answer).
+        if success:
+            final_output = self._synthesize_collaborative_results(task, current_responses)
+        else:
+            final_output = f"Error: {meta['error']}"
 
         return TeamResponse(
             output=final_output,
-            success=True,
+            success=success,
             pattern=OrchestrationPattern.COLLABORATIVE,
             agent_responses=current_responses,
             rounds=round_num,
-            consensus_score=consensus_score
+            consensus_score=consensus_score,
+            metadata=meta,
         )
 
     def _execute_competitive(self,
@@ -662,13 +769,15 @@ Consider the above viewpoints and provide your perspective or refined answer."""
         # Select best response
         best_response = self._select_best_response(task, responses, team.voting_strategy)
 
+        meta: dict[str, Any] = dict(_aggregate_usage(responses))
+        meta["voting_strategy"] = team.voting_strategy
         return TeamResponse(
             output=best_response["output"],
             success=best_response["success"],
             pattern=OrchestrationPattern.COMPETITIVE,
             agent_responses=responses,
             selected_response=best_response,
-            metadata={"voting_strategy": team.voting_strategy}
+            metadata=meta,
         )
 
     def _execute_pipeline(self,
@@ -676,12 +785,19 @@ Consider the above viewpoints and provide your perspective or refined answer."""
                          team: TeamConfig,
                          context: dict[str, Any]) -> TeamResponse:
         """
-        Pipeline processing with specialized stages.
+        Pipeline processing: each agent is a stage; the output of one stage is
+        the input to the next.
 
-        Similar to sequential but each agent has specific role.
+        ``PIPELINE`` is currently an alias for ``SEQUENTIAL`` — the two run
+        identically (agents execute in order, threading each output forward).
+        Give each stage agent a role-specific ``system_prompt`` to specialize
+        the stages. To route a ticket to a *single* chosen specialist instead of
+        running every stage, use ``HIERARCHICAL`` (a manager names the worker per
+        subtask) — see ``docs/tutorials/multi-agent-workflows.md``.
         """
-        # Similar to sequential but with role awareness
-        return self._execute_sequential(task, team, context)
+        result = self._execute_sequential(task, team, context)
+        result.pattern = OrchestrationPattern.PIPELINE
+        return result
 
     def _synthesize_parallel_results(self,
                                     task: str,
@@ -768,6 +884,40 @@ Consider the above viewpoints and provide your perspective or refined answer."""
         else:
             # Default to first response
             return responses[0] if responses else {}
+
+    def _route_subtask(self, subtask: str, agents: list[Agent]) -> Agent | None:
+        """Pick the worker a subtask is addressed to, by name.
+
+        The manager is asked to prefix each subtask with the responsible
+        worker's name (``"billing: issue the refund"``). We match that leading
+        label — or any worker name mentioned in the line — against the team
+        (case-insensitive) so the *named* specialist gets the work, not whoever
+        happens to sit at the same list index. Returns ``None`` when no worker is
+        recognizable so the caller can fall back to round-robin.
+        """
+        text = subtask.strip()
+        lowered = text.lower()
+        by_name = {a.name.lower(): a for a in agents}
+
+        # Prefer an explicit "<worker>:" label at the start of the line.
+        if ":" in text:
+            label = text.split(":", 1)[0].strip().lower()
+            if label in by_name:
+                return by_name[label]
+            # Tolerate decorations like "Billing agent" or "**billing**".
+            for name, agent in by_name.items():
+                if name and name in label:
+                    return agent
+
+        # Otherwise, the first worker name mentioned anywhere in the line wins.
+        best: tuple[int, Agent] | None = None
+        for name, agent in by_name.items():
+            if not name:
+                continue
+            pos = lowered.find(name)
+            if pos != -1 and (best is None or pos < best[0]):
+                best = (pos, agent)
+        return best[1] if best is not None else None
 
     def _parse_subtasks(self, text: str) -> list[str]:
         """Parse subtasks from numbered list."""

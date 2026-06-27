@@ -38,16 +38,19 @@ class _FakeResponse:
 
 class FakeAgent:
     def __init__(self, name: str, *, succeed: bool = True, reply: str | None = None,
-                 delay: float = 0.0):
+                 delay: float = 0.0, cost: float = 0.0):
         self.name = name
         self._succeed = succeed
         self._reply = reply
         self._delay = delay
+        self._cost = cost
         self.closed = False
         self.runs = 0
+        self.tasks: list[str] = []  # every task this agent was asked to run
 
     def run(self, task: str, mode: Any = None, context: Any = None, **kw) -> _FakeResponse:
         self.runs += 1
+        self.tasks.append(task)
         if self._delay:
             time.sleep(self._delay)
         if not self._succeed:
@@ -57,7 +60,8 @@ class FakeAgent:
                 metadata={"error": {"type": "ModelNotFoundError",
                                     "message": "model 'x' not found", "provider": "test"}},
             )
-        return _FakeResponse(output=self._reply or f"{self.name}:{task}")
+        meta = {"cost_usd": self._cost} if self._cost else {}
+        return _FakeResponse(output=self._reply or f"{self.name}:{task}", metadata=meta)
 
     async def run_async(self, task: str, mode: Any = None, context: Any = None, **kw):
         return self.run(task, mode=mode, context=context, **kw)
@@ -159,6 +163,46 @@ def test_node_failure_fails_workflow_and_redacts():
     assert "ModelNotFoundError" in berr
 
 
+def test_dag_skips_downstream_of_failed_upstream():
+    # triage -> {billing(fails), synthesize}; synthesize also depends on billing.
+    # The fan-in node must be SKIPPED (not run on the error text), so an internal
+    # failure is never rewritten into a downstream answer.
+    from effgen.core.workflow import WorkflowDAG, WorkflowNode
+    dag = WorkflowDAG("support")
+    triage = FakeAgent("triage")
+    billing = FakeAgent("billing", succeed=False)
+    synth = FakeAgent("synth")
+    dag.add_node(WorkflowNode(id="triage", agent=triage))
+    dag.add_node(WorkflowNode(id="billing", agent=billing))
+    dag.add_node(WorkflowNode(id="synthesize", agent=synth))
+    dag.connect("triage", "billing")
+    dag.connect("triage", "synthesize")
+    dag.connect("billing", "synthesize")
+    res = dag.run("write the customer reply")
+    statuses = {n["id"]: n["status"] for n in res.node_results}
+    assert statuses == {"triage": "completed", "billing": "failed",
+                        "synthesize": "skipped"}
+    assert res.success is False
+    assert synth.runs == 0  # never executed on the failed branch
+    assert res.outputs.get("synthesize") is None
+
+
+def test_dag_condition_skip_still_succeeds():
+    # A legitimate conditional skip (not a failure) keeps success=True and
+    # records a skip_reason for transparency.
+    from effgen.core.workflow import WorkflowDAG, WorkflowNode
+    dag = WorkflowDAG("cond")
+    dag.add_node(WorkflowNode(id="a", agent=FakeAgent("a", reply="normal")))
+    dag.add_node(WorkflowNode(id="b", agent=FakeAgent("b")))
+    dag.connect("a", "b", condition=lambda out: "urgent" in str(out))
+    res = dag.run("go")
+    statuses = {n["id"]: n["status"] for n in res.node_results}
+    assert statuses == {"a": "completed", "b": "skipped"}
+    assert res.success is True
+    bmeta = next(n["metadata"] for n in res.node_results if n["id"] == "b")
+    assert "condition" in bmeta.get("skip_reason", "")
+
+
 # --------------------------------------------------------------------------- #
 # Orchestrator shapes + honest failure
 # --------------------------------------------------------------------------- #
@@ -219,6 +263,149 @@ def test_parallel_all_fail_is_failure():
     )
     res = orch.assign_task("hi", "team")
     assert res.success is False
+
+
+def test_sequential_does_not_echo_input_on_failure():
+    # On failure the output must NOT be the caller's original task echoed back
+    # (a footgun: it reads like an answer). It carries the error instead.
+    task = "MY ORIGINAL TICKET — refund please"
+    orch = _orch_with_team(agents=[FakeAgent("bad", succeed=False), FakeAgent("ok")])
+    res = orch.assign_task(task, "team")
+    assert res.success is False
+    assert res.output != task
+    assert res.output.startswith("Error:")
+
+
+# --------------------------------------------------------------------------- #
+# COLLABORATIVE honesty (a failing collaborator must not pass silently)
+# --------------------------------------------------------------------------- #
+def test_collaborative_failure_is_honest():
+    from effgen.core.orchestrator import OrchestrationPattern
+    orch = _orch_with_team(
+        agents=[FakeAgent("billing"), FakeAgent("tech", succeed=False)],
+        pattern=OrchestrationPattern.COLLABORATIVE,
+    )
+    orch.get_team("team").max_rounds = 1
+    res = orch.assign_task("resolve this", "team")
+    assert res.success is False
+    assert res.metadata.get("reason") == "sub_agent_failed"
+    # every agent response now carries a discoverable success flag + error
+    flags = {r["agent_name"]: r["success"] for r in res.agent_responses}
+    assert flags == {"billing": True, "tech": False}
+    failed = next(r for r in res.agent_responses if not r["success"])
+    assert "error" in failed
+    # the team-level surfaced error/metadata never leaks raw secrets
+    assert "sk-secret-key-12345" not in str(res.metadata)
+
+
+def test_collaborative_all_ok_succeeds():
+    from effgen.core.orchestrator import OrchestrationPattern
+    orch = _orch_with_team(
+        agents=[FakeAgent("a", reply="same answer"), FakeAgent("b", reply="same answer")],
+        pattern=OrchestrationPattern.COLLABORATIVE,
+    )
+    orch.get_team("team").max_rounds = 1
+    res = orch.assign_task("q", "team")
+    assert res.success is True
+    assert all(r["success"] for r in res.agent_responses)
+
+
+# --------------------------------------------------------------------------- #
+# HIERARCHICAL named routing (subtask goes to the worker the manager names)
+# --------------------------------------------------------------------------- #
+def _hier_orch(manager_reply, workers):
+    from effgen.core.orchestrator import MultiAgentOrchestrator, OrchestrationPattern
+    orch = MultiAgentOrchestrator()
+    manager = FakeAgent("manager", reply=manager_reply)
+    orch.create_team("support", workers, pattern=OrchestrationPattern.HIERARCHICAL,
+                     manager_agent=manager)
+    return orch
+
+
+def test_hierarchical_routes_by_named_worker_not_position():
+    # tech is first in the list, billing is second — but the manager labels the
+    # subtask "billing:", so it must reach billing, not tech (the old positional
+    # zip would have mis-routed it to tech).
+    tech = FakeAgent("tech")
+    billing = FakeAgent("billing")
+    manager_reply = "1. billing: issue the refund for the double charge"
+    orch = _hier_orch(manager_reply, [tech, billing])
+    res = orch.assign_task("double charge", "support")
+    assert billing.runs == 1 and tech.runs == 0
+    assert res.agent_responses[0]["agent_name"] == "billing"
+
+
+def test_hierarchical_runs_all_subtasks_even_beyond_agent_count():
+    # 3 subtasks, 2 agents — the old zip() dropped the 3rd. All must run now.
+    tech = FakeAgent("tech")
+    billing = FakeAgent("billing")
+    manager_reply = (
+        "1. billing: confirm the charge\n"
+        "2. tech: check the login crash\n"
+        "3. billing: process the refund"
+    )
+    orch = _hier_orch(manager_reply, [tech, billing])
+    res = orch.assign_task("handle both", "support")
+    assert len(res.agent_responses) == 3
+    assert billing.runs == 2 and tech.runs == 1
+
+
+def test_hierarchical_worker_failure_fails_team():
+    # A failed worker must make the team fail even if the manager's synthesis is OK.
+    billing = FakeAgent("billing", succeed=False)
+    tech = FakeAgent("tech")
+    manager_reply = "1. billing: refund\n2. tech: fix login"
+    orch = _hier_orch(manager_reply, [tech, billing])
+    res = orch.assign_task("both", "support")
+    assert res.success is False
+    assert "sk-secret-key-12345" not in str(res.metadata)
+
+
+def test_hierarchical_unlabeled_falls_back_round_robin():
+    # No recognizable worker name -> round-robin, but nothing is dropped.
+    a = FakeAgent("alpha")
+    b = FakeAgent("beta")
+    manager_reply = "1. do the first thing\n2. do the second thing"
+    orch = _hier_orch(manager_reply, [a, b])
+    res = orch.assign_task("x", "support")
+    assert len(res.agent_responses) == 2
+    assert a.runs == 1 and b.runs == 1
+
+
+# --------------------------------------------------------------------------- #
+# PIPELINE is honestly an alias for SEQUENTIAL (labelled as PIPELINE)
+# --------------------------------------------------------------------------- #
+def test_pipeline_pattern_label():
+    from effgen.core.orchestrator import OrchestrationPattern
+    orch = _orch_with_team(pattern=OrchestrationPattern.PIPELINE)
+    res = orch.assign_task("hi", "team")
+    assert res.success is True
+    assert res.pattern == OrchestrationPattern.PIPELINE
+
+
+# --------------------------------------------------------------------------- #
+# Cost / token aggregation onto team & workflow results
+# --------------------------------------------------------------------------- #
+def test_team_cost_and_tokens_aggregated():
+    orch = _orch_with_team(
+        agents=[FakeAgent("a", cost=0.001), FakeAgent("b", cost=0.002)],
+    )
+    res = orch.assign_task("hi", "team")
+    assert res.success is True
+    assert res.metadata["cost_usd"] == pytest.approx(0.003)
+    assert res.metadata["tokens_used"] == 14  # 7 per FakeResponse
+
+
+def test_workflow_cost_and_tokens_aggregated():
+    from effgen.core.workflow import WorkflowDAG, WorkflowNode
+    dag = WorkflowDAG("t")
+    dag.add_node(WorkflowNode(id="a", agent=FakeAgent("a", cost=0.001)))
+    dag.add_node(WorkflowNode(id="b", agent=FakeAgent("b", cost=0.004)))
+    dag.connect("a", "b")
+    res = dag.run("go")
+    assert res.success is True
+    assert res.metadata["cost_usd"] == pytest.approx(0.005)
+    assert res.metadata["tokens_used"] == 14
 
 
 # --------------------------------------------------------------------------- #

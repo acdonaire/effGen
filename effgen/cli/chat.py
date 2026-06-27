@@ -66,6 +66,10 @@ class ChatREPL:
 
         self.model_id = getattr(args, "model", None) or self.DEFAULT_MODEL
         self.preset = getattr(args, "preset", None)
+        # Optional persistent session: when set, the chat agent loads prior turns
+        # for this id and saves new ones (same store as `effgen run --session-id`
+        # and `effgen sessions`), so a customer's conversation can be continued.
+        self.session_id = getattr(args, "session_id", None)
         self.temperature = getattr(args, "temperature", None)
         # Provider was validated by the caller; keep the canonical name.
         self.provider = getattr(args, "_provider", None) or getattr(args, "provider", None)
@@ -121,10 +125,18 @@ class ChatREPL:
             enable_sub_agents=not getattr(self.args, "no_sub_agents", False),
             enable_streaming=True,
         )
-        agent = Agent(config)
+        # Attach the persistent session only on the FIRST build, so its saved
+        # turns are loaded into memory exactly once. On a /model or /tools rebuild
+        # we carry memory from the old agent instead (below) and reuse the same
+        # Session object — re-loading from disk would double the history.
+        if self.session_id and carry_from is None:
+            agent = Agent(config, session_id=self.session_id)
+        else:
+            agent = Agent(config)
 
         # Carry the running conversation across a /model or /tools rebuild so the
-        # new model still "remembers" what was said.
+        # new model still "remembers" what was said, and keep persisting to the
+        # same session file.
         if carry_from is not None:
             try:
                 from effgen.memory.short_term import MessageRole
@@ -136,6 +148,10 @@ class ChatREPL:
                         agent.short_term_memory.add_assistant_message(msg.content)
             except Exception:  # noqa: BLE001 - memory carry is best-effort
                 pass
+            # Reuse the live Session object so new turns keep saving to the same id.
+            if getattr(carry_from, "session", None) is not None:
+                agent.session = carry_from.session
+                agent._session_id = getattr(carry_from, "_session_id", self.session_id)
         return agent
 
     def _rebuild(self) -> None:
@@ -185,6 +201,20 @@ class ChatREPL:
         if self.preset:
             meta = f"Preset: {self.preset}  ·  " + meta
         self.cli.print(meta)
+        # Show that we're continuing a named session (and how many turns it has).
+        if self.session_id:
+            try:
+                from effgen.core.session import Session
+
+                prior = len(Session.load_or_create(self.session_id).messages)
+            except Exception:  # noqa: BLE001
+                prior = 0
+            if prior:
+                self.cli.print(
+                    f"Session: {self.session_id}  ·  resuming {prior} prior message(s)"
+                )
+            else:
+                self.cli.print(f"Session: {self.session_id}  ·  new (will be saved)")
         self.cli.print(
             "Type your message and press Enter.  "
             "End a line with \\ for multi-line input.\n"
@@ -373,9 +403,13 @@ class ChatREPL:
 
         try:
             if self.tool_count > 0:
+                # agent.run() persists to the session itself.
                 answer = self._run_with_tools(user_input)
             else:
                 answer = self._stream_plain(user_input)
+                # The streaming path bypasses agent.run(), so persist the turn to
+                # the session ourselves when one is attached.
+                self._persist_session_turn(user_input, answer)
         except KeyboardInterrupt:
             interrupted = True
             self.cli.print("")
@@ -402,6 +436,18 @@ class ChatREPL:
         self.session_cost += max(dcost, 0.0)
         if not self.quiet:
             self._print_footer(elapsed, dtok, dcost, interrupted)
+
+    def _persist_session_turn(self, user_input: str, answer: str) -> None:
+        """Append a plain (streamed) turn to the persistent session, if any."""
+        session = getattr(self.agent, "session", None)
+        if session is None or not answer:
+            return
+        try:
+            session.add_user_message(user_input)
+            session.add_assistant_message(answer)
+            session.save()
+        except Exception:  # noqa: BLE001 - persistence is best-effort
+            pass
 
     def _stream_plain(self, user_input: str) -> str:
         """Stream the model's answer token-by-token with a thinking spinner."""
