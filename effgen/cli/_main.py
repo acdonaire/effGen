@@ -310,6 +310,19 @@ class CLIInterface:
         self.console = _get_console() if RICH_AVAILABLE else None
         self.config_loader = ConfigLoader()
         self.tool_registry = get_tool_registry()
+        # When True, all human-facing chatter is routed to stderr so stdout
+        # carries only machine-readable output (e.g. `effgen run --json`). A
+        # stderr-bound rich console is created lazily on first use.
+        self._human_to_stderr = False
+        self._err_console = None
+
+    def _human(self):
+        """Return the console human-facing output should go to (stdout/stderr)."""
+        if self._human_to_stderr:
+            if self._err_console is None and RICH_AVAILABLE:
+                self._err_console = _get_console(stderr=True)
+            return self._err_console
+        return self.console
 
     def _animate(self, args) -> bool:
         """Whether to show live animation for this invocation (TTY-aware, opt-out)."""
@@ -320,38 +333,43 @@ class CLIInterface:
 
     def print(self, *args, **kwargs):
         """Print with rich formatting if available."""
-        if self.console:
-            self.console.print(*args, **kwargs)
+        console = self._human()
+        if console:
+            console.print(*args, **kwargs)
         else:
-            print(*args, **kwargs)
+            print(*args, file=sys.stderr if self._human_to_stderr else None, **kwargs)
 
     def print_header(self, text: str):
         """Print a header."""
-        if self.console:
-            self.console.print(f"\n[bold cyan]{text}[/bold cyan]")
+        console = self._human()
+        if console:
+            console.print(f"\n[bold cyan]{text}[/bold cyan]")
         else:
-            print(f"\n=== {text} ===")
+            print(f"\n=== {text} ===", file=sys.stderr if self._human_to_stderr else None)
 
     def print_success(self, text: str):
         """Print success message."""
-        if self.console:
-            self.console.print(f"[green]✓[/green] {text}")
+        console = self._human()
+        if console:
+            console.print(f"[green]✓[/green] {text}")
         else:
-            print(f"✓ {text}")
+            print(f"✓ {text}", file=sys.stderr if self._human_to_stderr else None)
 
     def print_error(self, text: str):
         """Print error message."""
-        if self.console:
-            self.console.print(f"[red]✗[/red] {text}")
+        console = self._human()
+        if console:
+            console.print(f"[red]✗[/red] {text}")
         else:
-            print(f"✗ {text}")
+            print(f"✗ {text}", file=sys.stderr if self._human_to_stderr else None)
 
     def print_warning(self, text: str):
         """Print warning message."""
-        if self.console:
-            self.console.print(f"[yellow]⚠[/yellow] {text}")
+        console = self._human()
+        if console:
+            console.print(f"[yellow]⚠[/yellow] {text}")
         else:
-            print(f"⚠ {text}")
+            print(f"⚠ {text}", file=sys.stderr if self._human_to_stderr else None)
 
     def interactive_wizard(self, args):
         """
@@ -701,6 +719,14 @@ class CLIInterface:
         if args.task is None:
             return self.interactive_wizard(args)
 
+        # Headless JSON contract: keep stdout pure (only the JSON result object)
+        # by routing all human chatter to stderr and never streaming. `-q --json`
+        # gives a clean document to pipe straight into `jq`.
+        json_mode = getattr(args, 'output_json', False)
+        if json_mode:
+            self._human_to_stderr = True
+            args.stream = False
+
         # Validate an explicit --provider before doing any work, so a typo
         # (e.g. "grok") fails fast with a suggestion instead of falling through
         # to a multi-gigabyte local model download.
@@ -864,61 +890,64 @@ class CLIInterface:
                 if not response.success:
                     exit_code = 1
 
-                # Display response
-                self.print_header("Response")
-
-                if self.console:
-                    # Rich markdown formatting
-                    self.console.print(Panel(
-                        Markdown(response.output),
-                        title="Agent Response",
-                        border_style="green" if response.success else "red"
-                    ))
-                else:
-                    print(response.output)
-
-                # Frozen one-glance summary: ✓ Done in 3.2s · 2 tools · 1,204 tokens · $…
-                if not quiet:
-                    _progress.print_summary(self, response)
-
-                # Display explain trace (tool reasoning)
-                if getattr(args, 'explain', False) and response.execution_trace:
-                    self.print_header("Execution Trace (Explain Mode)")
-                    _lines = _progress.execution_trace_lines(response.execution_trace)
-                    if not _lines:
-                        self.print("(no detailed steps recorded for this run)")
-                    for _style, _text in _lines:
-                        if self.console:
-                            self.console.print(f"[{_style}]{_text}[/{_style}]")
-                        else:
-                            print(_text)
-
-                # Display execution statistics
-                if getattr(args, 'verbose', False) or getattr(args, 'explain', False):
-                    self.print_header("Execution Statistics")
-                    stats_table = self._create_stats_table({
-                        "Mode": response.mode.value,
-                        "Success": "Yes" if response.success else "No",
-                        "Iterations": response.iterations,
-                        "Tool Calls": response.tool_calls,
-                        "Tokens Used": response.tokens_used,
-                        "Execution Time": f"{response.execution_time:.2f}s"
-                    })
+                # Human presentation is skipped in --json mode so stdout stays a
+                # single clean JSON document; the JSON is emitted below.
+                if not json_mode:
+                    # Display response
+                    self.print_header("Response")
 
                     if self.console:
-                        self.console.print(stats_table)
+                        # Rich markdown formatting
+                        self.console.print(Panel(
+                            Markdown(response.output),
+                            title="Agent Response",
+                            border_style="green" if response.success else "red"
+                        ))
                     else:
-                        for key, value in stats_table.items():
-                            print(f"{key}: {value}")
+                        print(response.output)
 
-                    # Full verbose trace
-                    if getattr(args, 'verbose', False) and response.execution_trace:
-                        self.print_header("Full ReAct Trace")
-                        trace_json = json.dumps(response.execution_trace, indent=2, default=str)
+                    # Frozen one-glance summary: ✓ Done in 3.2s · 2 tools · 1,204 tokens · $…
+                    if not quiet:
+                        _progress.print_summary(self, response)
+
+                    # Display explain trace (tool reasoning)
+                    if getattr(args, 'explain', False) and response.execution_trace:
+                        self.print_header("Execution Trace (Explain Mode)")
+                        _lines = _progress.execution_trace_lines(response.execution_trace)
+                        if not _lines:
+                            self.print("(no detailed steps recorded for this run)")
+                        for _style, _text in _lines:
+                            if self.console:
+                                self.console.print(f"[{_style}]{_text}[/{_style}]")
+                            else:
+                                print(_text)
+
+                    # Display execution statistics
+                    if getattr(args, 'verbose', False) or getattr(args, 'explain', False):
+                        self.print_header("Execution Statistics")
+                        stats_table = self._create_stats_table({
+                            "Mode": response.mode.value,
+                            "Success": "Yes" if response.success else "No",
+                            "Iterations": response.iterations,
+                            "Tool Calls": response.tool_calls,
+                            "Tokens Used": response.tokens_used,
+                            "Execution Time": f"{response.execution_time:.2f}s"
+                        })
+
                         if self.console:
-                            self.console.print(Syntax(trace_json, "json", line_numbers=True))
+                            self.console.print(stats_table)
                         else:
-                            print(trace_json)
+                            for key, value in stats_table.items():
+                                print(f"{key}: {value}")
+
+                        # Full verbose trace
+                        if getattr(args, 'verbose', False) and response.execution_trace:
+                            self.print_header("Full ReAct Trace")
+                            trace_json = json.dumps(response.execution_trace, indent=2, default=str)
+                            if self.console:
+                                self.console.print(Syntax(trace_json, "json", line_numbers=True))
+                            else:
+                                print(trace_json)
 
                 # Save response if output file specified
                 if args.output:
@@ -926,6 +955,12 @@ class CLIInterface:
                     with open(output_path, 'w') as f:
                         json.dump(response.to_dict(), f, indent=2)
                     self.print_success(f"Response saved to {output_path}")
+
+                # Emit the result object to stdout for piping (same document the
+                # -o file carries). Goes to real stdout regardless of the
+                # stderr-routed human output above.
+                if json_mode:
+                    print(json.dumps(response.to_dict(), indent=2))
 
             return exit_code
 
@@ -2530,7 +2565,14 @@ Model id formats:
     run_parser.add_argument('--mode', choices=['auto', 'single', 'sub_agents'], help='Execution mode')
     run_parser.add_argument('--no-sub-agents', action='store_true', help='Disable sub-agents')
     run_parser.add_argument('--stream', action='store_true', help='Stream output')
-    run_parser.add_argument('-o', '--output', help='Output file for response')
+    run_parser.add_argument('-o', '--output',
+                            help='Write the full result as a JSON document to this '
+                                 'file (output, success, tool_calls, tokens, cost, '
+                                 'trace, citations, metadata)')
+    run_parser.add_argument('--json', dest='output_json', action='store_true',
+                            help='Emit that same JSON result object to stdout (for '
+                                 'piping to jq). Human output goes to stderr; '
+                                 'combine with -q for clean stdout.')
     run_parser.add_argument('--preset', choices=_preset_choices,
                             help='Use a preset agent configuration')
     run_parser.add_argument('--explain', action='store_true',
@@ -2559,7 +2601,9 @@ Model id formats:
     # Sessions commands
     sessions_parser = subparsers.add_parser('sessions', help='Manage persistent sessions')
     sessions_subparsers = sessions_parser.add_subparsers(dest='session_command', help='Sessions command')
-    sessions_subparsers.add_parser('list', help='List sessions')
+    _sessions_list = sessions_subparsers.add_parser('list', help='List sessions')
+    _sessions_list.add_argument('--json', dest='output_json', action='store_true',
+                                help='Output the session list as JSON')
     sd = sessions_subparsers.add_parser('delete', help='Delete a session')
     sd.add_argument('session_id', help='Session id')
     se = sessions_subparsers.add_parser('export', help='Export a session')
@@ -2760,9 +2804,13 @@ Model id formats:
                               help='Input for a specific node (can be repeated)')
     workflow_run.add_argument('--task', help='A single task string routed to the '
                               'workflow entry node(s) (alternative to --input)')
+    workflow_run.add_argument('--json', dest='output_json', action='store_true',
+                              help='Emit the workflow result as JSON to stdout (for CI gating)')
 
     workflow_validate = workflow_subparsers.add_parser('validate', help='Validate a workflow YAML file')
     workflow_validate.add_argument('file', help='Path to workflow YAML file')
+    workflow_validate.add_argument('--json', dest='output_json', action='store_true',
+                                   help='Emit the validation result as JSON to stdout')
 
     # Batch command
     batch_parser = subparsers.add_parser('batch', help='Run batch queries from a file')
@@ -2801,6 +2849,8 @@ Model id formats:
                               help='Filter test cases by difficulty')
     eval_parser.add_argument('--max-cases', type=int, default=None,
                               help='Only run the first N cases (quick subsample)')
+    eval_parser.add_argument('--json', dest='output_json', action='store_true',
+                              help='Emit the results object as JSON to stdout (for CI gating)')
     eval_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
                               help='Disable the live progress bar (plain output)')
 
@@ -2825,6 +2875,8 @@ Model id formats:
     compare_parser.add_argument('--difficulty', choices=['easy', 'medium', 'hard'],
                                  help='Filter test cases by difficulty')
     compare_parser.add_argument('-o', '--output', help='Output file for results (JSON or Markdown)')
+    compare_parser.add_argument('--json', dest='output_json', action='store_true',
+                                 help='Emit the comparison matrix as JSON to stdout (for CI gating)')
     compare_parser.add_argument('--preset', choices=_preset_choices,
                                  help='Use a preset agent configuration')
 
@@ -3430,17 +3482,32 @@ def _handle_workflow_command(args, cli) -> int:
     from effgen.core.workflow import WorkflowDAG
 
     wf_cmd = getattr(args, 'workflow_command', None)
+    json_mode = getattr(args, 'output_json', False)
+    if json_mode:
+        cli._human_to_stderr = True
 
     if wf_cmd == 'validate':
         try:
             dag = WorkflowDAG.from_yaml(args.file)
             order = dag.topological_order()
+            if json_mode:
+                print(json.dumps({
+                    "valid": True,
+                    "name": dag.name,
+                    "nodes": len(dag.nodes),
+                    "edges": len(dag.edges),
+                    "execution_order": order,
+                }, indent=2))
+                return 0
             cli.print(f"Workflow '{dag.name}' is valid.")
             cli.print(f"  Nodes: {len(dag.nodes)}")
             cli.print(f"  Edges: {len(dag.edges)}")
             cli.print(f"  Execution order: {' -> '.join(order)}")
             return 0
         except Exception as e:
+            if json_mode:
+                print(json.dumps({"valid": False, "error": str(e)}, indent=2))
+                return 1
             cli.print(f"Validation failed: {e}")
             return 1
 
@@ -3503,6 +3570,10 @@ def _handle_workflow_command(args, cli) -> int:
                         except Exception:
                             pass
 
+            if json_mode:
+                print(json.dumps(result.to_dict(), indent=2, default=str))
+                return 0 if result.success else 1
+
             cli.print(f"\nWorkflow {'succeeded' if result.success else 'FAILED'} "
                        f"in {result.execution_time:.2f}s")
             for nr in result.node_results:
@@ -3518,6 +3589,9 @@ def _handle_workflow_command(args, cli) -> int:
             return 0 if result.success else 1
 
         except Exception as e:
+            if json_mode:
+                print(json.dumps({"success": False, "error": str(e)}, indent=2))
+                return 1
             cli.print(f"Workflow execution failed: {e}")
             return 1
 
@@ -3658,6 +3732,12 @@ def _handle_eval_command(args, cli) -> int:
     from effgen.eval import AgentEvaluator, RegressionTracker, list_suites
     from effgen.eval.evaluator import ScoringMode
 
+    # --json: route human chatter to stderr so stdout carries only the JSON
+    # results document (CI gates parse it).
+    json_mode = getattr(args, 'output_json', False)
+    if json_mode:
+        cli._human_to_stderr = True
+
     suite_name = args.suite
     model_name = getattr(args, 'model', None) or 'Qwen/Qwen2.5-1.5B-Instruct'
     preset_name = getattr(args, 'preset', None)
@@ -3669,8 +3749,15 @@ def _handle_eval_command(args, cli) -> int:
     try:
         # List suites if requested
         if suite_name == 'list':
+            suites = list_suites()
+            if json_mode:
+                print(json.dumps(
+                    [{"name": n, "description": d} for n, d in suites.items()],
+                    indent=2,
+                ))
+                return 0
             cli.print_header("Available Evaluation Suites")
-            for name, desc in list_suites().items():
+            for name, desc in suites.items():
                 cli.print(f"  {name:16s} — {desc}")
             return 0
 
@@ -3751,6 +3838,10 @@ def _handle_eval_command(args, cli) -> int:
             Path(args.output).write_text(results.to_json(), encoding="utf-8")
             cli.print(f"\n  Results written to {args.output}")
 
+        # Emit the same results document to stdout for piping/CI gating.
+        if json_mode:
+            print(results.to_json())
+
         return 0 if results.accuracy >= 0.5 else 1
 
     except KeyError as e:
@@ -3778,6 +3869,9 @@ def _handle_compare_command(args, cli) -> int:
     preset_name = getattr(args, 'preset', None)
     difficulty = getattr(args, 'difficulty', None)
     max_cases = getattr(args, 'max_cases', None)
+    json_mode = getattr(args, 'output_json', False)
+    if json_mode:
+        cli._human_to_stderr = True
 
     # Unknown suite is a user error, not a crash — report cleanly (no traceback)
     # and exit 2 with the list of valid suites. A bad data file is reported the
@@ -3835,6 +3929,10 @@ def _handle_compare_command(args, cli) -> int:
             else:
                 Path(output_path).write_text(matrix.to_json(), encoding="utf-8")
             cli.print(f"\nResults written to {output_path}")
+
+        # Emit the comparison matrix as JSON to stdout for piping/CI gating.
+        if json_mode:
+            print(matrix.to_json())
 
         return 0
 
@@ -4174,6 +4272,13 @@ def _handle_sessions_command(args, cli) -> int:
     cmd = getattr(args, 'session_command', None)
     if cmd == 'list':
         sessions = mgr.list_sessions()
+        if getattr(args, 'output_json', False):
+            import json as _json
+            print(_json.dumps({
+                "sessions": sessions,
+                "sessions_dir": str(mgr.sessions_dir),
+            }, indent=2, default=str))
+            return 0
         if not sessions:
             cli.print(
                 "No sessions yet. Start one with: effgen chat  (or effgen run \"...\" "

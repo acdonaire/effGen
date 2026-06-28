@@ -12,6 +12,7 @@ import contextlib
 import importlib
 import inspect
 import logging
+import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -85,20 +86,52 @@ class ToolRegistry:
         # deferred until first access so importing the package stays cheap, but a
         # programmatic caller never sees a surprisingly empty registry.
         self._builtins_discovered = False
+        # Whether installed entry-point plugins have been auto-discovered yet.
+        self._plugins_discovered = False
 
     def _ensure_builtins(self) -> None:
-        """Lazily discover built-in tools on first access.
+        """Lazily discover built-in tools (and installed plugins) on first access.
 
         Programmatic users expect ``get_registry().list_tools()`` to be
         populated without first calling :meth:`discover_builtin_tools`. We run
         discovery once, the first time the registry is queried, and remember it
         so repeated lookups stay cheap and quiet (no re-import, no log spam).
+        Installed ``effgen.plugins`` entry-point packages are folded in at the
+        same time so a published plugin's tools show up everywhere built-in
+        tools do (``effgen tools list``, ``effgen run -t <tool>``, the API).
         """
         if self._builtins_discovered:
+            self._ensure_plugins()
             return
         # Mark first to avoid re-entry if discovery itself queries the registry.
         self._builtins_discovered = True
         self.discover_builtin_tools()
+        self._ensure_plugins()
+
+    def _ensure_plugins(self) -> None:
+        """Lazily load installed entry-point (and user-dir) plugins once.
+
+        A plugin published with an ``effgen.plugins`` entry point — exactly what
+        ``effgen create-plugin`` scaffolds — is auto-discovered here so its tools
+        are usable without any manual ``register()`` call. Set
+        ``EFFGEN_DISABLE_PLUGINS=1`` to skip this (e.g. for a hermetic run).
+        Discovery is best-effort: a broken plugin is logged and skipped, never
+        fatal.
+        """
+        if self._plugins_discovered:
+            return
+        self._plugins_discovered = True
+        if os.environ.get("EFFGEN_DISABLE_PLUGINS"):
+            return
+        try:
+            # Local import: plugin.py imports from this module, so importing it
+            # at module load time would create a circular import.
+            from .plugin import PluginManager
+            loaded = PluginManager(self).discover_all()
+            if loaded:
+                logger.debug("Auto-discovered plugins: %s", ", ".join(loaded))
+        except Exception:  # noqa: BLE001 — discovery must never break the registry
+            logger.debug("Plugin auto-discovery failed", exc_info=True)
 
     def register_tool(
         self,

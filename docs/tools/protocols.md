@@ -54,7 +54,7 @@ async def main():
         name="effgen",
         transport="stdio",
         command=sys.executable,
-        args=["-m", "effgen.tools.protocols.mcp_official.server"],  # stdio server
+        args=["-m", "effgen.tools.protocols.mcp_official"],  # stdio server
     )
     async with EffGenMCPClient(config) as client:
         for tool in client.get_tools():

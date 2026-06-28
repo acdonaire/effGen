@@ -331,6 +331,11 @@ class EffGenMCPClient:
         """
         Get list of available tools.
 
+        This is a **synchronous** accessor — it returns the tool list cached at
+        :meth:`connect` time, so call it directly (``client.get_tools()``); do
+        **not** ``await`` it. Only :meth:`connect`, :meth:`call_tool`, and the
+        other I/O methods are coroutines.
+
         Returns:
             List of tool definitions
         """
@@ -343,6 +348,16 @@ class EffGenMCPClient:
         The returned tools can be passed straight into an effGen ``Agent`` so it
         can call tools served by any MCP server. The client must stay connected
         for the lifetime of the agent run.
+
+        This is a **synchronous** accessor (it reads the catalog cached at
+        :meth:`connect`); call it directly, do not ``await`` it.
+
+        .. note::
+            An ``Agent`` that holds these tools must be driven with
+            ``await agent.run_async(...)``, not the synchronous ``Agent.run()``:
+            each tool call goes back over the MCP session bound to the calling
+            event loop, which a synchronous ``run()`` under that loop cannot
+            drive.
 
         Args:
             prefix: Name prefix for the wrapped tools (avoids collisions with

@@ -8,9 +8,28 @@ An effGen tool plugin.
 pip install -e .
 ```
 
-The plugin will be auto-discovered by effGen via entry points.
+Once installed, the plugin is **auto-discovered** by effGen via its
+`effgen.plugins` entry point — its tools show up wherever built-in tools do, with
+no extra wiring. Verify with:
+
+```bash
+effgen tools list          # your tool(s) appear in the catalog
+effgen run "..." -t example_tool
+```
+
+(Set `EFFGEN_DISABLE_PLUGINS=1` to skip plugin discovery for a hermetic run.)
 
 ## Usage
+
+```python
+from effgen.tools import get_registry
+
+# Auto-discovered after `pip install` — just look it up:
+tool = get_registry().get_tool_sync("example_tool")
+```
+
+To load the plugin explicitly (e.g. before it is installed), call its
+`register()`:
 
 ```python
 from effgen.tools import get_registry

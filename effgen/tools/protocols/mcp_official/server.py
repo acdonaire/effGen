@@ -456,23 +456,37 @@ async def main_http(
     await server.run_http(host, port, transport)
 
 
-if __name__ == "__main__":
-    import sys
+def run_cli(argv: list[str] | None = None) -> int:
+    """Launch the MCP server from the command line.
 
-    # Parse command line arguments
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "http":
-            host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
-            port = int(sys.argv[3]) if len(sys.argv) > 3 else 8000
-            asyncio.run(main_http(host, port))
-        elif sys.argv[1] == "sse":
-            host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
-            port = int(sys.argv[3]) if len(sys.argv) > 3 else 8000
-            asyncio.run(main_http(host, port, transport="sse"))
+    Dispatches ``[stdio|http|sse] [host] [port]`` (default: stdio). Shared by
+    the package entry point (``python -m effgen.tools.protocols.mcp_official``)
+    and this module's ``__main__`` guard so both behave identically.
+
+    Returns a process exit code.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv:
+        mode = argv[0]
+        if mode in ("http", "sse"):
+            host = argv[1] if len(argv) > 1 else "127.0.0.1"
+            port = int(argv[2]) if len(argv) > 2 else 8000
+            transport = "sse" if mode == "sse" else "streamable-http"
+            asyncio.run(main_http(host, port, transport=transport))
+        elif mode == "stdio":
+            asyncio.run(main_stdio())
         else:
-            print("Usage: python server.py [stdio|http|sse] [host] [port]")
-            sys.exit(1)
+            print(
+                "Usage: python -m effgen.tools.protocols.mcp_official "
+                "[stdio|http|sse] [host] [port]"
+            )
+            return 1
     else:
         # Default to STDIO
         asyncio.run(main_stdio())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run_cli())
 

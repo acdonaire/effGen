@@ -309,3 +309,60 @@ def test_chat_accepts_system_prompt_and_persona_alias():
     assert parser.parse_args(["chat", "--persona", persona]).system_prompt == persona
     # Absent by default (so a plain chat keeps the default assistant persona).
     assert parser.parse_args(["chat"]).system_prompt is None
+
+
+# --------------------------------------------------------------------------- #
+# Headless --json contract: run + the CI-gate commands
+# --------------------------------------------------------------------------- #
+
+def test_run_accepts_json_flag():
+    parser = _main.create_parser()
+    assert parser.parse_args(["run", "2+2", "--json"]).output_json is True
+    assert parser.parse_args(["run", "2+2"]).output_json is False
+
+
+def test_automation_commands_accept_json_flag():
+    parser = _main.create_parser()
+    assert parser.parse_args(["eval", "--suite", "math", "--json"]).output_json is True
+    assert parser.parse_args(
+        ["compare", "--models", "x", "--suite", "math", "--json"]
+    ).output_json is True
+    assert parser.parse_args(["workflow", "run", "w.yaml", "--json"]).output_json is True
+    assert parser.parse_args(["workflow", "validate", "w.yaml", "--json"]).output_json is True
+    assert parser.parse_args(["sessions", "list", "--json"]).output_json is True
+
+
+def test_sessions_list_json_is_parseable(capsys):
+    args = SimpleNamespace(session_command="list", output_json=True)
+    code = _main._handle_sessions_command(args, _cli())
+    data = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert "sessions" in data and "sessions_dir" in data
+    assert isinstance(data["sessions"], list)
+
+
+def test_eval_suite_list_json(capsys):
+    args = SimpleNamespace(
+        suite="list", model=None, preset=None, scoring="contains",
+        threshold=0.5, difficulty=None, max_cases=None, output_json=True,
+    )
+    code = _main._handle_eval_command(args, _cli())
+    data = json.loads(capsys.readouterr().out)
+    assert code == 0
+    names = {d["name"] for d in data}
+    assert {"math", "tool_use", "reasoning"} <= names
+
+
+def test_workflow_validate_json(capsys, tmp_path):
+    wf = tmp_path / "wf.yaml"
+    wf.write_text(
+        "name: t\nnodes:\n  - id: a\n    task: x\n  - id: b\n    task: y\n"
+        "    depends_on: [a]\n"
+    )
+    args = SimpleNamespace(workflow_command="validate", file=str(wf), output_json=True)
+    code = _main._handle_workflow_command(args, _cli())
+    data = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert data["valid"] is True
+    assert data["nodes"] == 2
+    assert data["execution_order"] == ["a", "b"]

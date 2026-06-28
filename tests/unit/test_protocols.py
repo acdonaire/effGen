@@ -118,6 +118,24 @@ class TestMCPServerToolSelection:
         # required param has no default; optional ones do.
         assert params["expression"].default is __import__("inspect").Parameter.empty
 
+    def test_run_cli_bad_mode_returns_error_code(self):
+        """The launch entry dispatches modes and reports a usage error cleanly
+        (the package `__main__` and the module guard share this)."""
+        from effgen.tools.protocols.mcp_official.server import run_cli
+
+        assert run_cli(["definitely-not-a-mode"]) == 1
+
+    def test_package_has_main_module(self):
+        """`python -m effgen.tools.protocols.mcp_official` works (and is
+        warning-free) because the package ships a __main__ that reuses run_cli."""
+        import importlib.util
+
+        spec = importlib.util.find_spec("effgen.tools.protocols.mcp_official.__main__")
+        assert spec is not None
+        from effgen.tools.protocols.mcp_official import __main__ as pkg_main
+        from effgen.tools.protocols.mcp_official.server import run_cli
+        assert pkg_main.run_cli is run_cli
+
 
 class TestMCPOfficialBridgeTypes:
     """The MCP->effGen bridge must map JSON types to real ParameterType members."""

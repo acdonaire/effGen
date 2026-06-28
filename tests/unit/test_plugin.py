@@ -125,3 +125,80 @@ class TempPlugin(ToolPlugin):
         mgr = PluginManager()
         mgr.load_plugin(plugin)
         assert "manual_plugin" in mgr.loaded_plugins
+
+
+_PLUGIN_WITH_TOOL = '''
+from effgen.tools.base_tool import (
+    BaseTool, ParameterSpec, ParameterType, ToolCategory, ToolMetadata,
+)
+from effgen.tools.plugin import ToolPlugin
+
+
+class AutoEchoTool(BaseTool):
+    def __init__(self):
+        super().__init__(metadata=ToolMetadata(
+            name="auto_echo_tool",
+            description="Echo for auto-discovery test.",
+            category=ToolCategory.DATA_PROCESSING,
+            parameters=[ParameterSpec(name="text", type=ParameterType.STRING,
+                                      description="text", required=True)],
+        ))
+
+    async def _execute(self, **kwargs):
+        return {"echo": kwargs.get("text", "")}
+
+
+class AutoPlugin(ToolPlugin):
+    name = "auto_plugin"
+    version = "0.0.1"
+    tools = [AutoEchoTool]
+'''
+
+
+class TestRegistryAutoDiscovery:
+    """A fresh registry must fold installed/locatable plugins in on first use,
+    so a plugin's tools appear wherever built-in tools do — without any manual
+    register() call. (Uses EFFGEN_PLUGINS_DIR so no pip install is needed.)"""
+
+    def _fresh_registry(self):
+        from effgen.tools.registry import ToolRegistry
+        return ToolRegistry()
+
+    def test_plugin_tool_auto_discovered(self, tmp_path):
+        (tmp_path / "auto_plugin.py").write_text(_PLUGIN_WITH_TOOL)
+        with patch.dict(os.environ, {"EFFGEN_PLUGINS_DIR": str(tmp_path)}, clear=False):
+            os.environ.pop("EFFGEN_DISABLE_PLUGINS", None)
+            reg = self._fresh_registry()
+            # First query triggers lazy built-in + plugin discovery.
+            assert "auto_echo_tool" in reg.list_tools()
+            tool = reg.get_tool_sync("auto_echo_tool")
+            out = asyncio.run(tool.execute(text="hi"))
+            assert out.output == {"echo": "hi"}
+
+    def test_disable_env_skips_discovery(self, tmp_path):
+        (tmp_path / "auto_plugin.py").write_text(_PLUGIN_WITH_TOOL)
+        with patch.dict(
+            os.environ,
+            {"EFFGEN_PLUGINS_DIR": str(tmp_path), "EFFGEN_DISABLE_PLUGINS": "1"},
+            clear=False,
+        ):
+            reg = self._fresh_registry()
+            assert "auto_echo_tool" not in reg.list_tools()
+            # Built-ins still present — only plugin discovery is skipped.
+            assert "calculator" in reg.list_tools()
+
+    def test_discovery_runs_once(self, tmp_path):
+        """Repeated queries do not re-run plugin discovery."""
+        reg = self._fresh_registry()
+        calls = {"n": 0}
+        real = PluginManager.discover_all
+
+        def counting(self):  # noqa: ANN001
+            calls["n"] += 1
+            return real(self)
+
+        with patch.object(PluginManager, "discover_all", counting):
+            reg.list_tools()
+            reg.list_tools()
+            reg.get_metadata("calculator")
+        assert calls["n"] == 1

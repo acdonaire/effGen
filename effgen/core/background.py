@@ -231,13 +231,29 @@ class BackgroundTaskRunner:
         return task_id
 
     # ------------------------------------------------------------------ status / result
+    def _require_task(self, task_id: str) -> BackgroundTask:
+        """Look up a task, raising a clear error for an unknown id.
+
+        The caller holds ``self._state.lock``. A bare ``dict[task_id]`` would
+        raise an opaque ``KeyError('<uuid>')``; surface the actual problem
+        instead so a script can act on it.
+        """
+        task = self._state.tasks.get(task_id)
+        if task is None:
+            raise KeyError(
+                f"No background task with id '{task_id}'. It may have already "
+                "been cleared, or the id is wrong — use list_tasks() to see "
+                "active task ids."
+            )
+        return task
+
     def get_status(self, task_id: str) -> TaskStatus:
         with self._state.lock:
-            return self._state.tasks[task_id].status
+            return self._require_task(task_id).status
 
     def get_task(self, task_id: str) -> BackgroundTask:
         with self._state.lock:
-            return self._state.tasks[task_id]
+            return self._require_task(task_id)
 
     def get_result(self, task_id: str, wait: bool = False, timeout: float | None = None) -> Any:
         s = self._state
@@ -245,7 +261,7 @@ class BackgroundTaskRunner:
             deadline = None if timeout is None else time.time() + timeout
             while True:
                 with s.lock:
-                    task = s.tasks[task_id]
+                    task = self._require_task(task_id)
                     if task.status in (
                         TaskStatus.COMPLETED,
                         TaskStatus.FAILED,
@@ -256,7 +272,7 @@ class BackgroundTaskRunner:
                     raise TimeoutError(f"Task {task_id} did not finish in time")
                 time.sleep(0.05)
         with s.lock:
-            return s.tasks[task_id].result
+            return self._require_task(task_id).result
 
     def list_tasks(self) -> list[BackgroundTask]:
         with self._state.lock:

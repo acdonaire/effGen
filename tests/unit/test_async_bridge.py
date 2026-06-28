@@ -109,3 +109,54 @@ def test_blocks_until_complete_under_running_loop():
     res, elapsed = asyncio.run(outer())
     assert res == "ok"
     assert elapsed >= 0.18, f"should have blocked ~0.2s, got {elapsed:.3f}s"
+
+
+def test_loop_bound_coroutine_times_out_instead_of_hanging():
+    """A coroutine awaiting a primitive bound to the *calling* loop can never
+    complete on the worker loop — historically this deadlocked forever (the
+    worker-thread join hung even after the result timeout). It must now raise a
+    bounded, actionable ``TimeoutError`` instead, and the caller must regain
+    control promptly (this is exactly the MCP-stdio-tool-in-``Agent.run()``
+    trap)."""
+
+    async def outer():
+        # An Event bound to THIS loop; the worker loop can never see it set.
+        ev = asyncio.Event()
+
+        async def loop_bound():
+            await ev.wait()
+            return "never"
+
+        t0 = time.monotonic()
+        try:
+            run_coroutine_sync(loop_bound(), timeout=1.0)
+        except TimeoutError as exc:
+            return time.monotonic() - t0, str(exc)
+        raise AssertionError("expected a TimeoutError, none raised")
+
+    elapsed, msg = asyncio.run(outer())
+    # Bounded by ~timeout, not an indefinite hang.
+    assert 1.0 <= elapsed < 5.0, f"should surface ~1s, got {elapsed:.2f}s"
+    # The message must teach the async-native escape hatch.
+    assert "run_async" in msg
+
+
+def test_timeout_worker_is_daemon_so_it_never_blocks_exit():
+    """The leaked worker on the timeout path is a daemon thread, so it never
+    keeps the interpreter (or a clean shutdown) hanging on a deadlocked loop."""
+
+    async def outer():
+        ev = asyncio.Event()
+
+        async def loop_bound():
+            await ev.wait()
+
+        with pytest.raises(TimeoutError):
+            run_coroutine_sync(loop_bound(), timeout=0.3)
+
+    asyncio.run(outer())
+    lingering = [
+        th for th in threading.enumerate()
+        if th.name == "effgen-async-bridge" and not th.daemon
+    ]
+    assert not lingering, "bridge worker must be a daemon thread"

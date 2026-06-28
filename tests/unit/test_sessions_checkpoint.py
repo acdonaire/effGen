@@ -212,6 +212,21 @@ def test_background_basic_lifecycle():
         runner.shutdown(wait=True)
 
 
+def test_background_unknown_id_clear_error():
+    """An unknown task id raises a clear, actionable message (not a bare
+    KeyError('<uuid>') a caller can't interpret)."""
+    runner = BackgroundTaskRunner(_FakeAgent(), max_workers=1)
+    try:
+        for accessor in (runner.get_status, runner.get_task, runner.get_result):
+            with pytest.raises(KeyError) as ei:
+                accessor("no-such-id")
+            msg = str(ei.value)
+            assert "no-such-id" in msg
+            assert "list_tasks()" in msg
+    finally:
+        runner.shutdown(wait=True)
+
+
 def test_background_failed_task_redacted_error():
     runner = BackgroundTaskRunner(_FakeAgent(fail=True), max_workers=1)
     try:
