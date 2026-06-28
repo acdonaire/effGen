@@ -82,6 +82,46 @@ class TestKeywordExpander:
 
 
 # ----------------------------------------------------------------------
+# Domain template expansion — non-tech domains get professional variants
+# ----------------------------------------------------------------------
+
+class TestDomainTemplates:
+    def test_legal_templates_are_professional_not_tech_howto(self):
+        from effgen.domains import LegalDomain
+
+        out = LegalDomain(keywords=["indemnification"]).expand_keywords(factor=8)
+        joined = " ".join(out).lower()
+        # Professional legal query variants present...
+        assert "indemnification clause" in out
+        assert any("obligations" in t or "liability" in t or "regulation" in t for t in out)
+        # ...and the tech "tutorial / for beginners / best tools" junk is gone.
+        for junk in ("for beginners", "tutorial", "best indemnification tools"):
+            assert junk not in joined
+
+    def test_finance_templates_are_professional(self):
+        from effgen.domains import FinanceDomain
+
+        out = FinanceDomain(keywords=["derivatives"]).expand_keywords(factor=6)
+        assert "derivatives analysis" in out or "derivatives risk" in out
+        assert "derivatives for beginners" not in out
+
+    def test_health_and_science_templates(self):
+        from effgen.domains import HealthDomain, ScienceDomain
+
+        h = HealthDomain(keywords=["diabetes"]).expand_keywords(factor=6)
+        assert any("symptoms" in t or "treatment" in t for t in h)
+        s = ScienceDomain(keywords=["relativity"]).expand_keywords(factor=6)
+        assert any("theory" in t or "experiment" in t for t in s)
+
+    def test_tech_domain_keeps_howto_templates(self):
+        from effgen.domains import TechDomain
+
+        out = TechDomain(keywords=["Python"]).expand_keywords(factor=8)
+        # Tech how-to phrasing is appropriate for the tech domain — keep it.
+        assert "Python tutorial" in out
+
+
+# ----------------------------------------------------------------------
 # get_guardrail_preset — "default" alias resolves
 # ----------------------------------------------------------------------
 
@@ -141,8 +181,31 @@ class TestPIIVersionFalsePositive:
         assert "IP_address" in types
         assert "[IP REDACTED]" in (r.modified_content or "")
 
+    @pytest.mark.parametrize("text", [
+        "Server at 10.2.3.4.",            # ends the sentence with a period
+        "Reach it on 192.168.0.1.",
+        "The internal host is 10.0.0.5.",
+    ])
+    def test_end_of_sentence_ip_is_redacted(self, text):
+        # A trailing sentence period must NOT suppress detection — an internal IP
+        # at end-of-sentence used to slip through to a cloud call unredacted.
+        r = PIIGuardrail(action="redact").check(text)
+        types = (r.metadata or {}).get("pii_types", [])
+        assert "IP_address" in types
+        assert "[IP REDACTED]" in (r.modified_content or "")
+
+    def test_five_octets_still_not_an_ip_even_with_trailing_period(self):
+        # Tightening the trailing guard must not start matching a 5-octet token.
+        r = PIIGuardrail(action="redact").check("build 1.2.3.4.5.")
+        types = (r.metadata or {}).get("pii_types", [])
+        assert "IP_address" not in types
+
     def test_block_mode_still_blocks_real_ip(self):
         r = PIIGuardrail(action="block").check("host 10.1.2.3 is up")
+        assert r.passed is False
+
+    def test_block_mode_blocks_end_of_sentence_ip(self):
+        r = PIIGuardrail(action="block").check("The box lives at 10.1.2.3.")
         assert r.passed is False
 
     def test_other_pii_unaffected(self):

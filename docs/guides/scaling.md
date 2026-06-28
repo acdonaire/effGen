@@ -130,19 +130,55 @@ effgen batch --input queries.jsonl --output results.jsonl \
 
 Scale keyword coverage per domain:
 
+A single `expand()` call combines the enabled strategies; toggle them with the
+constructor flags (`use_templates`, `use_wordnet`, `use_llm`).
+
 ```python
 from effgen.domains import KeywordExpander
 
+seeds = ["machine learning", "data science"]
+
+# Template-based (on by default): 2 seeds → ~20 search-query variants
 expander = KeywordExpander()
+expanded = expander.expand(seeds, factor=10)
 
-# Template-based: 2 seeds → ~18 terms
-expanded = expander.expand_template(["machine learning", "data science"])
+# WordNet synonyms (opt-in; requires nltk): 2 seeds → ~300 terms
+expander = KeywordExpander(use_templates=False, use_wordnet=True)
+expanded = expander.expand(seeds)
 
-# WordNet-based: 2 seeds → ~300 terms
-expanded = expander.expand_wordnet(["machine learning", "data science"])
+# LLM-based (uses a loaded model): 2 seeds → ~40+ related terms
+expander = KeywordExpander(use_templates=False, use_llm=True, model=model)
+expanded = expander.expand(seeds, factor=20)
+```
 
-# LLM-based: 2 seeds → ~44 terms (uses the agent's own model)
-expanded = expander.expand_llm(["machine learning", "data science"], model=model)
+A `Domain` exposes the same expansion via `expand_keywords(...)`. For non-tech
+domains (legal, finance, health, science), the LLM strategy gives the highest-
+quality results:
+
+```python
+from effgen.domains import LegalDomain
+
+terms = LegalDomain().expand_keywords(use_llm=True, model=model)
+```
+
+### From a domain to a runnable agent
+
+A domain is more than keywords: it bundles a system prompt, recommended tools,
+and guardrails. `Domain.to_agent(model)` (or `create_agent(domain=...)`) wires
+all three into an agent you can run — the one obvious on-ramp from a domain to
+something that answers questions:
+
+```python
+from effgen.domains import LegalDomain
+
+# Wires the domain's prompt + tools + guardrails into an agent.
+agent = LegalDomain().to_agent("gpt-5-nano")          # or a local model id
+response = agent.run("Summarize the obligations in a standard NDA.")
+print(response)
+
+# Equivalent, and any create_agent option works (extra_tools, temperature, ...):
+from effgen.presets import create_agent
+agent = create_agent(domain=LegalDomain(), model="gpt-5-nano", temperature=0.2)
 ```
 
 ## Caching

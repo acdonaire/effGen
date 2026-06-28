@@ -161,8 +161,10 @@ Three tiers:
 
 ### Domains (`effgen/domains/`)
 
-- `base.py`: `Domain` — keywords, system_prompt, tool_names
-- `expander.py`: `KeywordExpander` — WordNet/template/LLM expansion
+- `base.py`: `Domain` — keywords, system_prompt, tool_names, guardrails;
+  `Domain.to_agent(model)` builds a runnable agent (or `create_agent(domain=...)`)
+- `expander.py`: `KeywordExpander` — WordNet/template/LLM expansion (domain
+  presets carry field-appropriate query templates)
 - 5 built-in: `TechDomain`, `ScienceDomain`, `FinanceDomain`, `HealthDomain`, `LegalDomain`
 
 ### Configuration (`effgen/config/`)

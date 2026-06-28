@@ -15,6 +15,60 @@ from __future__ import annotations
 
 from .base import Domain
 
+# Domain-appropriate query templates. The base ``Domain`` default templates are
+# tech how-to oriented ("{kw} tutorial", "{kw} for beginners", "best {kw} tools"),
+# which read as junk for a professional non-tech domain. Each set below produces
+# query variants a practitioner in that field would actually search for. The LLM
+# strategy (``expand_keywords(use_llm=True, model=...)``) remains the highest-
+# quality path; these make the offline template default sensible too.
+_LEGAL_TEMPLATES = [
+    "{kw} clause",
+    "{kw} obligations",
+    "{kw} regulation",
+    "{kw} compliance requirements",
+    "{kw} liability",
+    "{kw} case law",
+    "{kw} statute",
+    "{kw} legal definition",
+    "{kw} vs {alt}",
+]
+
+_FINANCE_TEMPLATES = [
+    "{kw} analysis",
+    "{kw} risk",
+    "{kw} regulation",
+    "{kw} valuation",
+    "{kw} strategy",
+    "{kw} market trends",
+    "{kw} metrics",
+    "{kw} forecast",
+    "{kw} vs {alt}",
+]
+
+_HEALTH_TEMPLATES = [
+    "{kw} symptoms",
+    "{kw} treatment",
+    "{kw} diagnosis",
+    "{kw} guidelines",
+    "{kw} risk factors",
+    "{kw} prevention",
+    "{kw} causes",
+    "{kw} research",
+    "{kw} vs {alt}",
+]
+
+_SCIENCE_TEMPLATES = [
+    "{kw} theory",
+    "{kw} experiment",
+    "{kw} mechanism",
+    "{kw} research",
+    "{kw} applications",
+    "{kw} principles",
+    "{kw} equation",
+    "{kw} examples",
+    "{kw} vs {alt}",
+]
+
 
 def TechDomain(**overrides) -> Domain:  # noqa: N802
     """Software engineering, programming, and DevOps domain."""
@@ -58,6 +112,7 @@ def ScienceDomain(**overrides) -> Domain:  # noqa: N802
             "theories, and use formulas or diagrams when helpful."
         ),
         "tool_names": ["calculator", "python_repl", "web_search", "wikipedia"],
+        "templates": list(_SCIENCE_TEMPLATES),
     }
     defaults.update(overrides)
     return Domain(**defaults)
@@ -82,6 +137,7 @@ def FinanceDomain(**overrides) -> Domain:  # noqa: N802
             "concepts clearly, and note that your responses are not financial advice."
         ),
         "tool_names": ["calculator", "web_search", "python_repl"],
+        "templates": list(_FINANCE_TEMPLATES),
     }
     defaults.update(overrides)
     return Domain(**defaults)
@@ -108,6 +164,7 @@ def HealthDomain(**overrides) -> Domain:  # noqa: N802
         ),
         "tool_names": ["web_search", "wikipedia", "calculator"],
         "guardrails": "standard",
+        "templates": list(_HEALTH_TEMPLATES),
     }
     defaults.update(overrides)
     return Domain(**defaults)
@@ -135,6 +192,7 @@ def LegalDomain(**overrides) -> Domain:  # noqa: N802
         ),
         "tool_names": ["web_search", "wikipedia"],
         "guardrails": "standard",
+        "templates": list(_LEGAL_TEMPLATES),
     }
     defaults.update(overrides)
     return Domain(**defaults)

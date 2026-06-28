@@ -98,6 +98,89 @@ class TestCreateAgent:
             agent = create_agent(name, model)
             assert agent is not None
 
+    def test_unknown_preset_reported_before_missing_model(self):
+        """create_agent('legal') (an invalid preset) must report the bad preset
+        up front, not first demand a model for a preset that can't exist."""
+        with pytest.raises(KeyError, match="Unknown preset"):
+            create_agent("legal")  # no model passed on purpose
+
+    def test_valid_preset_no_model_still_asks_for_model(self):
+        with pytest.raises(ValueError, match="needs a model"):
+            create_agent("math")
+
+    def test_no_preset_and_no_domain_raises(self):
+        with pytest.raises(TypeError, match="preset name"):
+            create_agent(model=self._mock_model())
+
+
+class TestDomainAgentBridge:
+    """A Domain must have one obvious on-ramp to a runnable agent (E11-1)."""
+
+    def _mock_model(self):
+        return MockModel(responses=["Thought: done\nFinal Answer: ok"])
+
+    def test_domain_to_agent_wires_prompt_tools_guardrails(self):
+        from effgen.domains import LegalDomain
+
+        agent = LegalDomain().to_agent(self._mock_model())
+        assert agent.config.name == "legal-agent"
+        assert agent.config.system_prompt.startswith("You are a legal")
+        names = [t.metadata.name for t in agent.config.tools]
+        assert "web_search" in names and "wikipedia" in names
+        # The domain's guardrails ("standard") get their first real consumer.
+        assert agent._guardrail_chain is not None
+
+    def test_create_agent_domain_kwarg_equivalent(self):
+        from effgen.domains import LegalDomain
+        from effgen.presets import create_agent as ca
+
+        d = LegalDomain()
+        agent = ca(domain=d, model=self._mock_model())
+        assert agent.config.system_prompt == d.system_prompt
+
+    def test_domain_without_guardrails_has_no_chain(self):
+        from effgen.domains import TechDomain
+
+        agent = TechDomain().to_agent(self._mock_model())
+        assert agent._guardrail_chain is None
+
+    def test_to_agent_overrides_apply(self):
+        from effgen.domains import LegalDomain
+
+        agent = LegalDomain().to_agent(
+            self._mock_model(), temperature=0.1, max_iterations=3,
+            system_prompt="custom",
+        )
+        assert agent.config.temperature == 0.1
+        assert agent.config.max_iterations == 3
+        assert agent.config.system_prompt == "custom"
+
+    def test_to_agent_extra_tools_by_name(self):
+        from effgen.domains import LegalDomain
+
+        agent = LegalDomain().to_agent(self._mock_model(), extra_tools=["calculator"])
+        names = [t.metadata.name for t in agent.config.tools]
+        assert "calculator" in names
+
+    def test_preset_and_domain_together_raises(self):
+        from effgen.domains import LegalDomain
+        from effgen.presets import create_agent as ca
+
+        with pytest.raises(TypeError, match="both"):
+            ca("math", self._mock_model(), domain=LegalDomain())
+
+    def test_domain_kwarg_rejects_non_domain(self):
+        from effgen.presets import create_agent as ca
+
+        with pytest.raises(TypeError, match="Domain instance"):
+            ca(domain="legal", model=self._mock_model())
+
+    def test_domain_no_model_raises_domain_aware(self):
+        from effgen.domains import LegalDomain
+
+        with pytest.raises(ValueError, match="to_agent"):
+            LegalDomain().to_agent()
+
 
 class TestRagKnowledgeBase:
     """create_agent('rag', knowledge_base=...) must work or fail loudly."""
@@ -241,3 +324,54 @@ class TestRagKnowledgeBase:
         from effgen.rag import DocumentIngester
 
         assert DocumentIngester(show_progress=False).ingest_text("   ") == []
+
+    def test_prebuilt_vector_memory_store_is_indexed(self):
+        """A pre-built VectorMemoryStore connects straight to a RAG agent —
+        the memory/ and rag/ retrieval subsystems link up."""
+        import asyncio
+
+        from effgen.memory import VectorMemoryStore
+
+        store = VectorMemoryStore()
+        store.add(
+            "The Eiffel Tower is 330 meters tall and located in Paris.",
+            metadata={"topic": "landmark"},
+        )
+        store.add("The Great Wall of China is over 21,000 kilometers long.")
+
+        agent = create_agent("rag", self._mock_model(), knowledge_base=store)
+        rt = self._retrieval_tool(agent)
+        assert rt is not None
+        res = asyncio.run(
+            rt.execute(operation="search", query="How tall is the Eiffel Tower?", top_k=2)
+        )
+        assert res.success
+        results = res.output["results"] if isinstance(res.output, dict) else []
+        assert any("330 meters" in r["content"] for r in results)
+
+    def test_vector_store_mixed_with_text(self):
+        """A VectorMemoryStore can be mixed with raw text in one list."""
+        import asyncio
+
+        from effgen.memory import VectorMemoryStore
+
+        store = VectorMemoryStore()
+        store.add("Mercury is the closest planet to the Sun.")
+        agent = create_agent(
+            "rag",
+            self._mock_model(),
+            knowledge_base=[store, "Neptune is the farthest planet from the Sun."],
+        )
+        rt = self._retrieval_tool(agent)
+        res = asyncio.run(
+            rt.execute(operation="search", query="closest planet", top_k=2)
+        )
+        results = res.output["results"] if isinstance(res.output, dict) else []
+        assert any("Mercury" in r["content"] for r in results)
+
+    def test_empty_vector_store_fails_loud(self):
+        """An empty VectorMemoryStore must raise, never build an empty index."""
+        from effgen.memory import VectorMemoryStore
+
+        with pytest.raises(ValueError, match="0 documents"):
+            create_agent("rag", self._mock_model(), knowledge_base=VectorMemoryStore())

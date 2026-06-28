@@ -504,6 +504,22 @@ __all__ = [
     "create_agent",
     "list_presets",
 
+    # Guardrails (also importable from effgen.guardrails). Listed here so the
+    # everyday classes are as discoverable at the top level as the domains above.
+    "Guardrail",
+    "GuardrailChain",
+    "GuardrailPosition",
+    "GuardrailResult",
+    "PIIGuardrail",
+    "PromptInjectionGuardrail",
+    "ToxicityGuardrail",
+    "LengthGuardrail",
+    "TopicGuardrail",
+    "ToolInputGuardrail",
+    "ToolOutputGuardrail",
+    "ToolPermissionGuardrail",
+    "get_guardrail_preset",
+
     # Additional convenience exports
     "ToolFallbackChain",
     "CircuitBreaker",

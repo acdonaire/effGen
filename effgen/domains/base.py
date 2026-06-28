@@ -48,6 +48,10 @@ class Domain:
     system_prompt: str = "You are a helpful AI assistant."
     tool_names: list[str] = field(default_factory=list)
     guardrails: Any = None
+    # Default templates are tech how-to oriented. The built-in non-tech presets
+    # (Legal/Finance/Health/Science) override these with field-appropriate query
+    # variants; for a custom non-tech Domain, pass your own ``templates=`` or use
+    # ``expand_keywords(use_llm=True, model=...)`` for the highest-quality terms.
     templates: list[str] = field(default_factory=lambda: [
         "{kw} tutorial",
         "{kw} examples",
@@ -107,6 +111,41 @@ class Domain:
             self.name, len(self.keywords), len(expanded), factor,
         )
         return expanded
+
+    # ------------------------------------------------------------------
+    # Build a runnable agent
+    # ------------------------------------------------------------------
+
+    def to_agent(self, model: Any = None, **overrides: Any):
+        """Build a runnable :class:`~effgen.core.agent.Agent` from this domain.
+
+        Wires the domain's ``system_prompt``, ``tool_names`` (resolved through
+        the tool registry, skipping any that can't load), and ``guardrails`` into
+        an agent — the one obvious on-ramp from a domain to something you can
+        ``.run(...)``.
+
+        Args:
+            model: A loaded model instance or a model-id string (e.g.
+                ``"gpt-5-nano"`` or ``"Qwen/Qwen2.5-1.5B-Instruct"``). Required
+                unless ``EFFGEN_DEFAULT_MODEL`` is set.
+            **overrides: Any keyword accepted by
+                :func:`~effgen.presets.registry.create_agent` — e.g.
+                ``extra_tools=``, ``system_prompt=``, ``guardrails=``,
+                ``temperature=``, ``max_iterations=``, ``engine=`` (for a local
+                model id). The domain's own ``guardrails`` are used unless you
+                override them.
+
+        Returns:
+            A configured ``Agent`` ready to ``run(...)``.
+
+        Example:
+            >>> from effgen.domains import LegalDomain
+            >>> agent = LegalDomain().to_agent("gpt-5-nano")
+            >>> agent.run("Summarize the obligations in a standard NDA.")
+        """
+        from effgen.presets.registry import create_agent
+
+        return create_agent(domain=self, model=model, **overrides)
 
     def to_dict(self) -> dict[str, Any]:
         return {

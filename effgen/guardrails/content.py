@@ -125,12 +125,14 @@ class PIIGuardrail(Guardrail):
         r"\b(?:\d[ -]*?){13,19}\b"
     )
 
-    # IPv4 address. The surrounding ``(?<![\w.])``/``(?![\w.])`` guards ensure the
-    # dotted-quad is not part of a longer token (e.g. ``v1.2.3.4`` or ``1.2.3.4.5``),
-    # which keeps version/build numbers from masquerading as addresses.
+    # IPv4 address. The leading ``(?<![\w.])`` guard keeps the dotted-quad from
+    # starting inside a longer token. The trailing ``(?!\w)(?!\.\d)`` guard rejects
+    # a 5th octet (``1.2.3.4.5``) and a trailing alphanumeric, but — unlike the old
+    # ``(?![\w.])`` — still matches an address that ends a sentence (``10.2.3.4.``),
+    # so an internal IP at end-of-sentence is no longer silently let through.
     _IPV4_PATTERN = re.compile(
         r"(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
-        r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![\w.])"
+        r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?!\w)(?!\.\d)"
     )
 
     # Words that, when they immediately precede a dotted-quad, mark it as a version

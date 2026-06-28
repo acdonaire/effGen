@@ -428,18 +428,52 @@ def _looks_like_path(s: str) -> bool:
     return bool(suffix) and len(suffix) <= 6 and suffix[1:].isalnum()
 
 
+def _docs_from_vector_store(store: Any) -> list[dict]:
+    """Extract indexable documents from a pre-built ``VectorMemoryStore``.
+
+    Pulls the stored text content (and metadata) out of the memory subsystem's
+    vector store so a knowledge base built/persisted there connects straight to a
+    RAG agent. Returns ``[{"content", "id", "metadata"}, ...]``.
+    """
+    entries = getattr(store, "entries", None)
+    if not isinstance(entries, dict):
+        return []
+    docs: list[dict] = []
+    for entry_id, entry in entries.items():
+        content = getattr(entry, "content", None)
+        if not content or not str(content).strip():
+            continue
+        docs.append({
+            "content": str(content),
+            "id": str(entry_id),
+            "metadata": dict(getattr(entry, "metadata", {}) or {}),
+        })
+    return docs
+
+
+def _is_vector_store(obj: Any) -> bool:
+    """Duck-type check for a ``VectorMemoryStore`` without importing it eagerly."""
+    return (
+        type(obj).__name__ == "VectorMemoryStore"
+        and hasattr(obj, "entries")
+        and hasattr(obj, "search")
+    )
+
+
 def _ingest_rag_knowledge_base(
-    tools: list, knowledge_base: str | list[str]
+    tools: list, knowledge_base: Any
 ) -> None:
     """Populate the RAG preset's Retrieval tool from ``knowledge_base``.
 
-    Each entry is a file path, a directory path, **or** a raw text document:
-    an entry that exists on disk is loaded as a file/dir; any other string is
-    treated as an inline document and chunked directly. An entry that *looks
-    like* a path (a separator/extension, no whitespace) but does not exist is
-    rejected loudly as a likely typo rather than indexed as a literal string.
-    Raises ``ValueError`` if nothing ingestable was found (so a misuse fails
-    loudly instead of silently producing an empty index).
+    Each entry is a file path, a directory path, a raw text document, **or** a
+    pre-built :class:`~effgen.memory.vector_store.VectorMemoryStore`: an entry
+    that exists on disk is loaded as a file/dir; a ``VectorMemoryStore`` has its
+    stored entries folded in directly; any other string is treated as an inline
+    document and chunked. An entry that *looks like* a path (a separator/
+    extension, no whitespace) but does not exist is rejected loudly as a likely
+    typo rather than indexed as a literal string. Raises ``ValueError`` if
+    nothing ingestable was found (so a misuse fails loudly instead of silently
+    producing an empty index).
     """
     try:
         from effgen.rag import DocumentIngester
@@ -450,7 +484,7 @@ def _ingest_rag_knowledge_base(
             "`pip install effgen[rag]`."
         ) from exc
 
-    if isinstance(knowledge_base, str | Path):
+    if isinstance(knowledge_base, str | Path) or _is_vector_store(knowledge_base):
         sources: list = [knowledge_base]
     else:
         sources = list(knowledge_base)
@@ -459,8 +493,15 @@ def _ingest_rag_knowledge_base(
     chunks = []
     n_files = 0
     n_inline = 0
+    n_store_docs = 0
+    store_docs: list[dict] = []
     skipped: list[tuple[str, str]] = []
     for src in sources:
+        if _is_vector_store(src):
+            extracted = _docs_from_vector_store(src)
+            store_docs.extend(extracted)
+            n_store_docs += len(extracted)
+            continue
         s = str(src)
         # A blank entry has no content; skip it (and never let "" become
         # Path(".") and silently ingest the whole working directory).
@@ -488,6 +529,7 @@ def _ingest_rag_knowledge_base(
         {"content": c.content, "id": c.id, "metadata": c.metadata}
         for c in chunks
     ]
+    docs.extend(store_docs)
     if not docs:
         reason = ""
         if skipped:
@@ -498,9 +540,11 @@ def _ingest_rag_knowledge_base(
             reason = f" Skipped: {details}."
         raise ValueError(
             "knowledge_base produced 0 documents to index. Pass existing file "
-            "or directory paths, or raw text strings with content. Got "
+            "or directory paths, raw text strings with content, or a non-empty "
+            "VectorMemoryStore. Got "
             f"{len(sources)} entr{'y' if len(sources) == 1 else 'ies'} "
-            f"({n_files} treated as path(s), {n_inline} as inline text)."
+            f"({n_files} treated as path(s), {n_inline} as inline text, "
+            f"{n_store_docs} from vector store(s))."
             + reason
         )
 
@@ -513,35 +557,44 @@ def _ingest_rag_knowledge_base(
 
     retrieval_tool.add_documents(docs, chunk=False)
     logger.info(
-        "RAG preset: indexed %d chunk(s) from %d path(s) + %d inline document(s)",
+        "RAG preset: indexed %d document(s) from %d path(s) + %d inline + "
+        "%d vector-store document(s)",
         len(docs),
         n_files,
         n_inline,
+        n_store_docs,
     )
 
 
 def create_agent(
-    preset: str,
+    preset: str | None = None,
     model: BaseModel | str | None = None,
     *,
+    domain: Any = None,
     agent_name: str | None = None,
     extra_tools: list | None = None,
-    knowledge_base: str | list[str] | None = None,
+    knowledge_base: Any = None,
     system_prompt: str | None = None,
     max_iterations: int | None = None,
     temperature: float | None = None,
     enable_memory: bool | None = None,
+    guardrails: Any = None,
     session_id: str | None = None,
     **config_overrides: Any,
 ) -> Agent:
-    """Create an agent from a named preset.
+    """Create an agent from a named preset or a knowledge domain.
 
     Args:
         preset: Preset name. Available: {PRESET_LIST}.
             New to effGen? Start with ``math`` or ``minimal`` (small, fast);
             ``general`` is the broad "kitchen sink" of tools (the unsandboxed
             shell lives in ``coding``, not here). See ``list_presets()`` for
-            descriptions.
+            descriptions. Pass either ``preset`` **or** ``domain``, not both.
+        domain: A :class:`~effgen.domains.base.Domain` (e.g. ``LegalDomain()``)
+            to build a domain-specialized agent — its ``system_prompt``,
+            ``tool_names`` (resolved through the tool registry) and ``guardrails``
+            are wired into the agent. Use this *or* ``preset``. The equivalent
+            ``Domain.to_agent(model, ...)`` is a thin wrapper over this.
         model: A loaded model instance or a model identifier string. If omitted,
             ``EFFGEN_DEFAULT_MODEL`` is used when set, otherwise a clear error
             tells you how to pick one (effGen never silently picks a paid model).
@@ -554,15 +607,22 @@ def create_agent(
             ``tools`` is accepted as an alias for ``extra_tools``.
         knowledge_base: Only used by the ``rag`` preset. A document source, or
             a list of them, indexed into the agent's retrieval tool at
-            creation. Each entry may be a file path, a directory path, **or**
-            raw text (an entry that does not exist on disk is treated as an
-            inline document and chunked directly). Raises ``ValueError`` if the
-            sources yield zero documents, so a typo'd path or empty text fails
-            loudly rather than producing a silent empty-index agent.
-        system_prompt: Override the preset's system prompt.
+            creation. Each entry may be a file path, a directory path, raw text
+            (an entry that does not exist on disk is treated as an inline
+            document and chunked directly), **or** a pre-built
+            :class:`~effgen.memory.vector_store.VectorMemoryStore` whose stored
+            entries are folded into the retrieval index (so a knowledge base you
+            built and persisted with the ``memory`` subsystem connects straight
+            to a RAG agent). Raises ``ValueError`` if the sources yield zero
+            documents, so a typo'd path or empty text fails loudly rather than
+            producing a silent empty-index agent.
+        system_prompt: Override the preset's (or domain's) system prompt.
         max_iterations: Override max iterations.
         temperature: Override temperature.
         enable_memory: Override memory setting.
+        guardrails: Optional guardrail chain or preset name (e.g. ``"standard"``)
+            applied to the agent's input/output. For a ``domain`` the domain's
+            own ``guardrails`` are used by default; pass this to override.
         session_id: Optional persistent session id. When set, the agent loads or
             creates a stored conversation session so multi-turn context carries
             across processes (the same `--session-id` the CLI exposes).
@@ -609,8 +669,65 @@ def create_agent(
             )
         extra_tools = _alias_tools
 
+    # Resolve the build "spec" (tools + prompt + guardrails + defaults) from a
+    # domain or a named preset BEFORE anything else. Validating the preset name
+    # up front means create_agent('nope') reports the unknown preset immediately
+    # instead of first demanding a model for a preset that can't exist.
+    from effgen.domains.base import Domain
+
+    if domain is not None and preset is not None:
+        raise TypeError(
+            "create_agent() got both `preset` and `domain` — pass one. "
+            "Use a named preset (e.g. create_agent('math', model)) or a Domain "
+            "(e.g. create_agent(domain=LegalDomain(), model=model))."
+        )
+    if domain is not None:
+        if not isinstance(domain, Domain):
+            raise TypeError(
+                "create_agent(domain=...) expects a Domain instance "
+                f"(e.g. LegalDomain()), got {type(domain).__name__}."
+            )
+        spec_name = domain.name
+        spec_tool_names = list(domain.tool_names)
+        spec_system_prompt = domain.system_prompt
+        spec_guardrails = domain.guardrails
+        spec_max_iterations = 10
+        spec_temperature = 0.7
+        spec_enable_sub_agents = False
+        spec_enable_memory = True
+    else:
+        if preset is None:
+            raise TypeError(
+                "create_agent() requires a preset name (e.g. 'math') or "
+                "domain=<Domain>. See list_presets() for preset names."
+            )
+        cfg = get_preset(preset)  # validates the name (raises UnknownPresetError)
+        spec_name = cfg.name
+        spec_tool_names = cfg.tool_names
+        spec_system_prompt = cfg.system_prompt
+        spec_guardrails = None
+        spec_max_iterations = cfg.max_iterations
+        spec_temperature = cfg.temperature
+        spec_enable_sub_agents = cfg.enable_sub_agents
+        spec_enable_memory = cfg.enable_memory
+
     if model is None:
-        model = _resolve_default_model(preset)
+        if domain is not None:
+            import os as _os
+            _env_default = _os.environ.get("EFFGEN_DEFAULT_MODEL", "").strip()
+            if _env_default:
+                model = _env_default
+            else:
+                raise ValueError(
+                    f"create_agent(domain={type(domain).__name__}(...)) needs a "
+                    "model — effGen never silently picks a paid cloud model. Pass "
+                    "one, e.g. domain.to_agent('gpt-5-nano') or "
+                    "create_agent(domain=..., model='Qwen/Qwen2.5-1.5B-Instruct'). "
+                    "Run `effgen models list` for options, or set "
+                    "EFFGEN_DEFAULT_MODEL to choose a default once."
+                )
+        else:
+            model = _resolve_default_model(preset or spec_name)
 
     # Route load_model-only kwargs (engine, quantization, ...) to load_model
     # instead of letting them fall into AgentConfig and raise a cryptic
@@ -636,9 +753,7 @@ def create_agent(
         _prov = config_overrides.pop("provider", None)
         model = load_model(model, provider=_prov, **_load_kwargs)
 
-    cfg = get_preset(preset)
-
-    tools = _instantiate_tools(cfg.tool_names)
+    tools = _instantiate_tools(spec_tool_names)
 
     # Special handling for RAG preset: ingest knowledge base on creation.
     # Failures here are LOUD: a knowledge_base that ingests to zero documents
@@ -650,16 +765,27 @@ def create_agent(
     if extra_tools:
         tools.extend(_normalize_extra_tools(extra_tools))
 
+    # The agent's guardrails: an explicit guardrails= wins, otherwise the spec's
+    # (a domain carries its own, presets default to None). config_overrides may
+    # also carry guardrails (back-compat); an explicit kwarg takes precedence.
+    resolved_guardrails = guardrails if guardrails is not None else spec_guardrails
+    if "guardrails" in config_overrides:
+        if guardrails is None:
+            resolved_guardrails = config_overrides.pop("guardrails")
+        else:
+            config_overrides.pop("guardrails")
+
     try:
         agent_config = AgentConfig(
-            name=agent_name or f"{cfg.name}-agent",
+            name=agent_name or f"{spec_name}-agent",
             model=model,
             tools=tools,
-            system_prompt=system_prompt or cfg.system_prompt,
-            max_iterations=max_iterations if max_iterations is not None else cfg.max_iterations,
-            temperature=temperature if temperature is not None else cfg.temperature,
-            enable_sub_agents=cfg.enable_sub_agents,
-            enable_memory=enable_memory if enable_memory is not None else cfg.enable_memory,
+            system_prompt=system_prompt or spec_system_prompt,
+            max_iterations=max_iterations if max_iterations is not None else spec_max_iterations,
+            temperature=temperature if temperature is not None else spec_temperature,
+            enable_sub_agents=spec_enable_sub_agents,
+            enable_memory=enable_memory if enable_memory is not None else spec_enable_memory,
+            guardrails=resolved_guardrails,
             **config_overrides,
         )
     except TypeError as exc:
@@ -679,8 +805,8 @@ def create_agent(
         ) from exc
 
     logger.info(
-        "Created '%s' preset agent with %d tools: %s",
-        cfg.name,
+        "Created '%s' agent with %d tools: %s",
+        spec_name,
         len(tools),
         ", ".join(t.metadata.name for t in tools) if tools else "(none)",
     )
