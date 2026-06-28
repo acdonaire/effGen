@@ -114,7 +114,7 @@ class TestCreateAgent:
 
 
 class TestDomainAgentBridge:
-    """A Domain must have one obvious on-ramp to a runnable agent (E11-1)."""
+    """A Domain must have one obvious on-ramp to a runnable agent."""
 
     def _mock_model(self):
         return MockModel(responses=["Thought: done\nFinal Answer: ok"])
@@ -328,6 +328,7 @@ class TestRagKnowledgeBase:
     def test_prebuilt_vector_memory_store_is_indexed(self):
         """A pre-built VectorMemoryStore connects straight to a RAG agent —
         the memory/ and rag/ retrieval subsystems link up."""
+        pytest.importorskip("faiss")
         import asyncio
 
         from effgen.memory import VectorMemoryStore
@@ -351,6 +352,7 @@ class TestRagKnowledgeBase:
 
     def test_vector_store_mixed_with_text(self):
         """A VectorMemoryStore can be mixed with raw text in one list."""
+        pytest.importorskip("faiss")
         import asyncio
 
         from effgen.memory import VectorMemoryStore
@@ -371,6 +373,7 @@ class TestRagKnowledgeBase:
 
     def test_empty_vector_store_fails_loud(self):
         """An empty VectorMemoryStore must raise, never build an empty index."""
+        pytest.importorskip("faiss")
         from effgen.memory import VectorMemoryStore
 
         with pytest.raises(ValueError, match="0 documents"):

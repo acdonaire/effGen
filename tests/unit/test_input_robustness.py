@@ -29,7 +29,7 @@ def _img() -> ImagePart:
 
 
 # ---------------------------------------------------------------------------
-# E5 — inputs is an explicit keyword parameter (discoverable via inspect)
+# inputs is an explicit keyword parameter (discoverable via inspect)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("method", ["run", "stream", "run_async"])

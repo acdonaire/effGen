@@ -132,7 +132,7 @@ def test_default_max_output_tokens():
 
 
 # ---------------------------------------------------------------------------
-# E1-1 — reasoning default budget + truncation honesty
+# reasoning default budget + truncation honesty
 # ---------------------------------------------------------------------------
 
 
@@ -181,7 +181,7 @@ def test_user_pinned_max_tokens_is_respected_and_not_escalated():
 
 
 # ---------------------------------------------------------------------------
-# E1-3 — per-run cost + token usage on the response metadata
+# per-run cost + token usage on the response metadata
 # ---------------------------------------------------------------------------
 
 
@@ -208,7 +208,7 @@ def test_no_cost_key_when_provider_reports_none():
 
 
 # ---------------------------------------------------------------------------
-# E3-5 — per-run latency folded onto the response metadata (like cost/tokens)
+# per-run latency folded onto the response metadata (like cost/tokens)
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +227,7 @@ def test_latency_on_response_metadata():
 
 
 # ---------------------------------------------------------------------------
-# E1-4 — output_schema=PydanticModel populates metadata["parsed"]
+# output_schema=PydanticModel populates metadata["parsed"]
 # ---------------------------------------------------------------------------
 
 
@@ -254,7 +254,7 @@ def test_output_schema_pydantic_populates_parsed():
 
 
 # ---------------------------------------------------------------------------
-# E3-6 — str(GenerationResult) is the text, mirroring AgentResponse
+# str(GenerationResult) is the text, mirroring AgentResponse
 # ---------------------------------------------------------------------------
 
 
@@ -270,7 +270,7 @@ def test_generation_result_str_is_text():
 
 
 # ---------------------------------------------------------------------------
-# E3-7 — AgentConfig turns a stray engine= into an actionable error
+# AgentConfig turns a stray engine= into an actionable error
 # ---------------------------------------------------------------------------
 
 

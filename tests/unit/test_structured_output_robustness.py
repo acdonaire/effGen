@@ -141,7 +141,7 @@ def test_time_budget_zero_stops_immediately():
 
 
 # --------------------------------------------------------------------------- #
-# E3-1 — local grammar path: install-outlines remediation hint + token budget
+# local grammar path: install-outlines remediation hint + token budget
 # --------------------------------------------------------------------------- #
 def test_local_failure_hints_install_outlines_when_absent(monkeypatch):
     import effgen.core.structured_output as so

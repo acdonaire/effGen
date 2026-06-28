@@ -5,7 +5,7 @@ internal process used to build the project. This gate scans every tracked text
 file and fails if it finds breadcrumbs that should never ship:
 
 * internal tracking IDs (e.g. ``VF5``, ``GA4``, ``RA-N3``, ``SEC1``, ``FN-2``,
-  ``Audit-2 #x``),
+  ``Audit-2 #x``) and per-finding IDs (e.g. ``E1-1``, ``E11-3``),
 * internal milestone references (``Phase 7``, ``build plan``,
   ``stabilization sprint``),
 * author/process breadcrumbs (``this phase``, ``as per audit``,
@@ -51,7 +51,7 @@ _SKIP_FILES = {"tests/unit/test_no_internal_scaffolding.py"}
 PATTERNS: dict[str, re.Pattern[str]] = {
     # internal tracking IDs from the build/audit process
     "internal-tracking-id": re.compile(
-        r"\b(?:VF\d+|GA\d+|RA-[NC]\d+|SEC\d+|FN-\d+)\b|Audit-2 #"
+        r"\b(?:VF\d+|GA\d+|RA-[NC]\d+|SEC\d+|FN-\d+|E\d+-\d+)\b|Audit-2 #"
     ),
     # internal milestone / planning references
     "milestone-reference": re.compile(
@@ -143,6 +143,7 @@ def test_detector_catches_planted_violation():
     """The detector must actually fire — a no-op gate would pass forever."""
     samples = [
         "this is the VF5 regression case",
+        "the E11-3 per-finding case",
         "fixes Audit-2 #42",
         "see Phase 7 of the build plan",
         "as per audit, this phase reworked it",

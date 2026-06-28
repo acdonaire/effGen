@@ -1,4 +1,4 @@
-"""E3-2 — local batch must not trip the fast tokenizer's "Already borrowed".
+"""Local batch must not trip the fast tokenizer's "Already borrowed".
 
 HuggingFace "fast" (Rust) tokenizers are not thread-safe: two threads encoding
 on the same tokenizer at once raise ``RuntimeError("Already borrowed")``. The

@@ -19,7 +19,7 @@ def _cli():
     return _main.CLIInterface()
 
 
-# ── pre-flight model-id hint (E4-5) ──────────────────────────────────────────
+# ── pre-flight model-id hint ─────────────────────────────────────────────────
 
 def test_preflight_known_model_says_nothing(capsys):
     _main._preflight_model_hint(_cli(), "gpt-5-nano", "openai")
@@ -54,7 +54,7 @@ def test_preflight_silent_for_local_hub_ids(capsys):
     assert "Did you mean" not in capsys.readouterr().out
 
 
-# ── no-model default mirrors quickstart (E4-8) ───────────────────────────────
+# ── no-model default mirrors quickstart ──────────────────────────────────────
 
 def test_no_model_default_prefers_cloud_when_keyed(monkeypatch):
     monkeypatch.setattr(

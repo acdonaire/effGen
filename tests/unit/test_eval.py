@@ -258,7 +258,7 @@ class TestSuites:
 
 
 class TestResolveEvalSuite:
-    """E3-4 — `eval`/`compare` accept a named suite OR a path, plus subsampling."""
+    """`eval`/`compare` accept a named suite OR a path, plus subsampling."""
 
     def _resolver(self):
         from effgen.cli._main import _resolve_eval_suite

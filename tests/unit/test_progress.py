@@ -151,7 +151,7 @@ def test_summary_line_failure_shows_reason():
 
 
 # ---------------------------------------------------------------------------
-# execution_trace_lines — the renderer the quickstart shares (E4-7)
+# execution_trace_lines — the renderer the quickstart shares
 # ---------------------------------------------------------------------------
 
 def test_execution_trace_lines_reports_a_tool_call():
