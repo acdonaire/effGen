@@ -201,7 +201,10 @@ class EffGenMCPServer:
                 "ctx", inspect.Parameter.KEYWORD_ONLY, annotation=Context
             )
         ]
-        for param in metadata.parameters:
+        # Only advertise model-facing parameters: developer-only safety toggles
+        # (model_facing=False) must never enter the signature FastMCP turns into
+        # the schema/validation an MCP client/model sees.
+        for param in metadata.model_facing_parameters:
             pytype = _PARAM_TYPE_MAP.get(param.type.value, Any)
             if param.required:
                 default = inspect.Parameter.empty

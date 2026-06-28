@@ -15,56 +15,95 @@ from .base import Guardrail, GuardrailPosition, GuardrailResult
 
 
 class PromptInjectionGuardrail(Guardrail):
-    """Detect prompt injection attempts at configurable sensitivity levels.
+    """Detect common prompt injection attempts at configurable sensitivity levels.
+
+    This is a fast, offline, regex-based detector — **best-effort
+    defense-in-depth, not a security boundary.** It catches the well-known
+    textbook phrasings (instruction-override, identity/role-play hijacks, system
+    prompt extraction / prompt-leak, and role-delimiter spoofing) but a
+    determined attacker can paraphrase around any regex. Treat a pass as "no
+    obvious injection seen", not as "input is safe"; pair it with least-privilege
+    tools and output guardrails rather than relying on it as a gate.
 
     Sensitivity levels:
-        - ``low``: Only obvious, high-confidence injection patterns.
-        - ``medium``: Adds system prompt extraction and role-play patterns.
-        - ``high``: Adds delimiter injection and more aggressive matching.
+        - ``low``: Only obvious, high-confidence instruction/identity overrides.
+        - ``medium`` (default): Adds system-prompt extraction / prompt-leak,
+          role-play jailbreaks, role-delimiter spoofing, and ``System:`` headers.
+        - ``high``: Adds the most aggressive markdown/divider patterns.
 
-    Designed to have ZERO false positives on normal questions like
+    Tuned to avoid false positives on normal questions like
     "What is a system prompt?" or "Ignore the noise and focus on the data."
     """
 
     # ---- HIGH-CONFIDENCE patterns (all levels) ----
 
     # Direct instruction override: "Ignore previous instructions", etc.
-    # Requires imperative form + "instructions/prompts" to avoid false positives.
+    # Requires an imperative verb plus either an instruction-noun or an explicit
+    # "the above/preceding" reference, so plain text like "ignore the noise"
+    # does not match.
     _INSTRUCTION_OVERRIDE: list[re.Pattern[str]] = [
+        # verb + (optional qualifier words) + instruction-noun
         re.compile(
             r"\b(?:ignore|disregard|forget|override|bypass|skip|do\s+not\s+follow)"
-            r"\s+(?:all\s+)?(?:previous|prior|above|earlier|original|initial|your|the|my)?"
-            r"\s*(?:instructions?|prompts?|rules?|guidelines?|directives?|constraints?|context)",
+            r"(?:\s+(?:all|any|the|your|my|these|those|this|previous|prior|above|"
+            r"earlier|original|initial|preceding|foregoing|aforementioned)){0,5}"
+            r"\s+(?:instructions?|prompts?|rules?|guidelines?|directives?|"
+            r"constraints?|context|messages?|commands?)",
             re.I,
         ),
+        # verb + "the above / preceding / prior" (the object itself is the
+        # instructions being overridden)
         re.compile(
-            r"\b(?:ignore|disregard|forget)\s+(?:everything|anything)\s+"
-            r"(?:above|before|previously|i\s+(?:said|told|wrote))",
+            r"\b(?:ignore|disregard|forget|override|bypass)\s+"
+            r"(?:all\s+|everything\s+)?(?:the\s+|my\s+|your\s+)?"
+            r"(?:above|preceding|foregoing|aforementioned)\b",
+            re.I,
+        ),
+        # "forget everything you were told / I said / above"
+        re.compile(
+            r"\b(?:forget|ignore|disregard|erase)\s+(?:everything|anything|all)\s+"
+            r"(?:(?:above|before|previously|earlier)\b|"
+            r"(?:you(?:'?ve)?\s+(?:were\s+|have\s+been\s+|been\s+)?"
+            r"(?:told|instructed|given|taught))|"
+            r"(?:i\s+(?:said|told|wrote|gave)))",
             re.I,
         ),
     ]
 
-    # Explicit new identity assignment: "You are now ...", "Act as ..."
-    # Must be at start of content or after a delimiter to avoid matching
-    # normal text like "If you are now ready..."
+    # Explicit new identity assignment: "You are now ...", "Act as ...",
+    # "Pretend you have no restrictions".
     _IDENTITY_OVERRIDE: list[re.Pattern[str]] = [
         re.compile(
             r"(?:^|\n)\s*(?:you\s+are\s+now|from\s+now\s+on\s+you\s+are|"
-            r"pretend\s+(?:to\s+be|you\s+are)|"
             r"you\s+(?:must|should|will)\s+now\s+(?:act|behave|respond)\s+as)\b",
+            re.I,
+        ),
+        # "pretend (to be | you are/have/can/...)" anywhere — a hijack regardless
+        # of position.
+        re.compile(
+            r"\bpretend\s+(?:that\s+)?(?:to\s+be|you(?:'?re|\s+(?:are|have|can|"
+            r"do|don'?t|no\s+longer)))\b",
             re.I,
         ),
     ]
 
     # ---- MEDIUM-CONFIDENCE patterns (medium + high) ----
 
-    # System prompt extraction attempts
+    # System prompt extraction / prompt-leak attempts
     _SYSTEM_PROMPT_EXTRACTION: list[re.Pattern[str]] = [
         re.compile(
             r"\b(?:(?:show|reveal|print|display|output|repeat|echo|tell|give|what\s+(?:is|are))"
             r"(?:\s+me)?\s+(?:your|the)\s+(?:system\s+(?:prompt|message|instructions?)|"
             r"initial\s+(?:prompt|instructions?)|hidden\s+(?:prompt|instructions?)|"
             r"(?:original|full|complete|entire)\s+(?:prompt|instructions?)))",
+            re.I,
+        ),
+        # Prompt-leak: "repeat / print the text above ..."
+        re.compile(
+            r"\b(?:repeat|print|output|echo|show|reveal|say|spell\s+out)\s+(?:back\s+)?"
+            r"(?:me\s+)?(?:the\s+|all\s+(?:the\s+)?|everything\s+)?"
+            r"(?:text|words?|content|message|prompt|instructions?|everything)\s+"
+            r"(?:above|before|preceding|that\s+(?:came|comes|appeared?)\s+(?:before|above))",
             re.I,
         ),
     ]
@@ -79,28 +118,37 @@ class PromptInjectionGuardrail(Guardrail):
         ),
     ]
 
-    # ---- HIGH-SENSITIVITY patterns (high only) ----
+    # Role-delimiter spoofing: faking system/assistant/user message boundaries
+    # so the model treats injected text as a privileged turn.
+    _ROLE_DELIMITER_SPOOF: list[re.Pattern[str]] = [
+        re.compile(r"</?\s*(?:system|assistant|user|human)\s*>", re.I),
+        re.compile(r"<\|\s*(?:system|im_start|im_end|endoftext|assistant|user)\b[^>]*\|?>", re.I),
+        re.compile(r"(?:^|\n)\s*\[/?INST\]", re.I),
+        re.compile(r"(?:^|\n)\s*<</?SYS>>", re.I),
+    ]
 
-    # Delimiter injection: attempting to create fake system/user boundaries
-    _DELIMITER_INJECTION: list[re.Pattern[str]] = [
-        # Fake message boundaries
+    # Direct "System:" / "### New system prompt:" header injection
+    _SYSTEM_HEADER_INJECTION: list[re.Pattern[str]] = [
         re.compile(
-            r"(?:^|\n)\s*(?:<\|?(?:system|im_start|endoftext)\|?>|"
-            r"\[INST\]|\[/INST\]|<<SYS>>|<</SYS>>|"
-            r"###\s*(?:System|Human|Assistant|User)\s*(?::|###))",
+            r"(?:^|\n)\s*(?:#{1,4}\s*)?(?:new\s+|updated\s+|revised\s+)?"
+            r"system\s+(?:prompt|message|instructions?)\s*:",
             re.I,
         ),
-        # Markdown-style system prompt injection
+        # Bare ALL-CAPS "SYSTEM:" header (case-sensitive to avoid benign prose
+        # like "the operating system: linux").
+        re.compile(r"(?:^|\n)\s*SYSTEM\s*:\s*\S"),
+    ]
+
+    # ---- HIGH-SENSITIVITY patterns (high only) ----
+
+    # Markdown-style divider + system prompt injection.
+    _DELIMITER_INJECTION: list[re.Pattern[str]] = [
         re.compile(
             r"(?:^|\n)\s*(?:---+\s*\n\s*(?:System|New\s+System)\s*(?:Prompt|Instructions?)\s*:)",
             re.I,
         ),
-    ]
-
-    # Direct "System:" / "System prompt:" header injection
-    _SYSTEM_HEADER_INJECTION: list[re.Pattern[str]] = [
         re.compile(
-            r"(?:^|\n)\s*(?:System\s*(?:Prompt|Message|Instructions?)\s*:\s*.{10,})",
+            r"(?:^|\n)\s*###\s*(?:System|Human|Assistant|User)\s*(?::|###)",
             re.I,
         ),
     ]
@@ -135,12 +183,14 @@ class PromptInjectionGuardrail(Guardrail):
                 patterns.append(("system_prompt_extraction", p))
             for p in self._ROLEPLAY_INJECTION:
                 patterns.append(("roleplay_injection", p))
+            for p in self._ROLE_DELIMITER_SPOOF:
+                patterns.append(("role_delimiter_spoof", p))
+            for p in self._SYSTEM_HEADER_INJECTION:
+                patterns.append(("system_header_injection", p))
 
         if self.sensitivity == "high":
             for p in self._DELIMITER_INJECTION:
                 patterns.append(("delimiter_injection", p))
-            for p in self._SYSTEM_HEADER_INJECTION:
-                patterns.append(("system_header_injection", p))
 
         return patterns
 

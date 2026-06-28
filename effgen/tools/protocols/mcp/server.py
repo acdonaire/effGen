@@ -242,11 +242,13 @@ class MCPServer:
         Returns:
             MCP tool specification
         """
-        # Build JSON Schema for input
+        # Build JSON Schema for input. Only advertise model-facing parameters:
+        # developer-only safety toggles (model_facing=False) must never appear in
+        # the schema an MCP client/model sees.
         properties = {}
         required = []
 
-        for param in metadata.parameters:
+        for param in metadata.model_facing_parameters:
             prop = {
                 "type": param.type.value,
                 "description": param.description,

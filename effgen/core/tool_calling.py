@@ -352,7 +352,7 @@ class ReActStrategy(ToolCallingStrategy):
         for tool in tools:
             meta = tool.metadata
             params = ", ".join(
-                f"{p.name}: {p.type.value}" for p in meta.parameters
+                f"{p.name}: {p.type.value}" for p in meta.model_facing_parameters
             )
             lines.append(f"- {meta.name}: {meta.description} ({params})")
         return "\n".join(lines)

@@ -81,9 +81,9 @@ class ToolPromptGenerator:
         lines = [f"{index}. {tool.name}"]
         lines.append(f"   Description: {tool.description}")
 
-        if verbose and hasattr(tool, 'metadata') and tool.metadata.parameters:
+        if verbose and hasattr(tool, 'metadata') and tool.metadata.model_facing_parameters:
             lines.append("   Parameters:")
-            for param in tool.metadata.parameters:
+            for param in tool.metadata.model_facing_parameters:
                 req = "required" if param.required else "optional"
                 default_str = ""
                 if param.default is not None:
@@ -115,10 +115,11 @@ class ToolPromptGenerator:
                 input_json = json.dumps(input_dict)
                 return f"Action: {tool.name} | Action Input: {input_json}"
 
-        # Auto-generate from parameter specs
-        if hasattr(tool, 'metadata') and tool.metadata.parameters:
+        # Auto-generate from parameter specs (model-facing only — never sample a
+        # developer-only safety toggle into a model-facing example).
+        if hasattr(tool, 'metadata') and tool.metadata.model_facing_parameters:
             sample = {}
-            for param in tool.metadata.parameters:
+            for param in tool.metadata.model_facing_parameters:
                 if param.required:
                     sample[param.name] = self._sample_value(param)
             if sample:

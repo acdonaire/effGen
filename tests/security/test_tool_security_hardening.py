@@ -68,7 +68,9 @@ class TestPythonREPLSandbox:
             await repl.cleanup()
 
     async def test_runs_out_of_process(self):
-        repl = PythonREPL(timeout=10)
+        # Unrestricted execution is a developer opt-in (allow_unrestricted=True);
+        # a model can never reach it (see TestPythonREPLSandboxToggle).
+        repl = PythonREPL(timeout=10, allow_unrestricted=True)
         await repl.initialize()
         try:
             res = await repl.execute(
@@ -535,3 +537,114 @@ class TestFilePathConfinement:
             confine_path("/etc/passwd", roots)
         with pytest.raises(PathNotAllowedError):
             confine_path(str(link), roots)
+
+
+# --------------------------------------------------------------------------- #
+# PythonREPL — the sandbox toggle is developer-controlled, never model-facing  #
+# --------------------------------------------------------------------------- #
+class TestPythonREPLSandboxToggle:
+    def test_restricted_mode_not_in_model_schema(self):
+        repl = PythonREPL()
+        props = repl.metadata.to_json_schema()["parameters"]["properties"]
+        # The safety toggle must never appear in the schema a model sees.
+        assert "restricted_mode" not in props
+        # ...but the normal parameters still do.
+        assert "code" in props
+
+    def test_restricted_mode_absent_from_react_prompt(self):
+        from effgen.prompts.tool_prompt_generator import ToolPromptGenerator
+
+        text = ToolPromptGenerator([PythonREPL()]).generate_tools_section(verbose=True)
+        assert "restricted_mode" not in text
+
+    async def test_model_supplied_unrestricted_is_ignored_by_default(self):
+        # A prompt-injected model emitting restricted_mode=False must NOT escape:
+        # without a developer opt-in the call stays sandboxed.
+        repl = PythonREPL(timeout=10)
+        await repl.initialize()
+        try:
+            res = await repl.execute(code="import os\nos.getpid()", restricted_mode=False)
+            assert res.success is False
+            assert "not allowed" in str(res.output.get("error")).lower()
+        finally:
+            await repl.cleanup()
+
+    async def test_developer_optin_enables_unrestricted(self):
+        repl = PythonREPL(timeout=10, allow_unrestricted=True)
+        await repl.initialize()
+        try:
+            res = await repl.execute(code="import os\nos.getpid()", restricted_mode=False)
+            assert res.success
+            # restricted_mode=True is still honored even when opted in.
+            blocked = await repl.execute(code="import os", restricted_mode=True)
+            assert blocked.success is False
+        finally:
+            await repl.cleanup()
+
+    async def test_env_optin_enables_unrestricted(self, monkeypatch):
+        monkeypatch.setenv("EFFGEN_REPL_ALLOW_UNRESTRICTED", "1")
+        repl = PythonREPL(timeout=10)
+        await repl.initialize()
+        try:
+            res = await repl.execute(code="import os\nos.getpid()", restricted_mode=False)
+            assert res.success
+        finally:
+            await repl.cleanup()
+
+
+# --------------------------------------------------------------------------- #
+# BashTool — secret env-strip is exhaustive; secret files are refused          #
+# --------------------------------------------------------------------------- #
+class TestBashSecretProtection:
+    def test_every_provider_key_is_stripped(self, monkeypatch):
+        from effgen.tools.builtin.bash_tool import BashTool
+
+        keys = [
+            "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
+            "GROQ_API_KEY", "CEREBRAS_API_KEY", "TOGETHER_API_KEY",
+            "FIREWORKS_API_KEY", "REPLICATE_API_TOKEN", "HF_TOKEN",
+        ]
+        for k in keys:
+            monkeypatch.setenv(k, "DUMMY-secret-value-0123456789")
+        # A provider added later (generic-pattern coverage, not in any list).
+        monkeypatch.setenv("FUTUREPROVIDER_API_KEY", "DUMMY-secret-0123456789")
+        monkeypatch.setenv("MY_DB_PASSWORD", "DUMMY-pw")
+        safe = BashTool()._get_safe_env()
+        for k in keys + ["FUTUREPROVIDER_API_KEY", "MY_DB_PASSWORD"]:
+            assert k not in safe, f"{k} leaked into bash env"
+        # Non-secret vars survive.
+        monkeypatch.setenv("PATH_OK_VAR", "value")
+        assert "PATH_OK_VAR" in BashTool()._get_safe_env()
+
+    def test_secret_files_are_refused(self):
+        from effgen.tools.builtin.bash_tool import BashTool
+
+        bt = BashTool()
+        for cmd in [
+            "cat .env", "cat ./.env", "head .env.local",
+            "cat ~/.ssh/id_rsa", "cat ~/.aws/credentials",
+            "cat /home/u/id_ed25519", "cat ~/.netrc",
+        ]:
+            safe, _ = bt._is_command_safe(cmd)
+            assert safe is False, f"{cmd!r} should be refused"
+        # Ordinary commands still allowed.
+        for cmd in ["ls -la", "echo hi", "cat README.md", "wc -l setup.py"]:
+            safe, _ = bt._is_command_safe(cmd)
+            assert safe is True, f"{cmd!r} should be allowed"
+
+    async def test_cat_dotenv_blocked_at_execute(self):
+        from effgen.tools.builtin.bash_tool import BashTool
+
+        bt = BashTool()
+        res = await bt.execute(command="cat .env")
+        assert res.success is False
+
+    def test_bash_description_is_honest_and_not_in_general(self):
+        from effgen.presets.registry import PRESETS
+        from effgen.tools.builtin.bash_tool import BashTool
+
+        desc = BashTool().description.lower()
+        assert "not a sandbox" in desc
+        assert "safely" not in desc
+        assert "bash" not in PRESETS["general"].tool_names
+        assert "bash" in PRESETS["coding"].tool_names

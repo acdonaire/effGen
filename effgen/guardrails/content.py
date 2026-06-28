@@ -78,8 +78,27 @@ class PIIGuardrail(Guardrail):
     """Detect personally identifiable information using regex patterns.
 
     Covers: US SSN, email addresses, phone numbers (US and international),
-    credit card numbers (with Luhn validation), and IP addresses.
+    credit card numbers (with Luhn validation), IP addresses, and — when
+    ``detect_secrets`` is enabled (default) — common API keys / cloud
+    credentials (AWS access keys, ``sk-``/``gsk_`` style API keys, Google API
+    keys, GitHub/Slack tokens, bearer tokens, and PEM private-key headers), so a
+    leaked credential is treated as sensitive and not just classic PII.
     """
+
+    # Common credential / API-key shapes. High-precision prefixes keep these from
+    # firing on ordinary prose. Each pattern matches the whole token so redaction
+    # removes the full secret.
+    _SECRET_PATTERNS: list[re.Pattern[str]] = [
+        re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA)[0-9A-Z]{16}\b"),  # AWS access key id
+        re.compile(r"\b(?:sk|gsk|rk|pk)-[A-Za-z0-9]{20,}\b"),                   # OpenAI/Groq-style API keys
+        re.compile(r"\b(?:gsk|sk)_[A-Za-z0-9]{20,}\b"),                         # underscore-style keys
+        re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),                              # Google API key
+        re.compile(r"\bghp_[A-Za-z0-9]{36,}\b"),                                # GitHub personal token
+        re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}\b"),                        # GitHub fine-grained token
+        re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),                        # Slack token
+        re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{20,}\b"),                       # bearer token
+        re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),                   # PEM private key
+    ]
 
     # US Social Security Number: XXX-XX-XXXX
     _SSN_PATTERN = re.compile(
@@ -142,6 +161,7 @@ class PIIGuardrail(Guardrail):
         detect_phone: bool = True,
         detect_credit_card: bool = True,
         detect_ip: bool = True,
+        detect_secrets: bool = True,
         action: str = "block",  # "block" or "redact"
         positions: list[GuardrailPosition] | None = None,
         enabled: bool = True,
@@ -160,6 +180,7 @@ class PIIGuardrail(Guardrail):
         self.detect_phone = detect_phone
         self.detect_credit_card = detect_credit_card
         self.detect_ip = detect_ip
+        self.detect_secrets = detect_secrets
         self.action = action
 
     @staticmethod
@@ -219,6 +240,15 @@ class PIIGuardrail(Guardrail):
             redacted = self._IPV4_PATTERN.sub(_ip_repl, redacted)
             if found_ip:
                 detections.append("IP_address")
+
+        if self.detect_secrets:
+            found_secret = False
+            for pattern in self._SECRET_PATTERNS:
+                if pattern.search(redacted):
+                    found_secret = True
+                    redacted = pattern.sub("[SECRET REDACTED]", redacted)
+            if found_secret:
+                detections.append("secret")
 
         if not detections:
             return GuardrailResult(passed=True)

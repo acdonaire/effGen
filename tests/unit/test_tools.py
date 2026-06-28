@@ -153,3 +153,28 @@ class TestToolMetadata:
         )
         valid, error = spec.validate(None)
         assert valid is True
+
+    def test_model_facing_false_hidden_from_schema(self):
+        from effgen.tools.base_tool import ToolCategory, ToolMetadata
+
+        meta = ToolMetadata(
+            name="t",
+            description="d",
+            category=ToolCategory.COMPUTATION,
+            parameters=[
+                ParameterSpec(name="code", type=ParameterType.STRING, description="c", required=True),
+                ParameterSpec(
+                    name="unsafe_toggle",
+                    type=ParameterType.BOOLEAN,
+                    description="developer-only",
+                    model_facing=False,
+                ),
+            ],
+        )
+        props = meta.to_json_schema()["parameters"]["properties"]
+        assert "code" in props
+        # The non-model-facing toggle must not appear in the model schema.
+        assert "unsafe_toggle" not in props
+        # ...but it is still part of the tool's real parameter list.
+        assert {p.name for p in meta.parameters} == {"code", "unsafe_toggle"}
+        assert [p.name for p in meta.model_facing_parameters] == ["code"]

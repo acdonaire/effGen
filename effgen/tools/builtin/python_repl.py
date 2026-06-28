@@ -145,6 +145,7 @@ class PythonREPL(BaseTool):
         timeout: int = DEFAULT_TIMEOUT,
         max_output: int = DEFAULT_MAX_OUTPUT,
         max_memory_mb: int | None = DEFAULT_MAX_MEMORY_MB,
+        allow_unrestricted: bool = False,
     ):
         """Initialize the Python REPL.
 
@@ -153,6 +154,13 @@ class PythonREPL(BaseTool):
             max_output: Maximum captured stdout/stderr bytes per execution.
             max_memory_mb: Per-worker address-space cap in MiB (``None`` disables
                 the RLIMIT_AS limit; the timeout kill still applies).
+            allow_unrestricted: Developer opt-in that lets a per-call
+                ``restricted_mode=False`` actually drop the sandbox. Off by
+                default: the sandbox toggle is never reachable by the model, so a
+                model-supplied ``restricted_mode=False`` is ignored and execution
+                stays restricted. Can also be enabled out-of-band by setting the
+                ``EFFGEN_REPL_ALLOW_UNRESTRICTED`` environment variable to a
+                truthy value (``1``/``true``/``yes``/``on``).
         """
         super().__init__(
             metadata=ToolMetadata(
@@ -194,6 +202,11 @@ class PythonREPL(BaseTool):
                         description="Whether to use restricted builtins (safer but limited)",
                         required=False,
                         default=True,
+                        # Developer-controlled sandbox toggle — never exposed to
+                        # the model. A model-supplied restricted_mode=False is
+                        # ignored unless the developer set allow_unrestricted=True
+                        # at construction (or EFFGEN_REPL_ALLOW_UNRESTRICTED=1).
+                        model_facing=False,
                     ),
                 ],
                 returns={
@@ -232,6 +245,10 @@ class PythonREPL(BaseTool):
         self._max_output = int(max_output)
         self._max_memory_bytes = (
             int(max_memory_mb) * 1024 * 1024 if max_memory_mb else None
+        )
+        env_optin = os.environ.get("EFFGEN_REPL_ALLOW_UNRESTRICTED", "").strip().lower()
+        self._allow_unrestricted = bool(allow_unrestricted) or env_optin in (
+            "1", "true", "yes", "on",
         )
         self._allowed_imports = self.DEFAULT_ALLOWED_IMPORTS.copy()
         # session_id -> _Worker (live worker subprocess holding the namespace)
@@ -505,6 +522,14 @@ class PythonREPL(BaseTool):
         Returns:
             Dict containing result, stdout, stderr, error, and optionally variables
         """
+        # The sandbox toggle is developer-controlled, never model-controlled.
+        # Unless the developer explicitly opted into unrestricted execution at
+        # construction (allow_unrestricted=True / EFFGEN_REPL_ALLOW_UNRESTRICTED),
+        # any restricted_mode=False — including one a prompt-injected model emits —
+        # is ignored and execution stays sandboxed. Fail-closed by default.
+        if not self._allow_unrestricted:
+            restricted_mode = True
+
         # Check imports and security in restricted mode (cheap parent-side
         # gate that rejects obvious escapes before any subprocess work).
         if restricted_mode:

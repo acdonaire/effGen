@@ -91,6 +91,11 @@ class ParameterSpec:
     max_length: int | None = None
     pattern: str | None = None
     items_type: ParameterType | None = None  # For arrays
+    # When False, the parameter is hidden from the model-facing tool schema
+    # (``to_json_schema`` / ReAct prompt listings) so a model can never emit it,
+    # while developer code may still pass it explicitly to ``execute()``. Use for
+    # safety toggles that must stay under developer control (never LLM control).
+    model_facing: bool = True
 
     def validate(self, value: Any) -> tuple[bool, str | None]:
         """
@@ -169,6 +174,16 @@ class ToolMetadata:
     examples: list[dict[str, Any]] = field(default_factory=list)
     requires_approval: bool = False
 
+    @property
+    def model_facing_parameters(self) -> list[ParameterSpec]:
+        """Parameters exposed to the model (those with ``model_facing=True``).
+
+        Safety toggles marked ``model_facing=False`` are excluded so a model can
+        never set them via tool-calling; developer code may still pass them to
+        ``execute()`` directly.
+        """
+        return [p for p in self.parameters if getattr(p, "model_facing", True)]
+
     def to_dict(self) -> dict[str, Any]:
         """Convert metadata to dictionary format."""
         return {
@@ -220,7 +235,9 @@ class ToolMetadata:
         properties = {}
         required = []
 
-        for param in self.parameters:
+        # Only advertise model-facing parameters: safety toggles flagged
+        # model_facing=False must never appear in the schema a model sees.
+        for param in self.model_facing_parameters:
             json_type = _TYPE_MAP.get(param.type.value)
             prop: dict[str, Any] = {"description": param.description}
             if json_type is not None:

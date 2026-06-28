@@ -1557,7 +1557,9 @@ class CLIInterface:
             ParameterType.ANY: "example",
         }
         example: dict = {}
-        for p in metadata.parameters:
+        # Mirror the printed schema (to_json_schema), which excludes developer-only
+        # toggles, so the copy-paste example never references a hidden parameter.
+        for p in metadata.model_facing_parameters:
             if p.required or p.default is not None:
                 if p.enum:
                     example[p.name] = p.enum[0]

@@ -86,7 +86,25 @@ DANGEROUS_PATTERNS = [
     r">\(.*\)",  # process substitution output >(cmd)
 ]
 
-# Sensitive environment variables to strip
+# Common secret/credential files. Commands that reference these are refused so a
+# shell command cannot read what the environment strip protects (the env-strip
+# would be pointless if `cat .env` still worked). This is defense-in-depth, not a
+# sandbox: a shell tool runs with the user's full privileges by design.
+SECRET_FILE_PATTERNS = [
+    re.compile(r"(?:^|[\s/'\"=:])\.env(?:\.[\w.-]+)?(?:$|[\s'\"/:])", re.I),  # .env / .env.local
+    re.compile(r"\.aws/credentials", re.I),
+    re.compile(r"\.ssh/", re.I),
+    re.compile(r"\bid_(?:rsa|dsa|ecdsa|ed25519)\b", re.I),
+    re.compile(r"\.netrc\b", re.I),
+    re.compile(r"\.pgpass\b", re.I),
+    re.compile(r"\.kube/config\b", re.I),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+]
+
+# Sensitive environment variables to strip. This explicit list is a floor; the
+# generic name-pattern check in ``_is_sensitive_env_name`` strips anything that
+# *looks* like a credential too, so providers added later are covered without
+# editing this set.
 SENSITIVE_ENV_VARS = {
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
@@ -94,6 +112,11 @@ SENSITIVE_ENV_VARS = {
     "ANTHROPIC_API_KEY",
     "GOOGLE_API_KEY",
     "SERPAPI_API_KEY",
+    "GROQ_API_KEY",
+    "CEREBRAS_API_KEY",
+    "TOGETHER_API_KEY",
+    "FIREWORKS_API_KEY",
+    "REPLICATE_API_TOKEN",
     "HF_TOKEN",
     "HUGGING_FACE_HUB_TOKEN",
     "GITHUB_TOKEN",
@@ -104,6 +127,38 @@ SENSITIVE_ENV_VARS = {
     "PRIVATE_KEY",
     "SSH_PRIVATE_KEY",
 }
+
+# Generic credential-name patterns: any env var whose name ends with one of these
+# suffixes, or contains one of these substrings, is treated as a secret and
+# stripped from the shell environment — so a newly added provider key
+# (``*_API_KEY`` / ``*_API_TOKEN`` / ``*SECRET*`` …) is covered automatically,
+# never silently leaked because the explicit list drifted.
+_SECRET_NAME_SUFFIXES = (
+    "_API_KEY",
+    "_API_TOKEN",
+    "_API_SECRET",
+    "_ACCESS_KEY",
+    "_ACCESS_TOKEN",
+    "_SECRET_KEY",
+    "_AUTH_TOKEN",
+    "_SECRET",
+    "_TOKEN",
+)
+_SECRET_NAME_SUBSTRINGS = (
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "PRIVATE_KEY",
+    "API_KEY",
+)
+
+
+def _is_sensitive_env_name(name: str) -> bool:
+    """True if an env var name looks like a credential and must not be exposed."""
+    upper = name.upper()
+    if upper.endswith(_SECRET_NAME_SUFFIXES):
+        return True
+    return any(sub in upper for sub in _SECRET_NAME_SUBSTRINGS)
 
 
 class BashTool(BaseTool):
@@ -159,9 +214,12 @@ class BashTool(BaseTool):
             metadata=ToolMetadata(
                 name="bash",
                 description=(
-                    "Execute shell commands safely. Use this to run system commands, "
-                    "list files, check system info, process text with command-line tools, "
-                    "and perform other shell operations."
+                    "Run a shell command with the calling user's full privileges. "
+                    "This is NOT a sandbox — do not enable it for untrusted input. "
+                    "Dangerous commands and reads of common secret files (.env, "
+                    "~/.ssh, ~/.aws/credentials) are refused, but a shell can still "
+                    "touch anything the user can. Use it for system commands, listing "
+                    "files, checking system info, and processing text with CLI tools."
                 ),
                 category=ToolCategory.SYSTEM,
                 parameters=[
@@ -239,6 +297,15 @@ class BashTool(BaseTool):
             if cmd_stripped == blocked or cmd_stripped.startswith(blocked + " "):
                 return False, f"Command blocked: '{blocked}' is in the blocked commands list"
 
+        # Refuse commands that reference common secret files, so the env-strip
+        # can't be sidestepped by reading credentials off disk instead.
+        for pattern in SECRET_FILE_PATTERNS:
+            if pattern.search(command):
+                return False, (
+                    "Command blocked: references a sensitive credential file "
+                    "(.env, ~/.ssh, ~/.aws/credentials, private keys)"
+                )
+
         # Check dangerous patterns
         for pattern in DANGEROUS_PATTERNS:
             if re.search(pattern, cmd_stripped):
@@ -268,10 +335,17 @@ class BashTool(BaseTool):
         return True, ""
 
     def _get_safe_env(self) -> dict[str, str]:
-        """Get environment with sensitive variables stripped."""
+        """Get environment with sensitive variables stripped.
+
+        Strips the explicit ``strip_env_vars`` set *and* any variable whose name
+        matches the generic credential-name patterns, so provider keys added
+        later (or custom ``*_API_KEY`` / ``*SECRET*`` vars) are never leaked to a
+        shell command just because the explicit list didn't list them.
+        """
         env = os.environ.copy()
-        for var in self.strip_env_vars:
-            env.pop(var, None)
+        for var in list(env):
+            if var in self.strip_env_vars or _is_sensitive_env_name(var):
+                env.pop(var, None)
         return env
 
     @staticmethod

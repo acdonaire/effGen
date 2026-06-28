@@ -107,9 +107,10 @@ _CODING_PRESET = PresetConfig(
 _GENERAL_PRESET = PresetConfig(
     name="general",
     description=(
-        "General-purpose agent with all available built-in tools, including QR, OCR, "
+        "General-purpose agent with a broad set of built-in tools, including QR, OCR, "
         "audio transcription, image analysis, document parsing (PDF, DOCX, Excel), "
-        "weather/geo, email (SMTP/IMAP), Slack, and Discord webhooks."
+        "weather/geo, email (SMTP/IMAP), Slack, and Discord webhooks. The unsandboxed "
+        "shell (bash) is opt-in via the 'coding' preset, not bundled here."
     ),
     tool_names=[
         "calculator",
@@ -117,7 +118,6 @@ _GENERAL_PRESET = PresetConfig(
         "web_search",
         "code_executor",
         "file_operations",
-        "bash",
         "json_tool",
         "datetime_tool",
         "text_processing",
@@ -539,8 +539,9 @@ def create_agent(
     Args:
         preset: Preset name. Available: {PRESET_LIST}.
             New to effGen? Start with ``math`` or ``minimal`` (small, fast);
-            ``general`` is the "kitchen sink" with every tool. See
-            ``list_presets()`` for descriptions.
+            ``general`` is the broad "kitchen sink" of tools (the unsandboxed
+            shell lives in ``coding``, not here). See ``list_presets()`` for
+            descriptions.
         model: A loaded model instance or a model identifier string. If omitted,
             ``EFFGEN_DEFAULT_MODEL`` is used when set, otherwise a clear error
             tells you how to pick one (effGen never silently picks a paid model).
