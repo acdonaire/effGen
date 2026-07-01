@@ -225,6 +225,7 @@ class TestDocumentIngester:
         # also covers unsupported file extensions.
         pytest.importorskip("pypdf")
         pytest.importorskip("PIL")
+        pytest.importorskip("reportlab")
         from PIL import Image
         from reportlab.lib.pagesizes import letter
         from reportlab.pdfgen import canvas
