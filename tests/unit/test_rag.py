@@ -218,6 +218,34 @@ class TestDocumentIngester:
         assert "broken.pdf" in skipped_path
         assert reason  # a non-empty explanation
 
+    def test_image_only_pdf_skip_reason_names_scanned_pdf(self, tmp_path: Path):
+        # A valid PDF whose pages are images with no text layer (a scanned
+        # document) parses fine but yields zero text. The skip reason must
+        # name that specific, common case rather than a generic message that
+        # also covers unsupported file extensions.
+        pytest.importorskip("pypdf")
+        pytest.importorskip("PIL")
+        from PIL import Image
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        img_path = tmp_path / "page.png"
+        Image.new("RGB", (200, 100), color="white").save(img_path)
+
+        pdf_path = tmp_path / "scanned.pdf"
+        c = canvas.Canvas(str(pdf_path), pagesize=letter)
+        c.drawImage(str(img_path), 72, 600, width=200, height=100)
+        c.save()
+
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(pdf_path)
+        assert chunks == []
+        assert len(ingester.last_skipped) == 1
+        skipped_path, reason = ingester.last_skipped[0]
+        assert "scanned.pdf" in skipped_path
+        assert "scanned" in reason.lower() or "image-only" in reason.lower()
+        assert "OCR" in reason
+
 
 # ---------------------------------------------------------------------------
 # Chunkers

@@ -136,6 +136,10 @@ class ModelLoader:
         "gemini-2", "gemini-3",
     ]
 
+    # Local-engine prefixes recognized in an "engine:model_id" string, mirroring
+    # the cloud "provider:model_id" syntax (e.g. "transformers:Qwen/Qwen2.5-7B-Instruct").
+    _LOCAL_ENGINE_PREFIXES = frozenset({"transformers", "vllm", "gguf", "mlx"})
+
     def __init__(
         self,
         cache_dir: str | None = None,
@@ -222,6 +226,23 @@ class ModelLoader:
                     model_name = _rest
             except Exception:
                 logger.debug("Provider-prefix registry lookup failed", exc_info=True)
+
+        # Support "engine:model_id" prefix syntax for local engines, mirroring
+        # the cloud "provider:model_id" syntax above (e.g.
+        # "transformers:Qwen/Qwen2.5-7B-Instruct"). Without this, the whole
+        # string is passed to the HuggingFace repo-id validator, which rejects
+        # the colon with a cryptic HFValidationError instead of running the
+        # model locally with the requested engine.
+        if (
+            provider is None
+            and isinstance(model_name, str)
+            and ":" in model_name
+        ):
+            _eng_prefix, _eng_rest = model_name.split(":", 1)
+            if _eng_prefix in self._LOCAL_ENGINE_PREFIXES and _eng_rest:
+                if self.force_engine is None:
+                    self.force_engine = _eng_prefix
+                model_name = _eng_rest
 
         # Route / disambiguate bare cloud model ids by consulting the model
         # catalog directly.  Without this, a documented

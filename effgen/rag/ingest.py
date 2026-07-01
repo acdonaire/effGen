@@ -428,9 +428,17 @@ class DocumentIngester:
                 file_chunks = self._ingest_file(path)
                 if file_chunks:
                     chunks.extend(file_chunks)
+                elif path.suffix.lower() == ".pdf":
+                    # A PDF loads but yields no text most often because it is
+                    # a scanned/image-only PDF: the pages are images with no
+                    # text layer, and ingestion does not run OCR on them.
+                    self.last_skipped.append((
+                        str(path),
+                        "PDF has no extractable text layer (likely a scanned "
+                        "or image-only PDF); OCR is not applied during ingestion",
+                    ))
                 else:
-                    # Loaded but produced nothing (e.g. unsupported extension or
-                    # an empty/scanned PDF with no extractable text).
+                    # Loaded but produced nothing (e.g. an unsupported extension).
                     self.last_skipped.append(
                         (str(path), "no extractable text or unsupported file type")
                     )

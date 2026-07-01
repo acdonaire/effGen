@@ -1098,6 +1098,12 @@ class OpenAIAdapter(FunctionCallingModel):
             "tools": tools_list,
             "max_output_tokens": max_tokens,
         }
+        if any(spec.get("type", "").startswith("web_search") for spec in tools_list):
+            # Ask for the URLs a web search actually returned, not just the
+            # ones the model chose to cite inline: a search can run and
+            # inform the answer without the model emitting a url_citation
+            # annotation, and grounding should not depend on that choice.
+            params["include"] = ["web_search_call.action.sources"]
         if previous_response_id:
             params["previous_response_id"] = previous_response_id
         if self._supports_sampling_params:
@@ -1115,9 +1121,13 @@ class OpenAIAdapter(FunctionCallingModel):
         # Extract the output text from the response
         output_text = ""
         tool_call_results: list[dict[str, Any]] = []
-        # Grounded source URLs the model actually cited (web_search url_citation
-        # annotations). Surfaced uniformly as ``grounding_chunks`` so the Agent
-        # can fill AgentResponse.sources / .citations from real provider data.
+        # Grounded source URLs from the web_search tool. Two kinds land here,
+        # both as ``grounding_chunks`` so the Agent can fill AgentResponse
+        # .sources / .citations from real provider data: URLs the model cited
+        # inline (url_citation annotations, the default cited entries) and URLs
+        # a search returned but the model never referenced (action.sources,
+        # marked ``cited: False`` so they widen .sources without becoming a
+        # .citations entry).
         grounding_chunks: list[dict[str, Any]] = []
 
         for item in response.output:
@@ -1138,7 +1148,26 @@ class OpenAIAdapter(FunctionCallingModel):
                             "title": getattr(ann, "title", None),
                         })
             elif item_type == "web_search_call":
-                tool_call_results.append({"type": "web_search_call", "id": getattr(item, "id", "")})
+                action = getattr(item, "action", None)
+                query = getattr(action, "query", None) if action else None
+                tool_call_results.append({
+                    "type": "web_search_call",
+                    "id": getattr(item, "id", ""),
+                    "query": query,
+                })
+                # A search action carries every URL it returned in
+                # action.sources, independent of which (if any) the model
+                # goes on to cite inline. Fold those in as recall-oriented
+                # grounding: they widen response.sources so a search that
+                # ran is never silently unsourced, but they are marked
+                # "cited": False so they never manufacture a Citation the
+                # model did not actually make (url_citation annotations
+                # above remain the only source of response.citations).
+                for src in getattr(action, "sources", None) or []:
+                    url = getattr(src, "url", None)
+                    if not url:
+                        continue
+                    grounding_chunks.append({"url": url, "cited": False})
             elif item_type == "code_interpreter_call":
                 outputs = []
                 for out in getattr(item, "outputs", []) or []:

@@ -281,6 +281,42 @@ class TestRagKnowledgeBase:
         with pytest.raises(ValueError, match="Skipped:.*broken.pdf"):
             create_agent("rag", self._mock_model(), knowledge_base=str(bad))
 
+    def test_partial_ingestion_warns_about_skipped_file(self, tmp_path):
+        """A good file plus a corrupt one must still index the good file, but
+        the skip must not be silent — a caller querying an incomplete corpus
+        needs to know before it gets a confidently incomplete answer."""
+        pytest.importorskip("pypdf")
+        import asyncio
+
+        good = tmp_path / "facts.txt"
+        good.write_text("Mercury is the closest planet to the Sun.", encoding="utf-8")
+        bad = tmp_path / "broken.pdf"
+        bad.write_text("not a real pdf")
+
+        with pytest.warns(RuntimeWarning, match="1 file.*skipped.*broken.pdf"):
+            agent = create_agent(
+                "rag", self._mock_model(), knowledge_base=[str(good), str(bad)]
+            )
+
+        rt = self._retrieval_tool(agent)
+        res = asyncio.run(
+            rt.execute(operation="search", query="closest planet to the Sun", top_k=1)
+        )
+        assert res.success
+        results = res.output["results"] if isinstance(res.output, dict) else []
+        assert any("Mercury" in r["content"] for r in results)
+
+    def test_full_ingestion_success_emits_no_warning(self, tmp_path):
+        """No files skipped -> no warning noise on the common happy path."""
+        import warnings as _warnings
+
+        good = tmp_path / "facts.txt"
+        good.write_text("Mercury is the closest planet to the Sun.", encoding="utf-8")
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", RuntimeWarning)
+            create_agent("rag", self._mock_model(), knowledge_base=str(good))
+
     def test_empty_knowledge_base_fails_loud(self):
         """Blank entries must raise, never silently build an empty index."""
         with pytest.raises(ValueError, match="0 documents"):

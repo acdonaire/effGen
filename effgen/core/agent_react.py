@@ -1130,6 +1130,8 @@ class AgentReActMixin:
                 or meta.get("file_path")
                 or meta.get("file")
                 or meta.get("title")
+                or meta.get("doc")
+                or meta.get("name")
                 or item.get("source")
                 or item.get("url")
                 or item.get("title")
@@ -1160,9 +1162,15 @@ class AgentReActMixin:
 
         Two evidence sources are merged: passages mined from local retrieval/
         search tools (``_collected_citations``), and grounded URLs a provider
-        cited natively (``metadata["grounding_chunks"]`` — OpenAI web_search
+        surfaced natively (``metadata["grounding_chunks"]`` — OpenAI web_search
         ``url_citation`` annotations and Gemini search grounding). Only real,
         retrieved URLs land here — never URLs scraped from the model's prose.
+
+        A grounding chunk may carry ``"cited": False`` to mark a URL a search
+        returned but the model never referenced inline (e.g. OpenAI
+        ``web_search_call`` action sources). Those widen ``response.sources``
+        so a search that ran is never left unsourced, but they never
+        manufacture a ``Citation`` entry the model did not actually make.
         """
         raw = list(getattr(self, "_collected_citations", None) or [])
         # Fold provider-native grounding chunks ({url, title}) into the same
@@ -1181,6 +1189,7 @@ class AgentReActMixin:
                 "quote": str(chunk.get("title") or chunk.get("snippet") or "").strip(),
                 "page": None,
                 "section": None,
+                "cited": chunk.get("cited", True),
             })
         if not raw:
             return
@@ -1192,19 +1201,19 @@ class AgentReActMixin:
         sources: list[str] = []
         seen_sources: set[str] = set()
         for entry in raw:
-            key = (entry["source"], entry["chunk_id"], entry["quote"][:80])
-            if key in seen:
-                continue
-            seen.add(key)
-            citations.append(Citation(
-                index=len(citations) + 1,
-                source=entry["source"],
-                chunk_id=entry["chunk_id"],
-                relevance_score=entry["score"],
-                quote=entry["quote"],
-                page=entry["page"],
-                section=entry["section"],
-            ))
+            if entry.get("cited", True):
+                key = (entry["source"], entry["chunk_id"], entry["quote"][:80])
+                if key not in seen:
+                    seen.add(key)
+                    citations.append(Citation(
+                        index=len(citations) + 1,
+                        source=entry["source"],
+                        chunk_id=entry["chunk_id"],
+                        relevance_score=entry["score"],
+                        quote=entry["quote"],
+                        page=entry["page"],
+                        section=entry["section"],
+                    ))
             if entry["source"] not in seen_sources:
                 seen_sources.add(entry["source"])
                 sources.append(entry["source"])

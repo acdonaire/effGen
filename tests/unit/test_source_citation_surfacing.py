@@ -15,6 +15,7 @@ suite. Here we pin the conversions that previously left both fields empty:
 from effgen.core.agent import AgentResponse
 from effgen.presets import create_agent
 from effgen.tools.base_tool import ToolResult
+from effgen.tools.builtin.retrieval import Retrieval
 from effgen.tools.builtin.url_fetch import URLFetchTool
 from effgen.tools.builtin.web_search import WebSearch
 from tests.fixtures.mock_models import MockModel
@@ -79,6 +80,37 @@ class TestCollectFromToolResults:
         assert resp.sources == []
         assert resp.citations == []
 
+    def test_vector_store_metadata_doc_and_name_fall_back_before_opaque_id(self):
+        # A VectorMemoryStore entry has no natural path/URL; its metadata may
+        # use "doc" or "name" instead of "source"/"title" — both must resolve
+        # to a human-readable citation rather than the internal mem_* id.
+        agent = _agent()
+        agent._collected_citations = []
+        tool = Retrieval()
+        result = ToolResult(
+            success=True,
+            output={
+                "results": [
+                    {
+                        "id": "mem_1700000000000_0",
+                        "content": "The Zephyr-9 turbine outputs 4.2 MW.",
+                        "score": 0.9,
+                        "metadata": {"doc": "zephyr_manual.pdf"},
+                    },
+                    {
+                        "id": "mem_1700000000000_1",
+                        "content": "Maintenance is every 6000 hours.",
+                        "score": 0.5,
+                        "metadata": {"name": "zephyr_manual_v2.pdf"},
+                    },
+                ]
+            },
+        )
+        agent._collect_citations(tool, "retrieval", result)
+        resp = AgentResponse(output="answer")
+        agent._attach_citations(resp)
+        assert resp.sources == ["zephyr_manual.pdf", "zephyr_manual_v2.pdf"]
+
     def test_dedup_across_calls(self):
         agent = _agent()
         agent._collected_citations = []
@@ -130,4 +162,44 @@ class TestNativeGroundingMetadata:
         resp = AgentResponse(output="answer")
         agent._attach_citations(resp)
         assert resp.sources == []
+        assert resp.citations == []
+
+    def test_uncited_grounding_chunk_fills_sources_not_citations(self):
+        # A web search can return URLs the model never references inline
+        # (OpenAI web_search_call action.sources). Those widen `.sources`
+        # so a search that ran is never silently unsourced, but they must
+        # not manufacture a Citation the model did not actually make.
+        agent = _agent()
+        agent._collected_citations = []
+        resp = AgentResponse(
+            output="answer",
+            metadata={
+                "grounding_chunks": [
+                    {"url": "https://news.example/cited", "title": "Cited story"},
+                    {"url": "https://news.example/searched-only", "cited": False},
+                ]
+            },
+        )
+        agent._attach_citations(resp)
+        assert resp.sources == [
+            "https://news.example/cited",
+            "https://news.example/searched-only",
+        ]
+        assert len(resp.citations) == 1
+        assert resp.citations[0].source == "https://news.example/cited"
+
+    def test_all_uncited_chunks_fill_sources_only(self):
+        agent = _agent()
+        agent._collected_citations = []
+        resp = AgentResponse(
+            output="answer",
+            metadata={
+                "grounding_chunks": [
+                    {"url": "https://news.example/a", "cited": False},
+                    {"url": "https://news.example/b", "cited": False},
+                ]
+            },
+        )
+        agent._attach_citations(resp)
+        assert resp.sources == ["https://news.example/a", "https://news.example/b"]
         assert resp.citations == []

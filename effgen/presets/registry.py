@@ -5,6 +5,7 @@ Preset registry — defines agent presets and the create_agent factory.
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -556,11 +557,23 @@ def _ingest_rag_knowledge_base(
         tools.append(retrieval_tool)
 
     retrieval_tool.add_documents(docs, chunk=False)
+    if skipped:
+        # A partial ingestion still needs to name what it left out — a caller
+        # querying an incomplete corpus should know before it gets a
+        # confidently incomplete answer.
+        details = "; ".join(f"{p} — {why}" for p, why in skipped)
+        warnings.warn(
+            f"knowledge_base: {len(skipped)} file(s) were skipped and are "
+            f"not in the index: {details}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     logger.info(
-        "RAG preset: indexed %d document(s) from %d path(s) + %d inline + "
-        "%d vector-store document(s)",
+        "RAG preset: indexed %d document(s) from %d path(s) (%d skipped) + "
+        "%d inline + %d vector-store document(s)",
         len(docs),
         n_files,
+        len(skipped),
         n_inline,
         n_store_docs,
     )
@@ -595,7 +608,12 @@ def create_agent(
             ``tool_names`` (resolved through the tool registry) and ``guardrails``
             are wired into the agent. Use this *or* ``preset``. The equivalent
             ``Domain.to_agent(model, ...)`` is a thin wrapper over this.
-        model: A loaded model instance or a model identifier string. If omitted,
+        model: A loaded model instance or a model identifier string. A cloud
+            model may use a ``"provider:model_id"`` prefix (``"openai:gpt-5-nano"``);
+            a local model may use an ``"engine:model_id"`` prefix
+            (``"transformers:Qwen/Qwen2.5-7B-Instruct"``, or ``vllm:``/``gguf:``/
+            ``mlx:``) to pick the local engine explicitly, mirroring
+            :func:`~effgen.models.load_model`'s ``engine=`` parameter. If omitted,
             ``EFFGEN_DEFAULT_MODEL`` is used when set, otherwise a clear error
             tells you how to pick one (effGen never silently picks a paid model).
         agent_name: Optional override for the agent name (the keyword ``name``
@@ -613,9 +631,17 @@ def create_agent(
             :class:`~effgen.memory.vector_store.VectorMemoryStore` whose stored
             entries are folded into the retrieval index (so a knowledge base you
             built and persisted with the ``memory`` subsystem connects straight
-            to a RAG agent). Raises ``ValueError`` if the sources yield zero
+            to a RAG agent). A ``VectorMemoryStore`` entry has no file path or
+            URL of its own, so a citation to it falls back to whichever of
+            ``source``, ``url``, ``title``, ``doc``, or ``name`` is present on
+            the entry's ``metadata`` (in that order); set one of those keys
+            when you add an entry to get a human-readable citation instead of
+            the entry's internal id. Raises ``ValueError`` if the sources yield zero
             documents, so a typo'd path or empty text fails loudly rather than
-            producing a silent empty-index agent.
+            producing a silent empty-index agent. If some sources ingest and
+            others don't (e.g. a corrupt or unreadable file alongside good
+            ones), a ``RuntimeWarning`` names each skipped source and why,
+            so the agent is never queried against a silently partial corpus.
         system_prompt: Override the preset's (or domain's) system prompt.
         max_iterations: Override max iterations.
         temperature: Override temperature.
