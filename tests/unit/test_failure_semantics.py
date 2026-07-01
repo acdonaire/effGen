@@ -17,7 +17,9 @@ behavior, which the project forbids.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import inspect
 
 import pytest
 
@@ -37,11 +39,15 @@ from effgen.models.errors import (
 class _FakeModel(BaseModel):
     """Minimal in-process model: either returns fixed text or raises `exc`."""
 
-    def __init__(self, *, text: str = "", exc: Exception | None = None, provider: str = "fake"):
+    def __init__(
+        self, *, text: str = "", exc: Exception | None = None, provider: str = "fake",
+        usage_metadata: dict | None = None,
+    ):
         super().__init__(model_name="fake-model", model_type=ModelType.OPENAI)
         self._text = text
         self._exc = exc
         self._provider = provider
+        self._usage_metadata = usage_metadata or {}
         self.calls = 0
 
     def load(self) -> None:  # pragma: no cover - trivial
@@ -52,7 +58,8 @@ class _FakeModel(BaseModel):
         if self._exc is not None:
             raise self._exc
         return GenerationResult(
-            text=self._text, tokens_used=3, finish_reason="stop", model_name=self.model_name, metadata={}
+            text=self._text, tokens_used=3, finish_reason="stop", model_name=self.model_name,
+            metadata=dict(self._usage_metadata),
         )
 
     def generate_stream(self, prompt, config=None, **kwargs):  # pragma: no cover
@@ -182,6 +189,66 @@ def test_success_reason_final_answer():
     assert r.metadata["reason"] == "final_answer"
 
 
+@pytest.mark.parametrize("task", ["", "   ", "\n\t "])
+def test_empty_task_rejected_without_model_call(task):
+    m = _FakeModel(text="should never be reached")
+    r = _agent(m).run(task)
+    assert r.success is False
+    assert r.metadata["reason"] == "empty_task"
+    assert r.metadata["error"]["category"] == "invalid_input"
+    assert m.calls == 0  # no model call, no billing
+
+
+def test_tokens_used_is_total_not_completion_only():
+    # GenerationResult.tokens_used (3, per the fake model above) is
+    # completion-only; response.tokens_used must report the run's total
+    # (prompt + completion), matching its documented meaning and
+    # metadata["total_tokens"].
+    m = _FakeModel(
+        text="Canberra",
+        usage_metadata={"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+    )
+    r = _agent(m).run("capital of Australia?")
+    assert r.success is True
+    assert r.tokens_used == 13
+    assert r.tokens_used == r.metadata["total_tokens"]
+    assert r.metadata["prompt_tokens"] == 10
+    assert r.metadata["completion_tokens"] == 3
+
+
+def test_run_async_signature_has_output_schema_and_output_model():
+    params = inspect.signature(Agent.run_async).parameters
+    assert "output_schema" in params
+    assert "output_model" in params
+
+
+def test_run_async_accepts_output_schema_by_keyword():
+    schema = {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    }
+    m = _FakeModel(text='{"city": "Paris"}')
+    agent = _agent(m)
+
+    async def go():
+        return await agent.run_async("Which city?", output_schema=schema)
+
+    r = asyncio.run(go())
+    assert r.success is True
+    assert r.metadata["parsed"] == {"city": "Paris"}
+
+
+def test_empty_task_with_multimodal_inputs_not_rejected():
+    from effgen.core.messages import ImagePart
+
+    m = _FakeModel(text="a red square")
+    image = ImagePart(image=b"\x89PNG\r\n", mime="image/png")
+    r = _agent(m).run("", inputs=[image])
+    assert m.calls == 1
+    assert r.metadata.get("reason") != "empty_task"
+
+
 def test_raise_on_error_raises_typed():
     a = _agent(_FakeModel(exc=ModelNotFoundError("cerebras", "x")), raise_on_error=True)
     with pytest.raises(ModelNotFoundError):
@@ -211,6 +278,18 @@ def test_agentconfig_defaults_and_fields():
     assert fields["require_model"].default is True
     assert fields["raise_on_error"].default is False
     assert fields["provider"].default is None
+
+
+def test_agentconfig_name_defaults_from_model():
+    cfg = AgentConfig(model="openai:gpt-5-nano", require_model=False)
+    assert cfg.name == "openai:gpt-5-nano"
+
+    m = _FakeModel(text="x")
+    cfg2 = AgentConfig(model=m)
+    assert cfg2.name == "agent"
+
+    cfg3 = AgentConfig(name="explicit", model=m)
+    assert cfg3.name == "explicit"
 
 
 def test_require_model_true_fails_fast_on_bad_string_model():

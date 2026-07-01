@@ -179,3 +179,33 @@ def test_provider_runtime_error_keeps_classification():
     err = provider_runtime_error("openai", "m", "generate", src)
     assert err.error_context["category"] == "auth"
     assert err.error_context["retry_status"] == RETRY_NON_RETRYABLE
+
+
+# ---------------------------------------------------------------------------
+# Cost metadata: one canonical per-call key, no duplicate alias
+# ---------------------------------------------------------------------------
+
+# ``cost_usd`` (this call's cost) and ``total_cost`` (the adapter's cumulative
+# session cost — a genuinely different number) are both legitimate. A bare
+# ``"cost"`` key was a third, always-equal-to-cost_usd duplicate with no
+# consumer of its own; guard against it creeping back into a metadata dict.
+_COST_METADATA_ADAPTER_MODULES = [
+    "effgen.models.openai_adapter",
+    "effgen.models.anthropic_adapter",
+    "effgen.models.gemini_adapter",
+]
+
+
+@pytest.mark.parametrize("module_name", _COST_METADATA_ADAPTER_MODULES)
+def test_adapter_source_has_no_redundant_cost_key(module_name):
+    import importlib
+    import inspect
+    import re
+
+    source = inspect.getsource(importlib.import_module(module_name))
+    # Matches a literal `"cost": <expr>,` dict entry — not `"cost_usd"` or
+    # `"total_cost"`, both of which are intentionally kept.
+    assert not re.search(r'"cost"\s*:\s*\w', source), (
+        f"{module_name} reintroduced a bare 'cost' metadata key; "
+        "cost_usd is the canonical per-call key."
+    )

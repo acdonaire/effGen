@@ -514,6 +514,13 @@ class OpenAIAdapter(FunctionCallingModel):
         total_tokens: int,
         cached_tokens: int = 0,
     ) -> float:
+        """Price this call and fold it into the adapter's running session total.
+
+        Returns this call's cost — the value every ``GenerationResult.metadata``
+        reports as ``cost_usd``. ``self.total_cost`` (surfaced as
+        ``metadata["total_cost"]``) is a different number: the cumulative cost
+        across every call made on this adapter instance so far, not an alias.
+        """
         cost = self._calculate_cost(prompt_tokens, completion_tokens, cached_tokens)
         self.total_cost += cost
         self.total_tokens += total_tokens
@@ -643,7 +650,6 @@ class OpenAIAdapter(FunctionCallingModel):
             "total_tokens": total_tokens,
             "cached_input_tokens": cached_tokens,
             "cost_usd": cost,
-            "cost": cost,
             "total_cost": self.total_cost,
         }
 
@@ -844,7 +850,6 @@ class OpenAIAdapter(FunctionCallingModel):
                 "total_tokens": total_tokens,
                 "cached_input_tokens": cached_tokens,
                 "cost_usd": cost,
-                "cost": cost,
                 "total_cost": self.total_cost,
             },
         )
@@ -916,7 +921,6 @@ class OpenAIAdapter(FunctionCallingModel):
                 "total_tokens": total_tokens,
                 "cached_input_tokens": cached_tokens,
                 "cost_usd": cost,
-                "cost": cost,
                 "total_cost": self.total_cost,
             },
         )
@@ -1009,7 +1013,6 @@ class OpenAIAdapter(FunctionCallingModel):
                 "total_tokens": total_tokens,
                 "cached_input_tokens": cached_tokens,
                 "cost_usd": cost,
-                "cost": cost,
                 "total_cost": self.total_cost,
                 "tool_calls": tool_calls,
                 "message": message,
@@ -1192,7 +1195,6 @@ class OpenAIAdapter(FunctionCallingModel):
                 "total_tokens": total_tokens,
                 "cached_input_tokens": cached_tokens,
                 "cost_usd": cost,
-                "cost": cost,
                 "total_cost": self.total_cost,
                 "response_id": getattr(response, "id", None),
                 "tool_calls": tool_call_results,
@@ -1274,7 +1276,6 @@ class OpenAIAdapter(FunctionCallingModel):
                 "total_tokens": usage.total_tokens,
                 "cached_input_tokens": cached_tokens,
                 "cost_usd": cost,
-                "cost": cost,
                 "total_cost": self.total_cost,
                 "tool_calls": tool_calls,
                 "message": message,

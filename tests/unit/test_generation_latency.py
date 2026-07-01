@@ -69,6 +69,16 @@ class _SelfTimedEngine(_TinyEngine):
         )
 
 
+class _LengthTruncatedEngine(_TinyEngine):
+    """An engine whose output was cut off at the token budget."""
+
+    def generate(self, prompt, config=None, **kwargs):
+        return GenerationResult(
+            text="", tokens_used=16, finish_reason="length", model_name=self.model_name,
+            metadata={},
+        )
+
+
 def test_generate_stamps_latency():
     r = _TinyEngine().generate("hi")
     assert "latency_ms" in r.metadata and "duration_s" in r.metadata
@@ -76,6 +86,18 @@ def test_generate_stamps_latency():
     assert r.metadata["duration_s"] >= 0
     # original metadata is preserved alongside the new keys.
     assert r.metadata["prompt_tokens"] == 1
+
+
+def test_generate_stamps_truncated_flag():
+    # A "stop"-finished result is not truncated.
+    r = _TinyEngine().generate("hi")
+    assert r.metadata["truncated"] is False
+
+    # A "length"-finished result (budget exhausted) is truncated — the raw
+    # GenerationResult carries the same signal the Agent path derives from
+    # finish_reason, so a low-level caller doesn't have to string-match it.
+    r2 = _LengthTruncatedEngine().generate("hi")
+    assert r2.metadata["truncated"] is True
 
 
 def test_generate_batch_stamps_latency_on_every_item():

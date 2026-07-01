@@ -130,7 +130,9 @@ class AgentConfig:
     Agent configuration.
 
     Attributes:
-        name: Agent name/identifier
+        name: Agent name/identifier. Optional — defaults to the model id (or
+            "agent" for a model instance) when omitted, so
+            ``AgentConfig(model=...)`` works without boilerplate.
         model: Model instance or name
         tools: List of available tools
         system_prompt: System-level instructions
@@ -156,7 +158,7 @@ class AgentConfig:
             failure raises regardless of which internal path (direct or tool
             loop) produced it.
     """
-    name: str
+    name: str = field(default="", kw_only=True)
     model: BaseModel | str
     tools: list[BaseTool] = field(default_factory=list)
     system_prompt: str = "You are a helpful AI assistant."
@@ -207,6 +209,10 @@ class AgentConfig:
     # These flags have no effect when the model is not an AnthropicAdapter.
     cache_system_prompt: bool = True
     cache_tools: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            self.name = self.model if isinstance(self.model, str) else "agent"
 
 
 # Model-loading options belong to the engine (load_model), not the agent. Passing
@@ -272,6 +278,10 @@ class AgentResponse:
               (``success=False``); ``metadata["error"]`` is a structured dict
               ``{type, category, provider, model, message, retryable}`` and is
               identical whether the failure happened on the direct or tool path.
+            - ``"empty_task"`` — the task was empty or whitespace-only
+              (``success=False``); rejected before any model call, so nothing
+              is billed. ``metadata["error"]`` has the same shape as above with
+              ``provider``/``model`` set to ``None``.
 
             Success rule: ``success`` is ``True`` only when a real answer was
             produced (``final_answer`` / ``max_iterations_partial``); it is
@@ -921,6 +931,32 @@ Question: {task}
         task, inputs = self._coerce_task_input(task, inputs)
         if inputs is not None:
             kwargs["inputs"] = inputs
+
+        # Fail closed on an empty/whitespace-only task instead of sending it to
+        # the model — a blank prompt was never a real request and still bills
+        # the provider for a call the caller almost certainly didn't intend.
+        if isinstance(task, str) and not task.strip() and not inputs:
+            return AgentResponse(
+                output="",
+                success=False,
+                execution_time=time.time() - start_time,
+                metadata={
+                    "reason": "empty_task",
+                    "error": {
+                        "type": "InvalidRequestError",
+                        "category": "invalid_input",
+                        "provider": None,
+                        "model": None,
+                        "message": (
+                            "task is empty — provide a non-empty prompt, or pass "
+                            "inputs=[image_from(...)] for a caption-free "
+                            "multimodal request."
+                        ),
+                        "retryable": False,
+                    },
+                },
+            )
+
         self._current_depth = 0  # Reset depth at the start of each top-level run()
         self._collected_citations = []  # Reset retrieved-evidence accumulator
         # Per-run cost/token accumulator — folded onto the response metadata so
@@ -1500,6 +1536,8 @@ Provide a well-structured, comprehensive response that integrates all findings."
                        task: "str | Message | list[Any]",
                        mode: AgentMode = AgentMode.AUTO,
                        context: dict[str, Any] | None = None,
+                       output_schema: dict[str, Any] | None = None,
+                       output_model: Any = None,
                        inputs: list[Any] | None = None,
                        **kwargs) -> AgentResponse:
         """
@@ -1513,6 +1551,9 @@ Provide a well-structured, comprehensive response that integrates all findings."
             task: Task description (str, Message, or list[ContentPart])
             mode: Execution mode
             context: Optional context
+            output_schema: A JSON-Schema ``dict`` or a Pydantic ``BaseModel``
+                subclass (see ``run``).
+            output_model: Pydantic ``BaseModel`` class (see ``run``).
             inputs: Optional multimodal content parts (see ``run``).
             **kwargs: Additional arguments
 
@@ -1521,7 +1562,11 @@ Provide a well-structured, comprehensive response that integrates all findings."
         """
         import functools
         loop = asyncio.get_running_loop()
-        func = functools.partial(self.run, task, mode, context, inputs=inputs, **kwargs)
+        func = functools.partial(
+            self.run, task, mode, context,
+            output_schema=output_schema, output_model=output_model,
+            inputs=inputs, **kwargs,
+        )
         return await loop.run_in_executor(None, func)
 
     # ── Resource management ─────────────────────────────────────────────

@@ -669,6 +669,25 @@ class TransformersEngine(BatchModel):
             prompt_tokens = inputs["input_ids"].shape[1]
             completion_tokens = len(generated_ids)
 
+            # HuggingFace `generate()` doesn't report whether decoding stopped
+            # at EOS or was cut off at the token budget. Infer the budget case:
+            # no stop-sequence match, the last token isn't an EOS id, and the
+            # model produced the full requested budget.
+            if finish_reason == "stop":
+                eos_ids = generation_config.eos_token_id
+                if eos_ids is None:
+                    eos_ids = ()
+                elif isinstance(eos_ids, int):
+                    eos_ids = (eos_ids,)
+                last_token = generated_ids[-1].item() if completion_tokens else None
+                max_new = generation_config.max_new_tokens
+                if (
+                    max_new is not None
+                    and completion_tokens >= max_new
+                    and last_token not in eos_ids
+                ):
+                    finish_reason = "length"
+
             return GenerationResult(
                 text=generated_text,
                 tokens_used=completion_tokens,

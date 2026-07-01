@@ -381,6 +381,13 @@ class AnthropicAdapter(FunctionCallingModel):
         return (prompt_tokens / 1_000_000) * input_cost_pm + (completion_tokens / 1_000_000) * output_cost_pm
 
     def _record_usage(self, prompt_tokens: int, completion_tokens: int) -> float:
+        """Price this call and fold it into the adapter's running session total.
+
+        Returns this call's cost — the value every ``GenerationResult.metadata``
+        reports as ``cost_usd``. ``self.total_cost`` (surfaced as
+        ``metadata["total_cost"]``) is a different number: the cumulative cost
+        across every call made on this adapter instance so far, not an alias.
+        """
         cost = self._calculate_cost(prompt_tokens, completion_tokens)
         self.total_cost += cost
         self.total_tokens += prompt_tokens + completion_tokens
@@ -466,7 +473,6 @@ class AnthropicAdapter(FunctionCallingModel):
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
                 "cost_usd": cost,
-                "cost": cost,
                 "total_cost": self.total_cost,
                 # Prompt caching usage (0 when not used).
                 "cached_input_tokens": cached_input,
@@ -791,7 +797,6 @@ class AnthropicAdapter(FunctionCallingModel):
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
                 "cost_usd": cost,
-                "cost": cost,
                 "total_cost": self.total_cost,
                 "cached_input_tokens": cached_input,
                 "cache_creation_tokens": cache_creation,
@@ -901,7 +906,6 @@ class AnthropicAdapter(FunctionCallingModel):
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
                 "cost_usd": cost,
-                "cost": cost,
                 "total_cost": self.total_cost,
                 "cached_input_tokens": cached_input,
                 "cache_creation_tokens": cache_creation,

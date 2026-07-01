@@ -104,12 +104,16 @@ class TokenCount:
 
 
 def _stamp_latency(result: Any, elapsed_s: float) -> Any:
-    """Fold per-call wall-clock latency onto a ``GenerationResult``'s metadata.
+    """Fold per-call wall-clock latency + a truncation flag onto a
+    ``GenerationResult``'s metadata.
 
     Adds ``latency_ms`` and ``duration_s`` (via ``setdefault``, so an engine that
     measures its own latency wins) so benchmarkers can read throughput straight off
-    a raw ``generate()`` result. Non-``GenerationResult`` values pass through
-    untouched.
+    a raw ``generate()`` result. Also adds ``truncated`` (``finish_reason ==
+    "length"``) so a caller working directly with ``model.generate()`` (no
+    ``Agent`` in between) can detect a truncated/empty-from-truncation result
+    without string-matching ``finish_reason`` itself. Non-``GenerationResult``
+    values pass through untouched.
     """
     if isinstance(result, GenerationResult):
         meta = result.metadata
@@ -118,6 +122,7 @@ def _stamp_latency(result: Any, elapsed_s: float) -> Any:
             result.metadata = meta
         meta.setdefault("latency_ms", round(elapsed_s * 1000.0, 1))
         meta.setdefault("duration_s", round(elapsed_s, 4))
+        meta.setdefault("truncated", result.finish_reason == "length")
     return result
 
 

@@ -95,6 +95,8 @@ class AgentGenerationMixin:
                         response.metadata["parsed"] = self._parse_with_pydantic(
                             output_model, parsed,
                         )
+                    else:
+                        response.metadata["parsed"] = parsed
                     return response
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -133,9 +135,11 @@ class AgentGenerationMixin:
                 response.metadata["parsed"] = self._parse_with_pydantic(
                     output_model, outcome.parsed,
                 )
+            else:
+                response.metadata["parsed"] = outcome.parsed
         else:
-            # Honest failure: keep the raw answer, mark the run unsuccessful, and
-            # explain why — consistent with the framework's no-silent-failure rule.
+            # Keep the raw answer, mark the run unsuccessful, and explain why —
+            # consistent with the framework's no-silent-failure rule.
             logger.warning(
                 "Structured output constraint failed after %d attempt(s): %s",
                 outcome.attempts, outcome.error,
@@ -479,6 +483,15 @@ class AgentGenerationMixin:
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
             if key in accum and key not in meta:
                 meta[key] = int(accum[key])
+        # response.tokens_used is documented as the run's total token count;
+        # the value set along the generation path is completion-tokens-only
+        # (each provider adapter's GenerationResult.tokens_used). Correct it
+        # here, once, from the same prompt+completion sum already surfaced on
+        # metadata["total_tokens"] — covers Prometheus token_usage/tokens_used
+        # and the effgen.tokens_used span, which both read response.tokens_used
+        # after this point.
+        if "total_tokens" in accum:
+            response.tokens_used = int(accum["total_tokens"])
 
     def _build_error_detail(self, exc: Exception, model: Any) -> dict[str, Any]:
         """Build a structured, redacted error record from an exception.

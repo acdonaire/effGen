@@ -185,3 +185,17 @@ def test_clean_up_tokenization_spaces_disabled_on_decode(gpt2_engine):
     )
     # The destructive cleanup would turn "world! Done." into "world!Done." etc.
     assert "Hello, world! Done." in decoded
+
+
+def test_small_max_tokens_reports_length_not_stop(gpt2_engine):
+    """Cutting generation off at a tiny token budget (unlikely to land on EOS)
+    must surface finish_reason="length" and metadata["truncated"]=True, not
+    the "stop" HuggingFace's raw output otherwise defaults to."""
+    result = gpt2_engine.generate(
+        "The quick brown fox jumps over the lazy dog and then",
+        GenerationConfig(max_tokens=2, temperature=0.0),
+    )
+    assert result.finish_reason == "length"
+    assert result.metadata["truncated"] is True
+
+
