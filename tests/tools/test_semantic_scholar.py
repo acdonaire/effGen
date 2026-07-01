@@ -77,6 +77,12 @@ def test_semantic_scholar_search_returns_papers():
     top_titles = [paper.get("title") or "" for paper in out["results"][:3]]
     top_authors = [author for paper in out["results"][:3] for author in paper.get("authors", [])]
     assert any("attention is all you need" in title.lower() for title in top_titles)
+    # When the primary paper/search endpoint transiently fails, the tool falls
+    # back to paper/search/match, which returns a single title match with
+    # reduced author metadata; don't assert on specific authors from that
+    # degraded path (consistent with treating upstream instability as a skip).
+    if out.get("endpoint") == "paper/search/match":
+        pytest.skip("S2 primary search fell back to paper/search/match — reduced metadata")
     assert any("Vaswani" in author for author in top_authors)
 
 

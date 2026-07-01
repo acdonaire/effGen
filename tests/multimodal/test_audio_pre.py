@@ -41,13 +41,20 @@ def _make_part(duration_s: float = 1.0, mime: str = "audio/wav") -> AudioPart:
 
 
 def _make_silent_wav_ms(duration_ms: int) -> bytes:
-    from pydub import AudioSegment
+    """Return silent mono 16-bit PCM WAV bytes of the given duration.
 
+    Built with the stdlib ``wave`` module (silent PCM is just zero frames), so
+    the helper needs neither pydub nor ffmpeg on PATH. The preprocessor under
+    test still decodes/chunks the result via pydub.
+    """
+    sample_rate = 16_000
+    num_frames = int(sample_rate * duration_ms / 1000)
     buf = io.BytesIO()
-    AudioSegment.silent(duration=duration_ms, frame_rate=16_000).set_channels(1).export(
-        buf,
-        format="wav",
-    )
+    with wave.open(buf, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(b"\x00\x00" * num_frames)
     return buf.getvalue()
 
 
