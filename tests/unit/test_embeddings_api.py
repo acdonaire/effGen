@@ -1,4 +1,4 @@
-"""``/v1/embeddings`` honesty contract.
+"""``/v1/embeddings`` reporting contract.
 
 The endpoint must (a) resolve a ``provider:`` prefix the same way the chat
 endpoint does, so ``openai:text-embedding-3-small`` reaches the real neural
@@ -10,7 +10,7 @@ strict mode.
 
 The neural backend is *simulated as unavailable* by replacing the
 ``SentenceTransformerEmbedder`` with one that raises — this exercises the
-fallback/honesty logic deterministically and offline (it does not mock any
+fallback-reporting logic deterministically and offline (it does not mock any
 live model output, which the project forbids).
 """
 from __future__ import annotations

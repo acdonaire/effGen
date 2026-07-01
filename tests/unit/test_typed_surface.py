@@ -1,4 +1,4 @@
-"""The shipped typed surface must be honest.
+"""The shipped typed surface must be accurate.
 
 effGen ships ``effgen/py.typed``, which tells every user's mypy/pyright to type
 -check their code against effGen's annotations. That is only safe if the public
@@ -22,7 +22,7 @@ def test_py_typed_marker_ships():
     marker = Path(effgen.__file__).parent / "py.typed"
     assert marker.exists(), (
         "effgen/py.typed is missing — either ship it (and keep the public "
-        "surface type-honest) or remove the typed-package claim entirely."
+        "surface type-accurate) or remove the typed-package claim entirely."
     )
 
 

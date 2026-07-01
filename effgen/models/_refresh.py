@@ -82,7 +82,7 @@ def has_credentials(provider: str) -> bool:
 # ---------------------------------------------------------------------------
 # Per-provider live fetchers — each returns [(model_id, live_raw_dict), ...].
 # They never raise for an empty result; they raise only on a real API/auth error
-# so refresh_models() can report it honestly.
+# so refresh_models() can report it accurately.
 # ---------------------------------------------------------------------------
 
 
@@ -243,7 +243,7 @@ def _call_fetcher(provider: str, key: str | None) -> list[tuple[str, dict[str, A
     """Run a provider fetcher, turning a missing SDK into an actionable hint.
 
     In a lean install the provider SDK may be absent; a raw
-    ``ModuleNotFoundError: No module named 'cerebras'`` is honest but unhelpful.
+    ``ModuleNotFoundError: No module named 'cerebras'`` is accurate but unhelpful.
     Mirror the adapter path and point at the right extra to install.
     """
     try:

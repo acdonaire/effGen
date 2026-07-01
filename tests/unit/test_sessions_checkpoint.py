@@ -1,6 +1,6 @@
 """Durability tests for sessions, checkpoints, and background tasks.
 
-Covers the round-trip formats, corruption honesty (a clear typed error that
+Covers the round-trip formats, corruption reporting (a clear typed error that
 names the file rather than a raw stack trace), model-aware resume, and the
 background runner's thread lifecycle (no leaked threads after GC / shutdown).
 

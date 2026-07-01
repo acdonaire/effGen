@@ -1,4 +1,4 @@
-"""Tool-layer ergonomics: lazy discovery, sync accessor, honest envelopes,
+"""Tool-layer ergonomics: lazy discovery, sync accessor, accurate envelopes,
 operation aliases, friendly errors, and a round-tripping plugin scaffold.
 
 These guard the fixes for the empty-registry trap, the async-only ``get_tool``
@@ -252,7 +252,7 @@ def test_cli_tools_test_exit_codes():
     assert cli.tools_commands(
         _args(tool_command="test", name="no_such_tool", input="{}", verbose=False)
     ) == 1
-    # A tool that runs but reports failure -> nonzero (honest envelope).
+    # A tool that runs but reports failure -> nonzero (accurate envelope).
     bad = cli.tools_commands(
         _args(tool_command="test", name="calculator", input='{"expression": "1/0"}', verbose=False)
     )

@@ -176,7 +176,7 @@ def run_debug_cli(
     Returns:
         Process exit code: ``0`` when the run succeeded, ``1`` when the agent
         run failed, and ``2`` for a user/config error (no model/preset, missing
-        dependency). Lets ``effgen debug`` report honest exit codes.
+        dependency). Lets ``effgen debug`` report accurate exit codes.
     """
     try:
         from rich.panel import Panel

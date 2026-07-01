@@ -12,7 +12,7 @@ conflating them:
 * **Tool calling actually works** — ``run_tool_required_task`` asks for a value
   that is impossible to know without calling the tool (an opaque inventory count
   behind a fictitious SKU). The only way to answer is to invoke the tool, so a
-  passing run is honest proof that the backend's tool-calling path is wired up —
+  passing run is direct proof that the backend's tool-calling path is wired up —
   even for a model clever enough to shortcut arithmetic.
 """
 
@@ -148,7 +148,7 @@ def run_tool_required_task(adapter, strategies: tuple[str, ...] = ("native", "re
     """Run the must-call-a-tool task against *adapter*.
 
     The answer (an opaque inventory count) only exists inside the tool, so a
-    correct answer is honest proof the backend invoked the tool. A backend
+    correct answer is direct proof the backend invoked the tool. A backend
     passes if it calls the tool through **any** of its tool-calling modes: a
     capable reasoning model tends to use native function-calling reliably while
     a small instruct model leans on the scaffolded react loop, so trying the

@@ -204,7 +204,7 @@ def test_dag_condition_skip_still_succeeds():
 
 
 # --------------------------------------------------------------------------- #
-# Orchestrator shapes + honest failure
+# Orchestrator shapes + clear failure
 # --------------------------------------------------------------------------- #
 def _orch_with_team(name="team", agents=None, pattern=None):
     from effgen.core.orchestrator import MultiAgentOrchestrator, OrchestrationPattern
@@ -277,7 +277,7 @@ def test_sequential_does_not_echo_input_on_failure():
 
 
 # --------------------------------------------------------------------------- #
-# COLLABORATIVE honesty (a failing collaborator must not pass silently)
+# COLLABORATIVE failure reporting (a failing collaborator must not pass silently)
 # --------------------------------------------------------------------------- #
 def test_collaborative_failure_is_honest():
     from effgen.core.orchestrator import OrchestrationPattern
@@ -373,7 +373,7 @@ def test_hierarchical_unlabeled_falls_back_round_robin():
 
 
 # --------------------------------------------------------------------------- #
-# PIPELINE is honestly an alias for SEQUENTIAL (labelled as PIPELINE)
+# PIPELINE is an alias for SEQUENTIAL (labelled as PIPELINE)
 # --------------------------------------------------------------------------- #
 def test_pipeline_pattern_label():
     from effgen.core.orchestrator import OrchestrationPattern

@@ -120,7 +120,7 @@ class TestCompletionGenerated:
 
 
 # ---------------------------------------------------------------------------
-# effgen debug — honest exit codes
+# effgen debug — accurate exit codes
 # ---------------------------------------------------------------------------
 
 

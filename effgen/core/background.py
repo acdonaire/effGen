@@ -132,7 +132,7 @@ def _execute(state: _RunnerState, task: BackgroundTask) -> None:
             if state.cancel_flags[task.task_id].is_set():
                 task.status = TaskStatus.CANCELLED
             elif getattr(result, "success", True) is False:
-                # An honest failure from the agent (Phase-0 contract): the run
+                # A reported failure from the agent: the run
                 # came back unsuccessful. Surface it as FAILED with the typed,
                 # redacted reason rather than reporting a silent COMPLETED.
                 task.status = TaskStatus.FAILED

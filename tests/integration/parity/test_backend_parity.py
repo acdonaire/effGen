@@ -10,7 +10,7 @@ The suite checks two independent guarantees so they never get conflated:
 
   * Tool calling works — every backend that advertises native tool calling must
     answer a question whose value is unknowable without invoking the tool (an
-    opaque inventory count). Reaching that value is honest proof the tool path
+    opaque inventory count). Reaching that value is direct proof the tool path
     is wired up, and it stays a fair test even for a model clever enough to
     shortcut arithmetic.
 

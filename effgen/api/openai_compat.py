@@ -366,7 +366,7 @@ class UnknownToolError(ValueError):
     tools server-side; it does not forward arbitrary client-defined function
     specs to the model for the client to execute. Rather than silently dropping
     an unhosted tool (and returning prose), the endpoint raises this so the
-    caller gets an honest ``400`` naming the offending tool(s).
+    caller gets a clear ``400`` naming the offending tool(s).
     """
 
     def __init__(self, tool_names: list[str]) -> None:

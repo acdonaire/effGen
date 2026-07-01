@@ -327,7 +327,7 @@ class WorkflowDAG:
         initial_inputs = self._normalize_initial_inputs(initial_inputs)
         context = context or {}
 
-        # A zero-node workflow has nothing to run: report it honestly instead
+        # A zero-node workflow has nothing to run: report it explicitly instead
         # of an empty success (all([]) is True). Mirrors the empty-team contract
         # in MultiAgentOrchestrator.assign_task.
         if not self._nodes:
@@ -368,7 +368,7 @@ class WorkflowDAG:
                 #  1. A required upstream did NOT complete (it failed or was
                 #     itself skipped) — running on its error text would turn an
                 #     internal failure into a (often customer-facing) answer, so
-                #     we skip honestly instead.
+                #     we skip explicitly instead.
                 #  2. A conditional edge's predicate returned False.
                 skip = False
                 skip_reason: str | None = None

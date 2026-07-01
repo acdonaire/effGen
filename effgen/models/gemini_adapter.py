@@ -850,7 +850,7 @@ class GeminiAdapter(FunctionCallingModel):
                 ) from exc
             # A generic 400 INVALID_ARGUMENT is a malformed/unsupported request
             # (e.g. bad schema, or combining google_search with function tools),
-            # NOT an auth failure — classify it honestly so retries don't fire.
+            # NOT an auth failure — classify it correctly so retries don't fire.
             if "invalid_argument" in lowered or "400" in msg:
                 raise InvalidRequestError("gemini", self.model_name, msg) from exc
             raise provider_runtime_error("gemini", self.model_name, "generate", exc, message="Gemini generation failed") from exc

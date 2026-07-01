@@ -182,7 +182,7 @@ def test_every_injected_nudge_is_stripped():
 def test_injection_sites_use_the_shared_nudges():
     """The agent_react injection sites must reference the shared NUDGE_* values.
 
-    Reading the source keeps the two files honest: every literal a loop appends
+    Reading the source keeps the two files in sync: every literal a loop appends
     should be one of the named constants (so it is also on the strip-list).
     """
     import inspect

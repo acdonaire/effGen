@@ -441,7 +441,7 @@ class MultiAgentOrchestrator:
 
             if not response.success:
                 # Capture the typed, redacted error from the failing agent so the
-                # team response carries an honest per-agent failure, not a silent
+                # team response carries a real per-agent failure, not a silent
                 # success. Labeled partials (the responses so far) are preserved.
                 err_detail = (getattr(response, "metadata", None) or {}).get("error")
                 agent_result["error"] = err_detail or _redact(str(response.output))

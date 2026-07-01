@@ -379,7 +379,7 @@ class AgentGenerationMixin:
                 )
 
         # All models and retries exhausted — return a structured, redacted error
-        # so callers (both the tool loop and the direct path) can fail honestly.
+        # so callers (both the tool loop and the direct path) can fail explicitly.
         if last_error is not None:
             detail = self._build_error_detail(last_error, current_model)
         elif truncation_detail is not None:

@@ -7,7 +7,7 @@ Targets the pure helpers that turn messy model text into validated JSON:
     text (code fences, prose, trailing commas, unquoted keys).
   * ``_clean_json`` — the trailing-comma / unquoted-key cleaner.
   * ``validate_json_schema`` / ``_basic_validate`` — schema validation.
-  * ``StructuredOutcome`` — the honest result container.
+  * ``StructuredOutcome`` — the result container.
 
 Asserts that:
   1. ``extract_json_from_text`` never crashes on arbitrary text and returns

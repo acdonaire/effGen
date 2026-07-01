@@ -3,7 +3,7 @@
 This is a *presentation layer only*: it never changes what an agent does, only
 how the agent's existing execution events are surfaced to a human watching an
 interactive terminal. It turns the silent "dead pause" while a model thinks into
-an honest, ticking status line — ``Thinking…`` → ``Calling <model>…`` →
+a live, ticking status line — ``Thinking…`` → ``Calling <model>…`` →
 ``Running <tool>…`` — followed by a single glanceable summary line.
 
 Everything here is **opt-out and TTY-aware**. Animation is shown only when:

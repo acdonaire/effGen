@@ -7,7 +7,7 @@ Covers:
   buffered into a normal chunk that looks like model output.
 - The final assembled answer is sanitized before it is
   handed to ``on_answer`` and stored in short-term memory.
-- The ReAct/tool path also fails honestly (raises) on a streaming error.
+- The ReAct/tool path also fails explicitly (raises) on a streaming error.
 - A tool agent's default stream yields only the sanitized answer text — raw
   ReAct scaffolding (Thought/Action/Observation/Final Answer) is never the
   payload; ``include_events=True`` surfaces typed step events instead.
@@ -136,7 +136,7 @@ def test_immediate_stream_error_raises_with_no_chunks():
 
 
 def test_react_path_stream_error_raises():
-    """The tool/ReAct streaming path also fails honestly (raises)."""
+    """The tool/ReAct streaming path also fails explicitly (raises)."""
     from effgen.tools.builtin.calculator import Calculator
 
     model = _StreamModel(["Thought:"], raise_after=0, exc=RuntimeError("react boom"))

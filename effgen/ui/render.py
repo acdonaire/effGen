@@ -62,7 +62,7 @@ def format_cost(cost: float | None) -> str | None:
     needed:
 
     - ``None`` → ``None`` (no cost info; the caller omits the field).
-    - ``0`` → ``"$0.00"`` (genuinely free / local — honest, not fabricated).
+    - ``0`` → ``"$0.00"`` (genuinely free / local — real, not fabricated).
     - ``>= $0.0001`` → ``"$0.0006"`` (the familiar 4-decimal form).
     - ``< $0.0001`` (would round to ``$0.0000``) → 6 decimals (``"$0.000049"``),
       falling back to scientific (``"$4.9e-07"``) for vanishingly small costs.

@@ -174,7 +174,7 @@ class FunctionTool(BaseTool):
     Built by :func:`tool` / :meth:`from_function`; you rarely construct it
     directly. Supports both synchronous and ``async def`` functions. The wrapped
     function's return value is passed straight through ``BaseTool.execute`` (so
-    its honest success/failure envelope still applies).
+    its success/failure envelope still applies).
     """
 
     def __init__(self, func: Callable[..., Any], metadata: ToolMetadata) -> None:

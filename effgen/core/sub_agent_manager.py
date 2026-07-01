@@ -527,7 +527,7 @@ class SubAgentManager:
         ``tokens_used`` / ``tool_calls`` reported by the run — never fabricated.
 
         Raises ``RuntimeError`` if there is no parent agent with a usable model;
-        the caller turns that into an honest failed ``SubAgentResult`` rather
+        the caller turns that into a clear failed ``SubAgentResult`` rather
         than a fake success.
         """
         parent = self.parent_agent

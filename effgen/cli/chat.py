@@ -432,7 +432,7 @@ class ChatREPL:
         self.last_answer = answer
         self.turns += 1
 
-        # Per-turn footer: · 1.2s · 318 tok · $0.0003 (honest about what we know).
+        # Per-turn footer: · 1.2s · 318 tok · $0.0003 (accurate about what we know).
         elapsed = time.monotonic() - t0
         tok1, cost1 = self._snapshot()
         dtok = tok1 - tok0
@@ -654,7 +654,7 @@ class ChatREPL:
 
         self.cli.print(f"Turns: {self.turns}")
         self.cli.print(f"Tokens: {self.session_tokens:,}")
-        # A $0.00 here is honest for free/local sessions; for cheap cloud turns
+        # A $0.00 here is accurate for free/local sessions; for cheap cloud turns
         # the adaptive formatter keeps sub-cent spend visible instead of $0.0000.
         self.cli.print(f"Cost: {format_cost(self.session_cost) if self.session_cost else '$0.00'}")
         # Cross-check against the process-wide cost tracker when keyed providers

@@ -583,7 +583,7 @@ class ComplexityAnalyzer:
         updated weight mapping.
 
         Raises ``ValueError`` if fewer than 10 labelled samples are supplied
-        (too few for a stable estimate) — an honest, actionable error rather
+        (too few for a stable estimate) — a clear, actionable error rather
         than a silent no-op.
         """
         if len(training_data) < 10:

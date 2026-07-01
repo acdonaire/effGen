@@ -385,7 +385,7 @@ def create_embeddings_router(engine: EmbeddingEngine | None = None) -> Any:
         try:
             # Resolve the backend first so the fallback status is known even when
             # every vector comes from the cache (a cache hit skips backend
-            # creation, so without this the honesty flag could go stale).
+            # creation, so without this the accuracy flag could go stale).
             eng._get_backend(req.model)
             vecs = eng.embed(texts, model=req.model)
         except EmbeddingBackendUnavailable as e:

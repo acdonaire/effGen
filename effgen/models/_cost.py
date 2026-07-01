@@ -237,7 +237,7 @@ def _rate(provider: str, model: str) -> tuple[float, float]:
 def pricing_status(provider: str, model: str) -> str:
     """Return how *provider*/*model* is priced: ``priced``/``free``/``metered``/``unpriced``.
 
-    Used by ``effgen cost`` to label a $0 row honestly — a genuine free tier
+    Used by ``effgen cost`` to label a $0 row accurately — a genuine free tier
     reads "free" while a model with no published price reads "unpriced" instead
     of a misleading "$0.000000".
     """

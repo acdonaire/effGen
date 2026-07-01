@@ -54,7 +54,7 @@ class StructuredOutputConfig:
         use_grammar: Whether to attempt grammar-constrained decoding
             (requires ``outlines`` library, Transformers only).
         time_budget_s: Wall-clock cap for all repair/reprompt attempts. When the
-            budget is exhausted, repairs stop and the failure is reported honestly
+            budget is exhausted, repairs stop and the failure is reported clearly
             instead of looping. ``None`` disables the cap.
     """
     schema: dict[str, Any] | None = None
@@ -77,7 +77,7 @@ class StructuredOutcome:
         method: Which strategy produced/attempted the result
             ("grammar", "native", "reprompt", or None).
         error: Human-readable failure reason (None on success).
-        raw_text: The last raw model text seen, for honest failure reporting.
+        raw_text: The last raw model text seen, for clear failure reporting.
     """
     success: bool
     json_str: str | None = None
@@ -276,7 +276,7 @@ def structured_generate(
        wall-clock ``time_budget_s`` so repairs can't run away.
 
     Unlike a raising helper, this returns a :class:`StructuredOutcome` so callers
-    can surface the attempt count and fail honestly (raw text preserved) when no
+    can surface the attempt count and fail explicitly (raw text preserved) when no
     strategy produces a schema-valid object.
     """
     if config is None:
@@ -398,7 +398,7 @@ def _outlines_available() -> bool:
 
     Checks the concrete symbols ``_try_grammar_constrained`` relies on (not just
     that the package exists), so an incompatible ``outlines`` build is never
-    counted as a real grammar attempt — keeping the surfaced attempt count honest.
+    counted as a real grammar attempt — keeping the surfaced attempt count accurate.
     Supports both the current ``outlines`` 1.x API (``from_transformers`` +
     ``Generator`` + ``types.JsonSchema``) and the legacy 0.0.x API
     (``generate.json`` + ``models.Transformers``).
@@ -483,7 +483,7 @@ def _native_json_call(
 
     Returns ``(json_str, parsed, raw_text, error)``. On success ``json_str`` is the
     validated JSON; otherwise it is ``None`` and ``raw_text``/``error`` carry the
-    last model text and the reason so the caller can fall back honestly.
+    last model text and the reason so the caller can fall back cleanly.
     """
     from ..models._adapter_utils import default_max_output_tokens
     from ..models.base import GenerationConfig

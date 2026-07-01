@@ -266,7 +266,7 @@ class CodeExecutor(BaseTool):
             "sandbox_backend": result.backend_used,
         }
         # A timed-out run is a failure, not a silent success: reflect it in the
-        # honest tool envelope so the outer ToolResult.success agrees.
+        # accurate tool envelope so the outer ToolResult.success agrees.
         if result.timed_out:
             out["success"] = False
             out["error"] = (

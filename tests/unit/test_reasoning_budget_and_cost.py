@@ -1,4 +1,4 @@
-"""Output-token budgeting, truncation honesty, per-run cost, and parsed output.
+"""Output-token budgeting, truncation reporting, per-run cost, and parsed output.
 
 These cover the behaviours a token-heavy task on a reasoning model needs:
 
@@ -132,7 +132,7 @@ def test_default_max_output_tokens():
 
 
 # ---------------------------------------------------------------------------
-# reasoning default budget + truncation honesty
+# reasoning default budget + truncation reporting
 # ---------------------------------------------------------------------------
 
 
@@ -199,7 +199,7 @@ def test_cost_and_tokens_on_response_metadata():
 
 def test_no_cost_key_when_provider_reports_none():
     # A local model with no cost data must not fabricate a $0 cost — the key is
-    # simply absent (honest), though token counts still surface when present.
+    # simply absent, though token counts still surface when present.
     m = _BudgetModel(name="local-model", text="answer",
                      metadata={"completion_tokens": 12})
     r = _agent(m).run("hi")

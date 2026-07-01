@@ -312,7 +312,7 @@ class Calculator(BaseTool):
         # A real math expression is never thousands of characters; the
         # normalization regexes below use ``\d+\.?\d*`` groups whose ambiguity
         # backtracks catastrophically (ReDoS) on a long unbroken digit run, so
-        # reject oversized input fast with a clear, honest error.
+        # reject oversized input fast with a clear error.
         _MAX_EXPRESSION_LEN = 1024
         if len(raw) > _MAX_EXPRESSION_LEN:
             raise ValueError(

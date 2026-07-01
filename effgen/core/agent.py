@@ -1820,7 +1820,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
                         break
 
             except Exception:
-                # Fail honestly: raise the typed (already-redacted) provider error
+                # Fail explicitly: raise the typed (already-redacted) provider error
                 # at the iterator boundary so a consumer iterating stream() can tell
                 # success from failure, instead of receiving the error text as a
                 # normal chunk that looks like model output.
@@ -1902,7 +1902,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
             else:
                 scratchpad += "\nAction: (continue reasoning)"
 
-        # Step limit reached without a Final Answer: surface an honest terminal
+        # Step limit reached without a Final Answer: surface a clear terminal
         # notice (never raw scaffolding) so the stream is not silently empty.
         limit_msg = (
             "I wasn't able to finish this within the step limit. "

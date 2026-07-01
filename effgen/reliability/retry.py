@@ -70,7 +70,7 @@ def is_transient_error(exc: BaseException) -> bool:
     """
     from effgen.reliability.timeouts import TimeoutError as EffGenTimeout
 
-    # effGen typed provider errors → the Phase-0 taxonomy is the source of truth.
+    # effGen typed provider errors → the error taxonomy is the source of truth.
     if isinstance(exc, Exception) and type(exc).__module__ == "effgen.models.errors":
         from effgen.models.errors import classify_provider_error
 

@@ -96,7 +96,7 @@ def _killed_at_deadline(exit_code: int | None, elapsed: float, timeout: float) -
     ``ulimit -t`` that ``SIGXCPU``/``SIGKILL``s a busy loop *before* the outer
     guard fires. A negative exit code (signal kill) that lands at or after the
     requested deadline is therefore a timeout, not a clean exit — report it
-    honestly instead of as a silent success. (An OOM from ``ulimit -v`` surfaces
+    explicitly instead of as a silent success. (An OOM from ``ulimit -v`` surfaces
     as a Python ``MemoryError`` with a positive exit code, so it is not matched
     here.)
     """

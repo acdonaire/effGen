@@ -47,7 +47,7 @@ _DATA_DIR = Path(__file__).parent / "_data"
 # Default freshness horizon: a bundled snapshot older than this is "stale".
 DEFAULT_MAX_AGE_DAYS = 120
 
-# Tag describing where a record's numbers came from, for honesty in the UI.
+# Tag describing where a record's numbers came from, surfaced in the UI.
 PRICE_SOURCE_BUNDLED = "bundled-catalog"
 PRICE_SOURCE_LIVE = "live-api"
 PRICE_SOURCE_TABLE = "maintained-table"

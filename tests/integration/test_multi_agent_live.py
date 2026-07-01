@@ -7,7 +7,7 @@ Proves the machinery end-to-end:
 - sequential / parallel / hierarchical team patterns succeed,
 - a DAG (fan-out/fan-in) runs and routes a bare-string task to its entry node,
 - a deliberately-bad model id inside a team and inside a DAG node yields an
-  honest ``success=False`` with a per-agent/node error (never a silent success).
+  a clear ``success=False`` with a per-agent/node error (never a silent success).
 """
 
 from __future__ import annotations

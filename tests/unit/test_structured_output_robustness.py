@@ -1,9 +1,9 @@
-"""Structured-output robustness & speed (native-first, attempt surfacing, honest failure).
+"""Structured-output robustness & speed (native-first, attempt surfacing, clear failure).
 
 These tests exercise the *orchestration* of structured generation with lightweight
 stub models. They do not mock any live provider HTTP — they verify that
 ``structured_generate`` prefers native JSON modes, counts attempts, time-boxes
-repairs, and fails honestly when no schema-valid object can be produced.
+repairs, and fails explicitly when no schema-valid object can be produced.
 """
 from __future__ import annotations
 
@@ -241,7 +241,7 @@ def test_extract_json_handles_backticks_and_fences(text, expected):
 
 
 # --------------------------------------------------------------------------- #
-# Agent-level metadata mapping (attempt surfacing + honest failure)
+# Agent-level metadata mapping (attempt surfacing + clear failure)
 # --------------------------------------------------------------------------- #
 def _agent_with(model):
     from effgen.core.agent import Agent, AgentConfig

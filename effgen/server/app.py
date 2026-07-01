@@ -522,7 +522,7 @@ def _resolve_tools(tools: Any) -> list[Any]:
     **not** silently dropped — that would leave a client expecting OpenAI
     function-calling with prose and no ``tool_calls``. Instead the unhosted
     names are collected and surfaced as an :class:`UnknownToolError`, which the
-    route turns into an honest ``400``.
+    route turns into a clear ``400``.
     """
     if not tools:
         return []

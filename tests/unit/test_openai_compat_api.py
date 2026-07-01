@@ -13,7 +13,7 @@ Covers the OpenAI-compatible server API:
 - SSE streaming works through the full create_app middleware stack (the F15
   regression: it used to hang) with incremental chunks + final usage chunk
 - structured, redacted OpenAI-style error envelopes (bad model → 404)
-- honest mid-stream error event
+- surfaced mid-stream error event
 """
 from __future__ import annotations
 
