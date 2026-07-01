@@ -62,6 +62,11 @@ _EXEMPT = {
     "stanza",  # optional transitive dep (via argostranslate); no upstream fix for
     # CVE-2026-54499 (unsafe pickle in torch.load fallback); effgen never loads
     # untrusted stanza checkpoints
+    "nltk",  # optional [eval] extra (also transitive via rouge_score), not a core
+    # dependency; no upstream fix for CVE-2026-12243 (3.9.4 is the latest release).
+    # The CVE is a path traversal reachable only when an attacker controls the
+    # resource name passed to nltk.data.load()/find(); effgen passes only the
+    # fixed corpus names "wordnet"/"omw-1.4", never an attacker-supplied path.
 }
 
 def _pip_audit_runnable() -> bool:
@@ -222,6 +227,11 @@ class TestExemptPackagesKnownVulns:
                       "dependency); no upstream fix for CVE-2026-54499 (unsafe "
                       "pickle in torch.load fallback); effgen never loads untrusted "
                       "stanza checkpoints",
+            "nltk": "optional [eval] extra (also transitive via rouge_score), not "
+                    "a core dependency; no upstream fix for CVE-2026-12243 (3.9.4 is "
+                    "latest); the path-traversal requires an attacker-controlled "
+                    "resource name to nltk.data.load()/find(), and effgen only passes "
+                    "the fixed corpus names 'wordnet'/'omw-1.4'",
         }
         missing = _EXEMPT - set(rationale.keys())
         assert not missing, (

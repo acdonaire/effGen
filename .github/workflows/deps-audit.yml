@@ -86,6 +86,10 @@ jobs:
               # optional transitive dep via argostranslate; no upstream fix for
               # CVE-2026-54499 (unsafe pickle in torch.load fallback)
               "stanza",
+              # optional [eval] extra (also transitive via rouge_score); no upstream
+              # fix for CVE-2026-12243 (path traversal via attacker-controlled
+              # nltk.data resource name; effgen passes only fixed corpus names)
+              "nltk",
           }
 
           try:
