@@ -323,7 +323,12 @@ def test_wikipedia_fuzz(query, sentences):
     name=st.text(alphabet=string.ascii_lowercase + "_", min_size=1, max_size=30),
     params=st.lists(
         st.fixed_dictionaries({
-            "pname": st.text(alphabet=string.ascii_lowercase + "_", min_size=1, max_size=20),
+            # "self" is excluded: it is the bound-method receiver of execute(),
+            # so splatting a param of that name into tool.execute(**kwargs) would
+            # collide with the receiver — a name no real tool parameter can take.
+            "pname": st.text(
+                alphabet=string.ascii_lowercase + "_", min_size=1, max_size=20
+            ).filter(lambda s: s != "self"),
             "ptype": st.sampled_from(list(ParameterType)),
             "required": st.booleans(),
         }),

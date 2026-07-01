@@ -7,6 +7,206 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.1] - 2026-06-29
+
+### Highlights
+
+**effGen v0.3.1** is a **real-world usability & polish** release, driven by living with the framework as
+real professionals do — a finance analyst, a journalist, a researcher, a founder, a backend engineer, a
+support lead, an ML engineer, an educator, a security reviewer, an integration engineer, and a legal
+knowledge manager. It adds no new providers or subsystems. Instead it seals the sharp edges those users
+hit first: grounded results now carry the sources they were built from, reasoning models finish
+token-heavy work, a custom persona is honored on every path, multi-agent teams fail honestly, the server
+stops silently downgrading, code-execution is safe to enable, and a knowledge domain becomes a runnable
+agent in one call. **No breaking API changes** — every addition is additive.
+
+### Added — traceable evidence on every result
+
+- **`response.sources` and `response.citations` are populated** from the URLs a run actually retrieved
+  (`web_search`, `url_fetch`, `news`, `wikipedia`) and from provider-native grounding (OpenAI
+  `url_citation` annotations, surfaced as `metadata["grounding_chunks"]`; Gemini search grounding). Only
+  tool-returned URLs land here — never URLs scraped from the model's prose — so a caller can verify and
+  link them programmatically. The research preset is instructed to cite **only** a URL one of its tools
+  returned this run and never to invent one.
+
+### Changed — reasoning models finish the job
+
+- **Reasoning models (the `gpt-5` family, `o`-series) no longer return empty, billed results** on
+  token-heavy tasks. These models spend output budget on hidden reasoning, so the old fixed 1024-token
+  default could be fully consumed and return an empty but billed response. They now get a larger default
+  output budget (4096) across every path (direct, ReAct, streaming, speculative, native-tool, structured),
+  an empty result with `finish_reason="length"` is treated as **truncation** — the budget grows once and
+  retries, or fails with an actionable "increase `max_tokens`" message — and a starved budget is never
+  retried three times. `effgen batch` gained `--max-tokens`.
+
+### Changed — honest, costed, measurable results
+
+- **Cost and tokens on every result.** `AgentResponse.metadata` now carries `cost_usd` and prompt/
+  completion/total token counts (summed across the run, tool loops included); local models report no
+  `cost_usd` key rather than a fake `$0`. Per-run `latency_ms`/`duration_s` is folded onto both
+  `AgentResponse` and raw `GenerationResult` metadata, so throughput is computable without a manual timer.
+- **Readable sub-cent costs.** A shared adaptive formatter shows real SLM costs (e.g. `$0.000049`) at the
+  per-turn footer, `/cost`, and the notebook card instead of rounding them to `$0.0000`; genuinely
+  free/local stays an honest `$0.00`.
+- **Team and workflow results report summed `cost_usd`/tokens** in metadata, mirroring the single-agent
+  surface.
+- `str(GenerationResult)` returns the generated text (matching `AgentResponse`), and a notebook card
+  (`_repr_html_`) renders `model.generate()` cleanly instead of a dataclass repr.
+- Passing a Pydantic class to `output_schema=` now also populates `metadata["parsed"]` with a typed
+  instance.
+
+### Changed — your persona is honored everywhere
+
+- **A custom `system_prompt` now steers every response.** It was silently dropped on the no-tool direct
+  path, the no-tool streaming path that `chat` uses, and the native/hybrid tool path — so a carefully
+  written tutor or fixed-language assistant looked applied but was ignored. The persona is now captured at
+  construction and applied as a system message (or prepended) on every path; default agents are unchanged.
+- New `chat --system-prompt/--persona` to stand up a custom assistant from the terminal, an
+  `education.*` prompt set (`socratic_tutor`, `lesson_plan`, `quiz_generate`, `explain_simply`), and
+  `prompts list --json` as an alias for `--format json`.
+
+### Changed — trustworthy multi-agent teams & workflows
+
+- **Collaborative teams fail closed.** A failed collaborator now sets the team `success=False` with a
+  discoverable per-agent error and a redacted reason, instead of always returning `success=True` with the
+  failure invisible.
+- **Hierarchical teams route by name.** Each subtask goes to the worker the manager *named* (round-robin
+  only as a fallback), every subtask runs instead of extras being dropped, and a failed worker fails the
+  team — making hierarchical the real triage→specialist handoff. The `pipeline` pattern's docstring is
+  corrected and a "route to one specialist" recipe is documented.
+- **Workflow DAGs don't run downstream of failure.** A node whose required upstream failed (or was
+  skipped) is marked skipped with a reason, so an internal error is never rewritten into a downstream,
+  customer-facing answer. On failure, sequential/hierarchical no longer echo the caller's own input back
+  as the answer.
+- `effgen chat --session-id/--resume` continues a persisted conversation (the same store `run --session-id`
+  and `sessions` use); streamed turns are saved and the session-vs-checkpoint help is aligned.
+
+### Added — one-call agents from a knowledge domain
+
+- **A knowledge domain becomes a runnable agent in one call:** `LegalDomain().to_agent("gpt-5-nano")`
+  (or `create_agent(domain=...)`) wires the domain's system prompt, recommended tools, and guardrails
+  into an agent — giving the bundled domain guardrails their first real consumer.
+- A RAG agent accepts a pre-built `VectorMemoryStore` as its `knowledge_base`, connecting the memory and
+  retrieval subsystems (an empty store still fails loudly).
+- The everyday guardrail classes (`PIIGuardrail`, `GuardrailChain`, the presets, …) are exported at the
+  top level for the same discoverability as the domains. The non-tech domains (legal, finance, health,
+  science) expand seed keywords into field-appropriate query variants (`"{kw} clause"`,
+  `"{kw} obligations"`, `"{kw} regulation"`) instead of borrowing the tech how-to templates.
+
+### Changed — honest OpenAI-compatible server
+
+- **No silent tool downgrade.** `/v1/chat/completions` no longer silently drops a client-defined function
+  tool it does not host; the unhosted tool is rejected with a clear `400` (`unknown_tool`) naming it.
+  Built-in tools still resolve and run server-side.
+- **Honest embeddings.** `/v1/embeddings` strips a `provider:` prefix so `openai:text-embedding-3-small`
+  reaches the real neural model; when the neural backend can't load it warns once and reflects the lexical
+  fallback to the caller (`effgen.degraded`/`backend` + `x-effgen-embedding-backend` header), or fails
+  closed with `503` under `EFFGEN_EMBEDDINGS_STRICT=1` — no more near-zero hash vectors served under a
+  neural model's name.
+- Auth (401), validation (422), rate-limit (429), and RBAC/budget (403/429) now share the same
+  `{"error":{message,type,code}}` envelope as model errors; per-call `cost_usd` is surfaced in the
+  `effgen` response extension for priced models; an empty `messages` array returns `400`; and
+  `effgen serve --help` documents the operational env knobs and adds `--rate-limit`.
+
+### Changed — local-first truth: GPU, catalog, structured output
+
+- **Grammar-constrained structured output across model families.** With the new optional
+  `effgen[grammar]` extra (`outlines`), small local models that won't follow a JSON schema by prompting
+  alone (Llama-3.2-3B, gemma-2-2b) emit schema-valid output in one constrained pass; when the extra is
+  absent the honest `success=False` ends with a one-line fix hint.
+- **`models status` shows physical GPU memory** (the driver's view across all processes, via
+  `mem_get_info`) plus a utilization column — so it shows which GPU is actually free, not the calling
+  process's reservations.
+- **`models info` is local-aware:** a model in the local HuggingFace cache is described as
+  locally-runnable (engines, on-disk size, context window) instead of "not found" or a cloud-only route;
+  incomplete downloads are flagged rather than counted as ready.
+- **Thread-safe local batch.** A per-engine lock serializes the thread-unsafe fast tokenizer, so local
+  Transformers batch at the default concurrency no longer emits `"Already borrowed"` errors.
+- `effgen compare` breaks accuracy ties on lower latency then fewer tokens, gained `--max-cases`/
+  `--difficulty`, and (with `eval`) accepts your own `.jsonl`/`.json` dataset; `eval --suite list` shows
+  real per-suite case counts.
+
+### Changed — RAG ingestion & newcomer ergonomics
+
+- **PDFs ingest out of the box.** RAG `knowledge_base` no longer hard-requires `pymupdf`; PDFs fall back
+  to `pypdf`/`pdfplumber`, and when a file is skipped the error names *why* each was skipped instead of a
+  bare "0 documents to index".
+- `create_agent(extra_tools=["calculator"])` accepts tool **name** strings (with "did you mean" on a
+  typo), `tools=` is accepted as an alias for `extra_tools`, and bare `Agent()` teaches how to construct
+  one. A mistyped model id surfaces a single clean "did you mean" up front, `create_agent` reports an
+  unknown preset before demanding a model, a failed construction no longer tails a
+  "garbage-collected without close()" warning, and `effgen run` with no `-m` mirrors `quickstart` (prefer
+  a detected cheap cloud model, then a small local one) and says which and why.
+- `Agent.run(inputs=["photo.png"])` auto-wraps a bare image/audio/video path by extension; `agent.aclose()`
+  / `async with agent:` clean up asynchronously, and awaiting the sync `run()` raises a clear
+  "use `run_async()`" message. A dangling `Final Answer:` label and internal ReAct loop nudges are stripped
+  from answers.
+
+### Changed — automation & integration
+
+- **Sync `Agent.run()` no longer hangs forever** when handed a tool whose async resource is bound to the
+  calling event loop (e.g. an MCP stdio session): it runs on a daemon thread bounded by the timeout and
+  raises a clear `TimeoutError` pointing at `await agent.run_async(...)` instead of an indefinite silent
+  hang.
+- **Installed tool plugins auto-discover.** A package published with an `effgen.plugins` entry point —
+  what `effgen create-plugin` scaffolds — has its tools folded into the registry on first use (set
+  `EFFGEN_DISABLE_PLUGINS=1` to opt out).
+- **`effgen run --json`** emits the full result document to stdout for piping to `jq` (combine with `-q`
+  for pristine stdout), and `--json` is added to `eval`, `compare`, `workflow`, and `sessions list`. The
+  official MCP server gained a package entry point so `python -m effgen.tools.protocols.mcp_official`
+  starts without the runpy double-import warning; unknown background-task ids raise a clear "no such task"
+  message.
+
+### Security — hardened code-execution, secrets, and guardrails
+
+- **The Python REPL sandbox toggle is out of the model's hands.** `restricted_mode` is no longer in the
+  model-facing schema; unrestricted execution is a developer-only opt-in
+  (`PythonREPL(allow_unrestricted=True)` or `EFFGEN_REPL_ALLOW_UNRESTRICTED`), and a model-supplied
+  `restricted_mode=False` is ignored — fail-closed.
+- **The `bash` env scrub is exhaustive and drift-proof:** it strips every provider key plus anything that
+  looks like a credential (`*_API_KEY`/`*_TOKEN`/`*SECRET*`/`*PASSWORD*`), refuses reads of common secret
+  files (`.env`, `~/.ssh`, `~/.aws/credentials`, private keys, `.netrc`), no longer claims to run
+  "safely", and is no longer bundled in the `general` preset (it stays in `coding`).
+- The **prompt-injection guardrail** catches the common textbook phrasings (disregard/forget/pretend,
+  role-delimiter spoofing, `System:`/`### New system prompt` headers, repeat-the-text-above leaks) with no
+  false positives, documented as best-effort defense-in-depth. The **PII guardrail** can optionally treat
+  leaked API keys / cloud credentials as sensitive, and now redacts an IPv4 that **ends a sentence**
+  (`"Server at 10.2.3.4."`) while still leaving version strings (`1.2.3.4.5`) alone.
+
+### Quick start
+
+```python
+from effgen import create_agent, LegalDomain
+
+# Grounded research: response.sources/.citations are filled from the URLs the
+# tools actually retrieved (never from the model's prose), with honest cost.
+agent = create_agent("research", "openai:gpt-5-nano")
+r = agent.run("What is the capital of France? Cite a source.")
+print(r.text)                      # "...Paris (Source: https://en.wikipedia.org/wiki/Paris)."
+print(r.sources)                   # ['https://en.wikipedia.org/wiki/Paris']
+print(r.metadata["cost_usd"], r.metadata["latency_ms"])
+
+# A knowledge domain becomes a runnable agent in one call.
+legal = LegalDomain().to_agent("openai:gpt-5-nano")
+print(legal.run("What does an NDA confidentiality clause protect?").text)
+```
+
+```bash
+effgen run --json -q "What is 25 * 17?" | jq .output   # pure-JSON stdout for CI
+effgen models status                                    # physical GPU memory; which card is free
+```
+
+### Upgrading from v0.3.0
+
+No breaking API changes; every change is additive or makes a previously-silent failure honest. If you
+relied on `response.sources`/`.citations` being empty, they are now populated from retrieved URLs; if you
+gave `Agent.run()` an MCP stdio tool on the synchronous path, you now get a clear `TimeoutError` pointing
+at `run_async()` instead of a hang.
+
+```bash
+pip install --upgrade effgen
+```
+
 ## [0.3.0] - 2026-06-19
 
 ### Highlights

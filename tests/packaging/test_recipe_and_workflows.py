@@ -104,6 +104,24 @@ def test_recipe_renders_real_version():
     assert meta.name() == "effgen"
 
 
+def test_dockerfile_version_arg_tracks_package():
+    """The image's ``ARG VERSION`` default must equal the package version.
+
+    It is baked into ``org.opencontainers.image.version`` at build time, so a
+    stale default mislabels every default-built image. Guard it the same way the
+    conda recipe version is guarded.
+    """
+    dockerfile = REPO_ROOT / "deploy" / "docker" / "Dockerfile"
+    text = dockerfile.read_text(encoding="utf-8")
+    args = re.findall(r"^ARG VERSION=(\S+)\s*$", text, flags=re.MULTILINE)
+    assert args, "no `ARG VERSION=` default found in deploy/docker/Dockerfile"
+    version = _package_version()
+    assert all(v == version for v in args), (
+        f"deploy/docker/Dockerfile ARG VERSION defaults {args} must all equal "
+        f"the package version {version!r}"
+    )
+
+
 @pytest.mark.skipif(tomllib is None, reason="needs tomllib/tomli")
 def test_recipe_run_deps_track_pyproject():
     """Every conda run dep (minus python) must map to a pyproject core dep."""

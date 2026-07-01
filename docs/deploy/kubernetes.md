@@ -18,8 +18,8 @@ minikube start --cpus=2 --memory=4g
 # 2. Build and load the image into minikube
 docker build -f deploy/docker/Dockerfile \
   --build-arg EXTRAS=server \
-  -t effgen:0.3.0 .
-minikube image load effgen:0.3.0
+  -t effgen:0.3.1 .
+minikube image load effgen:0.3.1
 
 # 3. Install in dev mode
 helm install effgen deploy/k8s/helm/effgen \
@@ -40,7 +40,7 @@ helm install effgen deploy/k8s/helm/effgen \
   --set env.EFFGEN_OIDC_ISSUER=https://your-issuer.example.com \
   --set env.EFFGEN_OIDC_CLIENT_ID=your-client-id \
   --set env.EFFGEN_OIDC_JWKS_URI=https://your-issuer.example.com/.well-known/jwks.json \
-  --set image.tag=0.3.0 \
+  --set image.tag=0.3.1 \
   -n effgen --create-namespace
 ```
 

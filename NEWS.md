@@ -1,5 +1,88 @@
 # effGen Release Notes
 
+## v0.3.1 — June 29, 2026
+
+**effGen v0.3.1 is a real-world usability & polish release.** Where v0.3.0 hardened the framework, v0.3.1
+sands down the edges that real professionals hit the moment they sit down with it — an analyst extracting
+figures, a journalist tracing sources, a researcher serving local models, a founder shipping a weekend
+MVP, a backend engineer deploying the server, a support lead wiring up agents, an educator building a
+tutor, a security reviewer red-teaming the tools, and a legal knowledge manager standing up a domain
+assistant. It adds no new providers or subsystems; it makes the things you already reach for honest and
+delightful. There are no breaking API changes.
+
+### Your results now carry their evidence
+
+The single most-requested fix: `response.sources` and `response.citations` are no longer empty. A run now
+surfaces the URLs its tools actually retrieved — and provider-native grounding (OpenAI citation
+annotations, Gemini search grounding) — so you can verify and link them programmatically instead of
+regexing prose. Only real, retrieved URLs land there; the research preset is told to cite only what its
+tools returned, never to invent a source.
+
+### Reasoning models finish the job, and every result is measurable
+
+Reasoning models (the `gpt-5` family, `o`-series) spend output budget on hidden thinking, so the old
+1024-token default could be consumed entirely and hand back an empty — but billed — answer on a
+token-heavy task. They now get room to finish, a length-truncated empty is grown and retried once (or
+fails with a clear "increase `max_tokens`"), and a starved budget is never retried three times. Every
+`AgentResponse` now carries `cost_usd`, token counts, and `latency_ms` in its metadata (local models stay
+honestly cost-free), teams and workflows report their summed cost, and sub-cent SLM costs finally show
+real digits instead of `$0.0000`.
+
+### Your persona is finally honored everywhere
+
+A custom `system_prompt` — a Socratic tutor, a fixed-language assistant — was silently dropped on the
+direct, streaming, and native-tool paths, so it *looked* applied but wasn't. Now it steers every response
+on every provider. `effgen chat` gained `--system-prompt/--persona`, there's a new `education.*` prompt
+set, and a knowledge domain becomes a runnable agent in one call: `LegalDomain().to_agent("gpt-5-nano")`
+wires the domain's prompt, tools, and guardrails together.
+
+### Honest teams, an honest server, and safe code execution
+
+Multi-agent orchestration tells the truth now: a failed collaborator fails the team, hierarchical teams
+route each subtask to the worker the manager *named*, and a workflow never runs a node downstream of a
+failure (so an internal error can't become a customer-facing reply). The OpenAI-compatible server stops
+silently downgrading — an unhosted client tool is rejected with a clear `400` instead of vanishing, and
+`/v1/embeddings` reflects its real backend instead of quietly serving lexical hash vectors under a neural
+model's name. And the Python REPL's sandbox switch is out of the model's hands entirely: unrestricted
+execution is a developer-only opt-in, the `bash` env scrub now covers every provider credential, and the
+guardrails catch more injections and redact leaked keys.
+
+### Local-first truth and a dependable CI citizen
+
+`effgen models status` shows physical GPU memory across all processes (so you can see which card is
+actually free), `models info` recognizes a model in your own cache instead of routing you to the cloud,
+local batch is thread-safe, and small local models can emit schema-valid JSON via the new optional
+`effgen[grammar]` extra. For automation, the synchronous `Agent.run()` no longer hangs forever on an MCP
+tool, installed tool plugins auto-discover, and `effgen run --json` (plus `eval`/`compare`/`workflow`/
+`sessions list`) emits clean JSON to stdout for `jq`.
+
+### Try it
+
+```python
+from effgen import create_agent, LegalDomain
+
+# Grounded research with traceable sources and honest cost.
+agent = create_agent("research", "openai:gpt-5-nano")
+r = agent.run("What is the capital of France? Cite a source.")
+print(r.text)                  # "...Paris (Source: https://en.wikipedia.org/wiki/Paris)."
+print(r.sources)               # ['https://en.wikipedia.org/wiki/Paris']
+
+# A knowledge domain → a runnable agent in one call.
+print(LegalDomain().to_agent("openai:gpt-5-nano")
+      .run("What does an NDA confidentiality clause protect?").text)
+```
+
+```bash
+effgen run --json -q "What is 25 * 17?" | jq .output   # pure-JSON stdout for CI
+effgen models status                                    # physical GPU memory; which card is free
+```
+
+```bash
+pip install --upgrade effgen
+```
+
+---
+
 ## v0.3.0 — June 19, 2026
 
 **effGen v0.3.0 is the stabilization release.** It adds no new features — instead it takes everything

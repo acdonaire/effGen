@@ -18,7 +18,7 @@
 <a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/dm/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=orange" alt="Monthly Downloads"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/fork"><img src="https://img.shields.io/github/forks/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=blue" alt="Forks"/></a>
-<a href="docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-31_templates_across_7_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
+<a href="docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-35_templates_across_8_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
 <a href="docs/multimodal/overview.md"><img src="https://img.shields.io/badge/🖼️_Multimodal-image_%2F_audio_%2F_video-FF6B35?style=for-the-badge" alt="Multimodal"/></a>
 <a href="docs/cookbook/README.md"><img src="https://img.shields.io/badge/📖_Cookbook-5_multimodal_walkthroughs-4CAF50?style=for-the-badge" alt="Cookbook"/></a>
 <a href="docs/observability/overview.md"><img src="https://img.shields.io/badge/📊_Prometheus_Metrics-histograms_%2B_SLOs-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" alt="Prometheus Metrics"/></a>
@@ -47,6 +47,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| ✨ | **29 Jun 2026** | **v0.3.1 Released**: Real-World Usability & Polish — grounded `response.sources`/`.citations`, reasoning models (gpt-5/o-series) finish token-heavy tasks, custom personas honored on every path, honest multi-agent teams/workflows, an honest OpenAI-compatible server (no silent tool/embedding downgrades), one-call domain agents (`LegalDomain().to_agent(...)`), `effgen run --json` + auto-discovered tool plugins + deadlock-free sync `run()` over MCP, grammar-constrained local structured output, physical GPU memory in `models status`, the REPL sandbox toggle out of the model's hands, PDFs that ingest, and per-call latency with readable sub-cent costs. No breaking changes. [See changelog](CHANGELOG.md#031---2026-06-29) |
 | 🎯 | **19 Jun 2026** | **v0.3.0 Released**: Stabilization & Hardening — robust, fail-closed `Agent.run()` (no silent success; typed redacted errors; smart retries), a self-updating drift-aware model catalog (`effgen models refresh`), real GPU support (`temperature=0`, deadlock-free allocator), a fail-closed API server (forged-JWT rejected, secure CORS/metrics/RBAC/budget), hardened built-in tools (REPL timeout, one shared SSRF guard, path confinement, no unsafe pickle/eval), `import effgen` in ~20 ms, faster streaming + agent loop, a quiet scriptable CLI, and a live "thinking" UX. No breaking changes. [See changelog](CHANGELOG.md#030---2026-06-19) |
 | 🔒 | **27 May 2026** | **v0.2.10 Released**: Security, Edge & DX — secret scanning (gitleaks), SBOM (CycloneDX), pip-audit CI, sandboxed CodeExecutor (SubprocessSandbox + DockerSandbox), OAuth2/OIDC + RBAC + audit log, Docker + Helm, AWS Lambda (Mangum), Cloudflare Worker edge proxy, VSCode extension, Jupyter magics, live dashboard. [See changelog](CHANGELOG.md#0210---2026-05-27) |
 | 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [See changelog](CHANGELOG.md#029---2026-05-23) |
@@ -908,7 +909,7 @@ QRRead<br/>
 
 ## 📝 Prompt Library (New in v0.2.7)
 
-effGen ships a curated catalog of **31 reusable prompt templates** across 7 domains, each with a golden evaluation test and CLI access. Browse the [full gallery](docs/prompts/gallery.md).
+effGen ships a curated catalog of **35 reusable prompt templates** across 8 domains, each with a golden evaluation test and CLI access. Browse the [full gallery](docs/prompts/gallery.md).
 
 | Domain | Templates | Variants |
 |--------|-----------|----------|
@@ -921,7 +922,7 @@ effGen ships a curated catalog of **31 reusable prompt templates** across 7 doma
 | Business | 5 | zero-shot, CoT, structured, few-shot |
 
 ```bash
-effgen prompts list                          # browse all 31 templates
+effgen prompts list                          # browse all 35 templates
 effgen prompts show research.paper_summary.v1  # inspect a template
 effgen prompts eval                          # run golden eval (no model needed)
 effgen prompts playground                    # interactive REPL
@@ -1161,15 +1162,15 @@ Rate Limiting<br/>
 
 ## 🚀 Deployment
 
-effGen v0.3.0 ships production-ready deployment recipes for every major target:
+effGen v0.3.1 ships production-ready deployment recipes for every major target:
 
 ### 🐳 Docker
 
 Multi-stage build with a non-root user, read-only filesystem, and `/health` healthcheck. See [`docs/deploy/docker.md`](docs/deploy/docker.md).
 
 ```bash
-docker build -f deploy/docker/Dockerfile -t effgen:0.3.0 .
-docker run -p 8000:8000 --env-file .env effgen:0.3.0
+docker build -f deploy/docker/Dockerfile -t effgen:0.3.1 .
+docker run -p 8000:8000 --env-file .env effgen:0.3.1
 curl http://localhost:8000/health
 ```
 
@@ -1179,7 +1180,7 @@ Full Helm chart with Deployment, Service, Ingress, NetworkPolicy, PDB, and HPA (
 
 ```bash
 helm lint deploy/k8s/helm/effgen/
-helm install effgen deploy/k8s/helm/effgen/ --set image.tag=0.3.0
+helm install effgen deploy/k8s/helm/effgen/ --set image.tag=0.3.1
 ```
 
 ### λ AWS Lambda

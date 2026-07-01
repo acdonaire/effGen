@@ -22,7 +22,7 @@
 <a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/dm/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=orange" alt="Monthly Downloads"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/fork"><img src="https://img.shields.io/github/forks/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=blue" alt="Forks"/></a>
-<a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-31_templates_across_7_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-35_templates_across_8_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/multimodal/overview.md"><img src="https://img.shields.io/badge/🖼️_Multimodal-image_%2F_audio_%2F_video-FF6B35?style=for-the-badge" alt="Multimodal"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/cookbook/README.md"><img src="https://img.shields.io/badge/📖_Cookbook-5_multimodal_walkthroughs-4CAF50?style=for-the-badge" alt="Cookbook"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/blob/main/docs/observability/overview.md"><img src="https://img.shields.io/badge/📊_Prometheus_Metrics-histograms_%2B_SLOs-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" alt="Prometheus Metrics"/></a>
@@ -48,6 +48,7 @@
 
 | | Date | Update |
 |:---:|:---|:---|
+| ✨ | **29 Jun 2026** | **v0.3.1 Released**: Real-World Usability & Polish — grounded `response.sources`/`.citations`, reasoning models (gpt-5/o-series) finish token-heavy tasks, custom personas honored on every path, honest multi-agent teams/workflows, an honest OpenAI-compatible server (no silent tool/embedding downgrades), one-call domain agents (`LegalDomain().to_agent(...)`), `effgen run --json` + auto-discovered tool plugins + deadlock-free sync `run()` over MCP, grammar-constrained local structured output, physical GPU memory in `models status`, the REPL sandbox toggle out of the model's hands, PDFs that ingest, and per-call latency with readable sub-cent costs. No breaking changes. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#031---2026-06-29) |
 | 🎯 | **19 Jun 2026** | **v0.3.0 Released**: Stabilization & Hardening — robust, fail-closed `Agent.run()` (no silent success; typed redacted errors; smart retries), a self-updating drift-aware model catalog (`effgen models refresh`), real GPU support (`temperature=0`, deadlock-free allocator), a fail-closed API server (forged-JWT rejected, secure CORS/metrics/RBAC/budget), hardened built-in tools (REPL timeout, one shared SSRF guard, path confinement, no unsafe pickle/eval), `import effgen` in ~20 ms, faster streaming + agent loop, a quiet scriptable CLI, and a live "thinking" UX. No breaking changes. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#030---2026-06-19) |
 | 🔒 | **27 May 2026** | **v0.2.10 Released**: Security, Edge & DX — secret scanning (gitleaks), SBOM (CycloneDX), pip-audit CI, sandboxed CodeExecutor, OAuth2/OIDC + RBAC + audit log, Docker + Helm, AWS Lambda (Mangum), Cloudflare Worker, VSCode extension, Jupyter magics, live dashboard. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#0210---2026-05-27) |
 | 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [See changelog](https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md#029---2026-05-23) |
@@ -394,7 +395,7 @@ sql_prompt = p.template(
 )
 ```
 
-See the [full prompt gallery](https://github.com/ctrl-gaurav/effGen/blob/main/docs/prompts/gallery.md) for all 31 templates.
+See the [full prompt gallery](https://github.com/ctrl-gaurav/effGen/blob/main/docs/prompts/gallery.md) for all 35 templates.
 
 ---
 
@@ -469,7 +470,7 @@ model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
 math_agent     = create_agent("math", model)       # Calculator + PythonREPL
 research_agent = create_agent("research", model)   # WebSearch + URLFetch + Wikipedia + PubMed + ArXiv + PDF + DOCX + Excel
 coding_agent   = create_agent("coding", model)     # CodeExecutor + PythonREPL + FileOps + Bash
-general_agent  = create_agent("general", model)    # 64+ built-in tools
+general_agent  = create_agent("general", model)    # 66 built-in tools
 minimal_agent  = create_agent("minimal", model)    # Direct inference, no tools
 media_agent    = create_agent("media", model)      # AudioTranscribe + ImageCaption
 notify_agent   = create_agent("notify", model)     # EmailSMTP + EmailIMAP + Slack + Discord
@@ -697,7 +698,7 @@ Slack + Discord<br/>
 
 </div>
 
-See the [full tool gallery](https://github.com/ctrl-gaurav/effGen/blob/main/docs/tools/gallery.md) for quickstart snippets for all 64+ tools.
+See the [full tool gallery](https://github.com/ctrl-gaurav/effGen/blob/main/docs/tools/gallery.md) for quickstart snippets for all 66 tools.
 
 ---
 
