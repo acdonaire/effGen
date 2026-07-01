@@ -116,6 +116,46 @@ class TestUsageAndAliasMetadata:
         assert r.json()["effgen"]["alias_applied"] is False
 
 
+class TestModelsListDiscoverability:
+    """``GET /v1/models`` must list what the server actually serves, not just
+    the 6 legacy OpenAI-flagship aliases."""
+
+    def test_lists_legacy_aliases_by_default(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.get("/v1/models", headers={"X-API-Key": "k"})
+        ids = {m["id"] for m in r.json()["data"]}
+        assert {"gpt-4", "gpt-4o", "gpt-3.5-turbo"} <= ids
+
+    def test_lists_actually_served_models_alongside_aliases(self):
+        from starlette.testclient import TestClient
+
+        from effgen.server.app import create_app
+
+        served = ["openai:gpt-5-nano", "groq:llama-3.1-8b-instant"]
+        c = TestClient(create_app(
+            api_key="k", runner=_ok_runner, extra_models=lambda: served,
+        ))
+        r = c.get("/v1/models", headers={"X-API-Key": "k"})
+        ids = {m["id"] for m in r.json()["data"]}
+        # Real served ids are present without displacing the legacy aliases.
+        assert "openai:gpt-5-nano" in ids
+        assert "groq:llama-3.1-8b-instant" in ids
+        assert "gpt-4" in ids
+
+    def test_extra_models_failure_does_not_break_listing(self):
+        from starlette.testclient import TestClient
+
+        from effgen.server.app import create_app
+
+        def _boom():
+            raise RuntimeError("pool lock unavailable")
+
+        c = TestClient(create_app(api_key="k", runner=_ok_runner, extra_models=_boom))
+        r = c.get("/v1/models", headers={"X-API-Key": "k"})
+        assert r.status_code == 200
+        assert {m["id"] for m in r.json()["data"]} >= {"gpt-4"}
+
+
 class TestStreamingThroughFullStack:
     """Regression for F15: SSE used to hang through the create_app stack."""
 
@@ -414,3 +454,137 @@ class TestUnifiedErrorEnvelope:
         assert r.status_code == 429
         assert r.json()["error"]["type"] == "rate_limit_exceeded"
         assert r.headers.get("retry-after")
+
+
+class TestRateLimitHeaders:
+    """Standard ``RateLimit-*`` headers let a client pace itself before it
+    ever hits 429, not just learn about the breach after the fact."""
+
+    def test_headers_present_and_counting_down_on_allowed_requests(self):
+        from starlette.testclient import TestClient
+
+        from effgen.server.app import create_app
+
+        c = TestClient(create_app(api_key="k", rate_limit_per_minute=3, runner=_ok_runner))
+        h = {"X-API-Key": "k"}
+        body = {"model": "x", "messages": [{"role": "user", "content": "hi"}]}
+
+        r1 = c.post("/v1/chat/completions", headers=h, json=body)
+        assert r1.status_code == 200
+        assert r1.headers["ratelimit-limit"] == "3"
+        assert r1.headers["ratelimit-remaining"] == "2"
+
+        r2 = c.post("/v1/chat/completions", headers=h, json=body)
+        assert r2.headers["ratelimit-remaining"] == "1"
+
+    def test_headers_present_on_throttled_429(self):
+        from starlette.testclient import TestClient
+
+        from effgen.server.app import create_app
+
+        c = TestClient(create_app(api_key="k", rate_limit_per_minute=1, runner=_ok_runner))
+        h = {"X-API-Key": "k"}
+        body = {"model": "x", "messages": [{"role": "user", "content": "hi"}]}
+        c.post("/v1/chat/completions", headers=h, json=body)
+        r = c.post("/v1/chat/completions", headers=h, json=body)
+        assert r.status_code == 429
+        assert r.headers["ratelimit-limit"] == "1"
+        assert r.headers["ratelimit-remaining"] == "0"
+        assert r.headers["ratelimit-reset"]
+        assert r.headers["ratelimit-reset"] == r.headers["retry-after"]
+
+
+class TestDefaultRunnerFailClosed:
+    """The production runner (``_build_default_runner``, wired in when no
+    custom ``runner=`` is supplied) must not turn a failed generation into a
+    200 with the error text as the answer — it has to raise so the route maps
+    it to a real HTTP status, the same as every other runner failure."""
+
+    def _app_with_fake_model(self, monkeypatch, api_key="k", *, exc=None, text="PONG"):
+        import effgen.server.app as app_mod
+        from effgen.models.base import BaseModel, GenerationResult, ModelType, TokenCount
+
+        class _FakeModel(BaseModel):
+            def __init__(self):
+                super().__init__(model_name="fake-model", model_type=ModelType.OPENAI)
+
+            def load(self):
+                pass
+
+            def generate(self, prompt, config=None, **kwargs):
+                if exc is not None:
+                    raise exc
+                return GenerationResult(
+                    text=text, tokens_used=3, finish_reason="stop", model_name=self.model_name,
+                )
+
+            def generate_stream(self, prompt, config=None, **kwargs):  # pragma: no cover
+                yield text
+
+            def count_tokens(self, text):  # pragma: no cover
+                return TokenCount(count=len(text.split()), model_name=self.model_name)
+
+            def get_context_length(self):  # pragma: no cover
+                return 4096
+
+            def unload(self):  # pragma: no cover
+                pass
+
+            def generate_batch(self, prompts, config=None, **kwargs):  # pragma: no cover
+                return [self.generate(p, config=config) for p in prompts]
+
+            def generate_with_tools(self, prompt, tools, config=None, **kwargs):  # pragma: no cover
+                return self.generate(prompt, config=config)
+
+            def supports_function_calling(self):
+                return False
+
+            def supports_tool_calling(self):
+                return False
+
+        monkeypatch.setattr(app_mod, "_get_pooled_model", lambda resolved_model: _FakeModel())
+
+        from starlette.testclient import TestClient
+
+        return TestClient(app_mod.create_app(api_key=api_key))
+
+    def test_failed_generation_is_not_200(self, monkeypatch):
+        from effgen.models.errors import ModelNotFoundError
+
+        c = self._app_with_fake_model(
+            monkeypatch, exc=ModelNotFoundError("openai", "gpt-does-not-exist-999", "no such model")
+        )
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 404, r.status_code
+        err = r.json()["error"]
+        assert err["type"] == "model_not_found"
+        assert "no such model" in err["message"]
+        # Not stacked twice ("openai error (model=...)" appearing only once).
+        assert err["message"].count("openai error") == 1
+
+    def test_successful_generation_still_200(self, monkeypatch):
+        c = self._app_with_fake_model(monkeypatch, text="PONG")
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 200
+        assert r.json()["choices"][0]["message"]["content"] == "PONG"
+        assert r.json()["choices"][0]["finish_reason"] == "stop"
+
+    def test_unknown_provider_prefix_is_400_not_500(self):
+        # No monkeypatching: exercises the real production path — an unknown
+        # "provider:model" prefix must fail loading with a clear 4xx before it
+        # ever reaches a network call, not fall through to the local loader
+        # (which used to leak an "invalid repo id" 500).
+        from starlette.testclient import TestClient
+
+        from effgen.server.app import create_app
+
+        c = TestClient(create_app(api_key="k"))
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "nonexistent:foo-model",
+                         "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 400, r.status_code
+        err = r.json()["error"]
+        assert err["type"] == "invalid_request_error"
+        assert "nonexistent" in err["message"]

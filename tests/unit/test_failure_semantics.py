@@ -259,6 +259,20 @@ def test_raise_on_error_raises_typed():
         a2.run("hi")
 
 
+def test_raise_on_error_message_not_double_wrapped():
+    """The reconstructed exception must not stack the '<provider> error
+    (model=...):' prefix twice (once from the original exception's str(),
+    once from re-wrapping it in a fresh ModelNotFoundError)."""
+    cause = "Error code: 404 - model not found. Did you mean: gpt-5-nano?"
+    original = ModelNotFoundError("openai", "gpt-does-not-exist-999", cause)
+    a = _agent(_FakeModel(exc=original), raise_on_error=True)
+    with pytest.raises(ModelNotFoundError) as excinfo:
+        a.run("hi")
+    text = str(excinfo.value)
+    assert text.count("openai error") == 1
+    assert cause in text
+
+
 def test_error_message_is_redacted():
     leaked = "boom sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd failed"
     r = _agent(_FakeModel(exc=ProviderTransientError("openai", message=leaked))).run("hi")

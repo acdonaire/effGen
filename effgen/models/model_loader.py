@@ -244,6 +244,30 @@ class ModelLoader:
                     self.force_engine = _eng_prefix
                 model_name = _eng_rest
 
+        # A colon-prefixed id that matched neither a provider nor a local-engine
+        # prefix above is a typo'd prefix (e.g. "nonexistant:foo"), not a local
+        # HuggingFace repo id — HF repo ids cannot contain a colon. Fail fast
+        # with the valid prefixes instead of falling through to the local
+        # loader, which would reject the whole string with an unrelated
+        # "invalid repo id" error that names internal loader machinery.
+        if (
+            provider is None
+            and isinstance(model_name, str)
+            and ":" in model_name
+            and not os.path.exists(model_name)
+        ):
+            _bad_prefix, _ = model_name.split(":", 1)
+            try:
+                from effgen.models.registry import ProviderRegistry
+                known_providers = sorted(ProviderRegistry.list_providers())
+            except Exception:
+                known_providers = []
+            raise ValueError(
+                f"Unknown provider or engine prefix {_bad_prefix!r} in model id "
+                f"{model_name!r}. Known providers: {', '.join(known_providers) or 'none configured'}. "
+                f"Known local engines: {', '.join(sorted(self._LOCAL_ENGINE_PREFIXES))}."
+            )
+
         # Route / disambiguate bare cloud model ids by consulting the model
         # catalog directly.  Without this, a documented
         # provider id such as ``gpt-oss-120b`` or ``llama-3.3-70b-versatile``

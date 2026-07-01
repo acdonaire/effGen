@@ -139,6 +139,19 @@ class PromptInjectionGuardrail(Guardrail):
         re.compile(r"(?:^|\n)\s*SYSTEM\s*:\s*\S"),
     ]
 
+    # Plaintext role-turn spoofing: a line that opens with a conversational
+    # role label ("System:"/"Assistant:"/"Human:"/"User:"/"AI:") and content,
+    # faking a turn boundary without any special delimiter token so the model
+    # treats what follows as if it came from a privileged party or an earlier
+    # (compliant) reply. Anchored to the start of a line so it does not fire
+    # on the label appearing mid-sentence (e.g. "the operating system: linux").
+    _ROLE_LABEL_SPOOF: list[re.Pattern[str]] = [
+        re.compile(
+            r"(?:^|\n)\s*(?:#{1,4}\s*)?(?:system|assistant|human|user|ai)\s*:\s*\S",
+            re.I,
+        ),
+    ]
+
     # ---- HIGH-SENSITIVITY patterns (high only) ----
 
     # Markdown-style divider + system prompt injection.
@@ -187,6 +200,8 @@ class PromptInjectionGuardrail(Guardrail):
                 patterns.append(("role_delimiter_spoof", p))
             for p in self._SYSTEM_HEADER_INJECTION:
                 patterns.append(("system_header_injection", p))
+            for p in self._ROLE_LABEL_SPOOF:
+                patterns.append(("role_label_spoof", p))
 
         if self.sensitivity == "high":
             for p in self._DELIMITER_INJECTION:

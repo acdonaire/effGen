@@ -99,3 +99,27 @@ class TestEnginePrefixParsing:
         loader._load_with_transformers.assert_called_once()
         called_model_name = loader._load_with_transformers.call_args[0][0]
         assert called_model_name == "Qwen/Qwen2.5-7B-Instruct"
+
+    def test_unknown_provider_prefix_is_clear_valueerror(self):
+        # A typo'd/unknown "provider:model" or "engine:model" prefix must fail
+        # fast with a message naming the bad prefix and the valid options,
+        # not fall through to the local loader (which would reject the whole
+        # string with an unrelated "invalid repo id" error).
+        import pytest
+
+        loader = _stubbed_loader()
+        with pytest.raises(ValueError, match="Unknown provider or engine prefix 'nonexistent'"):
+            loader.load_model("nonexistent:foo-model")
+        loader._load_with_transformers.assert_not_called()
+
+    def test_unknown_provider_prefix_classifies_as_invalid_request(self):
+        # The server maps this to a 4xx, not a 500 — pin the classification.
+        from effgen.models.errors import classify_provider_error
+
+        loader = _stubbed_loader()
+        try:
+            loader.load_model("nonexistent:foo-model")
+        except ValueError as exc:
+            assert classify_provider_error(exc).category == "invalid_request"
+        else:
+            raise AssertionError("expected ValueError")

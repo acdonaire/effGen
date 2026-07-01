@@ -185,7 +185,9 @@ class RateLimitMiddleware:
     limit is ``requests_per_minute × workers``. Probe paths are exempt and
     ``OPTIONS`` preflight requests are never counted. On breach it returns a
     redacted ``429`` with a ``Retry-After`` header — no buffering, so SSE
-    responses on the allowed path stay incremental.
+    responses on the allowed path stay incremental. Every response — allowed
+    or throttled — also carries ``RateLimit-Limit``/``RateLimit-Remaining``/
+    ``RateLimit-Reset`` headers so a client can pace itself before hitting 429.
     """
 
     def __init__(self, app: Any, *, requests_per_minute: int, window_seconds: int = 60) -> None:
@@ -206,8 +208,13 @@ class RateLimitMiddleware:
         client = scope.get("client")
         return client[0] if client else "unknown"
 
-    def _check(self, ip: str) -> tuple[bool, int]:
-        """Return (allowed, retry_after_seconds)."""
+    def _check(self, ip: str) -> tuple[bool, int, int]:
+        """Return (allowed, remaining, reset_seconds).
+
+        ``remaining`` is the requests still allowed in the current window;
+        ``reset_seconds`` is how long until the window rolls over (also the
+        ``Retry-After`` value on a 429).
+        """
         now = time.monotonic()
         bucket = self._buckets.get(ip)
         if bucket is None or now - bucket[0] >= self.window:
@@ -218,11 +225,12 @@ class RateLimitMiddleware:
                 self._buckets = {
                     k: b for k, b in self._buckets.items() if b[0] >= cutoff
                 }
-            return True, 0
+            return True, self.limit - 1, self.window
+        reset = max(1, int(self.window - (now - bucket[0])))
         if bucket[1] < self.limit:
             bucket[1] += 1
-            return True, 0
-        return False, max(1, int(self.window - (now - bucket[0])))
+            return True, self.limit - bucket[1], reset
+        return False, 0, reset
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope.get("type") != "http" or scope.get("method") == "OPTIONS":
@@ -233,9 +241,25 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        allowed, retry_after = self._check(self._client_ip(scope))
+        allowed, remaining, reset = self._check(self._client_ip(scope))
+        # Standard rate-limit headers (draft IETF RateLimit-* shape) so a
+        # well-behaved client can pace itself before ever hitting 429, not
+        # just learn about it after the fact via Retry-After.
+        rate_headers = [
+            (b"ratelimit-limit", str(self.limit).encode()),
+            (b"ratelimit-remaining", str(remaining).encode()),
+            (b"ratelimit-reset", str(reset).encode()),
+        ]
         if allowed:
-            await self.app(scope, receive, send)
+            async def _send_with_rate_headers(message: Any) -> None:
+                if message["type"] == "http.response.start":
+                    message = {
+                        **message,
+                        "headers": list(message.get("headers", [])) + rate_headers,
+                    }
+                await send(message)
+
+            await self.app(scope, receive, _send_with_rate_headers)
             return
 
         import json as _json
@@ -257,7 +281,8 @@ class RateLimitMiddleware:
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode()),
-                (b"retry-after", str(retry_after).encode()),
+                (b"retry-after", str(reset).encode()),
+                *rate_headers,
             ],
         })
         await send({"type": "http.response.body", "body": body})

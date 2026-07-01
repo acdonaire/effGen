@@ -99,6 +99,7 @@ def create_app(
     cors_origins: list[str] | None = None,
     rate_limit_per_minute: int | None = None,
     runner: Any = None,
+    extra_models: Any = None,
 ) -> Any:
     """Create and return the FastAPI application.
 
@@ -110,6 +111,10 @@ def create_app(
         Optional callable ``runner(prompt, *, model, tools, stream, ...)`` used
         by the OpenAI-compatible ``/v1`` endpoints. When ``None`` a default
         agent-backed runner is constructed lazily on first use.
+    extra_models:
+        Optional callable returning model ids to list in ``GET /v1/models``
+        alongside the legacy aliases. When ``None`` this defaults to the ids
+        the default runner's model pool has actually loaded.
     """
     try:
         from fastapi import FastAPI
@@ -301,7 +306,7 @@ def create_app(
 
     # Import and mount the OpenAI-compatible + embeddings routers, with RBAC
     # and per-principal cost-cap enforcement layered on top.
-    _mount_existing_routers(app, runner=runner)
+    _mount_existing_routers(app, runner=runner, extra_models=extra_models)
 
     # Mount the local dashboard (static SPA + data.json + SSE spans).
     _mount_dashboard(app)
@@ -331,6 +336,16 @@ def _model_pool_max() -> int:
         return max(1, int(os.getenv("EFFGEN_MODEL_POOL_SIZE", "4")))
     except ValueError:
         return 4
+
+
+def _pooled_model_ids() -> list[str]:
+    """Return the resolved model ids currently loaded in the pool.
+
+    Used to make ``GET /v1/models`` list real, currently-servable models (the
+    ones this process has actually loaded) alongside the drop-in aliases.
+    """
+    with _MODEL_POOL_LOCK:
+        return list(_MODEL_POOL.keys())
 
 
 def _get_pooled_model(resolved_model: str) -> Any:
@@ -447,6 +462,12 @@ def _build_default_runner() -> Any:
             tools=resolved_tools,
             temperature=temperature if temperature is not None else 0.7,
             require_model=True,
+            # A generation failure must reach the route as a typed exception so
+            # it maps to a real HTTP status (404/502/503/...) via the same
+            # taxonomy every other runner failure uses, instead of returning
+            # HTTP 200 with the error text as the answer. ``stream()`` already
+            # raises on failure unconditionally, so this only changes run().
+            raise_on_error=True,
         )
         agent = Agent(config)
 
@@ -465,6 +486,8 @@ def _build_default_runner() -> Any:
             return _stream_then_close()
 
         try:
+            # A failure raises here (raise_on_error=True above), so a response
+            # that reaches this point is always a success.
             response = agent.run(prompt)
             prompt_tokens, completion_tokens = _extract_usage(response)
             return RunnerResult(
@@ -473,7 +496,7 @@ def _build_default_runner() -> Any:
                 completion_tokens=completion_tokens,
                 resolved_model=resolved_model,
                 cost_usd=_extract_cost(response),
-                finish_reason="stop" if getattr(response, "success", True) else "error",
+                finish_reason="stop",
             )
         finally:
             agent.close()
@@ -754,13 +777,17 @@ async def _reject_json(send: Any, status: int, detail: str) -> None:
     await send({"type": "http.response.body", "body": payload})
 
 
-def _mount_existing_routers(app: Any, *, runner: Any = None) -> None:
+def _mount_existing_routers(
+    app: Any, *, runner: Any = None, extra_models: Any = None
+) -> None:
     """Mount the OpenAI-compat + embeddings routers."""
     try:
         from effgen.api.openai_compat import create_openai_router
 
         _runner = runner or _build_default_runner()
-        router = create_openai_router(_runner)
+        router = create_openai_router(
+            _runner, extra_models=extra_models or _pooled_model_ids
+        )
         app.include_router(router)
         logger.info("Mounted OpenAI-compat router at /v1 (RBAC + budget enforced)")
     except Exception as exc:  # noqa: BLE001

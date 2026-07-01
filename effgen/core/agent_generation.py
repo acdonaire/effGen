@@ -517,11 +517,18 @@ class AgentGenerationMixin:
             or self.model_name
             or "unknown"
         )
+        # effGen's typed provider errors (ModelAuthError, ModelNotFoundError,
+        # InvalidRequestError, ...) keep the raw cause on ``.message`` and only
+        # add the "<provider> error (model=...):" prefix in their ``str()``.
+        # Use the raw form here so a reconstructed exception (``raise_on_error``,
+        # the server's error envelope) doesn't get that prefix stacked twice.
+        raw = getattr(exc, "message", None) or getattr(exc, "refusal_message", None)
+        raw_message = raw if isinstance(raw, str) and raw else str(exc)
         try:
-            message = get_redactor().scrub(str(exc))
+            message = get_redactor().scrub(raw_message)
         except Exception:  # redaction must never mask the underlying error
             logger.debug("Error-message redaction failed", exc_info=True)
-            message = str(exc)
+            message = raw_message
         return {
             "type": type(exc).__name__,
             "category": ec.category,

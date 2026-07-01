@@ -550,6 +550,8 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         "authentication", "unauthorized", "permission denied", "api key not",
     )):
         return _AUTH
+    if "unknown provider" in msg:
+        return _INVALID
     if any(k in msg for k in ("model_not_found", "does not exist", "not found", "no such model", "unknown model")):
         return _NOT_FOUND
     if "timed out" in msg or "timeout" in msg:

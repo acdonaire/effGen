@@ -526,7 +526,9 @@ def _messages_to_prompt(messages: list[Any]) -> str:
     return "\n".join(parts)
 
 
-def create_openai_router(runner: Runner) -> Any:
+def create_openai_router(
+    runner: Runner, *, extra_models: Callable[[], list[str]] | None = None
+) -> Any:
     """Create a FastAPI router exposing OpenAI-compatible endpoints.
 
     Parameters
@@ -534,6 +536,11 @@ def create_openai_router(runner: Runner) -> Any:
     runner:
         Callable invoked with (prompt, *, model, tools, stream). Should return
         a string (non-stream) or an iterable of string chunks (stream).
+    extra_models:
+        Optional callable returning model ids the server has actually served
+        this run (e.g. the pooled-model cache). ``GET /v1/models`` lists these
+        alongside the drop-in :data:`MODEL_ALIASES` so a client can discover
+        real, currently-servable ids instead of only the 6 legacy aliases.
 
     Returns
     -------
@@ -572,6 +579,25 @@ def create_openai_router(runner: Runner) -> Any:
             }
             for alias, target in MODEL_ALIASES.items()
         ]
+        # Alongside the drop-in legacy aliases, list the ids the server has
+        # actually loaded and served this run (e.g. "openai:gpt-5-nano"),
+        # so a client discovers real, currently-servable models instead of
+        # only the 6 hardcoded OpenAI-flagship aliases.
+        if extra_models is not None:
+            try:
+                served = extra_models()
+            except Exception:  # noqa: BLE001 - discoverability is best-effort
+                served = []
+            for model_id in served:
+                if model_id in MODEL_ALIASES:
+                    continue
+                data.append({
+                    "id": model_id,
+                    "object": "model",
+                    "created": now,
+                    "owned_by": "effgen",
+                    "root": model_id,
+                })
         return {"object": "list", "data": data}
 
     @router.post("/chat/completions")

@@ -90,6 +90,15 @@ class PIIGuardrail(Guardrail):
     # removes the full secret.
     _SECRET_PATTERNS: list[re.Pattern[str]] = [
         re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA)[0-9A-Z]{16}\b"),  # AWS access key id
+        # AWS secret access key: exactly 40 base64-alphabet chars, no context
+        # keyword required (mirrors the format-only patterns below). The
+        # mixed-case + digit lookaheads keep it from firing on a long run of
+        # plain lowercase prose.
+        re.compile(
+            r"(?<![A-Za-z0-9/+=])(?=[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=]))"
+            r"(?=[A-Za-z0-9/+]*[A-Z])(?=[A-Za-z0-9/+]*[a-z])(?=[A-Za-z0-9/+]*[0-9])"
+            r"[A-Za-z0-9/+]{40}"
+        ),
         re.compile(r"\b(?:sk|gsk|rk|pk)-[A-Za-z0-9]{20,}\b"),                   # OpenAI/Groq-style API keys
         re.compile(r"\b(?:gsk|sk)_[A-Za-z0-9]{20,}\b"),                         # underscore-style keys
         re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),                              # Google API key
