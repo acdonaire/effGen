@@ -4,76 +4,85 @@
 <img src="assets/header.svg" alt="effGen" width="100%"/>
 
 <br/>
-
 <br/>
 
-<!-- Badges -->
+<!-- ── Core ─────────────────────────────────────────────── -->
 <a href="https://github.com/ctrl-gaurav/effGen/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/ctrl-gaurav/effGen/ci.yml?branch=main&style=for-the-badge&logo=github&label=CI" alt="CI"/></a>
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/arXiv-2602.00887-b31b1b.svg?style=for-the-badge&logo=arxiv&logoColor=white" alt="arXiv"/></a>
 <a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/v/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=3775A9" alt="PyPI"/></a>
 <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python"/></a>
 <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-green.svg?style=for-the-badge" alt="License"/></a>
 
-<a href="https://pepy.tech/project/effgen"><img src="https://img.shields.io/pepy/dt/effgen?style=for-the-badge&logo=pypi&logoColor=white&color=brightgreen&label=Total%20Downloads" alt="Total Downloads"/></a>
-<a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/dm/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=orange" alt="Monthly Downloads"/></a>
-<a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
+<!-- ── Community ────────────────────────────────────────── -->
+<a href="https://pepy.tech/project/effgen"><img src="https://img.shields.io/pepy/dt/effgen?style=for-the-badge&logo=pypi&logoColor=white&color=brightgreen&label=Downloads" alt="Total Downloads"/></a>
+<a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/dm/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=orange&label=Monthly" alt="Monthly Downloads"/></a>
+<a href="https://github.com/ctrl-gaurav/effGen/stargazers"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/fork"><img src="https://img.shields.io/github/forks/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=blue" alt="Forks"/></a>
-<a href="docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-35_templates_across_8_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
-<a href="docs/multimodal/overview.md"><img src="https://img.shields.io/badge/🖼️_Multimodal-image_%2F_audio_%2F_video-FF6B35?style=for-the-badge" alt="Multimodal"/></a>
-<a href="docs/cookbook/README.md"><img src="https://img.shields.io/badge/📖_Cookbook-5_multimodal_walkthroughs-4CAF50?style=for-the-badge" alt="Cookbook"/></a>
-<a href="docs/observability/overview.md"><img src="https://img.shields.io/badge/📊_Prometheus_Metrics-histograms_%2B_SLOs-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" alt="Prometheus Metrics"/></a>
-<a href="docs/observability/tracing.md"><img src="https://img.shields.io/badge/🔭_OTel_Traces-samplers_%2B_span_spec-00B4CE?style=for-the-badge&logo=opentelemetry&logoColor=white" alt="OTel Traces"/></a>
-<a href="docs/observability/alerting.md"><img src="https://img.shields.io/badge/🔔_SLOs_%26_Alerting-Alertmanager_rules-F5A623?style=for-the-badge" alt="SLOs"/></a>
-<a href="deploy/docker/Dockerfile"><img src="https://img.shields.io/badge/🐳_Docker-multi--stage_%2B_non--root-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/></a>
-<a href="deploy/k8s/helm/effgen/"><img src="https://img.shields.io/badge/⎈_Helm-chart_%2B_HPA_%2B_PDB-0F1689?style=for-the-badge&logo=helm&logoColor=white" alt="Helm"/></a>
-<a href="deploy/aws_lambda/"><img src="https://img.shields.io/badge/λ_AWS_Lambda-Mangum_adapter-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="Lambda"/></a>
-<a href="deploy/cloudflare/"><img src="https://img.shields.io/badge/☁_Cloudflare_Worker-edge_proxy-F48120?style=for-the-badge&logo=cloudflare&logoColor=white" alt="Cloudflare"/></a>
-<a href="tools/vscode-effgen/"><img src="https://img.shields.io/badge/🔷_VSCode_Extension-prompt_completion-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="VSCode"/></a>
 
-<!-- Quick Links -->
-<a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Read_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
-<a href="https://effgen.org/"><img src="https://img.shields.io/badge/🌐_Website-4ECDC4?style=for-the-badge" alt="Website"/></a>
-<a href="https://effgen.org/docs/"><img src="https://img.shields.io/badge/📚_Documentation-45B7D1?style=for-the-badge" alt="Docs"/></a>
-<a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/badge/📦_PyPI-96CEB4?style=for-the-badge" alt="PyPI"/></a>
+<!-- ── Capabilities ─────────────────────────────────────── -->
+<a href="docs/prompts/gallery.md"><img src="https://img.shields.io/badge/📚_Prompt_Library-35_templates_·_8_domains-8A2BE2?style=for-the-badge" alt="Prompt Library"/></a>
+<a href="docs/multimodal/overview.md"><img src="https://img.shields.io/badge/🖼️_Multimodal-image_·_audio_·_video-FF6B35?style=for-the-badge" alt="Multimodal"/></a>
+<a href="docs/cookbook/README.md"><img src="https://img.shields.io/badge/📖_Cookbook-5_walkthroughs-4CAF50?style=for-the-badge" alt="Cookbook"/></a>
+<a href="docs/observability/overview.md"><img src="https://img.shields.io/badge/📊_Prometheus-histograms_+_SLOs-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" alt="Prometheus Metrics"/></a>
+<a href="docs/observability/tracing.md"><img src="https://img.shields.io/badge/🔭_OpenTelemetry-samplers_+_spans-00B4CE?style=for-the-badge&logo=opentelemetry&logoColor=white" alt="OTel Traces"/></a>
+<a href="docs/observability/alerting.md"><img src="https://img.shields.io/badge/🔔_SLOs_&_Alerting-Alertmanager-F5A623?style=for-the-badge" alt="SLOs"/></a>
+
+<!-- ── Deploy ───────────────────────────────────────────── -->
+<a href="deploy/docker/Dockerfile"><img src="https://img.shields.io/badge/🐳_Docker-multi--stage_·_non--root-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker"/></a>
+<a href="deploy/k8s/helm/effgen/"><img src="https://img.shields.io/badge/⎈_Helm-HPA_·_PDB-0F1689?style=for-the-badge&logo=helm&logoColor=white" alt="Helm"/></a>
+<a href="deploy/aws_lambda/"><img src="https://img.shields.io/badge/λ_AWS_Lambda-Mangum-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white" alt="Lambda"/></a>
+<a href="deploy/cloudflare/"><img src="https://img.shields.io/badge/☁_Cloudflare-edge_proxy-F48120?style=for-the-badge&logo=cloudflare&logoColor=white" alt="Cloudflare"/></a>
+<a href="tools/vscode-effgen/"><img src="https://img.shields.io/badge/🔷_VS_Code-extension-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="VSCode"/></a>
+
+<br/>
 
 <!-- Typing Animation -->
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=6C63FF&center=true&vCenter=true&multiline=true&repeat=true&width=600&height=80&lines=Build+AI+Agents+with+Small+Language+Models;Fast+%E2%80%A2+Efficient+%E2%80%A2+Powerful" alt="Typing SVG" />
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=6C63FF&center=true&vCenter=true&multiline=true&repeat=true&width=650&height=80&lines=Build+AI+Agents+with+Small+Language+Models;Fast+%E2%80%A2+Efficient+%E2%80%A2+Production-Ready" alt="Typing SVG" />
+
+<br/>
+<br/>
+
+<!-- Hero terminal (decorative; copyable code lives below) -->
+<img src="assets/hero-terminal.svg" alt="effGen quickstart — pip install effgen, then create_agent(...).run(...)" width="82%"/>
+
+<br/>
+<br/>
+
+<!-- ── Quick Navigation ─────────────────────────────────── -->
+<a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Paper-FF6B6B?style=for-the-badge" alt="Paper"/></a>
+<a href="https://effgen.org/"><img src="https://img.shields.io/badge/🌐_Website-4ECDC4?style=for-the-badge" alt="Website"/></a>
+<a href="https://effgen.org/docs/"><img src="https://img.shields.io/badge/📚_Docs-45B7D1?style=for-the-badge" alt="Docs"/></a>
+<a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/badge/📦_PyPI-96CEB4?style=for-the-badge" alt="PyPI"/></a>
+
+<br/>
+<br/>
+
+<!-- ── On-page contents ─────────────────────────────────── -->
+<b>
+<a href="#-what-is-effgen">What is effGen</a> &nbsp;•&nbsp;
+<a href="#-installation">Install</a> &nbsp;•&nbsp;
+<a href="#-quick-start">Quick Start</a> &nbsp;•&nbsp;
+<a href="#-features">Features</a> &nbsp;•&nbsp;
+<a href="#-agent-presets">Presets</a> &nbsp;•&nbsp;
+<a href="#-built-in-tools-66">Tools</a> &nbsp;•&nbsp;
+<a href="#-prompt-library">Prompts</a>
+<br/>
+<a href="#-multi-model-support">Models</a> &nbsp;•&nbsp;
+<a href="#-examples">Examples</a> &nbsp;•&nbsp;
+<a href="#-deployment">Deploy</a> &nbsp;•&nbsp;
+<a href="#-developer-experience">Dev Experience</a> &nbsp;•&nbsp;
+<a href="#-security">Security</a> &nbsp;•&nbsp;
+<a href="#-news--updates">News</a> &nbsp;•&nbsp;
+<a href="#-citation">Citation</a>
+</b>
 
 </div>
 
 ---
 
-## 📰 News & Updates
-
-| | Date | Update |
-|:---:|:---|:---|
-| ✨ | **29 Jun 2026** | **v0.3.1 Released**: Real-World Usability & Polish — grounded `response.sources`/`.citations`, reasoning models (gpt-5/o-series) finish token-heavy tasks, custom personas honored on every path, honest multi-agent teams/workflows, an honest OpenAI-compatible server (no silent tool/embedding downgrades), one-call domain agents (`LegalDomain().to_agent(...)`), `effgen run --json` + auto-discovered tool plugins + deadlock-free sync `run()` over MCP, grammar-constrained local structured output, physical GPU memory in `models status`, the REPL sandbox toggle out of the model's hands, PDFs that ingest, and per-call latency with readable sub-cent costs. No breaking changes. [See changelog](CHANGELOG.md#031---2026-06-29) |
-| 🎯 | **19 Jun 2026** | **v0.3.0 Released**: Stabilization & Hardening — robust, fail-closed `Agent.run()` (no silent success; typed redacted errors; smart retries), a self-updating drift-aware model catalog (`effgen models refresh`), real GPU support (`temperature=0`, deadlock-free allocator), a fail-closed API server (forged-JWT rejected, secure CORS/metrics/RBAC/budget), hardened built-in tools (REPL timeout, one shared SSRF guard, path confinement, no unsafe pickle/eval), `import effgen` in ~20 ms, faster streaming + agent loop, a quiet scriptable CLI, and a live "thinking" UX. No breaking changes. [See changelog](CHANGELOG.md#030---2026-06-19) |
-| 🔒 | **27 May 2026** | **v0.2.10 Released**: Security, Edge & DX — secret scanning (gitleaks), SBOM (CycloneDX), pip-audit CI, sandboxed CodeExecutor (SubprocessSandbox + DockerSandbox), OAuth2/OIDC + RBAC + audit log, Docker + Helm, AWS Lambda (Mangum), Cloudflare Worker edge proxy, VSCode extension, Jupyter magics, live dashboard. [See changelog](CHANGELOG.md#0210---2026-05-27) |
-| 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [See changelog](CHANGELOG.md#029---2026-05-23) |
-| 🖼️ | **21 May 2026** | **v0.2.8 Released**: First-class multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [See changelog](CHANGELOG.md#028---2026-05-21) |
-| 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [See changelog](CHANGELOG.md#027---2026-05-20) |
-| 🚀 | **19 May 2026** | **v0.2.6 Released**: 14 new tools — OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook. New presets: `media`, `notify`. 58+ built-in tools total. [See changelog](CHANGELOG.md#026---2026-05-19) |
-| 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [See changelog](CHANGELOG.md#025---2026-05-18) |
-| 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [See changelog](CHANGELOG.md#024---2026-05-14) |
-| 🚀 | **4 May 2026** | **v0.2.3 Released**: 5 new cloud backends (Groq, Together AI, Fireworks, Replicate, HuggingFace Inference) — 9 providers total. Unified ProviderRegistry, `effgen doctor` auth check, backend parity matrix. [See changelog](CHANGELOG.md#023---2026-05-04) |
-| 🚀 | **28 Apr 2026** | **v0.2.2 Released**: Gemini 3.x/2.5/2.0 registry, `thinking_budget`, Google Search grounding, Files API, Gemini native tools (GoogleSearch, UrlContext, CodeExecution). Anthropic Claude 4.7 registry, extended thinking, prompt caching (`cache_control`), streaming polish, experimental native tools. [See changelog](CHANGELOG.md#022---2026-04-28) |
-| 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [See changelog](CHANGELOG.md#021---2026-04-25) |
-| 🚀 | **9 Apr 2026** | **v0.2.0 Released**: Major release — native tool calling, guardrails, multi-agent orchestration, RAG pipeline, 31 tools, eval framework, production API server, MLX Apple Silicon support, Python & TypeScript SDKs. [See changelog](CHANGELOG.md#020---2026-04-09) |
-| 🍎 | **8 Apr 2026** | **MLX & Apple Silicon support merged** (PR #4): Native Metal GPU acceleration via MLX & MLX-VLM backends, hardware detection, 5 Gradio GUI examples. `pip install effgen[mlx]` |
-| 🔧 | **25 Mar 2026** | **v0.1.3 Released**: Verification hardening — smarter loop detection, "skip the tool" prompting, model-aware token counting, sub-agent depth limits, circuit breaker persistence. [See changelog](CHANGELOG.md#013---2026-03-25) |
-| 🔧 | **12 Mar 2026** | **v0.1.2 Released**: Test-driven hardening — 10 example agents, 19 bug fixes, cross-model compatibility matrix (11 models, 73% pass rate). [See changelog](CHANGELOG.md#012---2026-03-12) |
-| 🔒 | **6 Mar 2026** | **v0.1.1 Released**: Stabilization — fixed license/metadata consistency, improved error handling, added 6 examples, expanded test suite. [See changelog](CHANGELOG.md#011---2026-03-06) |
-| 🎉 | **1 Mar 2026** | **v0.1.0 Released**: Major feature release — 14 built-in tools, agent presets, plugin system, real streaming, memory integration, ACP/MCP protocols, CI/CD, and comprehensive test suite. [See changelog](CHANGELOG.md#010---2026-03-01) |
-| 🔧 | **3 Feb 2026** | **v0.0.2 Released**: vLLM backend fixes with automatic chat template support, GPU memory control, improved OOM error handling, and multi-model family compatibility |
-| 📄 | **2 Feb 2026** | Preprint available: [EffGen: Enabling Small Language Models as Capable Autonomous Agents](https://arxiv.org/abs/2602.00887) |
-| 🚀 | **31 Jan 2026** | Initial release of effGen framework **(v0.0.1)** |
-
----
-
 ## 🤔 What is effGen?
 
-**effGen** transforms Small Language Models into powerful AI agents. While most frameworks require massive LLMs, effGen is **optimized from the ground up** for efficient, smaller models — delivering fast, capable agents without the compute overhead.
+**effGen** transforms Small Language Models into powerful AI agents. While most frameworks assume a massive LLM, effGen is **optimized from the ground up** for efficient, smaller models — delivering fast, capable agents without the compute overhead — while still supporting all major cloud providers when you want them.
 
 ```python
 from effgen import Agent, load_model
@@ -83,18 +92,62 @@ from effgen.tools.builtin import Calculator, PythonREPL
 # Load a small but mighty model
 model = load_model("Qwen/Qwen2.5-1.5B-Instruct", quantization="4bit")
 
-# Create agent with tools
+# Create an agent with tools
 config = AgentConfig(
     name="math_agent",
     model=model,
-    tools=[Calculator(), PythonREPL()]
+    tools=[Calculator(), PythonREPL()],
 )
 agent = Agent(config=config)
 
-# Run computation
+# Run a computation
 result = agent.run("What is 24344 * 334?")
 print(f"Answer: {result.output}")
 ```
+
+<div align="center">
+
+**9 cloud providers** &nbsp;·&nbsp; **4 local backends** &nbsp;·&nbsp; **66 built-in tools** &nbsp;·&nbsp; **9 presets** &nbsp;·&nbsp; **35 prompt templates** &nbsp;·&nbsp; **image / audio / video**
+
+</div>
+
+---
+
+## 📰 News & Updates
+
+| | Date | Update |
+|:---:|:---|:---|
+| ✨ | **29 Jun 2026** | **v0.3.1 Released** — Real-World Usability & Polish: grounded `response.sources`/`.citations`, reasoning models (gpt-5/o-series) finish token-heavy tasks, custom personas honored on every path, fail-closed multi-agent teams/workflows, an OpenAI-compatible server with no silent tool/embedding downgrades, one-call domain agents (`LegalDomain().to_agent(...)`), `effgen run --json` + auto-discovered tool plugins + deadlock-free sync `run()` over MCP, grammar-constrained local structured output, physical GPU memory in `models status`, the REPL sandbox toggle out of the model's hands, PDFs that ingest, and per-call latency with readable sub-cent costs. No breaking changes. [Changelog](CHANGELOG.md#031---2026-06-29) |
+| 🎯 | **19 Jun 2026** | **v0.3.0 Released** — Stabilization & Hardening: fail-closed `Agent.run()` (no silent success; typed redacted errors; smart retries), a self-updating drift-aware model catalog (`effgen models refresh`), real GPU support (`temperature=0`, deadlock-free allocator), a fail-closed API server (forged-JWT rejected, secure CORS/metrics/RBAC/budget), hardened built-in tools (REPL timeout, one shared SSRF guard, path confinement, no unsafe pickle/eval), `import effgen` in ~20 ms, faster streaming + agent loop, a quiet scriptable CLI, and a live "thinking" UX. No breaking changes. [Changelog](CHANGELOG.md#030---2026-06-19) |
+
+<details>
+<summary><b>📜 Earlier releases (v0.2.10 → v0.0.1)</b></summary>
+
+<br/>
+
+| | Date | Update |
+|:---:|:---|:---|
+| 🔒 | **27 May 2026** | **v0.2.10 Released**: Security, Edge & DX — secret scanning (gitleaks), SBOM (CycloneDX), pip-audit CI, sandboxed CodeExecutor (SubprocessSandbox + DockerSandbox), OAuth2/OIDC + RBAC + audit log, Docker + Helm, AWS Lambda (Mangum), Cloudflare Worker edge proxy, VSCode extension, Jupyter magics, live dashboard. [Changelog](CHANGELOG.md#0210---2026-05-27) |
+| 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [Changelog](CHANGELOG.md#029---2026-05-23) |
+| 🖼️ | **21 May 2026** | **v0.2.8 Released**: First-class multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [Changelog](CHANGELOG.md#028---2026-05-21) |
+| 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [Changelog](CHANGELOG.md#027---2026-05-20) |
+| 🚀 | **19 May 2026** | **v0.2.6 Released**: 14 new tools — OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook. New presets: `media`, `notify`. 58+ built-in tools total. [Changelog](CHANGELOG.md#026---2026-05-19) |
+| 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [Changelog](CHANGELOG.md#025---2026-05-18) |
+| 🚀 | **14 May 2026** | **v0.2.4 Released**: ModelRouter with CostBased/LatencyBased/FirstAvailable policies, transparent provider failover, cross-process SQLite rate-limit coordination, persistent cost tracker + `effgen cost` dashboard CLI. [Changelog](CHANGELOG.md#024---2026-05-14) |
+| 🚀 | **4 May 2026** | **v0.2.3 Released**: 5 new cloud backends (Groq, Together AI, Fireworks, Replicate, HuggingFace Inference) — 9 providers total. Unified ProviderRegistry, `effgen doctor` auth check, backend parity matrix. [Changelog](CHANGELOG.md#023---2026-05-04) |
+| 🚀 | **28 Apr 2026** | **v0.2.2 Released**: Gemini 3.x/2.5/2.0 registry, `thinking_budget`, Google Search grounding, Files API, Gemini native tools (GoogleSearch, UrlContext, CodeExecution). Anthropic Claude 4.7 registry, extended thinking, prompt caching (`cache_control`), streaming polish, experimental native tools. [Changelog](CHANGELOG.md#022---2026-04-28) |
+| 🚀 | **25 Apr 2026** | **v0.2.1 Released**: Cerebras backend (streaming, native tool-calling, rate-limit coordinator, cost tracking) + OpenAI gpt-5/gpt-5.4-nano/o-series with `reasoning_effort`, prompt caching, structured outputs v2, and OpenAI native tools (web_search, code_interpreter, file_search). [Changelog](CHANGELOG.md#021---2026-04-25) |
+| 🚀 | **9 Apr 2026** | **v0.2.0 Released**: Major release — native tool calling, guardrails, multi-agent orchestration, RAG pipeline, 31 tools, eval framework, production API server, MLX Apple Silicon support, Python & TypeScript SDKs. [Changelog](CHANGELOG.md#020---2026-04-09) |
+| 🍎 | **8 Apr 2026** | **MLX & Apple Silicon support merged** (PR #4): Native Metal GPU acceleration via MLX & MLX-VLM backends, hardware detection, 5 Gradio GUI examples. `pip install effgen[mlx]` |
+| 🔧 | **25 Mar 2026** | **v0.1.3 Released**: Verification hardening — smarter loop detection, "skip the tool" prompting, model-aware token counting, sub-agent depth limits, circuit breaker persistence. [Changelog](CHANGELOG.md#013---2026-03-25) |
+| 🔧 | **12 Mar 2026** | **v0.1.2 Released**: Test-driven hardening — 10 example agents, 19 bug fixes, cross-model compatibility matrix (11 models, 73% pass rate). [Changelog](CHANGELOG.md#012---2026-03-12) |
+| 🔒 | **6 Mar 2026** | **v0.1.1 Released**: Stabilization — fixed license/metadata consistency, improved error handling, added 6 examples, expanded test suite. [Changelog](CHANGELOG.md#011---2026-03-06) |
+| 🎉 | **1 Mar 2026** | **v0.1.0 Released**: Major feature release — 14 built-in tools, agent presets, plugin system, real streaming, memory integration, ACP/MCP protocols, CI/CD, and comprehensive test suite. [Changelog](CHANGELOG.md#010---2026-03-01) |
+| 🔧 | **3 Feb 2026** | **v0.0.2 Released**: vLLM backend fixes with automatic chat template support, GPU memory control, improved OOM error handling, and multi-model family compatibility |
+| 📄 | **2 Feb 2026** | Preprint available: [EffGen: Enabling Small Language Models as Capable Autonomous Agents](https://arxiv.org/abs/2602.00887) |
+| 🚀 | **31 Jan 2026** | Initial release of effGen framework **(v0.0.1)** |
+
+</details>
 
 ---
 
@@ -102,66 +155,61 @@ print(f"Answer: {result.output}")
 
 > **Requires Python 3.10 or newer.** Tested on Python 3.10, 3.11, 3.12, 3.13, 3.14.
 
-### 📦 From PyPI (Recommended)
-
 ```bash
-pip install effgen
+pip install effgen            # from PyPI (recommended)
 ```
 
-### 🍎 Apple Silicon (MLX — Recommended for Mac)
+<table>
+<tr><th align="left">Target</th><th align="left">Command</th><th align="left">What you get</th></tr>
+<tr><td>🍎 <b>Apple Silicon</b></td><td><code>pip install effgen[mlx]</code></td><td>Text models on Metal GPU</td></tr>
+<tr><td>🍎 <b>Apple Silicon (VLM)</b></td><td><code>pip install effgen[mlx-vlm]</code></td><td>Vision-language models on Metal GPU</td></tr>
+<tr><td>🚀 <b>NVIDIA / vLLM</b></td><td><code>pip install effgen[vllm]</code></td><td>High-throughput batch inference</td></tr>
+<tr><td>🎁 <b>Everything</b></td><td><code>pip install effgen[all]</code></td><td>vLLM + RAG + vector-DB + search + monitoring + …</td></tr>
+</table>
 
-```bash
-pip install effgen[mlx]          # Text models on Apple Silicon
-pip install effgen[mlx-vlm]      # Vision-Language models on Apple Silicon
-```
+<details>
+<summary><b>⚡ Optional: flash-attn (NVIDIA GPUs only — 2 steps)</b></summary>
 
-### 🚀 With vLLM for Faster Inference
+<br/>
 
-```bash
-pip install effgen[vllm]
-```
-
-### 🎁 Everything in one shot
-
-```bash
-pip install effgen[all]    # installs vLLM + RAG + vector-DB + search + cloud-secrets + monitoring + …
-```
-
-### ⚡ Optional: flash-attn (NVIDIA GPUs only — 2 steps)
-
-> `flash-attn` is **not** in `[all]` on purpose: its own `setup.py` imports
-> `torch` before pip's isolated build environment has torch installed (a
-> well-known upstream bug), so bundling it would break `pip install effgen[all]`
-> for everyone. Install it in two steps instead:
+`flash-attn` is **not** in `[all]` on purpose: its own `setup.py` imports `torch` before pip's isolated
+build environment has torch installed (a well-known upstream bug), so bundling it would break
+`pip install effgen[all]` for everyone. Install it in two steps instead:
 
 ```bash
 pip install effgen[all]                       # step 1: gets torch + the rest
 pip install flash-attn --no-build-isolation   # step 2: reuses the torch from step 1
 ```
 
-See [docs/installation.md](docs/installation.md) for the full guide.
+</details>
 
-### 🔧 From Source
+<details>
+<summary><b>🔧 From source</b></summary>
+
+<br/>
 
 ```bash
 git clone https://github.com/ctrl-gaurav/effGen.git
 cd effGen
 
-# Quick install
-./install.sh
-
-# Full install (includes vLLM + dev tools)
-./install.sh --full
-
-# Manual install
-pip install -e .
+./install.sh            # quick install
+./install.sh --full     # full install (includes vLLM + dev tools)
+pip install -e .        # manual editable install
 ```
+
+</details>
+
+See [docs/installation.md](docs/installation.md) for the full guide.
 
 ---
 
 ## 🚀 Quick Start
 
-### 💻 CLI Usage
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**💻 Command line**
 
 ```bash
 # Run a task
@@ -170,62 +218,61 @@ effgen run "What is the capital of France?"
 # Interactive chat
 effgen chat
 
-# Start API server
+# Start the API server
 effgen serve --port 8000
 
-# List available presets
+# List presets · check health · wizard
 effgen presets
-
-# Check infrastructure health
 effgen health
-
-# Interactive wizard
 effgen
 ```
 
-### 🐍 Python API
+</td>
+<td width="50%" valign="top">
+
+**🐍 Python API**
 
 ```python
 from effgen import Agent, load_model
 from effgen.core.agent import AgentConfig
 from effgen.tools.builtin import Calculator
 
-# Load model
-model = load_model("Qwen/Qwen2.5-1.5B-Instruct", quantization="4bit")
+model = load_model("Qwen/Qwen2.5-1.5B-Instruct",
+                   quantization="4bit")
 
-# Configure agent
-config = AgentConfig(
+agent = Agent(config=AgentConfig(
     name="calculator_agent",
     model=model,
     tools=[Calculator()],
-    system_prompt="You are a helpful math assistant."
-)
-
-# Create and run
-agent = Agent(config=config)
+    system_prompt="You are a helpful math assistant.",
+))
 result = agent.run("Calculate 15% tip on $85.50")
 print(result.output)
 ```
 
-### 🍎 Apple Silicon (MLX)
+</td>
+</tr>
+</table>
+
+<details>
+<summary><b>🍎 Apple Silicon (MLX) quick start</b></summary>
+
+<br/>
 
 ```python
 from effgen import Agent, load_model
 from effgen.core.agent import AgentConfig
 from effgen.tools.builtin import Calculator
 
-# Load MLX model — native Metal GPU, unified memory, no CPU-GPU transfer
+# Native Metal GPU, unified memory, no CPU-GPU transfer
 model = load_model("LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit", engine="mlx")
 
-config = AgentConfig(
-    name="mlx_agent",
-    model=model,
-    tools=[Calculator()],
-)
-agent = Agent(config=config)
+agent = Agent(config=AgentConfig(name="mlx_agent", model=model, tools=[Calculator()]))
 result = agent.run("What is sqrt(144) + 2^10?")
 print(result.output)
 ```
+
+</details>
 
 ---
 
@@ -296,12 +343,85 @@ Observability<br/>
 
 </div>
 
----
-
-## 🆕 What's New in v0.2.9
-
 <details open>
-<summary><b>Observability & Reliability — production-ready telemetry in v0.2.9</b></summary>
+<summary><b>🆕 What's new in v0.3.1 — Real-World Usability & Polish</b></summary>
+
+<br/>
+
+Where v0.3.0 hardened the framework, **v0.3.1 sands down the edges** real professionals hit the moment
+they sit down with it. No new providers or subsystems — the things you already reach for are now more
+predictable, measurable, and consistent. **No breaking API changes** — every change is additive or makes
+a previously-silent failure surface a clear, typed error.
+
+| Area | What changed |
+|------|--------------|
+| **Traceable evidence** | `response.sources` / `.citations` are populated from the URLs a run actually retrieved (and provider-native grounding) — never from the model's prose. |
+| **Reasoning models** | The `gpt-5` family and `o`-series finish token-heavy tasks instead of returning an empty, billed result; length-truncation is grown and retried once, not three times. |
+| **Measurable results** | `cost_usd`, token counts, and `latency_ms` land on every result (local stays cost-free); teams/workflows report summed cost; sub-cent costs show real digits. |
+| **Personas everywhere** | A custom `system_prompt` now steers the direct, streaming, and native-tool paths — not just text-ReAct. |
+| **Trustworthy orchestration** | Collaborative teams fail closed, hierarchical teams route by the named worker, and a workflow never runs downstream of a failed node. |
+| **Consistent server** | No silent client-tool drop (clear `400`), embeddings reflect their real backend, a unified error envelope, and per-call cost. |
+| **One-call domains** | `LegalDomain().to_agent("gpt-5-nano")` wires a domain's prompt, tools, and guardrails into a runnable agent. |
+| **Local-first truth** | `models status` shows physical GPU memory, `models info` is cache-aware, local batch is thread-safe, and grammar-constrained JSON via `effgen[grammar]`. |
+| **Dependable automation** | Sync `Agent.run()` no longer hangs on MCP tools, tool plugins auto-discover, and `effgen run --json` pipes clean JSON to stdout. |
+| **Hardened tools** | The Python REPL sandbox toggle is out of the model's hands; the bash env scrub covers every credential; broader injection detection and credential-aware PII redaction. |
+
+```python
+from effgen import create_agent, LegalDomain
+
+# Grounded research: sources/citations come from the URLs the tools retrieved.
+agent = create_agent("research", "openai:gpt-5-nano")
+r = agent.run("What is the capital of France? Cite a source.")
+print(r.text)                  # "...Paris (Source: https://en.wikipedia.org/wiki/Paris)."
+print(r.sources)               # ['https://en.wikipedia.org/wiki/Paris']
+print(r.metadata["cost_usd"], r.metadata["latency_ms"])
+
+# A knowledge domain becomes a runnable agent in one call.
+legal = LegalDomain().to_agent("openai:gpt-5-nano")
+print(legal.run("What does an NDA confidentiality clause protect?").text)
+```
+
+```bash
+effgen run --json -q "What is 25 * 17?" | jq .output   # pure-JSON stdout for CI
+effgen models status                                    # physical GPU memory; which card is free
+```
+
+[Full v0.3.1 changelog →](CHANGELOG.md#031---2026-06-29)
+
+</details>
+
+<details>
+<summary><b>📦 Previous releases — v0.3.0 down to v0.2.0 (click to expand)</b></summary>
+
+<br/>
+
+<details>
+<summary><b>What's new in v0.3.0 — Stabilization & Hardening</b></summary>
+
+<br/>
+
+**effGen v0.3.0** made the framework production-safe from the inside out. **No breaking API changes.**
+
+- **Fail-closed `Agent.run()`** — no silent success; typed, redacted errors; smarter retries and loop
+  detection.
+- **Self-updating, drift-aware model catalog** — `effgen models refresh` reconciles the local snapshot
+  against live provider lists (chat models only; never persists `ft:` ids).
+- **Real GPU support** — deterministic `temperature=0`, a deadlock-free allocator, clean multi-GPU use.
+- **Fail-closed API server** — forged/expired/wrong-alg JWTs rejected; secure CORS, metrics, RBAC, and
+  budget enforcement.
+- **Hardened built-in tools** — Python REPL timeout, one shared SSRF guard, path confinement, and no
+  unsafe `pickle`/`eval`.
+- **Faster & quieter** — `import effgen` in ~20 ms, faster streaming + agent loop, a scriptable CLI, and
+  a live "thinking" UX.
+
+[Full v0.3.0 changelog →](CHANGELOG.md#030---2026-06-19)
+
+</details>
+
+<details>
+<summary><b>What's new in v0.2.9 — Observability & Reliability</b></summary>
+
+<br/>
 
 **effGen v0.2.9** ships the full observability and reliability stack. All telemetry is async/non-blocking — a failed export never fails inference.
 
@@ -316,7 +436,7 @@ log.event("model.call.started", provider="cerebras", model="gpt-oss-120b", cache
 
 **Prometheus histograms + SLO tracking.** `effgen_model_call_latency_seconds`, `effgen_tool_call_latency_seconds`, `effgen_agent_iteration_latency_seconds`, and `effgen_tokens_total` now expose histogram buckets at `/metrics`. `SLOTracker` maintains a rolling-window error budget and `burn_rate()` at `/slo`.
 
-**Configurable OTel samplers + canonical span spec.** Choose `AlwaysOn`, `AlwaysOff`, `TraceIdRatio(p)`, or `RateLimited(per_second)` in config. `effgen/observability/spans.py` is the single source of truth for every span attribute name — no more scattered string literals across adapters.
+**Configurable OTel samplers + canonical span spec.** Choose `AlwaysOn`, `AlwaysOff`, `TraceIdRatio(p)`, or `RateLimited(per_second)` in config. `effgen/observability/spans.py` is the single source of truth for every span attribute name.
 
 **Reliability primitives.** Four layers now protect every adapter call:
 
@@ -344,14 +464,14 @@ effgen loadtest --concurrency 10 --duration 30 --output report.json
 cp docs/observability/alert_rules.yaml /etc/prometheus/rules/effgen.yaml
 ```
 
-See [docs/observability/overview.md](docs/observability/overview.md) for full setup, [docs/observability/metrics.md](docs/observability/metrics.md) for all metric definitions, and [docs/observability/alerting.md](docs/observability/alerting.md) for Alertmanager integration.
+See [docs/observability/overview.md](docs/observability/overview.md), [docs/observability/metrics.md](docs/observability/metrics.md), and [docs/observability/alerting.md](docs/observability/alerting.md).
 
 </details>
 
-## 🆕 What's New in v0.2.8
+<details>
+<summary><b>What's new in v0.2.8 — First-class multimodal (image, audio & video across 6 providers)</b></summary>
 
-<details open>
-<summary><b>First-class multimodal in v0.2.8 — image, audio & video across 6 providers</b></summary>
+<br/>
 
 **effGen v0.2.8** makes multimodal input a first-class citizen. Send images, audio clips, and short video to any vision-capable provider through a unified `Message` schema — the adapter handles the translation, not your code.
 
@@ -386,48 +506,34 @@ result = agent.run("Transcribe and summarize.", inputs=[aud])
 ```
 
 ```bash
-# Multimodal preset
 effgen run --preset multimodal "Describe this image" --image /tmp/photo.jpg
-
-# Check capability
 python -c "from effgen.models.capabilities import Capability; print(Capability.vision)"
 ```
 
-See [docs/multimodal/overview.md](docs/multimodal/overview.md) for the full architecture and [docs/cookbook/README.md](docs/cookbook/README.md) for the cookbook index.
+See [docs/multimodal/overview.md](docs/multimodal/overview.md) and [docs/cookbook/README.md](docs/cookbook/README.md).
 
 </details>
 
 <details>
-<summary><b>31 prompt templates in v0.2.7 — Prompt Library, Eval Harness & Interactive Playground</b></summary>
+<summary><b>What's new in v0.2.7 — Prompt Library, Eval Harness & Interactive Playground</b></summary>
 
-**effGen v0.2.7** adds a curated, domain-organized **Prompt Library** with 31 reusable templates across 7 domains, paired with a golden evaluation harness and an interactive playground CLI. See the [full gallery](docs/prompts/gallery.md).
+<br/>
+
+**effGen v0.2.7** adds a curated, domain-organized **Prompt Library** with reusable templates, paired with a golden evaluation harness and an interactive playground CLI. See the [full gallery](docs/prompts/gallery.md).
 
 **Research** — literature review (zero-shot + CoT), paper summary, citation extraction, methodology critique.
-
 **Coding** — code review, bug diagnosis, refactoring plan, test generation, docstring fill.
-
 **Data / SQL** — NL-to-SQL with warnings, SQL explain, SQL optimize, data profile, ETL plan.
-
 **Legal** — contract summary, clause classify, research brief. All templates include mandatory legal disclaimer.
-
 **Medical** — symptom triage, drug interaction, medical literature synthesis. All templates include mandatory medical disclaimer.
-
 **Creative** — story continuation (zero-shot + few-shot), poetry forms, character bio, world building.
-
 **Business** — meeting summary, email draft (formal/casual), OKR generation, SWOT analysis, elevator pitch.
 
 ```bash
-# Discover and browse
 effgen prompts list
 effgen prompts list --domain research
-effgen prompts list --format markdown
-
-# Inspect and evaluate
 effgen prompts show research.literature_review.v1.cot
-effgen prompts eval
 effgen prompts eval --domain coding --live --model gpt-oss-120b
-
-# Interactive playground
 effgen prompts playground
 ```
 
@@ -442,14 +548,16 @@ sql_prompt = p.template(
 )
 ```
 
-See [docs/prompts/gallery.md](docs/prompts/gallery.md) for the full template catalog and [docs/prompts/library.md](docs/prompts/library.md) for the framework overview.
+See [docs/prompts/gallery.md](docs/prompts/gallery.md) and [docs/prompts/library.md](docs/prompts/library.md).
 
 </details>
 
 <details>
-<summary><b>14 new tools in v0.2.6 — OCR, Audio, Images, Documents, Geo/Weather & Communications</b></summary>
+<summary><b>What's new in v0.2.6 — 14 tools: OCR, audio, images, documents, geo/weather & comms</b></summary>
 
-**effGen v0.2.6** adds 14 new built-in tools across document, media, and communication categories, bringing the total to **58+**. Two new presets (`media`, `notify`) are also introduced.
+<br/>
+
+**effGen v0.2.6** adds 14 new built-in tools across document, media, and communication categories, and two new presets (`media`, `notify`).
 
 1. **OCR** — `OCRTool` (Tesseract local + OCR.space fallback; `OCRBackendUnavailable` raised with install instructions).
 
@@ -462,15 +570,9 @@ See [docs/prompts/gallery.md](docs/prompts/gallery.md) for the full template cat
 
 2. **Audio Transcription** — `AudioTranscribeTool` (faster-whisper local; HF Inference fallback; GPU auto-detected).
 
-   ```python
-   import asyncio
-   from effgen.tools.builtin.audio_transcribe import AudioTranscribeTool
-   result = asyncio.run(AudioTranscribeTool().execute(operation="transcribe", audio_path="/tmp/clip.mp3"))
-   ```
-
 3. **Image Analysis** — `ImageInfoTool` (Pillow metadata, zero network) + `ImageCaptionTool` (vision-capable model router).
 
-4. **Document Parsing** — `PDFTool` (pypdf + pdfplumber), `DOCXTool` (python-docx), `ExcelTool` (openpyxl + pandas). All added to `research` and `general` presets.
+4. **Document Parsing** — `PDFTool` (pypdf + pdfplumber), `DOCXTool` (python-docx), `ExcelTool` (openpyxl + pandas). Added to `research` and `general` presets.
 
    ```python
    import asyncio
@@ -480,45 +582,28 @@ See [docs/prompts/gallery.md](docs/prompts/gallery.md) for the full template cat
 
 5. **Geo / Weather** — `WeatherTool` (Open-Meteo, free, no auth), `GeocodeTool` (Nominatim/OSM, 1 req/s), `MapsTool` (staticmap PNG renderer).
 
-   ```python
-   import asyncio
-   from effgen.tools.builtin.geocode import GeocodeTool
-   result = asyncio.run(GeocodeTool().execute(operation="geocode", address="San Francisco, CA"))
-   ```
+6. **Email & Webhooks** — `EmailSMTPTool`, `EmailIMAPTool`, `SlackWebhookTool`, `DiscordWebhookTool`. All in the new `notify` preset. Webhook URLs are redacted in logs.
 
-6. **Email & Webhooks** — `EmailSMTPTool`, `EmailIMAPTool`, `SlackWebhookTool`, `DiscordWebhookTool`. All in new `notify` preset. Webhook URLs are redacted in logs.
-
-   ```python
-   import asyncio
-   from effgen.tools.builtin.slack_webhook import SlackWebhookTool
-   result = asyncio.run(SlackWebhookTool().execute(operation="post", text="Deploy complete!"))
-   ```
-
-See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for all 66 tools.
+See the [full tool gallery](docs/tools/gallery.md).
 
 </details>
 
 <details>
-<summary><b>13 new free tools in v0.2.5 — Research, News, YouTube, Social, Translation & QR</b></summary>
+<summary><b>What's new in v0.2.5 — 13 free tools: research, news, YouTube, social, translation & QR</b></summary>
 
-**effGen v0.2.5** adds 13 free, no-auth-required tools, bringing the built-in tool count above 44. All tools integrate with the `research` and `general` presets.
+<br/>
+
+**effGen v0.2.5** adds 13 free, no-auth-required tools. All integrate with the `research` and `general` presets.
 
 1. **Academic Research** — `PubMedTool` (NCBI, 3 ops, built-in rate limiting), `ArXivTool` (Atom feed + PDF download), `SemanticScholarTool` (search + citations + references).
 
    ```python
    import asyncio
    from effgen.tools.builtin.arxiv import ArXivTool
-   tool = ArXivTool()
-   result = asyncio.run(tool.execute(operation="search", query="transformer attention", max_results=5))
+   result = asyncio.run(ArXivTool().execute(operation="search", query="transformer attention", max_results=5))
    ```
 
 2. **News & RSS** — `RSSFeedTool` (any RSS/Atom feed), `NewsTool` (BBC, Reuters, HN, NPR, etc. + optional NewsAPI.org key).
-
-   ```python
-   import asyncio
-   from effgen.tools.builtin.news import NewsTool
-   result = asyncio.run(NewsTool().execute(operation="top_headlines", category="technology"))
-   ```
 
 3. **YouTube** — `YouTubeTranscriptTool` (captions without Google API key), `YouTubeMetadataTool` (via yt-dlp, public content only).
 
@@ -528,14 +613,16 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
 
 6. **QR Codes** — `QRGenerateTool` (generate locally), `QRReadTool` (decode from image, with OpenCV fallback if zbar is unavailable).
 
-See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for all 66 tools.
+See the [full tool gallery](docs/tools/gallery.md).
 
 </details>
 
 <details>
-<summary><b>Top 5 features from v0.2.4 — ModelRouter & Cost Optimizer</b></summary>
+<summary><b>What's new in v0.2.4 — ModelRouter & Cost Optimizer</b></summary>
 
-1. **`PolicyBasedRouter`** — composable routing engine with three built-in policies. Pick the cheapest provider within your budget, the fastest under your SLA, or simply the first available — and combine them freely.
+<br/>
+
+1. **`PolicyBasedRouter`** — composable routing engine with three built-in policies. Pick the cheapest provider within your budget, the fastest under your SLA, or simply the first available.
 
    ```python
    from effgen import PolicyBasedRouter, RoutingContext, CostBasedPolicy, LatencyBasedPolicy
@@ -553,34 +640,11 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
    print(decision.eliminated)  # [(pair, reason), ...] — fully explainable
    ```
 
-2. **Transparent failover** — `route_and_execute(ctx, fn)` retries on rate-limits / 5xx / timeouts and seamlessly moves to the next-best provider. Each hop fires a `RouterEvent` to registered subscribers.
+2. **Transparent failover** — `route_and_execute(ctx, fn)` retries on rate-limits / 5xx / timeouts and moves to the next-best provider. Each hop fires a `RouterEvent` to registered subscribers.
 
-   ```python
-   from effgen import load_model
+3. **Cross-process SQLite rate-limit coordination** — share a single rate-limit budget across multiple workers via `RateLimitCoordinator(SQLiteRateLimitStore(...))` (WAL-mode, BEGIN IMMEDIATE).
 
-   def call_provider(pair):
-       model = load_model(pair.model_id, provider=pair.provider)
-       return model.generate("Hello!").text
-
-   router.subscribe(
-       lambda event: print(
-           f"Failover: {event.from_provider}/{event.from_model} "
-           f"→ {event.to_provider}/{event.to_model}"
-       )
-   )
-   result = router.route_and_execute(ctx, call_provider)
-   ```
-
-3. **Cross-process SQLite rate-limit coordination** — share a single rate-limit budget across multiple workers:
-
-   ```python
-   from effgen import RateLimitCoordinator, SQLiteRateLimitStore
-
-   store = SQLiteRateLimitStore("~/.effgen/rate_limits.sqlite")
-   coordinator = RateLimitCoordinator(storage=store)  # WAL-mode, BEGIN IMMEDIATE
-   ```
-
-4. **Persistent cost tracking + `effgen cost` CLI** — every API call persists to SQLite; query spend instantly:
+4. **Persistent cost tracking + `effgen cost` CLI** — every API call persists to SQLite:
 
    ```bash
    effgen cost today          # per-provider per-model table
@@ -589,12 +653,14 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
    effgen cost set-budget 1.0 # set $1/day cap (BudgetExceededError at 100%)
    ```
 
-5. **Fully explainable decisions + budget guard** — `RouterDecision` records every eliminated provider and why (`"rate_limited"`, `"no_key"`, `"cost_exceeds_budget"`, `"latency_exceeds_sla"`). Configure a daily spend cap; the router automatically fails over to a free-tier provider when the budget is hit.
+5. **Fully explainable decisions + budget guard** — `RouterDecision` records every eliminated provider and why (`"rate_limited"`, `"no_key"`, `"cost_exceeds_budget"`, `"latency_exceeds_sla"`), and fails over to a free-tier provider when the budget is hit.
 
 </details>
 
 <details>
-<summary><b>Top 5 features from v0.2.3</b></summary>
+<summary><b>What's new in v0.2.3 — 5 new cloud backends (9 providers total)</b></summary>
+
+<br/>
 
 1. **5 new cloud backends** — `GroqAdapter`, `TogetherAdapter`, `FireworksAdapter`, `ReplicateAdapter`, `HFInferenceAdapter` — each with streaming, native tools, rate-limit coordination, and cost tracking. 9 providers total.
 
@@ -614,7 +680,9 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
 </details>
 
 <details>
-<summary><b>Top 5 features from v0.2.2 (and earlier)</b></summary>
+<summary><b>What's new in v0.2.2 — Gemini & Anthropic depth</b></summary>
+
+<br/>
 
 1. **Gemini 3.x/2.5/2.0 + Gemma families** — full model registry with correct context windows, output limits, and feature flags; SDK migrated to `google-genai>=1.0.0`.
 
@@ -629,7 +697,9 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
 </details>
 
 <details>
-<summary><b>Top 5 features from v0.2.1</b></summary>
+<summary><b>What's new in v0.2.1 — Cerebras + OpenAI reasoning</b></summary>
+
+<br/>
 
 1. **Cerebras backend** — the models the live API currently serves (`gpt-oss-120b`, `zai-glm-4.7`) with streaming, native function-calling, automatic RPM/TPM/RPD/TPD rate-limit coordination, and per-call cost tracking. `pip install effgen[cerebras]` and set `CEREBRAS_API_KEY`. Run `effgen models refresh --provider cerebras` to pick up catalog changes.
 
@@ -649,7 +719,9 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
 </details>
 
 <details>
-<summary><b>Top 5 features from v0.2.0</b></summary>
+<summary><b>What's new in v0.2.0 — the big one</b></summary>
+
+<br/>
 
 1. **Native Tool Calling** — Qwen, Llama, Mistral models use built-in function calling instead of text parsing. Set `tool_calling_mode="native"` or `"hybrid"`. Structured JSON/Pydantic output validation included.
 
@@ -660,6 +732,8 @@ See the [full tool gallery](docs/tools/gallery.md) for quickstart snippets for a
 4. **Production API Server** — OpenAI-compatible `/v1/chat/completions`, request queuing, agent pooling, multi-tenancy, API keys. Drop-in OpenAI replacement with local SLMs.
 
 5. **Apple Silicon Native** — MLX & MLX-VLM backends for M1/M2/M3/M4. Metal GPU acceleration, unified memory. `pip install effgen[mlx]`.
+
+</details>
 
 </details>
 
@@ -676,10 +750,10 @@ from effgen.presets import create_agent
 model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
 
 # One-line agent creation
-math_agent = create_agent("math", model)       # Calculator + PythonREPL
-research_agent = create_agent("research", model) # WebSearch + URLFetch + Wikipedia
+math_agent = create_agent("math", model)        # Calculator + PythonREPL
+research_agent = create_agent("research", model) # WebSearch + URLFetch + Wikipedia + academic
 coding_agent = create_agent("coding", model)     # CodeExecutor + PythonREPL + FileOps + Bash
-general_agent = create_agent("general", model)   # All tools
+general_agent = create_agent("general", model)   # Broad built-in tool suite
 rag_agent = create_agent("rag", model, knowledge_base="./docs/")  # RAG pipeline
 minimal_agent = create_agent("minimal", model)   # Direct inference, no tools
 ```
@@ -689,6 +763,8 @@ minimal_agent = create_agent("minimal", model)   # Direct inference, no tools
 effgen run --preset math "What is sqrt(144)?"
 effgen run --preset research "Tell me about quantum computing"
 ```
+
+> **9 presets:** `math` · `research` · `coding` · `general` · `rag` · `minimal` · `multimodal` · `notify` · `media`
 
 ---
 
@@ -897,7 +973,7 @@ QRRead<br/>
 
 **…**<br/>
 +more<br/>
-<sub>Finance, DevOps</sub>
+<sub>OCR, PDF, audio…</sub>
 
 </td>
 </tr>
@@ -905,9 +981,11 @@ QRRead<br/>
 
 </div>
 
+> Browse quickstart snippets for all 66 tools in the [full tool gallery](docs/tools/gallery.md).
+
 ---
 
-## 📝 Prompt Library (New in v0.2.7)
+## 📝 Prompt Library
 
 effGen ships a curated catalog of **35 reusable prompt templates** across 8 domains, each with a golden evaluation test and CLI access. Browse the [full gallery](docs/prompts/gallery.md).
 
@@ -922,10 +1000,10 @@ effGen ships a curated catalog of **35 reusable prompt templates** across 8 doma
 | Business | 5 | zero-shot, CoT, structured, few-shot |
 
 ```bash
-effgen prompts list                          # browse all 35 templates
+effgen prompts list                            # browse all 35 templates
 effgen prompts show research.paper_summary.v1  # inspect a template
-effgen prompts eval                          # run golden eval (no model needed)
-effgen prompts playground                    # interactive REPL
+effgen prompts eval                            # run golden eval (no model needed)
+effgen prompts playground                      # interactive REPL
 ```
 
 ```python
@@ -941,126 +1019,6 @@ sql_prompts = registry.search(domain="data")
 ```
 
 > Legal and medical templates enforce a mandatory non-advice disclaimer in every rendered output, verified by unit tests.
-
----
-
-## 📚 Examples
-
-### 🖥️ GUI Applications (Gradio)
-
-```bash
-# Visual agent & tool development
-python examples/basic/chat_gui_mlx.py              # MLX Chat — streaming chat with Apple Silicon models (port 7860)
-python examples/basic/agent_viz_mlx.py             # Agent Visualizer — step-by-step reasoning + code editor (port 7860)
-python examples/basic/tool_builder_gui.py          # Tool Builder — visually create custom tools (port 7863)
-python examples/basic/tool_tester_gui.py           # Tool Tester — browse, test, inspect all 66 tools (port 7864)
-```
-
-### 🍎 Apple Silicon (MLX)
-
-```bash
-python examples/basic/basic_agent_mlx.py           # Basic MLX agent with calculator
-python examples/basic/chat_gui_mlx.py --autoload   # Chat GUI with auto model loading
-python examples/basic/agent_viz_mlx.py --autoload   # Agent visualizer with auto model loading
-```
-
-### 🤖 Core Agent Examples
-
-```bash
-python examples/basic/qa_agent.py                  # Q&A agent (no tools)
-python examples/basic/calculator_agent.py          # Math with Calculator + PythonREPL
-python examples/tools/advanced_multi_tool_agent.py # 5 tools + fallback chains
-python examples/tools/file_operations_agent.py     # File read/write/search
-python examples/tools/coding_agent.py              # Code execution + iteration
-python examples/advanced/conversational_agent.py   # Multi-turn memory
-python examples/advanced/advanced_streaming_agent.py # Token streaming with callbacks
-python examples/advanced/data_processing_agent.py  # JSON & data pipelines
-python examples/advanced/multi_agent_pipeline.py   # Multi-agent orchestration
-python examples/advanced/error_recovery_agent.py   # Error handling patterns
-```
-
-### ⚡ Quick-Start Examples
-
-```bash
-python examples/basic/basic_agent.py               # Basic agent (Transformers)
-python examples/basic/basic_agent_vllm.py          # Basic agent (vLLM - 5-10x faster)
-python examples/plugins_presets/preset_agents.py   # Ready-to-use agent presets
-python examples/web_retrieval/streaming_agent.py   # Simple streaming
-python examples/web_retrieval/memory_agent.py      # Simple multi-turn memory
-python examples/tools/multi_tool_agent.py          # Simple multi-tool
-python examples/web_retrieval/weather_agent.py     # Weather via Open-Meteo (free)
-python examples/plugins_presets/plugin_example.py  # Custom tool plugins
-python examples/web_retrieval/web_agent.py         # Web search agent
-python examples/web_retrieval/retrieval_agent.py   # RAG-based retrieval
-```
-
-> 📊 See [examples/compatibility_matrix.md](examples/utils/compatibility_matrix.md) for model compatibility across all agents.
-
-<details>
-<summary><b>📖 More Examples</b></summary>
-
-### Multi-Tool Agent
-
-```python
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools.builtin import Calculator, WebSearch, PythonREPL
-
-model = load_model("Qwen/Qwen2.5-3B-Instruct")
-
-config = AgentConfig(
-    name="research_agent",
-    model=model,
-    tools=[Calculator(), WebSearch(), PythonREPL()],
-    system_prompt="You are a research assistant."
-)
-
-agent = Agent(config=config)
-result = agent.run("Search for the population of Tokyo and calculate what percentage it is of Japan's total population")
-```
-
-### Streaming
-
-```python
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools.builtin import Calculator
-
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-agent = Agent(config=AgentConfig(
-    name="stream_demo", model=model,
-    tools=[Calculator()], enable_streaming=True
-))
-
-for token in agent.stream("What is 2 + 2?"):
-    print(token, end="", flush=True)
-```
-
-### Memory (Multi-Turn)
-
-```python
-agent = Agent(config=AgentConfig(
-    name="memory_demo", model=model,
-    tools=[], enable_memory=True
-))
-
-agent.run("My name is Alice and I'm working on quantum computing.")
-result = agent.run("What's my name and what am I working on?")
-# → "Your name is Alice and you're working on quantum computing."
-```
-
-### Retrieval Agent (RAG)
-
-```python
-from effgen.tools.builtin import Retrieval
-
-retrieval_tool = Retrieval(knowledge_base_path="./docs")
-config = AgentConfig(name="qa_agent", model=model, tools=[retrieval_tool])
-agent = Agent(config=config)
-result = agent.run("What does the documentation say about configuration?")
-```
-
-</details>
 
 ---
 
@@ -1084,15 +1042,6 @@ effGen supports **9 cloud inference providers** + 4 local backends, tested acros
 | **Replicate** | Cloud API | `effgen[replicate]` | 38 models, async run-poll, SSE streaming, compute-second billing |
 | **HuggingFace** | Cloud API | `effgen[hf]` | 124-model HF Router catalog, custom Inference Endpoints, free serverless tier |
 
-### Provider Auth Check
-
-```bash
-# See which API keys are configured
-effgen doctor
-```
-
-### Quick Cloud Start
-
 ```python
 from effgen import load_model, Agent
 from effgen.core.agent import AgentConfig
@@ -1108,6 +1057,10 @@ result = agent.run("What is (17 * 23) + sqrt(144)?")
 print(result.output)  # → 403
 ```
 
+```bash
+effgen doctor   # see which provider API keys are configured
+```
+
 ### Top Recommended Models
 
 | Model | Size | Compatibility |
@@ -1120,7 +1073,230 @@ print(result.output)  # → 403
 | Qwen2.5-7B-Instruct | 7B | 9/10 |
 | Llama-3.2-3B-Instruct | 3B | 8.5/10 |
 
-> Full matrix with 11 models x 10 agents: [compatibility_matrix.md](examples/utils/compatibility_matrix.md)
+> Full matrix with 11 models × 10 agents: [compatibility_matrix.md](examples/utils/compatibility_matrix.md)
+
+---
+
+## 📚 Examples
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**🤖 Core agents**
+
+```bash
+python examples/basic/qa_agent.py                  # Q&A agent (no tools)
+python examples/basic/calculator_agent.py          # Math: Calculator + PythonREPL
+python examples/tools/multi_tool_agent.py          # Simple multi-tool
+python examples/tools/advanced_multi_tool_agent.py # 5 tools + fallback chains
+python examples/tools/file_operations_agent.py     # File read/write/search
+python examples/tools/coding_agent.py              # Code execution + iteration
+python examples/advanced/conversational_agent.py   # Multi-turn memory
+python examples/advanced/advanced_streaming_agent.py # Streaming w/ callbacks
+python examples/advanced/data_processing_agent.py  # JSON & data pipelines
+python examples/advanced/multi_agent_pipeline.py   # Multi-agent orchestration
+python examples/advanced/error_recovery_agent.py   # Error-handling patterns
+```
+
+**⚡ Quick-start agents**
+
+```bash
+python examples/basic/basic_agent.py               # Basic (Transformers)
+python examples/basic/basic_agent_vllm.py          # Basic (vLLM, 5-10× faster)
+python examples/plugins_presets/preset_agents.py   # Ready-to-use presets
+python examples/plugins_presets/plugin_example.py  # Custom tool plugins
+python examples/web_retrieval/web_agent.py         # Web search agent
+python examples/web_retrieval/retrieval_agent.py   # RAG retrieval
+python examples/web_retrieval/weather_agent.py     # Weather (Open-Meteo, free)
+python examples/web_retrieval/streaming_agent.py   # Simple streaming
+python examples/web_retrieval/memory_agent.py      # Simple multi-turn memory
+```
+
+</td>
+<td width="50%" valign="top">
+
+**🖼️ GUI applications (Gradio)**
+
+```bash
+python examples/basic/chat_gui_mlx.py       # MLX streaming chat (:7860)
+python examples/basic/agent_viz_mlx.py      # Reasoning + code editor (:7860)
+python examples/basic/tool_builder_gui.py   # Build custom tools (:7863)
+python examples/basic/tool_tester_gui.py    # Browse/test all 66 tools (:7864)
+```
+
+**🍎 Apple Silicon (MLX)**
+
+```bash
+python examples/basic/basic_agent_mlx.py            # Basic MLX agent + calculator
+python examples/basic/chat_gui_mlx.py --autoload    # Chat GUI, auto model load
+python examples/basic/agent_viz_mlx.py --autoload   # Visualizer, auto model load
+```
+
+</td>
+</tr>
+</table>
+
+> 📊 See [examples/compatibility_matrix.md](examples/utils/compatibility_matrix.md) for model compatibility across all agents.
+
+<details>
+<summary><b>📖 More code examples (multi-tool, streaming, memory, RAG)</b></summary>
+
+<br/>
+
+**Multi-Tool Agent**
+
+```python
+from effgen import Agent, load_model
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator, WebSearch, PythonREPL
+
+model = load_model("Qwen/Qwen2.5-3B-Instruct")
+config = AgentConfig(
+    name="research_agent",
+    model=model,
+    tools=[Calculator(), WebSearch(), PythonREPL()],
+    system_prompt="You are a research assistant.",
+)
+agent = Agent(config=config)
+result = agent.run("Search for the population of Tokyo and calculate what percentage it is of Japan's total population")
+```
+
+**Streaming**
+
+```python
+from effgen import Agent, load_model
+from effgen.core.agent import AgentConfig
+from effgen.tools.builtin import Calculator
+
+model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
+agent = Agent(config=AgentConfig(
+    name="stream_demo", model=model,
+    tools=[Calculator()], enable_streaming=True,
+))
+for token in agent.stream("What is 2 + 2?"):
+    print(token, end="", flush=True)
+```
+
+**Memory (Multi-Turn)**
+
+```python
+agent = Agent(config=AgentConfig(
+    name="memory_demo", model=model,
+    tools=[], enable_memory=True,
+))
+agent.run("My name is Alice and I'm working on quantum computing.")
+result = agent.run("What's my name and what am I working on?")
+# → "Your name is Alice and you're working on quantum computing."
+```
+
+**Retrieval Agent (RAG)**
+
+```python
+from effgen.tools.builtin import Retrieval
+
+retrieval_tool = Retrieval(knowledge_base_path="./docs")
+config = AgentConfig(name="qa_agent", model=model, tools=[retrieval_tool])
+agent = Agent(config=config)
+result = agent.run("What does the documentation say about configuration?")
+```
+
+</details>
+
+---
+
+## 🚀 Deployment
+
+effGen ships production-ready deployment recipes for every major target.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**🐳 Docker** — multi-stage build, non-root user, read-only FS, `/health` healthcheck. See [`docs/deploy/docker.md`](docs/deploy/docker.md).
+
+```bash
+docker build -f deploy/docker/Dockerfile -t effgen .
+docker run -p 8000:8000 --env-file .env effgen
+curl http://localhost:8000/health
+```
+
+**⎈ Kubernetes / Helm** — Deployment, Service, Ingress, NetworkPolicy, PDB, HPA (scales on CPU + `effgen_model_call_latency_seconds`). See [`docs/deploy/kubernetes.md`](docs/deploy/kubernetes.md).
+
+```bash
+helm lint deploy/k8s/helm/effgen/
+helm install effgen deploy/k8s/helm/effgen/
+```
+
+</td>
+<td width="50%" valign="top">
+
+**λ AWS Lambda** — Mangum adapter over the FastAPI app. Cold start < 3 s; warm call < 100 ms. SAM template included. See [`docs/deploy/lambda.md`](docs/deploy/lambda.md).
+
+```bash
+cd deploy/aws_lambda
+sam build && sam deploy --guided
+```
+
+**☁ Cloudflare Worker** — thin edge proxy for CORS, Bearer-JWT auth, and KV-backed rate limiting. See [`docs/deploy/cloudflare.md`](docs/deploy/cloudflare.md).
+
+```bash
+cd deploy/cloudflare
+wrangler deploy   # staging: wrangler deploy --env staging
+```
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🔷 Developer Experience
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+**VS Code Extension**
+
+Prompt-template completion, inline "Run" code lens, and hover docs from the effGen registry. See [`docs/dx/vscode.md`](docs/dx/vscode.md).
+
+```bash
+cd tools/vscode-effgen
+npm ci && npm run compile
+```
+
+</td>
+<td width="33%" valign="top">
+
+**Jupyter Magics**
+
+```python
+%load_ext effgen.jupyter
+%effgen_chat "What is 17 * 23?"
+%%effgen_agent general
+Summarise the top HackerNews
+stories and rank by interest.
+%effgen_metrics
+```
+
+See [`docs/dx/jupyter.md`](docs/dx/jupyter.md).
+
+</td>
+<td width="33%" valign="top">
+
+**Live Dashboard**
+
+Real-time SPA at `/dashboard`: span stream (SSE), Prometheus metrics, recent runs with token counts + cost, SLO burn rates. See [`docs/dx/dashboard.md`](docs/dx/dashboard.md).
+
+```bash
+EFFGEN_DEV_MODE=1 effgen serve --port 8000
+open http://localhost:8000/dashboard
+```
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -1130,21 +1306,28 @@ print(result.output)  # → 403
 
 <table>
 <tr>
-<td align="center" width="33%">
+<td align="center" width="25%">
 
 **🐳**<br/>
-Docker Sandbox<br/>
-<sub>Isolated execution</sub>
+Sandboxed Execution<br/>
+<sub>Subprocess / Docker</sub>
 
 </td>
-<td align="center" width="33%">
+<td align="center" width="25%">
 
 **🛡️**<br/>
-Input Validation<br/>
-<sub>Auto sanitization</sub>
+Guardrails<br/>
+<sub>PII, injection, SSRF</sub>
 
 </td>
-<td align="center" width="33%">
+<td align="center" width="25%">
+
+**🔑**<br/>
+OAuth2 / OIDC + RBAC<br/>
+<sub>Fail-closed auth</sub>
+
+</td>
+<td align="center" width="25%">
 
 **⚡**<br/>
 Rate Limiting<br/>
@@ -1156,109 +1339,19 @@ Rate Limiting<br/>
 
 </div>
 
-> 📋 For security policies and vulnerability reporting, see [SECURITY.md](SECURITY.md)
-
----
-
-## 🚀 Deployment
-
-effGen v0.3.1 ships production-ready deployment recipes for every major target:
-
-### 🐳 Docker
-
-Multi-stage build with a non-root user, read-only filesystem, and `/health` healthcheck. See [`docs/deploy/docker.md`](docs/deploy/docker.md).
-
-```bash
-docker build -f deploy/docker/Dockerfile -t effgen:0.3.1 .
-docker run -p 8000:8000 --env-file .env effgen:0.3.1
-curl http://localhost:8000/health
-```
-
-### ⎈ Kubernetes / Helm
-
-Full Helm chart with Deployment, Service, Ingress, NetworkPolicy, PDB, and HPA (scales on CPU + `effgen_model_call_latency_seconds`). See [`docs/deploy/kubernetes.md`](docs/deploy/kubernetes.md).
-
-```bash
-helm lint deploy/k8s/helm/effgen/
-helm install effgen deploy/k8s/helm/effgen/ --set image.tag=0.3.1
-```
-
-### λ AWS Lambda
-
-Mangum adapter wrapping the FastAPI app. Cold start < 3 s; warm call < 100 ms. SAM template included. See [`docs/deploy/lambda.md`](docs/deploy/lambda.md).
-
-```bash
-cd deploy/aws_lambda
-sam build && sam deploy --guided
-```
-
-### ☁ Cloudflare Worker
-
-Thin edge proxy handling CORS, Bearer JWT auth, and KV-backed rate limiting before forwarding to your backend. See [`docs/deploy/cloudflare.md`](docs/deploy/cloudflare.md).
-
-```bash
-cd deploy/cloudflare
-wrangler deploy  # staging: wrangler deploy --env staging
-```
-
----
-
-## 🔷 Developer Experience
-
-### VSCode Extension
-
-Prompt-template completion, inline "Run" code lens on `LibraryPrompt` definitions, and hover docs — all from the effGen registry. See [`docs/dx/vscode.md`](docs/dx/vscode.md).
-
-```bash
-cd tools/vscode-effgen
-npm ci && npm run compile
-# Install: Extensions → ··· → Install from VSIX → vscode-effgen-*.vsix
-```
-
-### Jupyter Magics
-
-```python
-%load_ext effgen.jupyter
-%effgen_chat "What is 17 * 23?"
-%%effgen_agent general
-Summarise the top HackerNews stories today and rank them by interest.
-%effgen_metrics
-```
-
-See [`docs/dx/jupyter.md`](docs/dx/jupyter.md).
-
-### Live Dashboard
-
-The API server serves a real-time SPA at `/dashboard` (no auth required). Panels: span stream (SSE), Prometheus metrics, recent agent runs with token counts and cost, SLO burn rates. See [`docs/dx/dashboard.md`](docs/dx/dashboard.md).
-
-```bash
-EFFGEN_DEV_MODE=1 effgen serve --port 8000
-open http://localhost:8000/dashboard
-```
-
----
-
-## 🔒 Security
-
-### Secret Scanning
-
-Gitleaks pre-commit hook + CI workflow (`secret-scan.yml`) catch secrets before they reach the repo. Install the hook once:
+**Secret scanning.** Gitleaks pre-commit hook + CI workflow (`secret-scan.yml`) catch secrets before they reach the repo:
 
 ```bash
 pip install pre-commit && pre-commit install
 ```
 
-### Sandboxed Code Execution
-
-`CodeExecutor` defaults to `SubprocessSandbox` (rootless user-namespace, network blocked, isolated `/tmp`) or `DockerSandbox` when Docker is available. To opt out (not recommended):
+**Sandboxed code execution.** `CodeExecutor` defaults to `SubprocessSandbox` (rootless user-namespace, network blocked, isolated `/tmp`) or `DockerSandbox` when Docker is available. To opt out (not recommended):
 
 ```bash
-EFFGEN_SANDBOX_BACKEND=off effgen run ...   # loud warning emitted
+EFFGEN_SANDBOX_BACKEND=off effgen run ...   # a loud warning is emitted
 ```
 
-### API Server Auth
-
-Protect your API server with OAuth2/OIDC (any OIDC provider — Auth0, Keycloak, Cognito):
+**API server auth.** Protect the server with OAuth2/OIDC (Auth0, Keycloak, Cognito — any OIDC provider):
 
 ```bash
 export EFFGEN_OIDC_ISSUER=https://your-tenant.auth0.com/
@@ -1267,7 +1360,7 @@ export EFFGEN_OIDC_JWKS_URI=https://your-tenant.auth0.com/.well-known/jwks.json
 effgen serve --port 8000
 ```
 
-See [`docs/server/auth.md`](docs/server/auth.md), [`docs/server/rbac.md`](docs/server/rbac.md), and [`docs/server/audit.md`](docs/server/audit.md).
+> 📋 See [SECURITY.md](SECURITY.md) for policies and vulnerability reporting, plus [`docs/server/auth.md`](docs/server/auth.md), [`docs/server/rbac.md`](docs/server/rbac.md), and [`docs/server/audit.md`](docs/server/audit.md).
 
 ---
 
@@ -1289,7 +1382,19 @@ If you use **effGen** in your research, please cite our paper:
 
 ---
 
-## 🔗 Links
+## ⭐ Star History
+
+<div align="center">
+
+<a href="https://star-history.com/#ctrl-gaurav/effGen&Date">
+  <img src="https://api.star-history.com/svg?repos=ctrl-gaurav/effGen&type=Date" alt="Star History Chart" width="70%"/>
+</a>
+
+</div>
+
+---
+
+## 🔗 Links & License
 
 <div align="center">
 
@@ -1299,22 +1404,20 @@ If you use **effGen** in your research, please cite our paper:
 <a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/badge/📦_PyPI-pypi.org/project/effgen-3775A9?style=for-the-badge" alt="PyPI"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/issues"><img src="https://img.shields.io/badge/🐛_Issues-GitHub-red?style=for-the-badge" alt="Issues"/></a>
 
-</div>
+<br/>
 
----
+Licensed under the **Apache License 2.0** — see [LICENSE](LICENSE) for details.
 
-## 📄 License
-
-Apache License 2.0 — see [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
+<br/>
+<br/>
 
 <a href="https://effgen.org/docs/"><img src="https://img.shields.io/badge/🚀_Get_Started-FF6B6B?style=for-the-badge" alt="Get Started"/></a>
 <a href="examples/"><img src="https://img.shields.io/badge/📚_Examples-4ECDC4?style=for-the-badge" alt="Examples"/></a>
 <a href="https://arxiv.org/abs/2602.00887"><img src="https://img.shields.io/badge/📄_Paper-45B7D1?style=for-the-badge" alt="Paper"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen"><img src="https://img.shields.io/badge/⭐_Star_on_GitHub-yellow?style=for-the-badge" alt="GitHub"/></a>
+
+<br/>
+<br/>
 
 **Made with ❤️ for the AI community**
 
