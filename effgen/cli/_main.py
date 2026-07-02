@@ -2832,6 +2832,18 @@ Model id formats:
     batch_parser.add_argument('--query-field', default='query', help='Field name for queries in JSONL/CSV (default: query)')
     batch_parser.add_argument('--max-tokens', type=int, default=None,
                               help='Max output tokens per query (raise for token-heavy or reasoning models)')
+    batch_parser.add_argument('--temperature', type=float, default=None,
+                              help='Sampling temperature per query (0 for deterministic reruns where the provider supports it)')
+    batch_parser.add_argument('--schema', dest='schema_path', default=None,
+                              help='JSON Schema file; each row is validated against it and its parsed object is written')
+    batch_parser.add_argument('--output-model', dest='output_model', default=None,
+                              help='Pydantic model as module:ClassName to validate each row against')
+    batch_parser.add_argument('--strict', action='store_true',
+                              help='Abort on the first malformed input line instead of skipping it')
+    batch_parser.add_argument('--resume', action='store_true',
+                              help='Skip input rows already present in the JSONL --output file and append the rest')
+    batch_parser.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
+                              help='Quiet output (suppress the progress bar)')
     batch_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
                               help='Disable the live progress bar (plain output)')
 
@@ -3606,6 +3618,78 @@ def _handle_workflow_command(args, cli) -> int:
         return 0
 
 
+def _batch_structured_kwargs(args) -> dict:
+    """Build ``output_schema`` / ``output_model`` run-kwargs from the CLI flags.
+
+    ``--schema PATH`` loads a JSON Schema file; ``--output-model module:Class``
+    imports a Pydantic model. Each validates every row and writes the parsed
+    object; a row that cannot be coerced to the schema is reported as a failed
+    row with a reason rather than a silently off-schema string. Raises
+    ``ValueError`` with an actionable message on a bad path or spec.
+    """
+    schema_path = getattr(args, 'schema_path', None)
+    model_spec = getattr(args, 'output_model', None)
+    if schema_path and model_spec:
+        raise ValueError("Use only one of --schema / --output-model, not both.")
+    if schema_path:
+        p = Path(schema_path)
+        if not p.exists():
+            raise ValueError(f"Schema file not found: {schema_path}")
+        try:
+            schema = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise ValueError(f"{schema_path}: not valid JSON: {e}") from e
+        if not isinstance(schema, dict):
+            raise ValueError(f"{schema_path}: a JSON Schema must be a JSON object.")
+        return {"output_schema": schema}
+    if model_spec:
+        if ":" not in model_spec:
+            raise ValueError(
+                "--output-model must be 'module:ClassName' "
+                "(e.g. myproject.schemas:Ticket)."
+            )
+        mod_name, _, cls_name = model_spec.partition(":")
+        import importlib
+        # Make a project-local module importable from a headless run.
+        if os.getcwd() not in sys.path:
+            sys.path.insert(0, os.getcwd())
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError as e:
+            raise ValueError(f"Could not import module '{mod_name}': {e}") from e
+        cls = getattr(mod, cls_name, None)
+        if cls is None:
+            raise ValueError(f"Module '{mod_name}' has no attribute '{cls_name}'.")
+        from effgen.core.structured_output import is_pydantic_model_class
+        if not is_pydantic_model_class(cls):
+            raise ValueError(
+                f"{model_spec} is not a Pydantic model class "
+                "(it must subclass pydantic.BaseModel)."
+            )
+        return {"output_model": cls}
+    return {}
+
+
+def _read_done_indices(output_path: Path) -> dict:
+    """Read an existing JSONL output file into ``{index: row}`` for --resume."""
+    done: dict[int, dict] = {}
+    if not output_path.exists():
+        return done
+    with open(output_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            idx = row.get("index") if isinstance(row, dict) else None
+            if isinstance(idx, int):
+                done[idx] = row
+    return done
+
+
 def _handle_batch_command(args, cli) -> int:
     """Handle the 'batch' CLI subcommand."""
     from effgen.core.batch import BatchConfig, BatchRunner
@@ -3616,12 +3700,32 @@ def _handle_batch_command(args, cli) -> int:
     preset_name = getattr(args, 'preset', None)
     query_field = getattr(args, 'query_field', 'query')
     max_tokens = getattr(args, 'max_tokens', None)
+    temperature = getattr(args, 'temperature', None)
+    strict = getattr(args, 'strict', False)
+    resume = getattr(args, 'resume', False)
+
     # Extra kwargs forwarded to each agent.run() call.
     run_kwargs: dict = {}
     if max_tokens is not None:
         run_kwargs['max_tokens'] = max_tokens
+    if temperature is not None:
+        run_kwargs['temperature'] = temperature
+    try:
+        run_kwargs.update(_batch_structured_kwargs(args))
+    except ValueError as e:
+        cli.print_error(str(e))
+        return 1
+
+    out_suffix = Path(output_path).suffix.lower() if output_path else None
+    # A .jsonl output streams each finished row as it completes, so a crash
+    # mid-job keeps the rows already done; --resume then skips those on rerun.
+    stream_jsonl = bool(output_path) and out_suffix == ".jsonl"
+    if resume and not stream_jsonl:
+        cli.print_error("--resume requires a .jsonl --output file.")
+        return 1
 
     agent = None
+    out_fh = None
     try:
         # Create agent
         if preset_name:
@@ -3639,19 +3743,63 @@ def _handle_batch_command(args, cli) -> int:
         runner = BatchRunner(agent)
         cli.print(f"Loading queries from {input_path}...")
 
-        # Count queries up front so the progress bar shows a real total/ETA.
+        # Read queries once. A malformed input line is skipped with a message
+        # naming the file and line number (not the parser's byte offset);
+        # --strict turns the first bad line into a hard failure instead.
+        skipped: list[int] = []
+
+        def _on_skip(lineno: int, msg: str) -> None:
+            skipped.append(lineno)
+            cli.print(f"Skipping malformed input at {input_path}:{lineno}: {msg}")
+
         try:
-            _queries = runner._read_queries(Path(input_path), query_field)
-            _total = len(_queries)
-        except Exception:  # noqa: BLE001 - fall back to an indeterminate bar
-            _total = None
+            queries = runner._read_queries(
+                Path(input_path), query_field, strict=strict, on_skip=_on_skip,
+            )
+        except Exception as e:  # noqa: BLE001 - one clear message, no traceback
+            cli.print_error(f"Could not read {input_path}: {e}")
+            return 1
+        if skipped:
+            cli.print(
+                f"Skipped {len(skipped)} malformed line(s); "
+                f"{len(queries)} queries loaded."
+            )
+
+        # --resume: skip input rows already present in the JSONL output.
+        done_rows: dict[int, dict] = {}
+        if resume:
+            done_rows = {
+                i: row for i, row in _read_done_indices(Path(output_path)).items()
+                if 0 <= i < len(queries)
+            }
+        run_positions = [i for i in range(len(queries)) if i not in done_rows]
+        run_queries = [queries[i] for i in run_positions]
+        if done_rows:
+            cli.print(
+                f"Resuming: {len(done_rows)} row(s) already present, "
+                f"running the remaining {len(run_queries)}."
+            )
+
+        # Open the streaming output before the run so completed rows persist
+        # immediately. Resume appends to the existing file; a fresh run truncates.
+        if stream_jsonl:
+            mode = "a" if (resume and Path(output_path).exists()) else "w"
+            out_fh = open(output_path, mode, encoding="utf-8")
+
+        def _on_result(pos: int, query: str, resp) -> None:
+            if out_fh is None:
+                return
+            orig_idx = run_positions[pos]
+            row = BatchRunner._result_row(orig_idx, resp, query)
+            out_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            out_fh.flush()
 
         animate = _progress.animation_enabled(
             quiet=getattr(args, 'quiet', False),
             no_animation=getattr(args, 'no_animation', False),
         )
         with _progress.StepProgress(
-            cli.console, total=_total, description="Batch", animate=animate,
+            cli.console, total=len(run_queries), description="Batch", animate=animate,
         ) as _bar:
             batch_config = BatchConfig(
                 max_concurrency=args.concurrency,
@@ -3659,30 +3807,63 @@ def _handle_batch_command(args, cli) -> int:
                 retry_failed=args.retries,
                 timeout_per_item=args.timeout,
                 progress_callback=lambda done, total: _bar.update(done, total),
+                on_result=_on_result if out_fh is not None else None,
             )
-            result = runner.run_from_file(
-                input_path, config=batch_config, query_field=query_field,
-                **run_kwargs,
-            )
+            result = runner.run(run_queries, config=batch_config, **run_kwargs)
 
-        cli.print(
-            f"\nBatch complete: {result.succeeded}/{result.total} succeeded "
+        if out_fh is not None:
+            out_fh.close()
+            out_fh = None
+
+        # Combine this run with any rows carried over by --resume so the
+        # headline counts and totals reflect the whole job, not just the rerun.
+        done_success = sum(1 for r in done_rows.values() if r.get("success"))
+        total = len(queries)
+        succeeded = done_success + result.succeeded
+        failed = total - succeeded
+
+        done_cost = sum(
+            r["cost_usd"] for r in done_rows.values()
+            if isinstance(r.get("cost_usd"), int | float)
+        )
+        done_tokens = sum(
+            r.get("total_tokens", 0) for r in done_rows.values()
+            if isinstance(r.get("total_tokens"), int)
+        )
+        cost_present = result.total_cost_usd is not None or done_cost > 0
+        total_cost = (result.total_cost_usd or 0.0) + done_cost if cost_present else None
+        total_tokens = result.total_tokens + done_tokens
+
+        summary = (
+            f"\nBatch complete: {succeeded}/{total} succeeded "
             f"in {result.total_time:.2f}s"
         )
+        if total_tokens:
+            summary += f" · {total_tokens:,} tokens"
+        from effgen.ui.render import format_cost
+        cost_str = format_cost(total_cost)
+        if cost_str is not None:
+            summary += f" · {cost_str}"
+        cli.print(summary)
 
-        if output_path:
-            queries = runner._read_queries(
-                __import__('pathlib').Path(input_path), query_field,
-            )
-            runner.write_results(result, output_path, query_list=queries)
+        # Non-streaming formats (.csv/.json) get one batched write at the end.
+        if output_path and not stream_jsonl:
+            runner.write_results(result, output_path, query_list=run_queries)
+            cli.print(f"Results written to {output_path}")
+        elif output_path:
             cli.print(f"Results written to {output_path}")
 
-        return 0 if result.failed == 0 else 1
+        return 0 if failed == 0 else 1
 
     except Exception as e:
         cli.print(f"Batch execution failed: {e}")
         return 1
     finally:
+        if out_fh is not None:
+            try:
+                out_fh.close()
+            except Exception:  # noqa: BLE001
+                pass
         # Release the agent's resources so the CLI never trips its own
         # "garbage-collected without close()" warning.
         if agent is not None:

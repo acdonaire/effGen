@@ -126,6 +126,46 @@ effgen batch --input queries.jsonl --output results.jsonl \
   --concurrency 10 --batch-size 100 --timeout 60 --retries 2
 ```
 
+### Structured output per row
+
+Pass a JSON Schema file with `--schema`, or a Pydantic model with
+`--output-model module:ClassName`, to validate every row. Each output row then
+carries a `parsed` object; a row that cannot be coerced to the schema is written
+as a failed row with a reason rather than an off-schema string.
+
+```bash
+effgen batch --input tickets.jsonl --output results.jsonl \
+  --preset minimal --schema ticket_schema.json --max-tokens 4096
+```
+
+For pure extraction or generation, prefer `--preset minimal`: it runs the model
+directly without the default tool loop, which small models can otherwise spend
+iterations on.
+
+### Output columns, per-job cost, and reruns
+
+Each output row carries token counts (`prompt_tokens`/`completion_tokens`/
+`total_tokens`), `cost_usd` for priced models, the validated `parsed` object
+(when a schema is set), and an `error` reason for failed rows. A local or
+unpriced model reports tokens without a `cost_usd`. The final line reports a
+per-job token total and, for priced models, a cost total:
+
+```
+Batch complete: 1000/1000 succeeded in 42.11s · 1,204,882 tokens · $0.48
+```
+
+A `.jsonl` `--output` is written row-by-row as each finishes, so an interrupted
+job keeps the rows already done. Rerun the same command with `--resume` to skip
+the indices already present and run only the remaining rows:
+
+```bash
+effgen batch --input queries.jsonl --output results.jsonl --resume
+```
+
+A malformed input line is skipped with a message naming the file and line
+number; pass `--strict` to hard-fail on the first bad line instead. Use
+`--temperature 0` for deterministic reruns where the provider supports it.
+
 ## Domain Keyword Expansion
 
 Scale keyword coverage per domain:
