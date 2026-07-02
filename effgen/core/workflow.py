@@ -548,7 +548,10 @@ class WorkflowDAG:
         """
         Load a workflow from a YAML file.
 
-        Expected format::
+        Dependencies can be declared per-node with ``depends_on`` or in a
+        top-level ``edges`` list; both build the same graph. Each edge is either
+        a ``[source, target]`` pair or a mapping with ``source``/``target``
+        (aliases ``from``/``to``) and an optional ``key``::
 
             workflow:
               name: my_pipeline
@@ -560,6 +563,10 @@ class WorkflowDAG:
                   agent: summary_agent
                   depends_on: [search]
 
+            # equivalent wiring via a top-level edges block:
+            #   edges:
+            #     - [search, summarize]
+
         Args:
             path: Path to the YAML file
             agent_factory: Optional callable that receives a node dict and
@@ -568,6 +575,10 @@ class WorkflowDAG:
 
         Returns:
             A validated WorkflowDAG
+
+        An unrecognized top-level key is reported with a warning rather than
+        dropped silently, so a mis-keyed file (e.g. ``edge:`` instead of
+        ``edges:``) does not validate as a workflow with all its declared wiring.
         """
         import yaml  # pyyaml is an existing dependency
 
@@ -576,6 +587,17 @@ class WorkflowDAG:
 
         wf_data = data.get("workflow", data)
         name = wf_data.get("name", "workflow")
+
+        # Surface unknown top-level keys instead of dropping the wiring silently.
+        _known_top = {"name", "nodes", "edges", "description", "metadata"}
+        unknown = [k for k in wf_data if k not in _known_top]
+        if unknown:
+            logger.warning(
+                "Workflow '%s': ignoring unrecognized top-level key(s) %s "
+                "(recognized: %s). Declare dependencies with per-node "
+                "'depends_on' or a top-level 'edges' list.",
+                name, sorted(unknown), sorted(_known_top),
+            )
 
         dag = cls(name=name)
 
@@ -589,18 +611,53 @@ class WorkflowDAG:
                 id=nd["id"],
                 agent=agent,
                 tools=nd.get("tools", []),
+                input_keys=nd.get("input_keys", []),
                 output_key=nd.get("output_key", nd["id"]),
                 metadata={k: v for k, v in nd.items()
-                          if k not in ("id", "tools", "output_key", "depends_on", "agent")},
+                          if k not in ("id", "tools", "input_keys",
+                                       "output_key", "depends_on", "agent")},
             )
             dag.add_node(node)
 
-        # Create edges from depends_on
+        # Create edges from per-node depends_on ...
         for nd in node_defs:
             for dep in nd.get("depends_on", []):
                 dag.connect(dep, nd["id"])
 
+        # ... and from a top-level edges list (same graph; both may be present).
+        for edge in wf_data.get("edges", []):
+            src, tgt, key = cls._parse_yaml_edge(edge)
+            dag.connect(src, tgt, key=key)
+
         return dag
+
+    @staticmethod
+    def _parse_yaml_edge(edge: Any) -> tuple[str, str, str | None]:
+        """Parse one entry of a YAML ``edges`` list into ``(source, target, key)``.
+
+        Accepts a ``[source, target]`` pair or a mapping with ``source``/``target``
+        (aliases ``from``/``to``) and an optional ``key``.
+        """
+        if isinstance(edge, list | tuple):
+            if len(edge) < 2:
+                raise ValueError(
+                    f"Workflow edge {edge!r} must be [source, target]."
+                )
+            return str(edge[0]), str(edge[1]), (str(edge[2]) if len(edge) > 2 else None)
+        if isinstance(edge, dict):
+            src = edge.get("source", edge.get("from"))
+            tgt = edge.get("target", edge.get("to"))
+            if not src or not tgt:
+                raise ValueError(
+                    f"Workflow edge {edge!r} needs 'source'/'target' "
+                    "(aliases 'from'/'to')."
+                )
+            key = edge.get("key")
+            return str(src), str(tgt), (str(key) if key is not None else None)
+        raise ValueError(
+            f"Unsupported workflow edge {edge!r}: use [source, target] or "
+            "{source, target}."
+        )
 
     # -- Introspection --
 

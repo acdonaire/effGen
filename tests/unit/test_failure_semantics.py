@@ -126,6 +126,10 @@ def test_classify_by_status_code():
     assert classify_provider_error(_E(429)).category == "rate_limited"
     assert classify_provider_error(_E(429)).should_retry is True
     assert classify_provider_error(_E(400)).category == "invalid_request"
+    # 413 payload-too-large is a property of the request, not a rate limit:
+    # retrying the same oversized request will not succeed.
+    assert classify_provider_error(_E(413)).category == "invalid_request"
+    assert classify_provider_error(_E(413)).should_retry is False
     assert classify_provider_error(_E(503)).should_retry is True
 
 

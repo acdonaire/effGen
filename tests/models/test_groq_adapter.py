@@ -282,3 +282,40 @@ class TestGroqAdapterGenerate:
             adapter.generate("hi")
         assert exc.value.provider == "groq"
         assert "401" in str(exc.value)
+
+    def test_request_too_large_raises_invalid_request_not_rate_limit(self):
+        # Groq returns 413 with a rate_limit_exceeded code for a single oversized
+        # request. It must classify as a non-retryable invalid request (not a
+        # rate limit routed through failover), and the org id must be redacted.
+        from effgen.models._rate_limit import RateLimitExceeded
+        from effgen.models.errors import InvalidRequestError
+        adapter = self._loaded_adapter()
+        adapter._client.chat.completions.create.side_effect = Exception(
+            "Error code: 413 - {'error': {'message': 'Request too large for "
+            "model `llama-3.1-8b-instant` in organization `org_secret123` on "
+            "tokens per minute (TPM): Limit 6000, Requested 9288, please "
+            "reduce your message size and try again.', 'type': 'tokens', "
+            "'code': 'rate_limit_exceeded'}}"
+        )
+        with pytest.raises(InvalidRequestError) as exc:
+            adapter.generate("hi")
+        assert not isinstance(exc.value, RateLimitExceeded)
+        msg = str(exc.value)
+        assert "org_secret123" not in msg
+        assert "reduce" in msg.lower() or "larger-context" in msg.lower()
+
+
+def test_is_request_too_large_helper():
+    from effgen.models.groq_adapter import _is_request_too_large
+    msg = "Error code: 413 - Request too large for model ..."
+    assert _is_request_too_large(msg, msg.lower()) is True
+    rate = "Error code: 429 - Rate limit reached for requests"
+    assert _is_request_too_large(rate, rate.lower()) is False
+
+
+def test_redact_groq_org_helper():
+    from effgen.models.groq_adapter import _redact_groq_org
+    msg = "Request too large in organization `org_01abcXYZ` service tier"
+    out = _redact_groq_org(msg)
+    assert "org_01abcXYZ" not in out
+    assert "organization `***`" in out

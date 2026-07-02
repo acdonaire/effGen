@@ -2122,16 +2122,22 @@ class CLIInterface:
             for k, v in rows.items():
                 table.add_row(k, str(v))
             self.console.print(table)
-            self.console.print(f"\n[dim]Use: [cyan]effgen run --provider {rec.provider} "
-                               f"-m {rec.id} \"...\"[/cyan][/dim]")
         else:
             for k, v in rows.items():
                 print(f"  {k}: {v}")
 
-        # If the same id is also downloaded locally, surface the local copy and a
-        # local invocation alongside the cloud row (don't pretend it's cloud-only).
+        cloud_hint = f"effgen run --provider {rec.provider} -m {rec.id} \"...\""
+        # If the same id is also downloaded locally, lead with the local engine
+        # path (the local block prints its own "Run locally" hint) and show the
+        # cloud invocation as an alternative — don't present it as cloud-only.
         if local_entry is not None:
             self._render_local_model_info(self._local_model_payload(local_entry))
+            if self.console:
+                self.console.print(f"\n[dim]Cloud alternative: [cyan]{cloud_hint}[/cyan][/dim]")
+            else:
+                print(f"\n  Cloud alternative: {cloud_hint}")
+        elif self.console:
+            self.console.print(f"\n[dim]Use: [cyan]{cloud_hint}[/cyan][/dim]")
         return 0
 
     def _models_load(self, args):
@@ -3761,7 +3767,18 @@ def _handle_eval_command(args, cli) -> int:
                 cli.print(f"  {name:16s} — {desc}")
             return 0
 
-        suite = _resolve_eval_suite(suite_name, difficulty=difficulty, max_cases=max_cases)
+        # A bad data file (unknown field, empty, missing) is a user error, not a
+        # crash — report it and exit 2 (matching `compare`) instead of a
+        # traceback.
+        try:
+            suite = _resolve_eval_suite(suite_name, difficulty=difficulty, max_cases=max_cases)
+        except (ValueError, FileNotFoundError) as exc:
+            cli.print(
+                f"Could not load suite '{suite_name}' ({exc}). "
+                f"Use a built-in suite ({', '.join(list_suites())}) "
+                "or a path to a .jsonl/.json file of test cases."
+            )
+            return 2
 
         # Report any narrowing applied
         if difficulty:

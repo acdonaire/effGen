@@ -352,6 +352,12 @@ class EffGenMCPClient:
         This is a **synchronous** accessor (it reads the catalog cached at
         :meth:`connect`); call it directly, do not ``await`` it.
 
+        Each returned tool is named ``{prefix}{server_tool_name}`` — with the
+        default ``prefix="mcp_"``, a server tool ``calculator`` is exposed to the
+        agent as ``mcp_calculator``. Look tools up by that namespaced name; to
+        reach the original server name pass ``prefix=""`` here, or use
+        :meth:`get_tool` (which is keyed by the unprefixed name).
+
         .. note::
             An ``Agent`` that holds these tools must be driven with
             ``await agent.run_async(...)``, not the synchronous ``Agent.run()``:
@@ -361,10 +367,12 @@ class EffGenMCPClient:
 
         Args:
             prefix: Name prefix for the wrapped tools (avoids collisions with
-                effGen's builtin tool names).
+                effGen's builtin tool names). Defaults to ``"mcp_"``; pass
+                ``""`` to keep the original server tool names.
 
         Returns:
-            List of effGen ``BaseTool`` instances.
+            List of effGen ``BaseTool`` instances, each named
+            ``{prefix}{server_tool_name}``.
         """
         return [
             _MCPOfficialToolBridge(tool, self, prefix=prefix)

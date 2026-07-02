@@ -64,6 +64,24 @@ class TestTestCase:
         })
         assert tc.metadata["turns"] == 3
 
+    @pytest.mark.parametrize("key", ["query", "input", "prompt", "question"])
+    def test_from_dict_accepts_query_aliases(self, key):
+        # A custom .jsonl may use any of the documented field names for the
+        # prompt; all resolve to ``query``.
+        tc = TestCase.from_dict({key: "What is 2+2?", "expected": "4"})
+        assert tc.query == "What is 2+2?"
+        assert tc.expected_output == "4"
+
+    def test_from_dict_missing_query_names_the_field(self):
+        # No recognized field -> an actionable ValueError that names the field
+        # it needs and the keys it saw, not a raw KeyError('query').
+        with pytest.raises(ValueError) as exc:
+            TestCase.from_dict({"foo": "bar"})
+        msg = str(exc.value)
+        assert "query" in msg
+        assert "input/prompt/question" in msg
+        assert "foo" in msg
+
 
 # ---------------------------------------------------------------------------
 # Scoring helpers

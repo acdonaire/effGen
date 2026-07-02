@@ -170,3 +170,21 @@ def test_parallel_function_calls_live():
         print("Parallel function calls response:", response.output[:300])
     finally:
         model.unload()
+
+
+@SKIP
+def test_general_preset_array_param_tools_accepted_live():
+    """The general preset attaches tools whose parameters include a plain
+    ``type: array`` field (map markers, email attachments). Gemini rejects an
+    array property without ``items``; the schema sanitizer defaults it so the
+    request is accepted and the preset runs instead of failing with a 400."""
+    from effgen.presets import create_agent
+
+    agent = create_agent("general", f"gemini:{MODEL}")
+    response = _run_agent_or_skip_transient(agent, "Say hello in one word.")
+    _skip_if_gemini_transient(response.output)
+    # The prior failure surfaced as a 400 "properties[markers].items: missing
+    # field" before generation — assert the request was accepted and answered.
+    assert response.success, f"general preset failed on Gemini: {response.metadata.get('error')}"
+    assert response.output.strip(), "Expected a non-empty answer"
+    print("general preset on Gemini:", response.output[:120])

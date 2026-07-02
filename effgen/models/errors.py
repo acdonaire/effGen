@@ -521,7 +521,9 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
             return _NOT_FOUND
         if status == 429:
             return _RATE_LIMITED
-        if status in (400, 422):
+        # 413 payload-too-large is a property of the request, not a transient
+        # rate limit — retrying the same oversized request will not succeed.
+        if status in (400, 413, 422):
             return _INVALID
         if status == 408 or status >= 500:
             return _TRANSIENT

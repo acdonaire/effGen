@@ -49,6 +49,24 @@ logger = logging.getLogger(__name__)
 _GROQ_MODEL_TYPE_VALUE = "groq"
 
 
+def _redact_groq_org(message: str) -> str:
+    """Remove the caller's organization id from a Groq error body before it is
+    surfaced (it is an account identifier, not useful for debugging)."""
+    return re.sub(r"organization `org_[^`]+`", "organization `***`", message)
+
+
+def _is_request_too_large(message: str, message_lower: str) -> bool:
+    """True when a Groq error is a 413 payload-too-large (a single oversized
+    request), not a 429 rate limit. Groq returns 413 with a ``rate_limit_exceeded``
+    code for a request over the per-minute token limit, so status + wording are
+    checked rather than the misleading code."""
+    return (
+        "413" in message
+        or "request too large" in message_lower
+        or "reduce your message size" in message_lower
+    )
+
+
 def _parse_failed_generation_tool_call(message: str) -> dict[str, Any] | None:
     """Extract a tool call from Groq's ``tool_use_failed`` failed_generation text."""
     match = re.search(
@@ -441,6 +459,22 @@ class GroqAdapter(BaseModel):
                         message=msg,
                     ) from exc
 
+                # A 413 payload-too-large is a permanent property of this
+                # request, not a transient rate limit — fail fast with a
+                # fix-oriented hint instead of routing it through retry/failover.
+                if _is_request_too_large(msg, msg_lower):
+                    from effgen.models.errors import InvalidRequestError as _IRE
+                    raise _IRE(
+                        provider="groq",
+                        model_name=self.model_name,
+                        message=(
+                            f"request too large for {self.model_name}: "
+                            f"{_redact_groq_org(msg)} — reduce the request "
+                            "(fewer/smaller tools or shorter input) or use a "
+                            "larger-context model."
+                        ),
+                    ) from exc
+
                 is_rate = "429" in msg or "rate_limit" in msg_lower or "rate limit" in msg_lower
                 is_server = "500" in msg or "503" in msg or "internal" in msg_lower
                 is_timeout = "timeout" in msg_lower
@@ -732,6 +766,18 @@ class GroqAdapter(BaseModel):
                     provider="groq",
                     model_name=self.model_name,
                     message=msg,
+                ) from exc
+            if _is_request_too_large(msg, msg_lower):
+                from effgen.models.errors import InvalidRequestError as _IRE
+                raise _IRE(
+                    provider="groq",
+                    model_name=self.model_name,
+                    message=(
+                        f"request too large for {self.model_name}: "
+                        f"{_redact_groq_org(msg)} — reduce the request "
+                        "(fewer/smaller tools or shorter input) or use a "
+                        "larger-context model."
+                    ),
                 ) from exc
             is_rate = "429" in msg or "rate_limit" in msg_lower or "rate limit" in msg_lower
             if is_rate:

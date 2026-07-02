@@ -314,6 +314,15 @@ class GeminiAdapter(FunctionCallingModel):
                     cleaned[k] = list(v) if isinstance(v, list | tuple) else v
                 else:
                     cleaned[k] = v
+            # Gemini rejects an ``array`` property that omits ``items``. Default a
+            # missing element schema to a string so tools that declare a plain
+            # ``type: array`` parameter are accepted (OpenAI/Groq tolerate the
+            # omission). Covers every current and future tool without per-tool
+            # patches.
+            type_val = cleaned.get("type")
+            if isinstance(type_val, str) and type_val.lower() == "array" \
+                    and "items" not in cleaned:
+                cleaned["items"] = {"type": "string"}
             return cleaned
         if isinstance(schema, list):
             return [cls._sanitize_schema(v) for v in schema]

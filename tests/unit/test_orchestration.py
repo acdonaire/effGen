@@ -409,6 +409,66 @@ def test_workflow_cost_and_tokens_aggregated():
 
 
 # --------------------------------------------------------------------------- #
+# WorkflowDAG.from_yaml — edge wiring
+# --------------------------------------------------------------------------- #
+def _write_yaml(tmp_path, text):
+    p = tmp_path / "wf.yaml"
+    p.write_text(text)
+    return str(p)
+
+
+def test_from_yaml_depends_on_builds_edge(tmp_path):
+    from effgen.core.workflow import WorkflowDAG
+    dag = WorkflowDAG.from_yaml(_write_yaml(tmp_path, (
+        "workflow:\n  name: p\n  nodes:\n    - id: a\n    - id: b\n"
+        "      depends_on: [a]\n"
+    )))
+    assert [(e.source, e.target) for e in dag.edges] == [("a", "b")]
+
+
+def test_from_yaml_top_level_edges_pair(tmp_path):
+    # A top-level ``edges`` list is a common DAG convention; it must build the
+    # graph, not be dropped while the workflow still reports as valid.
+    from effgen.core.workflow import WorkflowDAG
+    dag = WorkflowDAG.from_yaml(_write_yaml(tmp_path, (
+        "workflow:\n  name: p\n  nodes:\n    - id: a\n    - id: b\n"
+        "  edges:\n    - [a, b]\n"
+    )))
+    assert [(e.source, e.target) for e in dag.edges] == [("a", "b")]
+    assert dag.topological_order() == ["a", "b"]
+
+
+def test_from_yaml_top_level_edges_mapping_with_key(tmp_path):
+    from effgen.core.workflow import WorkflowDAG
+    dag = WorkflowDAG.from_yaml(_write_yaml(tmp_path, (
+        "workflow:\n  name: p\n  nodes:\n    - id: a\n    - id: b\n"
+        "  edges:\n    - {source: a, target: b, key: out}\n"
+    )))
+    edge = dag.edges[0]
+    assert (edge.source, edge.target, edge.key) == ("a", "b", "out")
+
+
+def test_from_yaml_node_input_keys_honored(tmp_path):
+    from effgen.core.workflow import WorkflowDAG
+    dag = WorkflowDAG.from_yaml(_write_yaml(tmp_path, (
+        "workflow:\n  name: p\n  nodes:\n    - id: a\n      input_keys: [x, y]\n"
+    )))
+    assert dag.get_node("a").input_keys == ["x", "y"]
+    assert "input_keys" not in dag.get_node("a").metadata
+
+
+def test_from_yaml_unknown_top_level_key_warns(tmp_path, caplog):
+    import logging
+
+    from effgen.core.workflow import WorkflowDAG
+    with caplog.at_level(logging.WARNING):
+        WorkflowDAG.from_yaml(_write_yaml(tmp_path, (
+            "workflow:\n  name: p\n  nodes:\n    - id: a\n  edgez: [[a, a]]\n"
+        )))
+    assert any("edgez" in r.message for r in caplog.records)
+
+
+# --------------------------------------------------------------------------- #
 # Consensus, message bus, approval, cancellation
 # --------------------------------------------------------------------------- #
 def test_consensus_score_range():

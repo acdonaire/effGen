@@ -41,7 +41,8 @@ class TestCase:
 
     Attributes:
         query: The input query for the agent. ``input=`` is accepted as an
-            ergonomic alias when constructing a TestCase.
+            ergonomic alias when constructing a TestCase; :meth:`from_dict`
+            additionally reads ``prompt`` / ``question``.
         expected_output: Expected output text (used for exact/contains/regex).
             ``expected=`` is accepted as an ergonomic alias.
         expected_tools: Tool names the agent should invoke.
@@ -70,17 +71,35 @@ class TestCase:
             self.difficulty = Difficulty(self.difficulty)
         if not self.query:
             raise ValueError(
-                "TestCase requires a non-empty 'query' (or 'input=' alias)."
+                "TestCase requires a non-empty 'query' "
+                "(aliases: input/prompt/question)."
             )
+
+    # Field names accepted for the query text, in priority order.
+    _QUERY_KEYS = ("query", "input", "prompt", "question")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TestCase:
-        """Create a TestCase from a dict (e.g. parsed JSONL line)."""
+        """Create a TestCase from a dict (e.g. parsed JSONL line).
+
+        The query text is read from ``query`` or any of the aliases
+        ``input`` / ``prompt`` / ``question``. A dict with none of these keys
+        raises a ``ValueError`` naming the field it needs and the keys it saw.
+        """
+        query = next(
+            (data[k] for k in cls._QUERY_KEYS if data.get(k)), None
+        )
+        if query is None:
+            raise ValueError(
+                "each test case needs a 'query' field "
+                "(aliases: input/prompt/question); got keys: "
+                f"{sorted(data.keys())}"
+            )
         difficulty = data.get("difficulty", "medium")
         if isinstance(difficulty, str):
             difficulty = Difficulty(difficulty)
         return cls(
-            query=data["query"],
+            query=query,
             expected_output=data.get("expected", data.get("expected_output", "")),
             expected_tools=data.get("tools", data.get("expected_tools", [])),
             tags=data.get("tags", []),

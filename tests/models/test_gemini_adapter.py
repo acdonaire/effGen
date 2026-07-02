@@ -44,6 +44,31 @@ def test_sanitize_schema_strips_unsupported_fields():
     }
 
 
+def test_sanitize_schema_defaults_missing_array_items():
+    """Gemini rejects an ``array`` property without ``items``; the sanitizer
+    defaults the element schema so tools with a plain ``type: array`` param are
+    accepted (this is what the general preset's maps/email tools declare)."""
+    raw = {
+        "type": "object",
+        "properties": {
+            "markers": {"type": "array", "description": "map markers"},
+            "attachments": {"type": "array"},
+            "typed": {"type": "array", "items": {"type": "integer"}},
+        },
+        "required": ["markers"],
+    }
+    cleaned = GeminiAdapter._sanitize_schema(raw)
+    assert cleaned["properties"]["markers"]["items"] == {"type": "string"}
+    assert cleaned["properties"]["attachments"]["items"] == {"type": "string"}
+    # An explicit items schema is preserved, not overwritten.
+    assert cleaned["properties"]["typed"]["items"] == {"type": "integer"}
+
+
+def test_sanitize_schema_top_level_array_gets_items():
+    cleaned = GeminiAdapter._sanitize_schema({"type": "array"})
+    assert cleaned == {"type": "array", "items": {"type": "string"}}
+
+
 def test_sanitize_schema_preserves_property_names():
     """`properties` keys are user-defined names, not schema fields — keep them."""
     raw = {
