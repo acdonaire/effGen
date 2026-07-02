@@ -77,12 +77,47 @@ class ToxicityGuardrail(Guardrail):
 class PIIGuardrail(Guardrail):
     """Detect personally identifiable information using regex patterns.
 
-    Covers: US SSN, email addresses, phone numbers (US and international),
-    credit card numbers (with Luhn validation), IP addresses, and — when
-    ``detect_secrets`` is enabled (default) — common API keys / cloud
-    credentials (AWS access keys, ``sk-``/``gsk_`` style API keys, Google API
-    keys, GitHub/Slack tokens, bearer tokens, and PEM private-key headers), so a
-    leaked credential is treated as sensitive and not just classic PII.
+    Covers, out of the box:
+
+    - **US SSN** — dashed (``123-45-6789``), space-grouped (``123 45 6789``),
+      and, when preceded by an ``SSN``/``Social Security`` label, undelimited
+      (``123456789``).
+    - **Email**, **phone** (US and international), **credit card** (Luhn-checked),
+      and **IPv4** addresses.
+    - When ``detect_secrets`` is enabled (default): common API keys / cloud
+      credentials (AWS access keys, ``sk-``/``gsk_`` style API keys, Google API
+      keys, GitHub/Slack tokens, bearer tokens, and PEM private-key headers), so a
+      leaked credential is treated as sensitive and not just classic PII.
+    - When ``detect_labeled`` is enabled (default): **label-anchored fields**
+      common in semi-structured records — ``Name:``/``Patient``, ``DOB:``,
+      ``MRN:``/``Medical Record #``, ``Address:``, and member/beneficiary/policy
+      IDs (``Member ID``, ``Insurance ID``, ``Policy Number``). The label is kept
+      and only the value is replaced (e.g. ``MRN: [MRN REDACTED]``).
+
+    **Coverage limits.** Label-anchored detection relies on a preceding label; a
+    free-text personal name with no label (``Seen by Maria Gonzalez``) is not
+    detected by regex alone. For records that use site-specific identifiers, pass
+    ``custom_patterns`` (regexes) and/or ``custom_terms`` (literal strings) to
+    extend coverage. For a privacy-critical path, set ``strict=True``: in redact
+    mode the check then reports ``passed=False`` whenever any PII is detected, so
+    the pipeline fails closed instead of forwarding text on the assumption that
+    regex redaction was complete.
+
+    Args:
+        detect_ssn / detect_email / detect_phone / detect_credit_card /
+            detect_ip / detect_secrets: Toggle each built-in detector.
+        detect_labeled: Toggle the label-anchored clinical/record fields
+            (name, DOB, MRN, address, member/policy ID). Default True.
+        custom_patterns: Extra regexes to redact. Each item is a regex ``str``,
+            a compiled ``re.Pattern``, or a ``(pattern, label)`` pair; ``label``
+            names the detection and its placeholder (``[LABEL REDACTED]``).
+        custom_terms: Literal strings to redact (case-insensitive, whole-word).
+            Each item is a ``str`` or a ``(term, label)`` pair.
+        action: ``"block"`` (default) or ``"redact"``.
+        strict: When True and ``action="redact"``, report ``passed=False`` on any
+            detection so a privacy-critical path fails closed rather than
+            forwarding redacted-but-not-guaranteed-clean text. The redacted text
+            is still provided in ``modified_content`` for inspection.
     """
 
     # Common credential / API-key shapes. High-precision prefixes keep these from
@@ -109,10 +144,101 @@ class PIIGuardrail(Guardrail):
         re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),                   # PEM private key
     ]
 
-    # US Social Security Number: XXX-XX-XXXX
+    # US Social Security Number, dashed or space-grouped: XXX-XX-XXXX / XXX XX XXXX.
+    # The 3-2-4 grouping is distinctive enough to redact without a label cue.
     _SSN_PATTERN = re.compile(
-        r"\b(?!000|666|9\d{2})\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b"
+        r"\b(?!000|666|9\d{2})\d{3}[-\s](?!00)\d{2}[-\s](?!0000)\d{4}\b"
     )
+    # SSN written with no delimiter (XXXXXXXXX) is ambiguous with other 9-digit
+    # ids, so it is only redacted when an ``SSN``/``Social Security`` label
+    # precedes it. The label is preserved; only the digits are replaced.
+    # Separator between a field label and its value. Tolerates a trailing period
+    # from an abbreviation (``D.O.B.``), a ``#`` before the colon (``Record #:``),
+    # a dash (``DOB - ...``), and surrounding whitespace. Values never begin with
+    # these characters, so it does not eat into a value.
+    _LSEP = r"\s*[:#.\-]{0,3}\s*"
+    # A labeled personal name: a capitalized first token, then up to ``n`` more
+    # tokens that may be an initial (``Q.``) or a capitalized word including
+    # apostrophe/hyphen surnames (``O'Brien``, ``Smith-Jones``). The first token
+    # keeps the ``[A-Z][a-z]`` shape so all-caps headers (``PATIENT NOTE``) and
+    # trailing lowercase prose are not captured.
+    # The full-word alternative precedes the single-initial one so a surname is
+    # captured whole ("Gonzalez"), not truncated to its first letter. An initial
+    # must carry a period or be followed by a non-letter, so a following acronym
+    # label ("MRN") is not mistaken for a middle initial.
+    _NAME_VALUE = (
+        r"[A-Z][a-z][A-Za-z'.\-]*"
+        r"(?:[ \t]+(?:[A-Z][a-z'][A-Za-z'.\-]*|[A-Z](?:\.|(?![A-Za-z])))){{0,{n}}}"
+    )
+
+    _SSN_CUED_PATTERN = re.compile(
+        r"(?P<label>(?i:\bSSN\b|\bSocial\s+Security(?:\s+(?:No|Number|#))?\b)" + _LSEP + r")"
+        r"(?P<value>(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4})\b"
+    )
+
+    # Label-anchored fields common in semi-structured records (clinical notes,
+    # intake forms). Each keeps its label and replaces only the value. Ordered so
+    # that the more specific fields resolve before the line-spanning address.
+    _LABELED_PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
+        (
+            "name", "[NAME REDACTED]",
+            re.compile(
+                r"(?P<label>(?i:\b(?:patient(?:\s+name)?|name)\b)[ \t]*[:#.]{0,2}[ \t]+)"
+                r"(?P<value>" + _NAME_VALUE.format(n=3) + r")"
+            ),
+        ),
+        (
+            "name", "[NAME REDACTED]",
+            re.compile(
+                r"(?P<label>(?i:\b(?:Dr|Mr|Mrs|Ms)\b)\.?[ \t]+)"
+                r"(?P<value>" + _NAME_VALUE.format(n=2) + r")"
+            ),
+        ),
+        (
+            "DOB", "[DOB REDACTED]",
+            re.compile(
+                r"(?P<label>(?i:\b(?:DOB|D\.O\.B\.?|date\s+of\s+birth|birth\s*date)\b)" + _LSEP + r")"
+                r"(?P<value>\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}|\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2})"
+            ),
+        ),
+        (
+            "MRN", "[MRN REDACTED]",
+            re.compile(
+                r"(?P<label>(?i:\b(?:MRN|medical\s+record(?:\s+(?:no|number|#))?|"
+                r"record\s+(?:no|number|#))\b)" + _LSEP + r")"
+                r"(?P<value>[A-Za-z0-9][A-Za-z0-9\-]{3,})"
+            ),
+        ),
+        (
+            "member_id", "[ID REDACTED]",
+            re.compile(
+                r"(?P<label>(?i:\b(?:insurance\s+(?:member\s+)?id|member\s+id|"
+                r"beneficiary\s+id|subscriber\s+id|policy\s+(?:no|number|#|id)|"
+                r"group\s+(?:no|number|#)|health\s+plan\s+id)\b)" + _LSEP + r")"
+                r"(?P<value>[A-Za-z0-9][A-Za-z0-9\-]{3,})"
+            ),
+        ),
+        # Street address up to a ZIP code (preferred: precise end so a following
+        # sentence or instruction on the same line is not swallowed).
+        (
+            "address", "[ADDRESS REDACTED]",
+            re.compile(
+                r"(?P<label>(?i:\b(?:mailing\s+address|home\s+address|street\s+address|"
+                r"address|addr)\b)" + _LSEP + r")"
+                r"(?P<value>\d+[^\n]*?\b\d{5}(?:-\d{4})?\b)"
+            ),
+        ),
+        # Fallback for an address with no ZIP: stop at a sentence terminator or
+        # line break rather than running to end of line.
+        (
+            "address", "[ADDRESS REDACTED]",
+            re.compile(
+                r"(?P<label>(?i:\b(?:mailing\s+address|home\s+address|street\s+address|"
+                r"address|addr)\b)" + _LSEP + r")"
+                r"(?P<value>\d+[^\n.;]*)"
+            ),
+        ),
+    ]
 
     # Email address
     _EMAIL_PATTERN = re.compile(
@@ -173,7 +299,11 @@ class PIIGuardrail(Guardrail):
         detect_credit_card: bool = True,
         detect_ip: bool = True,
         detect_secrets: bool = True,
+        detect_labeled: bool = True,
+        custom_patterns: list[str | re.Pattern[str] | tuple[str, str]] | None = None,
+        custom_terms: list[str | tuple[str, str]] | None = None,
         action: str = "block",  # "block" or "redact"
+        strict: bool = False,
         positions: list[GuardrailPosition] | None = None,
         enabled: bool = True,
     ):
@@ -192,7 +322,55 @@ class PIIGuardrail(Guardrail):
         self.detect_credit_card = detect_credit_card
         self.detect_ip = detect_ip
         self.detect_secrets = detect_secrets
+        self.detect_labeled = detect_labeled
         self.action = action
+        self.strict = strict
+        self._custom_patterns = self._normalize_custom_patterns(custom_patterns)
+        self._custom_terms = self._normalize_custom_terms(custom_terms)
+
+    @staticmethod
+    def _normalize_custom_patterns(
+        patterns: list[str | re.Pattern[str] | tuple[str, str]] | None,
+    ) -> list[tuple[str, str, re.Pattern[str]]]:
+        """Return a list of ``(type, placeholder, compiled)`` from user input.
+
+        Each item may be a regex string, a compiled pattern, or a
+        ``(pattern, label)`` pair. ``label`` names the detection and the
+        placeholder; without one, the detection is typed ``"custom"``.
+        """
+        out: list[tuple[str, str, re.Pattern[str]]] = []
+        for item in patterns or []:
+            label = "custom"
+            if isinstance(item, tuple):
+                pat, label = item[0], item[1]
+            else:
+                pat = item
+            compiled = pat if isinstance(pat, re.Pattern) else re.compile(pat)
+            placeholder = f"[{label.upper()} REDACTED]"
+            out.append((label, placeholder, compiled))
+        return out
+
+    @staticmethod
+    def _normalize_custom_terms(
+        terms: list[str | tuple[str, str]] | None,
+    ) -> list[tuple[str, str, re.Pattern[str]]]:
+        """Return ``(type, placeholder, compiled)`` for literal terms.
+
+        Terms match case-insensitively on whole-word boundaries.
+        """
+        out: list[tuple[str, str, re.Pattern[str]]] = []
+        for item in terms or []:
+            label = "custom"
+            if isinstance(item, tuple):
+                term, label = item[0], item[1]
+            else:
+                term = item
+            if not term:
+                continue
+            compiled = re.compile(rf"\b{re.escape(term)}\b", re.I)
+            placeholder = f"[{label.upper()} REDACTED]"
+            out.append((label, placeholder, compiled))
+        return out
 
     @staticmethod
     def _luhn_check(number_str: str) -> bool:
@@ -211,73 +389,103 @@ class PIIGuardrail(Guardrail):
         return checksum % 10 == 0
 
     def check(self, content: str, **kwargs: Any) -> GuardrailResult:
-        detections: list[str] = []
+        counts: dict[str, int] = {}
         redacted = content
 
-        if self.detect_ssn and self._SSN_PATTERN.search(content):
-            detections.append("SSN")
-            redacted = self._SSN_PATTERN.sub("[SSN REDACTED]", redacted)
+        def _record(kind: str, n: int = 1) -> None:
+            if n > 0:
+                counts[kind] = counts.get(kind, 0) + n
 
-        if self.detect_email and self._EMAIL_PATTERN.search(content):
-            detections.append("email")
-            redacted = self._EMAIL_PATTERN.sub("[EMAIL REDACTED]", redacted)
+        if self.detect_ssn:
+            redacted, n = self._SSN_PATTERN.subn("[SSN REDACTED]", redacted)
+            _record("SSN", n)
+            # Undelimited SSN only when an SSN/Social-Security label precedes it.
+            redacted, n = self._SSN_CUED_PATTERN.subn(
+                lambda m: m.group("label") + "[SSN REDACTED]", redacted
+            )
+            _record("SSN", n)
+
+        if self.detect_email:
+            redacted, n = self._EMAIL_PATTERN.subn("[EMAIL REDACTED]", redacted)
+            _record("email", n)
 
         if self.detect_phone:
-            if self._PHONE_US_PATTERN.search(content):
-                detections.append("phone")
-                redacted = self._PHONE_US_PATTERN.sub("[PHONE REDACTED]", redacted)
-            elif self._PHONE_INTL_PATTERN.search(content):
-                detections.append("phone")
-                redacted = self._PHONE_INTL_PATTERN.sub("[PHONE REDACTED]", redacted)
+            redacted, n = self._PHONE_US_PATTERN.subn("[PHONE REDACTED]", redacted)
+            _record("phone", n)
+            redacted, n = self._PHONE_INTL_PATTERN.subn("[PHONE REDACTED]", redacted)
+            _record("phone", n)
 
         if self.detect_credit_card:
             for match in self._CC_PATTERN.finditer(content):
                 digits_only = re.sub(r"[ -]", "", match.group())
                 if self._luhn_check(digits_only):
-                    detections.append("credit_card")
+                    _record("credit_card")
                     redacted = redacted.replace(match.group(), "[CC REDACTED]")
                     break  # one detection is enough
 
         if self.detect_ip:
-            found_ip = False
+            found_ip = 0
 
             def _ip_repl(match: re.Match[str]) -> str:
                 nonlocal found_ip
                 if self._is_version_string(match.string, match.start(), match.end()):
                     return match.group()  # leave version/build numbers untouched
-                found_ip = True
+                found_ip += 1
                 return "[IP REDACTED]"
 
             redacted = self._IPV4_PATTERN.sub(_ip_repl, redacted)
-            if found_ip:
-                detections.append("IP_address")
+            _record("IP_address", found_ip)
 
         if self.detect_secrets:
-            found_secret = False
             for pattern in self._SECRET_PATTERNS:
-                if pattern.search(redacted):
-                    found_secret = True
-                    redacted = pattern.sub("[SECRET REDACTED]", redacted)
-            if found_secret:
-                detections.append("secret")
+                redacted, n = pattern.subn("[SECRET REDACTED]", redacted)
+                _record("secret", n)
 
-        if not detections:
+        if self.detect_labeled:
+            for kind, placeholder, pattern in self._LABELED_PATTERNS:
+                redacted, n = pattern.subn(
+                    lambda m, ph=placeholder: m.group("label") + ph, redacted
+                )
+                _record(kind, n)
+
+        for kind, placeholder, pattern in self._custom_patterns:
+            redacted, n = pattern.subn(placeholder, redacted)
+            _record(kind, n)
+
+        for kind, placeholder, pattern in self._custom_terms:
+            redacted, n = pattern.subn(placeholder, redacted)
+            _record(kind, n)
+
+        if not counts:
             return GuardrailResult(passed=True)
 
+        detections = list(counts.keys())
         reason = f"PII guardrail: detected {', '.join(detections)}"
+        metadata = {"pii_types": detections, "pii_counts": counts}
 
         if self.action == "redact":
+            # In strict mode a privacy-critical path fails closed: any detection
+            # reports passed=False so redacted-but-not-guaranteed-clean text is
+            # not forwarded on the assumption regex redaction was complete. The
+            # redacted text is still returned for inspection.
+            if self.strict:
+                return GuardrailResult(
+                    passed=False,
+                    reason=reason + " (strict mode: blocking)",
+                    modified_content=redacted,
+                    metadata=metadata,
+                )
             return GuardrailResult(
                 passed=True,
                 reason=reason,
                 modified_content=redacted,
-                metadata={"pii_types": detections},
+                metadata=metadata,
             )
 
         return GuardrailResult(
             passed=False,
             reason=reason,
-            metadata={"pii_types": detections},
+            metadata=metadata,
         )
 
 

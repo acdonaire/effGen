@@ -119,6 +119,11 @@ class GuardrailChain:
         start = time.monotonic()
         current_content = content
         results: list[GuardrailResult] = []
+        # Aggregate redaction detail from any modifying guardrail (e.g.
+        # PIIGuardrail in redact mode) so a caller can audit what a chain removed
+        # without reaching into each individual result.
+        pii_types: list[str] = []
+        pii_counts: dict[str, int] = {}
 
         for guardrail in self.guardrails:
             if not guardrail.enabled:
@@ -140,18 +145,29 @@ class GuardrailChain:
                 result.metadata["chain_elapsed_ms"] = elapsed * 1000
                 return result
 
+            for t in result.metadata.get("pii_types", []):
+                if t not in pii_types:
+                    pii_types.append(t)
+            for t, n in (result.metadata.get("pii_counts") or {}).items():
+                pii_counts[t] = pii_counts.get(t, 0) + n
+
             # If guardrail modified content, pass modified version to next
             if result.modified_content is not None:
                 current_content = result.modified_content
 
         elapsed = time.monotonic() - start
+        metadata: dict[str, Any] = {
+            "checks_run": len(results),
+            "chain_elapsed_ms": elapsed * 1000,
+        }
+        if pii_types:
+            metadata["pii_types"] = pii_types
+        if pii_counts:
+            metadata["pii_counts"] = pii_counts
         return GuardrailResult(
             passed=True,
             reason="",
             modified_content=current_content if current_content != content else None,
             guardrail_name="GuardrailChain",
-            metadata={
-                "checks_run": len(results),
-                "chain_elapsed_ms": elapsed * 1000,
-            },
+            metadata=metadata,
         )

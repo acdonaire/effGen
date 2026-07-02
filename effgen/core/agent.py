@@ -164,6 +164,9 @@ class AgentConfig:
     system_prompt: str = "You are a helpful AI assistant."
     max_iterations: int = 10
     temperature: float = 0.7
+    # Default output-token budget for every run(). None lets the model pick a
+    # size-aware default; run(max_tokens=...) overrides it for a single call.
+    max_tokens: int | None = None
     enable_sub_agents: bool = True
     enable_memory: bool = True
     enable_streaming: bool = False
@@ -915,6 +918,13 @@ Question: {task}
             output_model: Pydantic BaseModel class — when provided, output is
                 validated and the parsed instance is stored in
                 ``response.metadata["parsed"]``.
+
+                Reasoning models and deeply nested schemas need a generous output
+                budget: the model spends tokens on internal reasoning and on the
+                JSON structure before it fills any values. Set ``max_tokens``
+                accordingly (``run(..., max_tokens=8192)`` for a reasoning model).
+                When an extraction validates but every field is empty,
+                ``response.metadata["structured_output_empty"]`` is set to True.
             inputs: Optional list of multimodal content parts created by
                 ``image_from``, ``audio_from``, or ``video_from``. When present,
                 the agent sends a structured Message directly to the model.
@@ -963,6 +973,10 @@ Question: {task}
         # every run reports its own cost_usd + token counts (see _finalize_cost).
         self._run_cost_accum = {}
         debug = kwargs.pop("debug", False)
+        # A max_tokens set on the config is the default output budget for every
+        # run(); an explicit run(max_tokens=...) still overrides it per call.
+        if "max_tokens" not in kwargs and self.config.max_tokens is not None:
+            kwargs["max_tokens"] = self.config.max_tokens
         run_id = generate_run_id()
         # Capture checkpoint args here so the outer run() can use
         # them for the final-checkpoint write even after _run_single_agent
@@ -975,6 +989,7 @@ Question: {task}
         prom_metrics.active_agents.inc(labels=labels)
 
         # Pre-run input guardrail check
+        input_redaction: dict[str, Any] | None = None
         if self._guardrail_chain is not None:
             from ..guardrails.base import GuardrailPosition
             gr = self._guardrail_chain.check(task, position=GuardrailPosition.INPUT)
@@ -988,6 +1003,13 @@ Question: {task}
                 )
             if gr.modified_content is not None:
                 task = gr.modified_content
+                # Record what the input redaction removed so a run is auditable
+                # from its response (e.g. a note de-identified before a cloud call).
+                pii_types = gr.metadata.get("pii_types")
+                if pii_types:
+                    input_redaction = {"types": pii_types}
+                    if gr.metadata.get("pii_counts"):
+                        input_redaction["counts"] = gr.metadata["pii_counts"]
 
         # Resolve structured output schema. Accept either a JSON-Schema dict or
         # a Pydantic model class for `output_schema` (and the config default),
@@ -1080,6 +1102,8 @@ Question: {task}
                 response.execution_trace = self.execution_tracker.get_trace()
                 response.execution_tree = self.execution_tracker.generate_execution_tree()
                 response.metadata["run_id"] = run_id
+                if input_redaction is not None:
+                    response.metadata["input_redaction"] = input_redaction
                 # Surface this run's cost + token usage on the result so callers
                 # can budget per call without a side channel.
                 self._finalize_cost_metadata(response)

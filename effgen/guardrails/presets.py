@@ -51,6 +51,32 @@ def standard_guardrails(
     ])
 
 
+def phi_guardrails(
+    max_length: int = 100_000,
+    strict: bool = False,
+) -> GuardrailChain:
+    """De-identification posture for records containing personal identifiers.
+
+    Redacts PII before it reaches a model: the built-in detectors plus the
+    label-anchored fields common in semi-structured records (name, date of
+    birth, medical record number, address, member/policy ID). Also runs length,
+    injection, and tool-output safety with PII stripping.
+
+    Coverage is regex-based: it removes labeled and well-formed identifiers, not
+    every free-text personal name. For site-specific identifiers, build a
+    ``PIIGuardrail`` with ``custom_patterns``/``custom_terms`` and use it
+    directly. Pass ``strict=True`` to fail closed — any detection then reports
+    ``passed=False`` instead of forwarding redacted text.
+    """
+    return GuardrailChain([
+        LengthGuardrail(max_length=max_length),
+        PromptInjectionGuardrail(sensitivity="medium"),
+        PIIGuardrail(action="redact", detect_labeled=True, strict=strict),
+        ToolInputGuardrail(),
+        ToolOutputGuardrail(strip_pii=True, max_output_length=max_length),
+    ])
+
+
 def minimal_guardrails(
     max_length: int = 200_000,
 ) -> GuardrailChain:
@@ -72,12 +98,14 @@ def no_guardrails() -> GuardrailChain:
 # Named preset constants for convenience
 STRICT = "strict"
 STANDARD = "standard"
+PHI = "phi"
 MINIMAL = "minimal"
 NONE = "none"
 
 _PRESET_FACTORIES = {
     STRICT: strict_guardrails,
     STANDARD: standard_guardrails,
+    PHI: phi_guardrails,
     MINIMAL: minimal_guardrails,
     NONE: no_guardrails,
 }
@@ -87,6 +115,8 @@ _PRESET_FACTORIES = {
 _PRESET_ALIASES = {
     "default": STANDARD,
     "balanced": STANDARD,
+    "hipaa": PHI,
+    "deidentify": PHI,
     "off": NONE,
     "disabled": NONE,
 }
@@ -96,9 +126,9 @@ def get_guardrail_preset(name: str, **kwargs) -> GuardrailChain:
     """Get a guardrail chain by preset name.
 
     Args:
-        name: One of "strict", "standard", "minimal", "none". The aliases
-            "default"/"balanced" map to "standard" and "off"/"disabled" map
-            to "none".
+        name: One of "strict", "standard", "phi", "minimal", "none". The aliases
+            "default"/"balanced" map to "standard", "hipaa"/"deidentify" map to
+            "phi", and "off"/"disabled" map to "none".
         **kwargs: Passed to the preset factory function.
 
     Returns:

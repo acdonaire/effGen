@@ -13,11 +13,13 @@ from .injection import PromptInjectionGuardrail
 from .presets import (
     MINIMAL,
     NONE,
+    PHI,
     STANDARD,
     STRICT,
     get_guardrail_preset,
     minimal_guardrails,
     no_guardrails,
+    phi_guardrails,
     standard_guardrails,
     strict_guardrails,
 )
@@ -43,11 +45,13 @@ __all__ = [
     # Presets
     "STRICT",
     "STANDARD",
+    "PHI",
     "MINIMAL",
     "NONE",
     "get_guardrail_preset",
     "strict_guardrails",
     "standard_guardrails",
+    "phi_guardrails",
     "minimal_guardrails",
     "no_guardrails",
 ]

@@ -97,6 +97,8 @@ class AgentGenerationMixin:
                         )
                     else:
                         response.metadata["parsed"] = parsed
+                    if self._structured_all_empty(parsed):
+                        response.metadata["structured_output_empty"] = True
                     return response
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -137,6 +139,8 @@ class AgentGenerationMixin:
                 )
             else:
                 response.metadata["parsed"] = outcome.parsed
+            if self._structured_all_empty(outcome.parsed):
+                response.metadata["structured_output_empty"] = True
         else:
             # Keep the raw answer, mark the run unsuccessful, and explain why —
             # consistent with the framework's no-silent-failure rule.
@@ -156,6 +160,31 @@ class AgentGenerationMixin:
                 response.metadata["structured_output_raw_attempt"] = outcome.raw_text
 
         return response
+
+    @staticmethod
+    def _structured_all_empty(data: Any) -> bool:
+        """Return True when a schema-valid object carries no extracted values.
+
+        A reasoning model or a nested schema under a tight ``max_tokens`` can
+        return an object that validates but has every field empty
+        (``{"diagnosis": "", "medications": []}``). Flagging it lets a caller
+        distinguish "nothing to extract" from "budget ran out before the model
+        filled the fields" — a larger ``max_tokens`` usually resolves the latter.
+        """
+        def _empty(v: Any) -> bool:
+            if v is None or v == "" or v == [] or v == {}:
+                return True
+            if isinstance(v, dict):
+                return all(_empty(x) for x in v.values())
+            if isinstance(v, list | tuple):
+                return all(_empty(x) for x in v)
+            return False
+
+        if isinstance(data, dict):
+            return len(data) > 0 and all(_empty(v) for v in data.values())
+        if isinstance(data, list | tuple):
+            return len(data) == 0
+        return False
 
     @staticmethod
     def _parse_with_pydantic(model_class: Any, data: Any) -> Any:

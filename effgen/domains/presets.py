@@ -144,7 +144,16 @@ def FinanceDomain(**overrides) -> Domain:  # noqa: N802
 
 
 def HealthDomain(**overrides) -> Domain:  # noqa: N802
-    """Medical, wellness, and nutrition domain."""
+    """Medical, wellness, and nutrition domain.
+
+    This is a consumer health-information assistant. It uses the ``standard``
+    guardrails, which redact well-formed and labeled identifiers but do not
+    guarantee removal of every free-text identifier. It is not a de-identification
+    tool. To strip personal identifiers before sending records to a model, pass
+    ``guardrails="phi"`` (or ``guardrails=phi_guardrails(strict=True)`` to fail
+    closed), and extend ``PIIGuardrail`` with ``custom_patterns``/``custom_terms``
+    for site-specific identifiers.
+    """
     defaults = {
         "name": "health",
         "description": "Medical science, wellness, nutrition, and public health.",
