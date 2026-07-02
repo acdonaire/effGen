@@ -132,6 +132,26 @@ def test_csv_output_serializes_parsed_as_json_cell(tmp_path):
     assert rows[0]["total_tokens"] == "12"
 
 
+def test_csv_output_no_bom_by_default(tmp_path):
+    r0 = _resp("out", metadata={"total_tokens": 12})
+    runner, result = _batch([r0])
+    out = tmp_path / "out.csv"
+    runner.write_results(result, out, query_list=["q"])
+    assert out.read_bytes()[:3] != b"\xef\xbb\xbf"
+
+
+def test_csv_output_excel_bom_opt_in(tmp_path):
+    r0 = _resp("保存更改", metadata={"total_tokens": 12})
+    runner, result = _batch([r0])
+    out = tmp_path / "out.csv"
+    runner.write_results(result, out, query_list=["Save changes"], excel_bom=True)
+    raw = out.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    # Still valid UTF-8 content once the BOM is stripped (utf-8-sig decodes it).
+    text = raw.decode("utf-8-sig")
+    assert "保存更改" in text
+
+
 def test_read_queries_skips_malformed_line(tmp_path):
     p = tmp_path / "in.jsonl"
     p.write_text(

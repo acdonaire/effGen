@@ -952,15 +952,15 @@ class CLIInterface:
                 # Save response if output file specified
                 if args.output:
                     output_path = Path(args.output)
-                    with open(output_path, 'w') as f:
-                        json.dump(response.to_dict(), f, indent=2)
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        json.dump(response.to_dict(), f, indent=2, ensure_ascii=False)
                     self.print_success(f"Response saved to {output_path}")
 
                 # Emit the result object to stdout for piping (same document the
                 # -o file carries). Goes to real stdout regardless of the
                 # stderr-routed human output above.
                 if json_mode:
-                    print(json.dumps(response.to_dict(), indent=2))
+                    print(json.dumps(response.to_dict(), indent=2, ensure_ascii=False))
 
             return exit_code
 
@@ -2823,8 +2823,8 @@ Model id formats:
 
     # Batch command
     batch_parser = subparsers.add_parser('batch', help='Run batch queries from a file')
-    batch_parser.add_argument('--input', required=True, help='Input file (JSONL, CSV, JSON, or plain text)')
-    batch_parser.add_argument('--output', help='Output file (JSONL, CSV, or JSON)')
+    batch_parser.add_argument('-i', '--input', required=True, help='Input file (JSONL, CSV, JSON, or plain text)')
+    batch_parser.add_argument('-o', '--output', help='Output file (JSONL, CSV, or JSON)')
     batch_parser.add_argument('--concurrency', type=int, default=5, help='Max concurrent queries (default: 5)')
     batch_parser.add_argument('--batch-size', type=int, default=0, help='Batch size (0 = all at once)')
     batch_parser.add_argument('--timeout', type=float, default=120.0, help='Timeout per query in seconds')
@@ -2832,6 +2832,13 @@ Model id formats:
     batch_parser.add_argument('-m', '--model', help='Model to use')
     batch_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
+    batch_parser.add_argument(
+        '--system-prompt', '--persona', dest='system_prompt', metavar='TEXT',
+        help='System prompt applied to every row, e.g. a target language, '
+             'glossary, and tone instruction for a localization batch '
+             '("Translate into formal European French (vous); keep {placeholders} '
+             'and HTML tags verbatim."). Overrides the preset\'s default prompt.',
+    )
     batch_parser.add_argument('--query-field', default='query', help='Field name for queries in JSONL/CSV (default: query)')
     batch_parser.add_argument('--max-tokens', type=int, default=None,
                               help='Max output tokens per query (raise for token-heavy or reasoning models)')
@@ -2845,6 +2852,12 @@ Model id formats:
                               help='Abort on the first malformed input line instead of skipping it')
     batch_parser.add_argument('--resume', action='store_true',
                               help='Skip input rows already present in the JSONL --output file and append the rest')
+    batch_parser.add_argument(
+        '--excel', '--bom', dest='excel_bom', action='store_true',
+        help='Prepend a UTF-8 BOM to CSV output so Excel on Windows opens '
+             'non-Latin scripts (Arabic, CJK, Devanagari, ...) correctly on '
+             'double-click. Only affects --output ending in .csv.',
+    )
     batch_parser.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
                               help='Quiet output (suppress the progress bar)')
     batch_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
@@ -3518,7 +3531,7 @@ def _handle_workflow_command(args, cli) -> int:
                     "nodes": len(dag.nodes),
                     "edges": len(dag.edges),
                     "execution_order": order,
-                }, indent=2))
+                }, indent=2, ensure_ascii=False))
                 return 0
             cli.print(f"Workflow '{dag.name}' is valid.")
             cli.print(f"  Nodes: {len(dag.nodes)}")
@@ -3527,7 +3540,7 @@ def _handle_workflow_command(args, cli) -> int:
             return 0
         except Exception as e:
             if json_mode:
-                print(json.dumps({"valid": False, "error": str(e)}, indent=2))
+                print(json.dumps({"valid": False, "error": str(e)}, indent=2, ensure_ascii=False))
                 return 1
             cli.print(f"Validation failed: {e}")
             return 1
@@ -3592,7 +3605,7 @@ def _handle_workflow_command(args, cli) -> int:
                             pass
 
             if json_mode:
-                print(json.dumps(result.to_dict(), indent=2, default=str))
+                print(json.dumps(result.to_dict(), indent=2, default=str, ensure_ascii=False))
                 return 0 if result.success else 1
 
             cli.print(f"\nWorkflow {'succeeded' if result.success else 'FAILED'} "
@@ -3611,7 +3624,7 @@ def _handle_workflow_command(args, cli) -> int:
 
         except Exception as e:
             if json_mode:
-                print(json.dumps({"success": False, "error": str(e)}, indent=2))
+                print(json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False))
                 return 1
             cli.print(f"Workflow execution failed: {e}")
             return 1
@@ -3704,6 +3717,7 @@ def _handle_batch_command(args, cli) -> int:
     query_field = getattr(args, 'query_field', 'query')
     max_tokens = getattr(args, 'max_tokens', None)
     temperature = getattr(args, 'temperature', None)
+    system_prompt = getattr(args, 'system_prompt', None)
     strict = getattr(args, 'strict', False)
     resume = getattr(args, 'resume', False)
 
@@ -3735,12 +3749,17 @@ def _handle_batch_command(args, cli) -> int:
             from effgen.models import load_model
             from effgen.presets import create_agent
             model = load_model(model_name)
-            agent = create_agent(preset_name, model)
+            agent = create_agent(preset_name, model, system_prompt=system_prompt)
         else:
             from effgen.core.agent import Agent, AgentConfig
             from effgen.models import load_model
             model = load_model(model_name)
-            config = AgentConfig(name="batch-agent", model=model, max_iterations=5)
+            config_kwargs: dict = {}
+            if system_prompt is not None:
+                config_kwargs['system_prompt'] = system_prompt
+            config = AgentConfig(
+                name="batch-agent", model=model, max_iterations=5, **config_kwargs,
+            )
             agent = Agent(config)
 
         runner = BatchRunner(agent)
@@ -3851,7 +3870,10 @@ def _handle_batch_command(args, cli) -> int:
 
         # Non-streaming formats (.csv/.json) get one batched write at the end.
         if output_path and not stream_jsonl:
-            runner.write_results(result, output_path, query_list=run_queries)
+            runner.write_results(
+                result, output_path, query_list=run_queries,
+                excel_bom=getattr(args, 'excel_bom', False),
+            )
             cli.print(f"Results written to {output_path}")
         elif output_path:
             cli.print(f"Results written to {output_path}")
@@ -3943,7 +3965,7 @@ def _handle_eval_command(args, cli) -> int:
             if json_mode:
                 print(json.dumps(
                     [{"name": n, "description": d} for n, d in suites.items()],
-                    indent=2,
+                    indent=2, ensure_ascii=False,
                 ))
                 return 0
             cli.print_header("Available Evaluation Suites")
@@ -4478,7 +4500,7 @@ def _handle_sessions_command(args, cli) -> int:
             print(_json.dumps({
                 "sessions": sessions,
                 "sessions_dir": str(mgr.sessions_dir),
-            }, indent=2, default=str))
+            }, indent=2, default=str, ensure_ascii=False))
             return 0
         if not sessions:
             cli.print(

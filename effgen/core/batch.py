@@ -251,10 +251,18 @@ class BatchRunner:
         batch_result: BatchResult,
         path: str | Path,
         query_list: list[str] | None = None,
+        excel_bom: bool = False,
     ) -> None:
         """Write batch results to a JSONL or CSV file.
 
         Format is inferred from the file extension (.jsonl, .csv, .json).
+
+        Args:
+            excel_bom: When the target is ``.csv``, prepend a UTF-8 BOM
+                (``utf-8-sig``) so Excel on Windows opens non-Latin scripts
+                (Arabic, CJK, Devanagari, ...) correctly on double-click
+                instead of misreading them as another encoding. The file
+                stays valid UTF-8 either way; this only affects the CSV path.
         """
         path = Path(path)
         suffix = path.suffix.lower()
@@ -282,7 +290,8 @@ class BatchRunner:
                     for key in row:
                         if key not in fieldnames:
                             fieldnames.append(key)
-                with open(path, "w", encoding="utf-8", newline="") as f:
+                csv_encoding = "utf-8-sig" if excel_bom else "utf-8"
+                with open(path, "w", encoding=csv_encoding, newline="") as f:
                     writer = csv.DictWriter(f, fieldnames=fieldnames)
                     writer.writeheader()
                     for row in rows:

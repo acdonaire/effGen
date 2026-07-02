@@ -173,6 +173,15 @@ class TestSuiteResults:
         j = json.loads(results.to_json())
         assert j["suite"] == "json_test"
 
+    def test_to_json_emits_raw_utf8_not_escaped(self):
+        # Non-Latin metadata (e.g. a localized suite label) stays readable
+        # in the piped/CI-gate JSON instead of turning into \uXXXX escapes.
+        results = SuiteResults(suite_name="json_test", metadata={"note": "翻訳テスト"})
+        raw = results.to_json()
+        assert "翻訳テスト" in raw
+        assert "\\u" not in raw
+        assert json.loads(raw)["metadata"]["note"] == "翻訳テスト"
+
 
 # ---------------------------------------------------------------------------
 # AgentEvaluator with MockModel
@@ -577,6 +586,14 @@ class TestModelComparison:
         )
         j = json.loads(matrix.to_json())
         assert len(j["scores"]) == 1
+
+    def test_comparison_matrix_to_json_emits_raw_utf8_not_escaped(self):
+        matrix = ComparisonMatrix(
+            scores=[ModelScore("m", "s", accuracy=0.0, error="翻訳に失敗しました")],
+        )
+        raw = matrix.to_json()
+        assert "翻訳に失敗しました" in raw
+        assert "\\u" not in raw
 
     def test_empty_matrix(self):
         matrix = ComparisonMatrix()

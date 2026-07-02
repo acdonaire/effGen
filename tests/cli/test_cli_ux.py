@@ -345,6 +345,34 @@ def test_chat_accepts_system_prompt_and_persona_alias():
     assert parser.parse_args(["chat"]).system_prompt is None
 
 
+def test_batch_accepts_system_prompt_and_persona_alias():
+    parser = _main.create_parser()
+    persona = "Translate into formal European French (vous); keep {placeholders} verbatim."
+    args = parser.parse_args(["batch", "-i", "in.jsonl", "--system-prompt", persona])
+    assert args.system_prompt == persona
+    args = parser.parse_args(["batch", "-i", "in.jsonl", "--persona", persona])
+    assert args.system_prompt == persona
+    assert parser.parse_args(["batch", "-i", "in.jsonl"]).system_prompt is None
+
+
+def test_batch_accepts_short_input_output_flags():
+    parser = _main.create_parser()
+    args = parser.parse_args(["batch", "-i", "in.jsonl", "-o", "out.jsonl"])
+    assert args.input == "in.jsonl"
+    assert args.output == "out.jsonl"
+    # Long forms still work.
+    args = parser.parse_args(["batch", "--input", "in.jsonl", "--output", "out.jsonl"])
+    assert args.input == "in.jsonl"
+    assert args.output == "out.jsonl"
+
+
+def test_batch_accepts_excel_bom_flag():
+    parser = _main.create_parser()
+    assert parser.parse_args(["batch", "-i", "in.jsonl", "--excel"]).excel_bom is True
+    assert parser.parse_args(["batch", "-i", "in.jsonl", "--bom"]).excel_bom is True
+    assert parser.parse_args(["batch", "-i", "in.jsonl"]).excel_bom is False
+
+
 # --------------------------------------------------------------------------- #
 # Headless --json contract: run + the CI-gate commands
 # --------------------------------------------------------------------------- #
@@ -373,6 +401,26 @@ def test_sessions_list_json_is_parseable(capsys):
     assert code == 0
     assert "sessions" in data and "sessions_dir" in data
     assert isinstance(data["sessions"], list)
+
+
+def test_sessions_list_json_emits_raw_utf8_not_escaped(capsys, tmp_path, monkeypatch):
+    # A locale-labeled agent name (e.g. a French persona session) must come
+    # back as readable UTF-8 on --json, not \uXXXX escapes.
+    monkeypatch.setenv("EFFGEN_SESSIONS_DIR", str(tmp_path))
+    (tmp_path / "s1.json").write_text(
+        json.dumps({
+            "session_id": "s1",
+            "agent_name": "professeur-français",
+            "messages": [],
+        }),
+        encoding="utf-8",
+    )
+    args = SimpleNamespace(session_command="list", output_json=True)
+    code = _main._handle_sessions_command(args, _cli())
+    raw = capsys.readouterr().out
+    assert code == 0
+    assert "professeur-français" in raw
+    assert "\\u" not in raw
 
 
 def test_eval_suite_list_json(capsys):

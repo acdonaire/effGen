@@ -411,13 +411,34 @@ class TestTogetherAdapterGenerate:
         with pytest.raises(ModelAuthError):
             adapter.generate("test")
 
-    def test_endpoint_error_raises_runtime_error(self):
+    def test_endpoint_error_raises_invalid_request_error(self):
+        from effgen.models.errors import InvalidRequestError
+
         adapter, mock_client = self._loaded_adapter()
         mock_client.chat.completions.create.side_effect = Exception(
             "400 Unable to access non-serverless model"
         )
-        with pytest.raises(RuntimeError, match="dedicated endpoint"):
+        with pytest.raises(InvalidRequestError, match="dedicated endpoint"):
             adapter.generate("test")
+
+    def test_endpoint_error_is_non_retryable_configuration_error(self):
+        """A dedicated-endpoint-not-running condition is permanent, not
+        transient — it must not be retried or burn a fallback_chain attempt.
+        """
+        from effgen.models.errors import classify_provider_error
+
+        adapter, mock_client = self._loaded_adapter()
+        mock_client.chat.completions.create.side_effect = Exception(
+            "400 dedicated_endpoint_not_running"
+        )
+        try:
+            adapter.generate("test")
+        except Exception as exc:
+            ec = classify_provider_error(exc)
+            assert ec.category == "invalid_request"
+            assert ec.should_retry is False
+        else:
+            raise AssertionError("expected the endpoint error to raise")
 
     def test_count_tokens(self):
         adapter = TogetherAdapter(

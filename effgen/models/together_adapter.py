@@ -30,7 +30,7 @@ from effgen.models.base import (
     GenerationResult,
     TokenCount,
 )
-from effgen.models.errors import ModelAuthError, ModelNotFoundError
+from effgen.models.errors import InvalidRequestError, ModelAuthError, ModelNotFoundError
 from effgen.models.latency_tracker import timed_call
 from effgen.models.together_models import (
     TOGETHER_DEFAULT_MODEL,
@@ -421,11 +421,19 @@ class TogetherAdapter(BaseModel):
                     or "dedicated endpoint" in msg_lower
                 )
                 if is_endpoint_error:
-                    raise RuntimeError(
-                        f"Together model '{self.model_name}' requires a dedicated endpoint "
-                        f"that is not running. Start it at "
-                        f"https://api.together.ai/models/{self.model_name} or use a "
-                        f"serverless model: {serverless_models()}"
+                    # A permanent configuration condition (the endpoint isn't
+                    # running), not a transient failure — non-retryable so a
+                    # fallback_chain doesn't burn attempts retrying the same
+                    # unstartable model.
+                    raise InvalidRequestError(
+                        provider="together",
+                        model_name=self.model_name,
+                        message=(
+                            f"Together model '{self.model_name}' requires a dedicated "
+                            f"endpoint that is not running. Start it at "
+                            f"https://api.together.ai/models/{self.model_name} or use a "
+                            f"serverless model: {serverless_models()}"
+                        ),
                     ) from exc
 
                 is_rate = "429" in msg or "rate_limit" in msg_lower or "rate limit" in msg_lower
@@ -711,10 +719,18 @@ class TogetherAdapter(BaseModel):
                 or "dedicated_endpoint_not_running" in msg_lower
                 or "unable to access non-serverless" in msg_lower
             ):
-                raise RuntimeError(
-                    f"Together model '{self.model_name}' requires a dedicated endpoint. "
-                    f"Start it at https://api.together.ai/models/{self.model_name} "
-                    f"or use a serverless model: {serverless_models()}"
+                # A permanent configuration condition, not a transient
+                # failure — non-retryable so a fallback_chain doesn't burn
+                # attempts retrying the same unstartable model.
+                raise InvalidRequestError(
+                    provider="together",
+                    model_name=self.model_name,
+                    message=(
+                        f"Together model '{self.model_name}' requires a dedicated "
+                        f"endpoint. Start it at "
+                        f"https://api.together.ai/models/{self.model_name} or use a "
+                        f"serverless model: {serverless_models()}"
+                    ),
                 ) from exc
             if "429" in msg or "rate_limit" in msg_lower or "rate limit" in msg_lower:
                 from effgen.models._rate_limit import RateLimitExceeded as _RLE

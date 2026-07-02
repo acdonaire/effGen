@@ -182,7 +182,7 @@ class SuiteResults:
         }
 
     def to_json(self, indent: int = 2) -> str:
-        return json.dumps(self.summary(), indent=indent)
+        return json.dumps(self.summary(), indent=indent, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
