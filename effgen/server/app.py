@@ -266,6 +266,18 @@ def create_app(
         except ImportError:
             return JSONResponse({"detail": "prometheus_client not installed"}, status_code=503)
 
+    @app.get("/slo", tags=["ops"])
+    async def slo_status() -> dict[str, Any]:
+        """SLO burn-rate status for every registered SLO (public, like /health).
+
+        Empty until the process registers at least one SLO via
+        ``effgen.observability.slo.get_tracker().register(...)`` and records
+        events with ``tracker.record(name, ok=...)``.
+        """
+        from effgen.observability.slo import get_tracker
+
+        return {"slos": get_tracker().all_statuses()}
+
     @app.get("/whoami", tags=["auth"])
     async def whoami(request: _FastAPIRequest) -> dict[str, Any]:  # type: ignore[valid-type]
         """Return the current principal's identity (requires auth in non-dev mode)."""

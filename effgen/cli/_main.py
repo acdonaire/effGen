@@ -2667,6 +2667,9 @@ Model id formats:
             "  EFFGEN_OIDC_CLIENT_ID\n"
             "  EFFGEN_PUBLIC_METRICS=1   serve /metrics without auth (default: auth).\n"
             "  EFFGEN_MODEL_POOL_SIZE    loaded models kept warm (default 4).\n"
+            "  EFFGEN_NO_DOTENV=1    skip the .env filesystem search entirely, so\n"
+            "                        only environment variables the orchestrator set\n"
+            "                        are visible (EFFGEN_DOTENV=none is equivalent).\n"
             "\n"
             "Scaling: `effgen serve` runs a single worker. For multiple workers,\n"
             "run the app factory under uvicorn/gunicorn, e.g.:\n"
@@ -4679,17 +4682,33 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
     return 1
 
 
+def _dotenv_disabled() -> bool:
+    """True when the .env filesystem walk should be skipped entirely.
+
+    Set ``EFFGEN_NO_DOTENV=1`` (or ``EFFGEN_DOTENV=none``) so a production
+    process uses only the environment its orchestrator injected — a stray
+    ``.env`` left in a deploy image or the server's cwd can otherwise supply
+    provider keys nobody intended to expose to that process.
+    """
+    if os.environ.get("EFFGEN_NO_DOTENV", "0").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return (os.environ.get("EFFGEN_DOTENV") or "").strip().lower() == "none"
+
+
 def _env_search_paths() -> list[Path]:
     """The ordered list of ``.env`` locations the CLI loads (earliest wins).
 
     Search order (documented so pip-installed users aren't surprised):
-      1. ``$EFFGEN_DOTENV`` — explicit override, if set.
+      0. Skipped entirely when ``EFFGEN_NO_DOTENV=1`` or ``EFFGEN_DOTENV=none``.
+      1. ``$EFFGEN_DOTENV`` — explicit override, if set (and not ``"none"``).
       2. ``~/.effgen/.env`` — per-user effGen config.
       3. ``./.env`` and each parent directory up to the filesystem root — the
          nearest project ``.env`` to the current working directory.
     Values are loaded non-overriding, so a real environment variable always
     wins over a file, and earlier files win over later ones.
     """
+    if _dotenv_disabled():
+        return []
     paths: list[Path] = []
     override = os.environ.get("EFFGEN_DOTENV")
     if override:
@@ -4706,9 +4725,13 @@ def _env_search_paths() -> list[Path]:
 def load_env_files() -> list[str]:
     """Load ``.env`` files from the documented search paths (non-overriding).
 
-    Returns the list of paths actually loaded (for diagnostics).
+    Returns the list of paths actually loaded (for diagnostics). Returns
+    immediately with an empty list when the walk is disabled (see
+    :func:`_dotenv_disabled`) — no filesystem access happens in that case.
     """
     loaded: list[str] = []
+    if _dotenv_disabled():
+        return loaded
     try:
         from dotenv import load_dotenv as _load_dotenv
     except ImportError:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -255,6 +256,39 @@ def test_env_search_paths_include_override_and_home(monkeypatch):
     assert any(p.endswith("/.effgen/.env") for p in paths)
     # walks up from cwd, so it includes a ./.env candidate
     assert any(p.endswith("/.env") for p in paths)
+
+
+def test_env_no_dotenv_flag_skips_the_walk_entirely(monkeypatch):
+    monkeypatch.setenv("EFFGEN_NO_DOTENV", "1")
+    monkeypatch.setenv("EFFGEN_DOTENV", "/tmp/custom.env")  # must not matter
+    assert _main._env_search_paths() == []
+    assert _main.load_env_files() == []
+
+
+def test_env_dotenv_none_is_equivalent_to_no_dotenv(monkeypatch):
+    monkeypatch.delenv("EFFGEN_NO_DOTENV", raising=False)
+    monkeypatch.setenv("EFFGEN_DOTENV", "none")
+    assert _main._env_search_paths() == []
+
+
+def test_env_dotenv_walk_runs_by_default(monkeypatch):
+    monkeypatch.delenv("EFFGEN_NO_DOTENV", raising=False)
+    monkeypatch.delenv("EFFGEN_DOTENV", raising=False)
+    assert _main._env_search_paths() != []
+
+
+def test_load_env_files_skips_filesystem_when_disabled(monkeypatch, tmp_path):
+    """A .env that would otherwise be picked up must not be loaded."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("EFFGEN_TEST_DOTENV_PROBE=leaked\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("EFFGEN_TEST_DOTENV_PROBE", raising=False)
+    monkeypatch.setenv("EFFGEN_NO_DOTENV", "1")
+    try:
+        _main.load_env_files()
+        assert "EFFGEN_TEST_DOTENV_PROBE" not in os.environ
+    finally:
+        os.environ.pop("EFFGEN_TEST_DOTENV_PROBE", None)
 
 
 # --------------------------------------------------------------------------- #

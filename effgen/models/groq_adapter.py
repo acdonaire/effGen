@@ -147,6 +147,9 @@ class GroqAdapter(BaseModel):
         adapter.unload()
     """
 
+    #: Provider label used for metrics/error reporting (see Agent._model_provider).
+    _provider = "groq"
+
     def __init__(
         self,
         model_name: str = GROQ_DEFAULT_MODEL,

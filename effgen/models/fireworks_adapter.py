@@ -101,6 +101,9 @@ class FireworksAdapter(BaseModel):
         adapter.unload()
     """
 
+    #: Provider label used for metrics/error reporting (see Agent._model_provider).
+    _provider = "fireworks"
+
     def __init__(
         self,
         model_name: str = FIREWORKS_DEFAULT_MODEL,

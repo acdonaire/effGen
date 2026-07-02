@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -550,15 +551,19 @@ class TestSamTemplate:
             f"unexpected handler reference: {handler}"
         )
 
-    def test_function_runtime_python311(self, template):
-        # Runtime may be set at Globals level
+    def test_function_runtime_not_deprecated(self, template):
+        # Runtime may be set at Globals level. python3.10/3.11 were deprecated by AWS
+        # on 2026-06-30 (creation blocked 2026-07-31) — the template must track a
+        # currently supported minor version.
         resources = template["Resources"]
         fn = next(
             v for v in resources.values()
             if v.get("Type") == "AWS::Serverless::Function"
         )
         runtime = fn["Properties"].get("Runtime") or template.get("Globals", {}).get("Function", {}).get("Runtime", "")
-        assert "python3.11" in runtime, f"Expected python3.11 runtime, got: {runtime}"
+        match = re.fullmatch(r"python3\.(\d+)", runtime)
+        assert match, f"Unexpected Lambda runtime format: {runtime}"
+        assert int(match.group(1)) >= 12, f"Runtime {runtime} is deprecated; use python3.12 or newer"
 
     def test_has_outputs(self, template):
         assert "Outputs" in template

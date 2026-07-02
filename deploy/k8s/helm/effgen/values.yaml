@@ -106,6 +106,13 @@ env:
   EFFGEN_PORT: "8080"
   EFFGEN_HOST: "0.0.0.0"
   EFFGEN_SANDBOX_BACKEND: "subprocess"
+  # /metrics is auth-gated by default; the pod annotations below advertise a
+  # Prometheus scrape on the same port, so metrics are opened here and the
+  # NetworkPolicy (same-namespace + monitoring-namespace ingress on 8080) is
+  # the actual access control. Unset this (or set "0") to keep /metrics
+  # behind the API key and scrape it with an authenticated ServiceMonitor
+  # instead.
+  EFFGEN_PUBLIC_METRICS: "1"
   # EFFGEN_OIDC_ISSUER: ""
   # EFFGEN_OIDC_CLIENT_ID: ""
 

@@ -97,6 +97,9 @@ class CerebrasAdapter(BaseModel):
         adapter.unload()
     """
 
+    #: Provider label used for metrics/error reporting (see Agent._model_provider).
+    _provider = "cerebras"
+
     def __init__(
         self,
         model_name: str = CEREBRAS_DEFAULT_MODEL,

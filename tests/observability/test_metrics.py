@@ -23,8 +23,10 @@ from effgen.observability.metrics import (
     LabeledHistogram,
     agent_iteration_latency,
     export_metrics,
+    http_requests_total,
     model_call_latency,
     record_agent_iteration,
+    record_http_request,
     record_model_call,
     record_tokens,
     record_tool_call,
@@ -300,6 +302,16 @@ class TestRecordingHelpers:
             labels={"provider": "cerebras", "model": "llama3.1-8b", "kind": "input"}
         ) == 50.0
 
+    def test_record_http_request(self):
+        record_http_request(route="/v1/chat/completions", method="POST", status=200)
+        record_http_request(route="/v1/chat/completions", method="POST", status=429)
+        assert http_requests_total.get(
+            labels={"route": "/v1/chat/completions", "method": "POST", "status": "200"}
+        ) == 1.0
+        assert http_requests_total.get(
+            labels={"route": "/v1/chat/completions", "method": "POST", "status": "429"}
+        ) == 1.0
+
 
 # ---------------------------------------------------------------------------
 # export_metrics() Prometheus format validity
@@ -333,11 +345,13 @@ class TestExportMetrics:
         record_tool_call(tool="calc", outcome="ok", latency=0.02)
         record_agent_iteration(preset="default", latency=0.5)
         record_tokens(provider="cerebras", model="llama3.1-8b", input_tokens=5)
+        record_http_request(route="/v1/chat/completions", method="POST", status=200)
         text = export_metrics()
         assert "effgen_model_call_latency_seconds" in text
         assert "effgen_tool_call_latency_seconds" in text
         assert "effgen_agent_iteration_latency_seconds" in text
         assert "effgen_tokens_total" in text
+        assert "effgen_http_requests_total" in text
 
     def test_bucket_lines_format(self):
         record_model_call(

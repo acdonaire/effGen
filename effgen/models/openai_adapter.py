@@ -136,6 +136,9 @@ class OpenAIAdapter(FunctionCallingModel):
         timeout: Request timeout in seconds
     """
 
+    #: Provider label used for metrics/error reporting (see Agent._model_provider).
+    _provider = "openai"
+
     def __init__(
         self,
         model_name: str = "gpt-4o-mini",

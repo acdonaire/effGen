@@ -132,6 +132,9 @@ class ReplicateAdapter(BaseModel):
         adapter.unload()
     """
 
+    #: Provider label used for metrics/error reporting (see Agent._model_provider).
+    _provider = "replicate"
+
     def __init__(
         self,
         model_name: str = REPLICATE_DEFAULT_MODEL,

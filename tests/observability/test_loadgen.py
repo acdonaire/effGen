@@ -28,6 +28,7 @@ from effgen.tools.loadgen import (
     LoadReport,
     LoadScenario,
     RequestResult,
+    _classify_loadtest_error,
     _mock_target,
     _percentile,
 )
@@ -125,6 +126,31 @@ class TestRequestResult:
         assert r.success is False
         assert r.error == "TimeoutError"
 
+    def test_error_category_defaults_none(self):
+        r = RequestResult(latency=0.01, success=True)
+        assert r.error_category is None
+
+    def test_error_category_set_on_failure(self):
+        r = RequestResult(latency=0.01, success=False, error="x", error_category="timeout")
+        assert r.error_category == "timeout"
+
+
+class TestClassifyLoadtestError:
+    def test_auth_error_classified(self):
+        from effgen.models.errors import ModelAuthError
+
+        assert _classify_loadtest_error(ModelAuthError("openai")) == "auth"
+
+    def test_not_found_error_classified(self):
+        from effgen.models.errors import ModelNotFoundError
+
+        assert _classify_loadtest_error(ModelNotFoundError("groq", "bad")) == "not_found"
+
+    def test_generic_exception_classified_unknown_or_something(self):
+        # Falls through classify_provider_error's heuristics; must never raise.
+        result = _classify_loadtest_error(RuntimeError("something odd"))
+        assert isinstance(result, str) and result
+
 
 class TestLoadReport:
     def _make_report(self, **kwargs) -> LoadReport:
@@ -177,6 +203,36 @@ class TestLoadReport:
         d = report.to_dict(include_raw=True)
         assert "raw_results" in d
         assert len(d["raw_results"]) == 1
+
+    def test_to_dict_include_raw_has_error_category(self):
+        r = RequestResult(latency=0.01, success=False, error="x", error_category="timeout")
+        report = self._make_report(raw_results=[r])
+        d = report.to_dict(include_raw=True)
+        assert d["raw_results"][0]["error_category"] == "timeout"
+
+    def test_to_dict_has_requested_duration_and_drain(self):
+        report = self._make_report(duration=35.6, requested_duration=10.0)
+        d = report.to_dict()
+        assert d["requested_duration_s"] == 10.0
+        assert d["duration_s"] == 35.6
+        assert d["drain_s"] == pytest.approx(25.6)
+
+    def test_to_dict_drain_zero_when_no_overshoot(self):
+        report = self._make_report(duration=10.0, requested_duration=10.0)
+        d = report.to_dict()
+        assert d["drain_s"] == 0.0
+
+    def test_to_dict_drain_never_negative(self):
+        """A run that finishes early (rare, but possible) must not report a
+        negative drain time."""
+        report = self._make_report(duration=9.5, requested_duration=10.0)
+        d = report.to_dict()
+        assert d["drain_s"] == 0.0
+
+    def test_to_dict_error_breakdown_present_and_sorted(self):
+        report = self._make_report(error_breakdown={"timeout": 2, "auth": 1})
+        d = report.to_dict()
+        assert d["error_breakdown"] == {"auth": 1, "timeout": 2}
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +333,8 @@ class TestZeroResults:
         assert report.p50_latency == 0.0
         assert report.p95_latency == 0.0
         assert report.p99_latency == 0.0
+        assert report.requested_duration == 0.001
+        assert report.error_breakdown == {}
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +375,43 @@ class TestCustomTarget:
         gen = LoadGenerator(cfg, target=slow_target)
         report = gen.run()
         assert report.failed_requests > 0
+
+    def test_timeout_target_error_breakdown_labeled_timeout(self):
+        async def slow_target(prompt: str) -> str:
+            await asyncio.sleep(999)
+            return "never"
+
+        cfg = LoadConfig(concurrency=2, duration=1.0, request_timeout=0.1)
+        gen = LoadGenerator(cfg, target=slow_target)
+        report = gen.run()
+        assert report.error_breakdown == {"timeout": report.failed_requests}
+
+    def test_failing_target_error_breakdown_populated(self):
+        from effgen.models.errors import ModelAuthError
+
+        async def bad_target(prompt: str) -> str:
+            raise ModelAuthError("groq")
+
+        cfg = LoadConfig(concurrency=2, duration=1.0)
+        gen = LoadGenerator(cfg, target=bad_target)
+        report = gen.run()
+        assert report.error_breakdown == {"auth": report.failed_requests}
+
+    def test_drain_note_reflects_timeout_overshoot(self):
+        """When in-flight requests must wait out request_timeout after the
+        window closes, the wall duration exceeds the requested duration and
+        drain_s reports the gap."""
+        async def slow_target(prompt: str) -> str:
+            await asyncio.sleep(0.6)
+            return "ok"
+
+        cfg = LoadConfig(concurrency=1, duration=0.1, request_timeout=5.0)
+        gen = LoadGenerator(cfg, target=slow_target)
+        report = gen.run()
+        d = report.to_dict()
+        assert d["requested_duration_s"] == pytest.approx(0.1, abs=1e-6)
+        assert d["duration_s"] > d["requested_duration_s"]
+        assert d["drain_s"] > 0.0
 
 
 # ---------------------------------------------------------------------------

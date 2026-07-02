@@ -65,6 +65,9 @@ class GeminiAdapter(FunctionCallingModel):
         safety_settings: Content safety filter settings
     """
 
+    #: Provider label used for metrics/error reporting (see Agent._model_provider).
+    _provider = "gemini"
+
     COST_PER_1M_TOKENS: dict[str, tuple[float, float]] = {
         "gemini-1.5-pro": (3.5, 10.5),
         "gemini-1.5-flash": (0.35, 1.05),

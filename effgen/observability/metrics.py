@@ -260,6 +260,13 @@ tokens_total = LabeledCounter(
     help="Total tokens consumed, by provider/model/kind",
 )
 
+#: HTTP request counter for the server's OpenAI-compatible API.
+#: Labels: route, method, status  (status is the numeric HTTP status code)
+http_requests_total = LabeledCounter(
+    name="effgen_http_requests_total",
+    help="Total HTTP requests to the server, by route/method/status",
+)
+
 # ---------------------------------------------------------------------------
 # Convenience recording functions
 # ---------------------------------------------------------------------------
@@ -349,6 +356,26 @@ def record_tokens(
         tokens_total.inc(cached_tokens, labels={**base, "kind": "cached"})
 
 
+def record_http_request(
+    *,
+    route: str,
+    method: str,
+    status: int,
+) -> None:
+    """
+    Record one HTTP request/response for the server's OpenAI-compatible API.
+
+    Args:
+        route: Request path (a known route, or ``"other"`` for anything
+            unmatched — keeps the label cardinality bounded).
+        method: HTTP method (e.g. ``"POST"``).
+        status: Numeric HTTP status code sent to the client.
+    """
+    http_requests_total.inc(
+        labels={"route": route, "method": method, "status": str(status)}
+    )
+
+
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
@@ -367,6 +394,7 @@ def export_metrics() -> str:
         tool_call_latency.export(),
         agent_iteration_latency.export(),
         tokens_total.export(),
+        http_requests_total.export(),
     ]
     # Append legacy metrics (non-blocking)
     try:
@@ -385,6 +413,7 @@ def reset_all() -> None:
     tool_call_latency.reset()
     agent_iteration_latency.reset()
     tokens_total.reset()
+    http_requests_total.reset()
 
 
 __all__ = [
@@ -393,11 +422,13 @@ __all__ = [
     "tool_call_latency",
     "agent_iteration_latency",
     "tokens_total",
+    "http_requests_total",
     # Recording helpers
     "record_model_call",
     "record_tool_call",
     "record_agent_iteration",
     "record_tokens",
+    "record_http_request",
     # Export
     "export_metrics",
     "reset_all",

@@ -120,23 +120,30 @@ logger) and also covered by the global `Redactor` in structured log lines.
 
 ## Integration with SLO tracker
 
+`check_slo_and_alert` reads one SLO's current status from the tracker and
+fires through the webhook when its burn rate is over threshold — the
+"read the live meter, decide, fire" loop, as a single reusable call instead
+of hand-written glue at every call site:
+
 ```python
 from effgen.observability import get_slo_tracker
-from effgen.observability.alerting import AlertWebhook, Alert, AlertSeverity
+from effgen.observability.alerting import AlertWebhook, check_slo_and_alert
 
 tracker = get_slo_tracker()
 webhook = AlertWebhook("https://hooks.slack.com/services/...")
 
-burn = tracker.burn_rate("model_call_success")
-if burn > 14.4:
-    webhook.fire(Alert(
-        name="SLOFastBurn",
-        severity=AlertSeverity.CRITICAL,
-        summary=f"SLO burn rate {burn:.1f}× (fast-burn threshold: 14.4×)",
-        value=burn,
-        threshold=14.4,
-    ))
+# Returns the AlertWebhook.fire() result when the SLO is over budget,
+# or None when it is within budget (nothing sent).
+check_slo_and_alert(tracker, "model_call_success", webhook, burn_rate_threshold=14.4)
 ```
+
+Call it on a schedule — a cron job, a background task, or after each batch of
+requests — for every SLO you want paged on. It is also importable directly
+from ``effgen`` (``from effgen import check_slo_and_alert``).
+
+The server exposes the same tracker at `GET /slo` (public, no auth — see
+[SLO tracking](slos.md#http-endpoint)), so an external process can poll
+burn rates and drive this same bridge without importing effGen.
 
 ---
 

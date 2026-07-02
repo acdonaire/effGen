@@ -317,6 +317,9 @@ _PUBLIC_PATHS: frozenset[str] = frozenset({
     "/ready",
     "/readyz",
     "/livez",
+    # Aggregate SLO burn-rate status (no request bodies, costs, or user data) —
+    # same sensitivity class as the probes above, public like an uptime badge.
+    "/slo",
     # API schema / interactive docs carry no data (just the API shape) and need
     # to load before a token is available, like the health probes.
     "/openapi.json",

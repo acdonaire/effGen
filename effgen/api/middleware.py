@@ -127,6 +127,12 @@ def install_production_middleware(
     # 5. Graceful shutdown
     _install_graceful_shutdown(app, shutdown_timeout)
 
+    # 6. Status-coded request counter — outermost layer (added last) so it
+    # observes the status actually sent to the client: rate-limit 429s,
+    # auth 401s, RBAC 403s, upstream 502/503s, and the shutdown-drain 503
+    # above, not just successful routed calls.
+    app.add_middleware(RequestMetricsMiddleware)  # type: ignore[arg-type]
+
 
 class RequestIDMiddleware:
     """Pure-ASGI middleware that stamps every request/response with an id.
@@ -286,6 +292,56 @@ class RateLimitMiddleware:
             ],
         })
         await send({"type": "http.response.body", "body": body})
+
+
+#: Routes tracked with their own label; anything else collapses to "other" so
+#: a scanner probing random paths cannot grow the metric's label cardinality.
+_KNOWN_HTTP_ROUTES: frozenset[str] = frozenset({
+    "/health", "/healthz", "/livez", "/ready", "/readyz", "/metrics",
+    "/whoami", "/rbac/policy", "/rbac/roles",
+    "/v1/models", "/v1/chat/completions", "/v1/completions", "/v1/embeddings",
+})
+
+
+class RequestMetricsMiddleware:
+    """Pure-ASGI middleware recording ``effgen_http_requests_total{route,method,status}``.
+
+    Reads the status code off the ``http.response.start`` message (never
+    buffers the body, so SSE stays incremental) and records it once the
+    response — or an unhandled exception — has completed. Placed as the
+    outermost layer so it sees the status the client actually received,
+    including responses produced by other middleware (rate limiting, auth,
+    shutdown drain), not just successful routed calls.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        method = scope.get("method", "GET")
+        path = scope.get("path", "")
+        route = path if path in _KNOWN_HTTP_ROUTES else "other"
+        status_holder = {"status": 500}
+
+        async def _send(message: dict) -> None:
+            if message.get("type") == "http.response.start":
+                status_holder["status"] = message.get("status", 500)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, _send)
+        finally:
+            try:
+                from effgen.observability.metrics import record_http_request
+
+                record_http_request(
+                    route=route, method=method, status=status_holder["status"]
+                )
+            except Exception:  # noqa: BLE001 - metrics must never break a request
+                pass
 
 
 def _install_graceful_shutdown(app: Any, timeout: float) -> None:

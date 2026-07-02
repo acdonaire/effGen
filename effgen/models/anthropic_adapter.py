@@ -98,6 +98,9 @@ class AnthropicAdapter(FunctionCallingModel):
         timeout: Request timeout in seconds
     """
 
+    #: Provider label used for metrics/error reporting (see Agent._model_provider).
+    _provider = "anthropic"
+
     def __init__(
         self,
         model_name: str = "claude-opus-4-7",

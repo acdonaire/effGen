@@ -446,6 +446,42 @@ class AgentGenerationMixin:
                 return val
         return "unknown"
 
+    def _record_provider_metrics(
+        self,
+        *,
+        execution_time: float,
+        outcome: str,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+    ) -> None:
+        """Feed the provider/model-labeled Prometheus series for one run.
+
+        Populates ``effgen_model_call_latency_seconds{provider,model,outcome}``
+        and ``effgen_tokens_total{provider,model,kind}`` (declared in
+        ``effgen.observability.metrics`` but otherwise never written), so a
+        server operator can graph latency/error-rate per provider and model
+        and cost by model — not just the flat per-``agent_name`` aggregate.
+        """
+        try:
+            from ..observability.metrics import record_model_call, record_tokens
+        except Exception:  # pragma: no cover - metrics module always ships
+            return
+        provider = self._model_provider(self.model)
+        model_name = getattr(self.model, "model_name", None) or self.model_name or "unknown"
+        record_model_call(
+            provider=provider,
+            model=model_name,
+            outcome=outcome,
+            latency=max(0.0, execution_time or 0.0),
+        )
+        if prompt_tokens or completion_tokens:
+            record_tokens(
+                provider=provider,
+                model=model_name,
+                input_tokens=int(prompt_tokens or 0),
+                output_tokens=int(completion_tokens or 0),
+            )
+
     def _truncation_error_detail(self, model: Any, max_tokens: int) -> dict[str, Any]:
         """Structured error for a deterministic ``max_tokens`` truncation.
 

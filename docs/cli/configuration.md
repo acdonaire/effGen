@@ -22,6 +22,16 @@ export EFFGEN_DOTENV=/secure/keys/effgen.env
 effgen doctor
 ```
 
+To disable the filesystem search entirely — so a production process sees only
+the environment variables its orchestrator injected, never a stray `.env` left
+in a deploy image or the server's working directory — set `EFFGEN_NO_DOTENV=1`
+(or `EFFGEN_DOTENV=none`):
+
+```bash
+export EFFGEN_NO_DOTENV=1
+effgen serve
+```
+
 Check what keys effGen can see (no secrets are printed):
 
 ```bash

@@ -286,6 +286,27 @@ class TestHelmTemplate:
         ]
         assert dns_ports, "NetworkPolicy egress must allow DNS (port 53)"
 
+    def test_prometheus_scrape_annotation_is_reachable(self, rendered: list[dict]) -> None:
+        """A pod that advertises a Prometheus scrape must actually serve it.
+
+        The pod annotations point Prometheus at /metrics; if that endpoint
+        stays auth-gated (the server default) every scrape returns 401.
+        Either the annotation is dropped or EFFGEN_PUBLIC_METRICS must open
+        the endpoint (the NetworkPolicy is the access control in that case).
+        """
+        dep = next(d for d in rendered if d.get("kind") == "Deployment")
+        annotations = dep["spec"]["template"]["metadata"].get("annotations", {})
+        if annotations.get("prometheus.io/scrape") != "true":
+            return
+        env_vars = dep["spec"]["template"]["spec"]["containers"][0]["env"]
+        public_metrics = next(
+            (e["value"] for e in env_vars if e["name"] == "EFFGEN_PUBLIC_METRICS"), None
+        )
+        assert public_metrics == "1", (
+            "prometheus.io/scrape=true is set but EFFGEN_PUBLIC_METRICS is not "
+            "'1' — Prometheus would get 401 from the auth-gated /metrics endpoint"
+        )
+
 
 @requires_helm
 class TestHelmTemplatePersistence:

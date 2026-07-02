@@ -31,6 +31,7 @@ from ..memory.long_term import (
 from ..memory.short_term import MessageRole, ShortTermMemory
 from ..models._adapter_utils import default_max_output_tokens
 from ..models.base import BaseModel, GenerationConfig
+from ..models.errors import classify_provider_error
 from ..models.model_loader import ModelLoader
 from ..observability import get_logger as _get_obs_logger
 from ..observability.spans import AgentAttrs
@@ -1130,6 +1131,17 @@ Question: {task}
                 if response.tokens_used:
                     prom_metrics.token_usage.observe(response.tokens_used, labels=labels)
                     prom_metrics.tokens_used.inc(response.tokens_used, labels=labels)
+                # A failed response with raise_on_error set is about to be turned
+                # into a raised exception below and recorded once, with a precise
+                # classify_provider_error() outcome, in the except block — recording
+                # it here too would double-count the same request.
+                if response.success or not self.config.raise_on_error:
+                    self._record_provider_metrics(
+                        execution_time=response.execution_time,
+                        outcome="ok" if response.success else "error",
+                        prompt_tokens=response.metadata.get("prompt_tokens"),
+                        completion_tokens=response.metadata.get("completion_tokens"),
+                    )
 
                 # Tracing span attributes (using span constants)
                 set_span_attribute(AgentAttrs.RUN_ID, run_id or "")
@@ -1217,6 +1229,10 @@ Question: {task}
                 if self.config.raise_on_error:
                     prom_metrics.errors.inc(labels=labels)
                     set_span_error(e)
+                    self._record_provider_metrics(
+                        execution_time=time.time() - start_time,
+                        outcome=classify_provider_error(e).category,
+                    )
                     raise
                 # Track failure
                 self.execution_tracker.track_event(ExecutionEvent(
@@ -1242,6 +1258,10 @@ Question: {task}
                     metadata={"reason": "run_failed", "error": detail, "run_id": run_id}
                 )
                 self._record_dashboard_run(response, error=redacted_msg)
+                self._record_provider_metrics(
+                    execution_time=response.execution_time,
+                    outcome=classify_provider_error(e).category,
+                )
                 return response
 
             finally:

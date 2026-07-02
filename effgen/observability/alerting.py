@@ -41,6 +41,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from .redact import get_redactor
+from .slo import SLOTracker
 
 log = logging.getLogger(__name__)
 
@@ -348,6 +349,61 @@ class AlertWebhook:
             raise RuntimeError(f"HTTP {exc.code}: {exc.reason}") from exc
         except URLError as exc:
             raise RuntimeError(f"Network error: {exc.reason}") from exc
+
+
+# ---------------------------------------------------------------------------
+# SLO -> alert bridge
+# ---------------------------------------------------------------------------
+
+def check_slo_and_alert(
+    tracker: SLOTracker,
+    name: str,
+    webhook: AlertWebhook,
+    *,
+    burn_rate_threshold: float = 1.0,
+    severity: AlertSeverity = AlertSeverity.CRITICAL,
+) -> dict[str, Any] | None:
+    """
+    Evaluate one SLO's current burn rate against *tracker* and fire an alert
+    via *webhook* when it exceeds *burn_rate_threshold*.
+
+    This is the reusable form of the "read the live meter, decide, fire" loop
+    an operator would otherwise hand-write around
+    :meth:`~effgen.observability.slo.SLOTracker.status`. Call it on a schedule
+    (a cron job, a background task, or after each batch of requests) to turn
+    a registered :class:`~effgen.observability.slo.SLO` into an actual paging
+    alert without bespoke glue.
+
+    Args:
+        tracker: An :class:`~effgen.observability.slo.SLOTracker` (e.g.
+            ``effgen.observability.slo.get_tracker()``).
+        name: The registered SLO name to evaluate.
+        webhook: The :class:`AlertWebhook` to fire through when over budget.
+        burn_rate_threshold: Fire when ``burn_rate > burn_rate_threshold``
+            (default ``1.0`` — exactly on-budget or better never fires).
+        severity: Severity to attach to the fired alert.
+
+    Returns:
+        The :meth:`AlertWebhook.fire` result dict when an alert was fired, or
+        ``None`` when the SLO is within budget (nothing sent).
+    """
+    status = tracker.status(name)
+    burn_rate = status["burn_rate"]
+    if burn_rate <= burn_rate_threshold:
+        return None
+    alert = Alert(
+        name=f"{name}_burn_rate",
+        severity=severity,
+        summary=(
+            f"{name} burn rate {burn_rate:.2f}x over threshold "
+            f"{burn_rate_threshold:.2f}x (target {status['target_pct']}%, "
+            f"{status['bad_events']}/{status['total_events']} bad events)"
+        ),
+        value=burn_rate,
+        threshold=burn_rate_threshold,
+        labels={"slo": name},
+    )
+    return webhook.fire(alert)
 
 
 # ---------------------------------------------------------------------------

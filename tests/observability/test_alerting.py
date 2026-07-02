@@ -25,8 +25,10 @@ from effgen.observability.alerting import (
     AlertSeverity,
     AlertWebhook,
     _redact_webhook_url,
+    check_slo_and_alert,
     validate_alert_rules_yaml,
 )
+from effgen.observability.slo import SLO, SLOTracker
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -476,3 +478,68 @@ class TestPayloadBytes:
         d = hook._generic_payload(basic_alert)
         assert "alerts" in d
         assert d["alerts"][0]["name"] == "TestAlert"
+
+
+# ---------------------------------------------------------------------------
+# SLO -> alert bridge
+# ---------------------------------------------------------------------------
+
+class TestCheckSloAndAlert:
+    def _tracker_with(self, good: int, bad: int, target_pct: float = 99.0) -> SLOTracker:
+        tracker = SLOTracker()
+        tracker.register(SLO("model_call_success", target_pct=target_pct, window_seconds=3600))
+        for _ in range(good):
+            tracker.record("model_call_success", ok=True)
+        for _ in range(bad):
+            tracker.record("model_call_success", ok=False)
+        return tracker
+
+    def test_fires_when_over_budget(self, slack_hook):
+        tracker = self._tracker_with(good=90, bad=10)  # burn_rate = 10x
+        slack_hook._fire_via_tool = MagicMock(return_value={"status": 200})
+        result = check_slo_and_alert(tracker, "model_call_success", slack_hook)
+        assert result is not None
+        assert result["ok"] is True
+        slack_hook._fire_via_tool.assert_called_once()
+
+    def test_returns_none_when_within_budget(self, slack_hook):
+        tracker = self._tracker_with(good=100, bad=0)  # burn_rate = 0.0
+        slack_hook._fire_via_tool = MagicMock(return_value={"status": 200})
+        result = check_slo_and_alert(tracker, "model_call_success", slack_hook)
+        assert result is None
+        slack_hook._fire_via_tool.assert_not_called()
+
+    def test_respects_custom_threshold(self, slack_hook):
+        # burn_rate = 2x — over the default 1.0x threshold but under a 5x one.
+        tracker = self._tracker_with(good=98, bad=2)
+        slack_hook._fire_via_tool = MagicMock(return_value={"status": 200})
+        assert check_slo_and_alert(
+            tracker, "model_call_success", slack_hook, burn_rate_threshold=5.0
+        ) is None
+        assert check_slo_and_alert(
+            tracker, "model_call_success", slack_hook, burn_rate_threshold=1.0
+        ) is not None
+
+    def test_alert_summary_names_the_slo_and_burn_rate(self, slack_hook):
+        tracker = self._tracker_with(good=90, bad=10)
+        captured: dict = {}
+        original_fire = slack_hook.fire
+
+        def capture_fire(alert):
+            captured["alert"] = alert
+            slack_hook._fire_via_tool = MagicMock(return_value={"status": 200})
+            return original_fire(alert)
+
+        slack_hook.fire = capture_fire
+        check_slo_and_alert(tracker, "model_call_success", slack_hook)
+        alert = captured["alert"]
+        assert "model_call_success" in alert.summary
+        assert alert.value == pytest.approx(10.0)
+        assert alert.labels == {"slo": "model_call_success"}
+
+    def test_never_raises_on_webhook_failure(self, slack_hook):
+        """The webhook's own non-raising contract carries through unchanged."""
+        tracker = self._tracker_with(good=0, bad=10)
+        slack_hook._fire_via_tool = MagicMock(side_effect=RuntimeError("network down"))
+        result = check_slo_and_alert(tracker, "model_call_success", slack_hook)
+        assert result["ok"] is False

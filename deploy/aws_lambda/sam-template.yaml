@@ -64,7 +64,7 @@ Conditions:
 # ---------------------------------------------------------------------------
 Globals:
   Function:
-    Runtime: python3.11
+    Runtime: python3.13
     MemorySize: 1024
     Timeout: 30          # Lambda hard limit — EFFGEN_TIMEOUT_SECONDS must be < this
     Environment:

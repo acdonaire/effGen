@@ -135,6 +135,12 @@ class RequestResult:
     error: str | None = None
     """Error message (if not success)."""
 
+    error_category: str | None = None
+    """Failure class for a failed request (e.g. "timeout", "rate_limited",
+    "auth", "not_found", "invalid_request", "transient", "unknown"). ``None``
+    for a successful request. Matches
+    :func:`effgen.models.errors.classify_provider_error`'s ``category``."""
+
     prompt: str = ""
     """Prompt that was sent."""
 
@@ -167,17 +173,31 @@ class LoadReport:
     stdev_latency: float
     provider: str | None
     model: str | None
+    requested_duration: float = 0.0
+    """The ``--duration`` asked for. ``duration`` is the actual wall time,
+    which can exceed this while in-flight requests drain up to
+    ``request_timeout`` after the requested window closes."""
+    error_breakdown: dict[str, int] = field(default_factory=dict)
+    """Failed-request count by :attr:`RequestResult.error_category`
+    (e.g. ``{"timeout": 3, "rate_limited": 1}``), so a failing run is
+    triageable from the report alone instead of only a single error rate."""
     raw_results: list[RequestResult] = field(default_factory=list, repr=False)
 
     def to_dict(self, include_raw: bool = False) -> dict[str, Any]:
+        drain_s = round(self.duration - self.requested_duration, 3)
         d = {
             "scenario": self.scenario,
             "concurrency": self.concurrency,
             "duration_s": round(self.duration, 3),
+            "requested_duration_s": round(self.requested_duration, 3),
+            # Positive when the run took longer than --duration because
+            # in-flight requests were drained after the window closed.
+            "drain_s": drain_s if drain_s > 0 else 0.0,
             "total_requests": self.total_requests,
             "successful_requests": self.successful_requests,
             "failed_requests": self.failed_requests,
             "error_rate": round(self.error_rate, 4),
+            "error_breakdown": dict(sorted(self.error_breakdown.items())),
             "throughput_rps": round(self.throughput, 4),
             "latency": {
                 "p50": round(self.p50_latency, 4),
@@ -197,6 +217,7 @@ class LoadReport:
                     "latency": round(r.latency, 4),
                     "success": r.success,
                     "error": r.error,
+                    "error_category": r.error_category,
                     "prompt": r.prompt[:80],
                 }
                 for r in self.raw_results
@@ -207,6 +228,22 @@ class LoadReport:
 # ---------------------------------------------------------------------------
 # Percentile helper
 # ---------------------------------------------------------------------------
+
+def _classify_loadtest_error(exc: Exception) -> str:
+    """Return a short failure-class label for a load-test request exception.
+
+    Reuses the same provider-error taxonomy the server and ``Agent`` use
+    (``classify_provider_error``), so a failed live run reports *why* it
+    failed (rate limited vs. auth vs. transient upstream error) instead of
+    only a bare error-rate percentage.
+    """
+    from ..models.errors import classify_provider_error
+
+    try:
+        return classify_provider_error(exc).category
+    except Exception:  # pragma: no cover - classification must never crash the run
+        return "unknown"
+
 
 def _percentile(sorted_data: list[float], pct: float) -> float:
     """Return the *pct*-th percentile of *sorted_data* (0–100)."""
@@ -298,6 +335,7 @@ class LoadGenerator:
             t0 = time.monotonic()
             success = False
             error_msg = None
+            error_category = None
             response = ""
             try:
                 raw = await asyncio.wait_for(
@@ -312,14 +350,17 @@ class LoadGenerator:
                 # UP041 autofix (collapse to TimeoutError) would drop the 3.10
                 # case, so it is intentionally suppressed here.
                 error_msg = f"TimeoutError after {self.config.request_timeout}s"
+                error_category = "timeout"
             except Exception as exc:
                 error_msg = repr(exc)[:200]
+                error_category = _classify_loadtest_error(exc)
 
             latency = time.monotonic() - t0
             await results_queue.put(RequestResult(
                 latency=latency,
                 success=success,
                 error=error_msg,
+                error_category=error_category,
                 prompt=prompt,
                 response=response,
             ))
@@ -423,6 +464,8 @@ class LoadGenerator:
                 stdev_latency=0.0,
                 provider=cfg.provider,
                 model=cfg.model,
+                requested_duration=cfg.duration,
+                error_breakdown={},
                 raw_results=[],
             )
 
@@ -430,6 +473,12 @@ class LoadGenerator:
         successes = sum(1 for r in results if r.success)
         failures = total - successes
         latencies = sorted(r.latency for r in results)
+
+        error_breakdown: dict[str, int] = {}
+        for r in results:
+            if not r.success:
+                category = r.error_category or "unknown"
+                error_breakdown[category] = error_breakdown.get(category, 0) + 1
 
         throughput = total / actual_duration if actual_duration > 0 else 0.0
         mean_lat = statistics.mean(latencies)
@@ -453,5 +502,7 @@ class LoadGenerator:
             stdev_latency=stdev_lat,
             provider=cfg.provider,
             model=cfg.model,
+            requested_duration=cfg.duration,
+            error_breakdown=error_breakdown,
             raw_results=results,
         )

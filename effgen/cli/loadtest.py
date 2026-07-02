@@ -201,11 +201,24 @@ def _print_report(report) -> None:  # type: ignore[no-untyped-def]
     print(f"  Load Test Report — {d['scenario']}")
     print(sep)
     print(f"  Concurrency   : {d['concurrency']}")
-    print(f"  Duration      : {d['duration_s']:.1f}s")
+    # Only surface the drain note when the overshoot is large enough to show at
+    # the 0.1s precision used below; sub-0.05s scheduling jitter would otherwise
+    # print a self-contradictory "incl. 0.0s draining" line on every fast run.
+    if d["drain_s"] >= 0.05:
+        print(
+            f"  Duration      : requested {d['requested_duration_s']:.1f}s, "
+            f"wall {d['duration_s']:.1f}s (incl. {d['drain_s']:.1f}s draining "
+            f"in-flight requests after the window closed)"
+        )
+    else:
+        print(f"  Duration      : {d['duration_s']:.1f}s")
     print(f"  Total requests: {d['total_requests']}")
     print(f"  Successful    : {d['successful_requests']}")
     print(f"  Failed        : {d['failed_requests']}")
     print(f"  Error rate    : {d['error_rate'] * 100:.2f}%")
+    if d["error_breakdown"]:
+        breakdown = ", ".join(f"{k}={v}" for k, v in d["error_breakdown"].items())
+        print(f"  Error types   : {breakdown}")
     print(f"  Throughput    : {d['throughput_rps']:.2f} req/s")
     lat = d["latency"]
     print(f"  Latency p50   : {lat['p50'] * 1000:.1f}ms")

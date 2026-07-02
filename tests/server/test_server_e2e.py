@@ -113,6 +113,34 @@ def test_health_is_public(client):
     assert client.get("/health").status_code == 200
 
 
+def test_slo_is_public_and_returns_empty_by_default(client):
+    r = client.get("/slo")
+    assert r.status_code == 200
+    assert r.json() == {"slos": []}
+
+
+def test_slo_reflects_registered_tracker_state(client):
+    from effgen.observability.slo import SLO, _reset_global_tracker, get_tracker
+
+    _reset_global_tracker()
+    try:
+        tracker = get_tracker()
+        tracker.register(SLO("test_slo", target_pct=99.0, window_seconds=3600))
+        for _ in range(99):
+            tracker.record("test_slo", ok=True)
+        tracker.record("test_slo", ok=False)
+
+        r = client.get("/slo")
+        assert r.status_code == 200
+        slos = r.json()["slos"]
+        assert len(slos) == 1
+        assert slos[0]["name"] == "test_slo"
+        assert slos[0]["total_events"] == 100
+        assert slos[0]["bad_events"] == 1
+    finally:
+        _reset_global_tracker()
+
+
 def test_unauthenticated_chat_rejected_401(client):
     # Spec item 2
     r = client.post("/v1/chat/completions", json=CHAT_BODY)
@@ -249,3 +277,43 @@ class TestModelIdNormalization:
 
         sentinel = object()
         assert _normalize_model_id(sentinel) is sentinel  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Status-coded HTTP request counter (effgen_http_requests_total)
+# ---------------------------------------------------------------------------
+
+
+def test_http_requests_total_counts_by_route_method_status(tmp_path, monkeypatch):
+    """A successful call, a 401, and an unmatched path each land in their own
+    route/method/status series, and a matched-route response never falls into
+    the "other" bucket."""
+    from effgen.observability.metrics import reset_all
+
+    reset_all()
+    monkeypatch.setenv("EFFGEN_DEV_MODE", "1")
+    monkeypatch.setenv("EFFGEN_PUBLIC_METRICS", "1")
+    monkeypatch.setenv("EFFGEN_AUDIT_DIR", str(tmp_path / "audit"))
+    monkeypatch.setenv("EFFGEN_BUDGET_DIR", str(tmp_path / "budget"))
+    import effgen.server.auth as auth
+
+    auth._DEV_MODE_WARNED = False
+    from fastapi.testclient import TestClient
+
+    from effgen.server.app import create_app
+
+    app = create_app(dev_mode=True, runner=_stub_runner)
+    c = TestClient(app, raise_server_exceptions=False)
+
+    c.post("/v1/chat/completions", json=CHAT_BODY)
+    c.post("/v1/chat/completions", json=CHAT_BODY)
+    c.get("/this-path-does-not-exist")
+
+    body = c.get("/metrics").text
+    lines = [ln for ln in body.splitlines() if ln.startswith("effgen_http_requests_total{")]
+    counts = {ln.split("}")[0] + "}": ln.rsplit(" ", 1)[1] for ln in lines}
+    assert counts.get(
+        'effgen_http_requests_total{method="POST",route="/v1/chat/completions",status="200"}'
+    ) == "2.0"
+    other = [ln for ln in lines if 'route="other"' in ln and 'status="404"' in ln]
+    assert other, f"expected an unmatched-path 404 under route=\"other\":\n{lines}"
