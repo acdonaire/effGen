@@ -435,6 +435,174 @@ def test_eval_suite_list_json(capsys):
     assert {"math", "tool_use", "reasoning"} <= names
 
 
+# --------------------------------------------------------------------------- #
+# `eval` CI-gate wiring: --fail-under, --compare-baseline, agent cleanup
+# --------------------------------------------------------------------------- #
+
+def _eval_args(suite_path, **overrides):
+    base = {
+        "suite": str(suite_path), "model": None, "preset": None, "scoring": "contains",
+        "threshold": 0.5, "fail_under": 0.5, "temperature": None, "baseline_dir": None,
+        "save_baseline": False, "compare_baseline": False, "output": None,
+        "difficulty": None, "max_cases": None, "output_json": False, "quiet": True,
+        "no_animation": True,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _write_suite(tmp_path, expected="right answer"):
+    suite_file = tmp_path / "cases.jsonl"
+    suite_file.write_text(json.dumps({"query": "q", "expected": expected}) + "\n")
+    return suite_file
+
+
+def test_eval_fail_under_gates_exit_code(tmp_path, monkeypatch, capsys):
+    """A suite scoring below --fail-under must exit non-zero even though the
+    old hardcoded 50% gate would have passed a 0% run too — this specifically
+    proves --fail-under (not --threshold) drives the exit code."""
+    from tests.fixtures.mock_models import MockModel
+
+    monkeypatch.setattr(
+        "effgen.models.load_model",
+        lambda *a, **k: MockModel(responses=["Thought: done\nFinal Answer: nope"]),
+    )
+    suite_file = _write_suite(tmp_path, expected="right answer")
+    args = _eval_args(suite_file, fail_under=0.9)
+    code = _main._handle_eval_command(args, _cli())
+    capsys.readouterr()
+    assert code == 1
+
+
+def test_eval_fail_under_passes_when_accuracy_meets_gate(tmp_path, monkeypatch, capsys):
+    from tests.fixtures.mock_models import MockModel
+
+    monkeypatch.setattr(
+        "effgen.models.load_model",
+        lambda *a, **k: MockModel(responses=["Thought: done\nFinal Answer: right answer"]),
+    )
+    suite_file = _write_suite(tmp_path, expected="right answer")
+    args = _eval_args(suite_file, fail_under=0.9)
+    code = _main._handle_eval_command(args, _cli())
+    capsys.readouterr()
+    assert code == 0
+
+
+def test_eval_compare_baseline_regression_fails_build(tmp_path, monkeypatch, capsys):
+    """The core CI-gate bug: a detected blocking regression must fail the
+    build (non-zero exit) even when the run's own accuracy still clears
+    --fail-under."""
+    from effgen.eval.evaluator import SuiteResults
+    from effgen.eval.regression import RegressionTracker
+    from tests.fixtures.mock_models import MockModel
+
+    baseline_dir = tmp_path / "baselines"
+    RegressionTracker(baselines_dir=baseline_dir).save_baseline(
+        "cases", SuiteResults(suite_name="cases", accuracy=1.0), version="0.1.0",
+    )
+    monkeypatch.setattr(
+        "effgen.models.load_model",
+        lambda *a, **k: MockModel(responses=["Thought: done\nFinal Answer: wrong"]),
+    )
+    suite_file = _write_suite(tmp_path, expected="right answer")
+    args = _eval_args(
+        suite_file, compare_baseline=True, baseline_dir=str(baseline_dir), fail_under=0.0,
+    )
+    code = _main._handle_eval_command(args, _cli())
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "REGRESSION DETECTED" in out
+
+
+def test_eval_compare_baseline_no_regression_uses_fail_under_gate(tmp_path, monkeypatch, capsys):
+    """When the baseline comparison finds no regression, the exit code falls
+    back to the --fail-under accuracy gate."""
+    from effgen.eval.evaluator import SuiteResults
+    from effgen.eval.regression import RegressionTracker
+    from tests.fixtures.mock_models import MockModel
+
+    baseline_dir = tmp_path / "baselines"
+    RegressionTracker(baselines_dir=baseline_dir).save_baseline(
+        "cases", SuiteResults(suite_name="cases", accuracy=1.0), version="0.1.0",
+    )
+    monkeypatch.setattr(
+        "effgen.models.load_model",
+        lambda *a, **k: MockModel(responses=["Thought: done\nFinal Answer: right answer"]),
+    )
+    suite_file = _write_suite(tmp_path, expected="right answer")
+    args = _eval_args(
+        suite_file, compare_baseline=True, baseline_dir=str(baseline_dir), fail_under=0.5,
+    )
+    code = _main._handle_eval_command(args, _cli())
+    capsys.readouterr()
+    assert code == 0
+
+
+def test_eval_save_baseline_uses_resolved_suite_name_not_raw_path(tmp_path, monkeypatch, capsys):
+    """A custom-dataset suite argument with directory separators must not
+    crash --save-baseline (the baseline is keyed on the resolved stem)."""
+    from tests.fixtures.mock_models import MockModel
+
+    monkeypatch.setattr(
+        "effgen.models.load_model",
+        lambda *a, **k: MockModel(responses=["Thought: done\nFinal Answer: right answer"]),
+    )
+    nested = tmp_path / "sub" / "dir"
+    nested.mkdir(parents=True)
+    suite_file = nested / "cases.jsonl"
+    suite_file.write_text(json.dumps({"query": "q", "expected": "right answer"}) + "\n")
+    baseline_dir = tmp_path / "baselines"
+    args = _eval_args(suite_file, save_baseline=True, baseline_dir=str(baseline_dir))
+    code = _main._handle_eval_command(args, _cli())
+    capsys.readouterr()
+    assert code == 0
+    assert (baseline_dir / "eval_baseline_cases.json").exists()
+
+
+def test_eval_closes_agent_after_run(tmp_path, monkeypatch, capsys):
+    """`eval` must release its agent like `compare` does, instead of relying
+    on garbage collection (which logs a warning on every run)."""
+    from effgen.core.agent import Agent
+    from tests.fixtures.mock_models import MockModel
+
+    closed = []
+    original_close = Agent.close
+
+    def _tracking_close(self):
+        closed.append(True)
+        return original_close(self)
+
+    monkeypatch.setattr(Agent, "close", _tracking_close)
+    monkeypatch.setattr(
+        "effgen.models.load_model",
+        lambda *a, **k: MockModel(responses=["Thought: done\nFinal Answer: right answer"]),
+    )
+    suite_file = _write_suite(tmp_path, expected="right answer")
+    _main._handle_eval_command(_eval_args(suite_file), _cli())
+    capsys.readouterr()
+    assert closed == [True]
+
+
+def test_eval_suite_help_mentions_custom_dataset_path():
+    """`eval --help` must document the custom-dataset path the same way
+    `compare --help` already does (same underlying `_resolve_eval_suite`)."""
+    parser = _main.create_parser()
+    eval_help = parser._subparsers._group_actions[0].choices["eval"].format_help()
+    compare_help = parser._subparsers._group_actions[0].choices["compare"].format_help()
+    assert "jsonl/.json test cases" in eval_help
+    assert "jsonl/.json test cases" in compare_help
+
+
+def test_compare_accepts_no_animation_and_temperature_flags():
+    parser = _main.create_parser()
+    args = parser.parse_args([
+        "compare", "--models", "x,y", "--suite", "math",
+        "--no-animation", "--temperature", "0",
+    ])
+    assert args.no_animation is True
+    assert args.temperature == 0.0
+
+
 def test_workflow_validate_json(capsys, tmp_path):
     wf = tmp_path / "wf.yaml"
     wf.write_text(

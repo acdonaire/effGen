@@ -2866,18 +2866,36 @@ Model id formats:
     # Eval command
     eval_parser = subparsers.add_parser('eval', help='Evaluate an agent against a test suite')
     eval_parser.add_argument('--suite', required=True,
-                              help='Test suite name (math, tool_use, reasoning, safety, conversation)')
+                              help='Built-in suite name (math, tool_use, reasoning, safety, '
+                                   'conversation) OR a path to your own .jsonl/.json test cases')
     eval_parser.add_argument('-m', '--model', help='Model to use')
     eval_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
     eval_parser.add_argument('--scoring', choices=['exact_match', 'contains', 'regex', 'semantic_similarity', 'llm_judge'],
                               default='contains', help='Scoring mode (default: contains)')
     eval_parser.add_argument('--threshold', type=float, default=0.5,
-                              help='Pass threshold (default: 0.5)')
+                              help='Per-case pass score for continuous scoring modes '
+                                   '(semantic_similarity, llm_judge); has no effect on '
+                                   'exact_match/contains/regex, whose scores are already binary '
+                                   '(0 or 1) (default: 0.5). Use --fail-under to gate the exit '
+                                   'code on suite accuracy.')
+    eval_parser.add_argument('--fail-under', type=float, default=0.5, metavar='ACCURACY',
+                              help='Minimum suite accuracy required for a zero exit code '
+                                   '(default: 0.5). This is the CI gate; a --compare-baseline '
+                                   'regression always fails regardless of this value.')
+    eval_parser.add_argument('--temperature', type=float, default=None,
+                              help='Sampling temperature for the evaluated agent (0 for '
+                                   'deterministic, reproducible scoring where the provider '
+                                   'supports it; default: the model/preset default)')
     eval_parser.add_argument('--save-baseline', action='store_true',
                               help='Save results as regression baseline')
     eval_parser.add_argument('--compare-baseline', action='store_true',
                               help='Compare results against stored baseline')
+    eval_parser.add_argument('--baseline-dir', dest='baseline_dir', default=None, metavar='DIR',
+                              help='Directory for --save-baseline/--compare-baseline files '
+                                   '(default: ./.effgen/baselines under the current directory, '
+                                   'created if missing). A baseline saved under the installed '
+                                   'package tree by an older effGen version is still read.')
     eval_parser.add_argument('-o', '--output', help='Output file for results (JSON)')
     eval_parser.add_argument('--difficulty', choices=['easy', 'medium', 'hard'],
                               help='Filter test cases by difficulty')
@@ -2902,7 +2920,16 @@ Model id formats:
     compare_parser.add_argument('--scoring', choices=['exact_match', 'contains', 'regex', 'semantic_similarity', 'llm_judge'],
                                  default='contains', help='Scoring mode (default: contains)')
     compare_parser.add_argument('--threshold', type=float, default=0.5,
-                                 help='Pass threshold (default: 0.5)')
+                                 help='Per-case pass score for continuous scoring modes '
+                                      '(semantic_similarity, llm_judge); has no effect on '
+                                      'exact_match/contains/regex, whose scores are already '
+                                      'binary (0 or 1) (default: 0.5). compare always exits 0 — '
+                                      'it reports a bake-off rather than gating a build; use '
+                                      '`eval --fail-under` for CI gating.')
+    compare_parser.add_argument('--temperature', type=float, default=None,
+                                 help='Sampling temperature for every compared model (0 for '
+                                      'deterministic, reproducible scoring where the provider '
+                                      'supports it; default: the model/preset default)')
     compare_parser.add_argument('--max-cases', type=int, default=None,
                                  help='Only run the first N cases (quick bake-off '
                                       'on a big suite)')
@@ -2913,6 +2940,8 @@ Model id formats:
                                  help='Emit the comparison matrix as JSON to stdout (for CI gating)')
     compare_parser.add_argument('--preset', choices=_preset_choices,
                                  help='Use a preset agent configuration')
+    compare_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
+                                 help='Disable the live progress bar (plain output)')
 
     # Debug command
     debug_parser = subparsers.add_parser('debug', help='Run an agent in interactive debug mode')
@@ -3955,9 +3984,13 @@ def _handle_eval_command(args, cli) -> int:
     preset_name = getattr(args, 'preset', None)
     scoring = ScoringMode(args.scoring)
     threshold = args.threshold
+    fail_under = getattr(args, 'fail_under', 0.5)
+    baseline_dir = getattr(args, 'baseline_dir', None)
+    temperature = getattr(args, 'temperature', None)
     difficulty = getattr(args, 'difficulty', None)
     max_cases = getattr(args, 'max_cases', None)
 
+    agent = None
     try:
         # List suites if requested
         if suite_name == 'list':
@@ -3999,12 +4032,15 @@ def _handle_eval_command(args, cli) -> int:
             from effgen.models import load_model
             from effgen.presets import create_agent
             model = load_model(model_name)
-            agent = create_agent(preset_name, model)
+            agent = create_agent(preset_name, model, temperature=temperature)
         else:
             from effgen.core.agent import Agent, AgentConfig
             from effgen.models import load_model
             model = load_model(model_name)
-            config = AgentConfig(name="eval-agent", model=model, max_iterations=10)
+            config_kwargs: dict = {"name": "eval-agent", "model": model, "max_iterations": 10}
+            if temperature is not None:
+                config_kwargs["temperature"] = temperature
+            config = AgentConfig(**config_kwargs)
             agent = Agent(config)
 
         cli.print(f"Running {suite_name} suite ({len(suite)} cases, scoring={args.scoring})...")
@@ -4042,18 +4078,21 @@ def _handle_eval_command(args, cli) -> int:
                 cli.print(f"      Expected: {r.test_case.expected_output[:40]}")
                 cli.print(f"      Got:      {r.agent_output[:40]}")
 
-        # Save baseline
+        # Save baseline — keyed on the resolved suite name (a custom dataset's
+        # name is the file stem, never the full path) so a baseline file for a
+        # nested or absolute suite path does not fail to write.
         if args.save_baseline:
             from effgen import __version__
-            tracker = RegressionTracker()
-            path = tracker.save_baseline(suite_name, results, version=__version__)
+            tracker = RegressionTracker(baselines_dir=baseline_dir)
+            path = tracker.save_baseline(suite.name, results, version=__version__)
             cli.print(f"\n  Baseline saved to {path}")
 
         # Compare baseline
+        report = None
         if args.compare_baseline:
             from effgen import __version__
-            tracker = RegressionTracker()
-            report = tracker.compare(suite_name, results, version=__version__)
+            tracker = RegressionTracker(baselines_dir=baseline_dir)
+            report = tracker.compare(suite.name, results, version=__version__)
             cli.print(f"\n{report.to_markdown()}")
 
         # Write output
@@ -4065,7 +4104,22 @@ def _handle_eval_command(args, cli) -> int:
         if json_mode:
             print(results.to_json())
 
-        return 0 if results.accuracy >= 0.5 else 1
+        # Exit-code gate. A detected blocking regression against a saved
+        # baseline always fails the build; otherwise the gate is the suite
+        # accuracy against --fail-under (--threshold is a separate per-case
+        # setting and does not drive the exit code).
+        if report is not None and report.has_regressions:
+            cli.print(
+                "\n  Exit gate: FAIL — blocking regression against baseline (--compare-baseline)."
+            )
+            return 1
+        gate_passed = results.accuracy >= fail_under
+        cli.print(
+            f"\n  Exit gate: {'PASS' if gate_passed else 'FAIL'} — accuracy "
+            f"{results.accuracy:.1%} {'>=' if gate_passed else '<'} "
+            f"--fail-under {fail_under:.0%}"
+        )
+        return 0 if gate_passed else 1
 
     except KeyError as e:
         cli.print(f"Error: {e}")
@@ -4078,6 +4132,16 @@ def _handle_eval_command(args, cli) -> int:
         import traceback
         traceback.print_exc()
         return 1
+    finally:
+        # Release agent resources so eval stops emitting the GC-without-close
+        # warning on every run (matches `compare`'s cleanup).
+        if agent is not None:
+            close = getattr(agent, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 def _handle_compare_command(args, cli) -> int:
@@ -4089,6 +4153,7 @@ def _handle_compare_command(args, cli) -> int:
     suite_name = args.suite
     scoring = ScoringMode(args.scoring)
     threshold = args.threshold
+    temperature = getattr(args, 'temperature', None)
     preset_name = getattr(args, 'preset', None)
     difficulty = getattr(args, 'difficulty', None)
     max_cases = getattr(args, 'max_cases', None)
@@ -4121,10 +4186,15 @@ def _handle_compare_command(args, cli) -> int:
                 model = load_model(model_name)
                 if preset_name:
                     from effgen.presets import create_agent
-                    agent = create_agent(preset_name, model)
+                    agent = create_agent(preset_name, model, temperature=temperature)
                 else:
                     from effgen.core.agent import Agent, AgentConfig
-                    config = AgentConfig(name=f"compare-{model_name}", model=model, max_iterations=10)
+                    config_kwargs: dict = {
+                        "name": f"compare-{model_name}", "model": model, "max_iterations": 10,
+                    }
+                    if temperature is not None:
+                        config_kwargs["temperature"] = temperature
+                    config = AgentConfig(**config_kwargs)
                     agent = Agent(config)
                 agents[model_name] = agent
             except Exception as e:

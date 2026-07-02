@@ -20,7 +20,12 @@ logger = logging.getLogger(__name__)
 ACCURACY_DROP_THRESHOLD = 0.05   # >5% accuracy drop
 LATENCY_INCREASE_THRESHOLD = 0.20  # >20% latency increase
 
-_DEFAULT_BASELINES_DIR = Path(__file__).resolve().parents[2] / "tests" / "benchmarks"
+# Baselines saved by effGen versions before ``--baseline-dir`` existed live
+# under the package checkout. New baselines are written under the caller's
+# own working directory instead (see ``RegressionTracker.__init__``); this
+# path is read-only, used as a fallback when the configured directory has no
+# baseline for a suite.
+_LEGACY_BASELINES_DIR = Path(__file__).resolve().parents[2] / "tests" / "benchmarks"
 
 
 class RegressionAlert:
@@ -191,13 +196,27 @@ class RegressionTracker:
         accuracy_threshold: float = ACCURACY_DROP_THRESHOLD,
         latency_threshold: float = LATENCY_INCREASE_THRESHOLD,
     ) -> None:
-        self.baselines_dir = Path(baselines_dir or _DEFAULT_BASELINES_DIR)
+        """
+        Args:
+            baselines_dir: Where baseline files are read from and written to.
+                Defaults to ``./.effgen/baselines`` under the current working
+                directory, so baselines live in the caller's own repository
+                (committable, diffable in CI) instead of the installed
+                package tree. A baseline saved under the package tree by an
+                older effGen version is still found by :meth:`load_baseline`
+                when the configured directory has no file for that suite.
+        """
+        self.baselines_dir = Path(baselines_dir) if baselines_dir is not None else Path.cwd() / ".effgen" / "baselines"
         self.baselines_dir.mkdir(parents=True, exist_ok=True)
         self.accuracy_threshold = accuracy_threshold
         self.latency_threshold = latency_threshold
 
     def _baseline_path(self, suite: str) -> Path:
-        return self.baselines_dir / f"eval_baseline_{suite}.json"
+        # Sanitize so a suite name that is a filesystem path (e.g. a custom
+        # dataset's raw CLI argument) can never introduce a directory
+        # separator into the baseline filename.
+        safe = suite.replace("/", "_").replace("\\", "_")
+        return self.baselines_dir / f"eval_baseline_{safe}.json"
 
     def save_baseline(
         self,
@@ -209,7 +228,7 @@ class RegressionTracker:
         path = self._baseline_path(suite)
         data = {
             "version": version,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),  # noqa: UP017 - `timezone.utc` needed for py3.10 support
             "summary": results.summary(),
         }
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -217,11 +236,20 @@ class RegressionTracker:
         return path
 
     def load_baseline(self, suite: str) -> dict[str, Any] | None:
-        """Load the stored baseline for *suite*, or ``None`` if absent."""
+        """Load the stored baseline for *suite*, or ``None`` if absent.
+
+        Falls back to the legacy package-tree location when the configured
+        ``baselines_dir`` has no file for *suite*, so a baseline saved before
+        ``--baseline-dir`` existed is still found.
+        """
         path = self._baseline_path(suite)
-        if not path.exists():
-            return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+        safe = suite.replace("/", "_").replace("\\", "_")
+        legacy_path = _LEGACY_BASELINES_DIR / f"eval_baseline_{safe}.json"
+        if legacy_path != path and legacy_path.exists():
+            return json.loads(legacy_path.read_text(encoding="utf-8"))
+        return None
 
     def compare(
         self,

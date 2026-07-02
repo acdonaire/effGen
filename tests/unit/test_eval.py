@@ -103,6 +103,26 @@ class TestScoring:
         assert _score_regex(r"^\d+$", "not a number") == 0.0
         assert _score_regex(r"[invalid", "test") == 0.0  # bad regex
 
+    def test_semantic_similarity_falls_back_to_contains_without_dependency(self, monkeypatch):
+        """Without sentence-transformers, scoring must still work — via `contains`
+        — and report that it did, so a caller can tell the score came from a
+        different metric than requested."""
+        import builtins
+
+        from effgen.eval.evaluator import _score_semantic_similarity
+
+        real_import = builtins.__import__
+
+        def _no_sentence_transformers(name, *args, **kwargs):
+            if name == "sentence_transformers":
+                raise ImportError("simulated missing optional dependency")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_sentence_transformers)
+        score, used_fallback = _score_semantic_similarity("hello world", "hello world")
+        assert used_fallback is True
+        assert score == 1.0  # contains scoring on an exact substring match
+
     def test_tool_accuracy_all_match(self):
         assert _compute_tool_accuracy(["calc", "json"], ["calc", "json"]) == 1.0
 
@@ -251,6 +271,30 @@ class TestAgentEvaluator:
         result = evaluator.run_case(tc)
         assert result.passed is False
         assert result.score == 0.0
+
+    def test_semantic_similarity_fallback_surfaces_in_suite_metadata(self, monkeypatch):
+        """A silent scoring-mode fallback must be visible in the suite summary
+        (which reaches the `--json` CI document), not just a log line."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_sentence_transformers(name, *args, **kwargs):
+            if name == "sentence_transformers":
+                raise ImportError("simulated missing optional dependency")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_sentence_transformers)
+
+        agent = self._make_agent(["Thought: done\nFinal Answer: 42"])
+        evaluator = AgentEvaluator(agent, scoring=ScoringMode.SEMANTIC_SIMILARITY)
+        tc = TestCase(query="What is the answer?", expected_output="42")
+        result = evaluator.run_case(tc)
+        assert result.details.get("scoring_fallback") == "contains"
+
+        results = evaluator._aggregate("fake", [result])
+        assert results.metadata["scoring_fallback"] == "contains"
+        assert results.summary()["metadata"]["scoring_fallback"] == "contains"
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +512,46 @@ class TestRegressionTracker:
         md = report.to_markdown()
         assert "REGRESSION DETECTED" in md
         assert "Baseline" in md
+
+    def test_save_baseline_suite_name_with_path_separators_does_not_crash(self, tmp_path):
+        """A suite name that is a filesystem path (the CLI's raw --suite
+        argument for a custom dataset) must never turn into a nested/missing
+        directory when building the baseline filename."""
+        tracker = RegressionTracker(baselines_dir=tmp_path)
+        results = SuiteResults(suite_name="mycases", accuracy=0.9)
+        path = tracker.save_baseline("data/nested/mycases.jsonl", results, version="0.1.0")
+        assert path.exists()
+        assert path.parent == tmp_path  # no nested subdirectory was created
+        loaded = tracker.load_baseline("data/nested/mycases.jsonl")
+        assert loaded is not None
+        assert loaded["summary"]["accuracy"] == 0.9
+
+    def test_default_baselines_dir_is_cwd_relative_not_package_tree(self, tmp_path, monkeypatch):
+        """Baselines must live under the caller's own working directory by
+        default, not the installed effGen package tree."""
+        monkeypatch.chdir(tmp_path)
+        tracker = RegressionTracker()
+        assert tracker.baselines_dir == tmp_path / ".effgen" / "baselines"
+        assert tracker.baselines_dir.is_dir()
+
+    def test_load_baseline_falls_back_to_legacy_package_location(self, tmp_path, monkeypatch):
+        """A baseline saved before --baseline-dir existed (under the package
+        tree) must still be found when the new default directory has none."""
+        from effgen.eval import regression as regression_mod
+
+        legacy_dir = tmp_path / "legacy_benchmarks"
+        legacy_dir.mkdir()
+        monkeypatch.setattr(regression_mod, "_LEGACY_BASELINES_DIR", legacy_dir)
+
+        legacy_tracker = RegressionTracker(baselines_dir=legacy_dir)
+        legacy_tracker.save_baseline("math", SuiteResults(suite_name="math", accuracy=0.9), version="0.1.0")
+
+        new_dir = tmp_path / "new_baselines"
+        tracker = RegressionTracker(baselines_dir=new_dir)
+        assert not (new_dir / "eval_baseline_math.json").exists()
+        loaded = tracker.load_baseline("math")
+        assert loaded is not None
+        assert loaded["summary"]["accuracy"] == 0.9
 
 
 class TestRegressionAlert:

@@ -205,8 +205,14 @@ def _score_regex(pattern: str, actual: str) -> float:
         return 0.0
 
 
-def _score_semantic_similarity(expected: str, actual: str) -> float:
-    """Score via sentence-transformers cosine similarity (optional dep)."""
+def _score_semantic_similarity(expected: str, actual: str) -> tuple[float, bool]:
+    """Score via sentence-transformers cosine similarity (optional dep).
+
+    Returns ``(score, used_fallback)``. ``used_fallback`` is True when
+    sentence-transformers is not installed and the score was computed with
+    the ``contains`` heuristic instead — the caller records this so a result
+    scored this way is distinguishable from a real similarity score.
+    """
     try:
         from sentence_transformers import SentenceTransformer
         from sentence_transformers import util as st_util
@@ -214,11 +220,11 @@ def _score_semantic_similarity(expected: str, actual: str) -> float:
         logger.warning(
             "sentence-transformers not installed — falling back to contains scoring"
         )
-        return _score_contains(expected, actual)
+        return _score_contains(expected, actual), True
     model = SentenceTransformer("all-MiniLM-L6-v2")
     emb = model.encode([expected, actual], convert_to_tensor=True)
     sim = float(st_util.cos_sim(emb[0], emb[1])[0][0])
-    return max(0.0, min(1.0, sim))
+    return max(0.0, min(1.0, sim)), False
 
 
 def _score_llm_judge(agent: Any, query: str, expected: str, actual: str) -> tuple[float, str]:
@@ -354,7 +360,9 @@ class AgentEvaluator:
         elif self.scoring == ScoringMode.REGEX:
             score = _score_regex(tc.expected_output, output)
         elif self.scoring == ScoringMode.SEMANTIC_SIMILARITY:
-            score = _score_semantic_similarity(tc.expected_output, output)
+            score, used_fallback = _score_semantic_similarity(tc.expected_output, output)
+            if used_fallback:
+                details["scoring_fallback"] = "contains"
         elif self.scoring == ScoringMode.LLM_JUDGE:
             score, reasoning = _score_llm_judge(
                 self.agent, tc.query, tc.expected_output, output,
@@ -382,6 +390,16 @@ class AgentEvaluator:
 
     def _aggregate(self, suite_name: str, results: list[EvalResult]) -> SuiteResults:
         n = len(results) or 1
+        metadata: dict[str, Any] = {
+            "scoring": self.scoring.value,
+            "pass_threshold": self.pass_threshold,
+            "num_cases": len(results),
+        }
+        # Surface a scoring-mode fallback in the suite metadata (reaches the
+        # JSON CI document via SuiteResults.summary()) so a run silently
+        # scored on a different metric than requested is never invisible.
+        if any(r.details.get("scoring_fallback") for r in results):
+            metadata["scoring_fallback"] = "contains"
         return SuiteResults(
             suite_name=suite_name,
             results=results,
@@ -389,9 +407,5 @@ class AgentEvaluator:
             avg_latency=sum(r.latency for r in results) / n,
             total_tokens=sum(r.tokens_used for r in results),
             avg_tool_accuracy=sum(r.tool_accuracy for r in results) / n,
-            metadata={
-                "scoring": self.scoring.value,
-                "pass_threshold": self.pass_threshold,
-                "num_cases": len(results),
-            },
+            metadata=metadata,
         )
