@@ -240,6 +240,12 @@ class GeminiAdapter(FunctionCallingModel):
         }
         if config.stop_sequences:
             kwargs["stop_sequences"] = config.stop_sequences
+        if config.seed is not None:
+            kwargs["seed"] = config.seed
+        if config.presence_penalty:
+            kwargs["presence_penalty"] = config.presence_penalty
+        if config.frequency_penalty:
+            kwargs["frequency_penalty"] = config.frequency_penalty
 
         # Thinking config — only for models that support it.
         if config.thinking_budget is not None:

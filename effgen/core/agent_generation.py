@@ -13,7 +13,11 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from ..models._adapter_utils import FINISH_LENGTH, default_max_output_tokens
+from ..models._adapter_utils import (
+    FINISH_LENGTH,
+    default_max_output_tokens,
+    needs_reasoning_headroom,
+)
 from ..models.base import BaseModel, GenerationConfig
 from ..models.errors import (
     InvalidRequestError,
@@ -35,11 +39,20 @@ from ..utils.structured_logging import (
 _TRUNCATION_ESCALATION_FACTOR = 4
 _TRUNCATION_MAX_TOKENS_CEILING = 8192
 
+# A reasoning model asked for structured output needs headroom well beyond the
+# reasoning-family default (it spends budget on hidden reasoning *and* the
+# JSON/schema structure before any field value). Below this, warn at call time
+# instead of only after a billed, truncated failure.
+_REASONING_STRUCTURED_OUTPUT_MIN_TOKENS = 8192
+
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 _slog = get_structured_logger(__name__)
+# (model_name, kind) pairs already warned about in this process — a call-time
+# reasoning-budget heads-up fires once per model/kind, not on every call.
+_reasoning_budget_warned: set[tuple[str, str]] = set()
 # Canonical structured observability logger — emits redacted JSON lines with OTel context
 _obs_log = _get_obs_logger(__name__)
 
@@ -307,7 +320,12 @@ class AgentGenerationMixin:
                     gen_config = GenerationConfig(
                         temperature=retry_temperature,
                         max_tokens=current_max_tokens,
-                        top_p=kwargs.get('top_p', 0.9),
+                        top_p=kwargs.get('top_p', self.config.top_p),
+                        top_k=kwargs.get('top_k', self.config.top_k),
+                        seed=kwargs.get('seed', self.config.seed),
+                        presence_penalty=kwargs.get('presence_penalty', self.config.presence_penalty),
+                        frequency_penalty=kwargs.get('frequency_penalty', self.config.frequency_penalty),
+                        repetition_penalty=kwargs.get('repetition_penalty', self.config.repetition_penalty),
                         stop_sequences=kwargs.get('stop_sequences', default_stop_sequences)
                     )
 
@@ -482,6 +500,47 @@ class AgentGenerationMixin:
                 input_tokens=int(prompt_tokens or 0),
                 output_tokens=int(completion_tokens or 0),
             )
+
+    def _warn_reasoning_budget(self, max_tokens: int | None, structured_output: bool) -> None:
+        """Warn once per model when a reasoning model's budget looks too tight.
+
+        gpt-5 / o-series models spend part of ``max_tokens`` on hidden
+        reasoning before any visible token, so a small pinned budget — or a
+        generous one paired with structured output, which needs headroom for
+        the reasoning *and* the JSON/schema structure — can produce nothing
+        and still be billed. Logged before the call so the caller sees it
+        without first burning a failed, billed round-trip.
+        """
+        model = self.model
+        if model is None or not needs_reasoning_headroom(model):
+            return
+        name = getattr(model, "model_name", None) or self.model_name or "unknown"
+
+        if structured_output:
+            min_tokens = _REASONING_STRUCTURED_OUTPUT_MIN_TOKENS
+            if max_tokens is not None and max_tokens >= min_tokens:
+                return
+            kind, hint = "structured", (
+                f"'{name}' is a reasoning model asked for structured output with "
+                f"max_tokens={max_tokens if max_tokens is not None else 'default'} — "
+                f"reasoning plus the JSON structure can consume the whole budget "
+                f"before any field is filled. Consider max_tokens>={min_tokens}."
+            )
+        else:
+            min_tokens = default_max_output_tokens(model)
+            if max_tokens is None or max_tokens >= min_tokens:
+                return
+            kind, hint = "tight_budget", (
+                f"'{name}' is a reasoning model with max_tokens={max_tokens} — it can "
+                f"spend the whole budget on hidden reasoning and return no visible "
+                f"text. Consider max_tokens>={min_tokens}."
+            )
+
+        warn_key = (name, kind)
+        if warn_key in _reasoning_budget_warned:
+            return
+        _reasoning_budget_warned.add(warn_key)
+        logger.warning(hint)
 
     def _truncation_error_detail(self, model: Any, max_tokens: int) -> dict[str, Any]:
         """Structured error for a deterministic ``max_tokens`` truncation.
@@ -705,7 +764,12 @@ class AgentGenerationMixin:
         gen_config = GenerationConfig(
             temperature=base_temperature,
             max_tokens=kwargs.get('max_tokens', default_max_output_tokens(self.model)),
-            top_p=kwargs.get('top_p', 0.9),
+            top_p=kwargs.get('top_p', self.config.top_p),
+            top_k=kwargs.get('top_k', self.config.top_k),
+            seed=kwargs.get('seed', self.config.seed),
+            presence_penalty=kwargs.get('presence_penalty', self.config.presence_penalty),
+            frequency_penalty=kwargs.get('frequency_penalty', self.config.frequency_penalty),
+            repetition_penalty=kwargs.get('repetition_penalty', self.config.repetition_penalty),
             stop_sequences=kwargs.get('stop_sequences', default_stop_sequences),
         )
 

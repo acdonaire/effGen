@@ -112,6 +112,37 @@ def test_build_config_sanitizes_native_response_schema():
     assert gc.response_schema["properties"] == {"city": {"type": "string"}}
 
 
+def test_build_config_forwards_seed_and_penalties():
+    """A pinned seed/penalty must reach the Gemini request config, matching top_k."""
+    pytest.importorskip("google.genai")
+    from effgen.models.base import GenerationConfig
+
+    adapter = GeminiAdapter.__new__(GeminiAdapter)
+    adapter.safety_settings = None
+    adapter.model_name = "gemini-3.1-flash-lite"
+
+    cfg = GenerationConfig(seed=42, presence_penalty=0.5, frequency_penalty=1.5)
+    gc = adapter._build_config(cfg)
+    assert gc.seed == 42
+    assert gc.presence_penalty == 0.5
+    assert gc.frequency_penalty == 1.5
+
+
+def test_build_config_omits_default_seed_and_penalties():
+    """The neutral defaults (seed=None, penalty=0.0) are not sent."""
+    pytest.importorskip("google.genai")
+    from effgen.models.base import GenerationConfig
+
+    adapter = GeminiAdapter.__new__(GeminiAdapter)
+    adapter.safety_settings = None
+    adapter.model_name = "gemini-3.1-flash-lite"
+
+    gc = adapter._build_config(GenerationConfig())
+    assert gc.seed is None
+    assert gc.presence_penalty is None
+    assert gc.frequency_penalty is None
+
+
 def test_build_config_native_schema_with_no_real_properties_keeps_json_mode_only():
     """If sanitization leaves no usable properties, keep JSON mode but drop the
     schema rather than send Gemini an empty/invalid one."""

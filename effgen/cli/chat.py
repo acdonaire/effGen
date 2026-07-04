@@ -75,6 +75,7 @@ class ChatREPL:
         # and `effgen sessions`), so a customer's conversation can be continued.
         self.session_id = getattr(args, "session_id", None)
         self.temperature = getattr(args, "temperature", None)
+        self.max_tokens = getattr(args, "max_tokens", None)
         # Provider was validated by the caller; keep the canonical name.
         self.provider = getattr(args, "_provider", None) or getattr(args, "provider", None)
 
@@ -126,6 +127,7 @@ class ChatREPL:
             "provider": self.provider,
             "tools": tools,
             "temperature": self.temperature if self.temperature is not None else 0.7,
+            "max_tokens": self.max_tokens,
             "enable_sub_agents": not getattr(self.args, "no_sub_agents", False),
             "enable_streaming": True,
         }

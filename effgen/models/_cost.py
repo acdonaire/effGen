@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import warnings
 from dataclasses import dataclass
@@ -31,11 +32,20 @@ logger = logging.getLogger(__name__)
 _BUDGET_CONFIG_PATH = Path.home() / ".effgen" / "budget.json"
 
 
+def _budget_config_path() -> Path:
+    """Resolve the budget-config file, honoring an ``EFFGEN_BUDGET_CONFIG``
+    override (mirrors ``EFFGEN_COST_DB``) so a sandbox or test run can point the
+    budget away from the user's real ``~/.effgen/budget.json``."""
+    env_path = os.environ.get("EFFGEN_BUDGET_CONFIG")
+    return Path(env_path) if env_path else _BUDGET_CONFIG_PATH
+
+
 def _load_budget() -> dict:
-    """Load budget config from ~/.effgen/budget.json (returns empty dict if absent)."""
+    """Load budget config (returns empty dict if absent)."""
     try:
-        if _BUDGET_CONFIG_PATH.exists():
-            return json.loads(_BUDGET_CONFIG_PATH.read_text())
+        path = _budget_config_path()
+        if path.exists():
+            return json.loads(path.read_text())
     except Exception:
         logger.debug("Failed to load budget config; treating as empty", exc_info=True)
     return {}

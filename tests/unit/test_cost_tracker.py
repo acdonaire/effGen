@@ -155,3 +155,34 @@ class TestCostTrackerCerebrasRates:
     def test_cerebras_model_is_free(self, model):
         cost = CostTracker.get().record("cerebras", model, 1_000_000, 1_000_000)
         assert cost == 0.0
+
+
+class TestBudgetConfigOverride:
+    """EFFGEN_BUDGET_CONFIG redirects the budget file (mirrors EFFGEN_COST_DB),
+    so a sandbox or CI run is not affected by the developer's real
+    ~/.effgen/budget.json."""
+
+    def test_override_points_at_a_budget_file(self, tmp_path, monkeypatch):
+        import json as _json
+
+        from effgen.models._cost import _load_budget
+        cfg = tmp_path / "budget.json"
+        cfg.write_text(_json.dumps({"daily": 5.0}))
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
+        assert _load_budget() == {"daily": 5.0}
+
+    def test_override_missing_file_reads_as_no_budget(self, tmp_path, monkeypatch):
+        from effgen.models._cost import _load_budget
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(tmp_path / "absent.json"))
+        assert _load_budget() == {}
+
+    def test_configured_budget_is_enforced_via_override(self, tmp_path, monkeypatch):
+        import json as _json
+
+        from effgen.models.errors import BudgetExceededError
+        cfg = tmp_path / "budget.json"
+        cfg.write_text(_json.dumps({"daily": 0.01}))
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
+        with pytest.raises(BudgetExceededError):
+            # 1M gpt-4o-mini output tokens costs well over $0.01.
+            CostTracker.get().record("openai", "gpt-4o-mini", 0, 1_000_000)

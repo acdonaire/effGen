@@ -179,6 +179,29 @@ class TestGroqAdapterGenerate:
         assert result.metadata["completion_tokens"] == 5
         assert result.metadata["total_tokens"] == 15
 
+    def test_generate_forwards_frequency_and_presence_penalty(self):
+        """A pinned penalty must reach the Groq request, matching seed/top_p."""
+        from effgen.models.base import GenerationConfig
+
+        adapter = self._loaded_adapter()
+        adapter._client.chat.completions.create.return_value = self._make_mock_response("Hi")
+        adapter.generate(
+            "Hi",
+            config=GenerationConfig(frequency_penalty=1.5, presence_penalty=0.5),
+        )
+        call_kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["frequency_penalty"] == 1.5
+        assert call_kwargs["presence_penalty"] == 0.5
+
+    def test_generate_omits_default_penalties(self):
+        """The neutral 0.0 default is not sent, matching the seed/top_p convention."""
+        adapter = self._loaded_adapter()
+        adapter._client.chat.completions.create.return_value = self._make_mock_response("Hi")
+        adapter.generate("Hi")
+        call_kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert "frequency_penalty" not in call_kwargs
+        assert "presence_penalty" not in call_kwargs
+
     def test_generate_with_tools_calls_api(self):
         adapter = self._loaded_adapter("llama-3.3-70b-versatile")
         tc = MagicMock()

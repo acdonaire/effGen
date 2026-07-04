@@ -77,6 +77,12 @@ _TEST_COST_DB_DIR: str | None = None
 if "EFFGEN_COST_DB" not in os.environ:
     _TEST_COST_DB_DIR = tempfile.mkdtemp(prefix="effgen_test_costs_")
     os.environ["EFFGEN_COST_DB"] = str(Path(_TEST_COST_DB_DIR) / "costs.sqlite")
+    # Also point the budget config away from the developer's real
+    # ~/.effgen/budget.json. Otherwise a host that has configured a daily budget
+    # makes cost-tracker tests (which record large fixture spends) trip the real
+    # budget and raise BudgetExceededError. The empty temp path reads as "no
+    # budget configured", which is the state a clean CI runner sees.
+    os.environ["EFFGEN_BUDGET_CONFIG"] = str(Path(_TEST_COST_DB_DIR) / "budget.json")
 
 
 def pytest_sessionfinish(session, exitstatus):

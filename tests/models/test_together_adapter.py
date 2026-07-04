@@ -366,6 +366,28 @@ class TestTogetherAdapterGenerate:
         assert result.metadata["total_tokens"] == 8
         assert result.metadata["provider"] == "together"
 
+    def test_generate_forwards_penalties(self):
+        """A pinned penalty must reach the request, matching seed/top_p."""
+        from effgen.models.base import GenerationConfig
+        adapter, mock_client = self._loaded_adapter()
+        mock_client.chat.completions.create.return_value = _make_mock_response("hi")
+        adapter.generate(
+            "Hi",
+            config=GenerationConfig(frequency_penalty=1.5, presence_penalty=0.5),
+        )
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["frequency_penalty"] == 1.5
+        assert call_kwargs["presence_penalty"] == 0.5
+
+    def test_generate_omits_default_penalties(self):
+        """The neutral 0.0 default is not sent."""
+        adapter, mock_client = self._loaded_adapter()
+        mock_client.chat.completions.create.return_value = _make_mock_response("hi")
+        adapter.generate("Hi")
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert "frequency_penalty" not in call_kwargs
+        assert "presence_penalty" not in call_kwargs
+
     def test_generate_with_tools_passes_tools(self):
         adapter, mock_client = self._loaded_adapter(
             "meta-llama/Llama-3.3-70B-Instruct-Turbo"

@@ -16,8 +16,15 @@ from effgen.models.errors import BudgetExceededError
 
 @pytest.fixture(autouse=True)
 def isolated_budget_path(tmp_path, monkeypatch):
-    """Keep budget alert tests away from the real user config."""
-    monkeypatch.setattr(cost_mod, "_BUDGET_CONFIG_PATH", tmp_path / "budget.json")
+    """Keep budget alert tests away from the real user config.
+
+    Point both the default path and the ``EFFGEN_BUDGET_CONFIG`` override (the
+    root conftest sets the override to isolate cost tests from a host-configured
+    budget) at this test's temp file, so a budget written here is the one read.
+    """
+    budget_file = tmp_path / "budget.json"
+    monkeypatch.setattr(cost_mod, "_BUDGET_CONFIG_PATH", budget_file)
+    monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(budget_file))
 
 
 # ---------------------------------------------------------------------------

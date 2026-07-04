@@ -313,6 +313,10 @@ class FireworksAdapter(BaseModel):
             request_params["stop"] = config.stop_sequences
         if config.seed is not None:
             request_params["seed"] = config.seed
+        if config.presence_penalty:
+            request_params["presence_penalty"] = config.presence_penalty
+        if config.frequency_penalty:
+            request_params["frequency_penalty"] = config.frequency_penalty
 
         info = FIREWORKS_MODELS.get(self.model_name, {})
         if tools and info.get("supports_native_tools", False):
@@ -528,6 +532,10 @@ class FireworksAdapter(BaseModel):
             request_params["stop"] = config.stop_sequences
         if config.seed is not None:
             request_params["seed"] = config.seed
+        if config.presence_penalty:
+            request_params["presence_penalty"] = config.presence_penalty
+        if config.frequency_penalty:
+            request_params["frequency_penalty"] = config.frequency_penalty
 
         request_params.update(kwargs)
 

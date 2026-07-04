@@ -1,7 +1,20 @@
 """Unit tests for the Agent class."""
 
+import pytest
+
 from effgen.core.agent import Agent, AgentConfig, AgentMode, AgentResponse
 from tests.fixtures.mock_models import MockToolCallingModel
+
+
+@pytest.fixture(autouse=True)
+def _reset_reasoning_budget_warned():
+    """The reasoning-budget heads-up fires once per (model, kind) per process.
+    Clear that record around each test so a test asserting the warning is not
+    silenced by a warning an earlier test already emitted for the same model."""
+    from effgen.core import agent_generation
+    agent_generation._reasoning_budget_warned.clear()
+    yield
+    agent_generation._reasoning_budget_warned.clear()
 
 
 class TestAgentConfig:
@@ -127,6 +140,77 @@ class TestAgentRun:
         assert "success" in d
         assert "mode" in d
         assert "iterations" in d
+
+    def test_run_forwards_sampling_kwargs_to_generation_config(self, mock_model):
+        """seed/top_k/penalties passed to run() must reach the model's config,
+        matching the temperature/top_p/stop_sequences that already worked."""
+        config = AgentConfig(
+            name="sampling-test", model=mock_model, enable_memory=False, enable_sub_agents=False,
+        )
+        agent = Agent(config=config)
+        agent.run(
+            "test",
+            seed=99,
+            top_k=7,
+            presence_penalty=0.3,
+            frequency_penalty=1.2,
+            repetition_penalty=1.1,
+        )
+        gen_config = mock_model._generate_calls[-1]["config"]
+        assert gen_config.seed == 99
+        assert gen_config.top_k == 7
+        assert gen_config.presence_penalty == 0.3
+        assert gen_config.frequency_penalty == 1.2
+        assert gen_config.repetition_penalty == 1.1
+
+    def test_agent_config_pins_sampling_defaults_for_every_run(self, mock_model):
+        """Pinning seed/penalties on AgentConfig applies to every run(), not just
+        a single call — matching how `temperature` already behaves."""
+        config = AgentConfig(
+            name="pinned-sampling", model=mock_model, enable_memory=False, enable_sub_agents=False,
+            seed=7, frequency_penalty=0.8,
+        )
+        agent = Agent(config=config)
+        agent.run("test")
+        gen_config = mock_model._generate_calls[-1]["config"]
+        assert gen_config.seed == 7
+        assert gen_config.frequency_penalty == 0.8
+
+    def test_run_rejects_unknown_kwarg(self, basic_agent):
+        """A mistyped/unknown run() kwarg must raise, not be silently ignored."""
+        import pytest as _pytest
+
+        with _pytest.raises(TypeError, match="totally_made_up_param"):
+            basic_agent.run("test", totally_made_up_param=123)
+
+    def test_run_rejects_unknown_kwarg_with_close_match_hint(self, basic_agent):
+        import pytest as _pytest
+
+        with _pytest.raises(TypeError, match="Did you mean 'seed'"):
+            basic_agent.run("test", seeed=1)
+
+    def test_warn_reasoning_budget_fires_for_tight_pinned_budget(self, mock_model, caplog):
+        import logging
+
+        mock_model.model_name = "gpt-5-nano"
+        config = AgentConfig(
+            name="reasoning-budget", model=mock_model, enable_memory=False, enable_sub_agents=False,
+        )
+        agent = Agent(config=config)
+        with caplog.at_level(logging.WARNING, logger="effgen.core.agent_generation"):
+            agent.run("test", max_tokens=250)
+        assert any("reasoning model" in r.message for r in caplog.records)
+
+    def test_warn_reasoning_budget_silent_for_non_reasoning_model(self, mock_model, caplog):
+        import logging
+
+        config = AgentConfig(
+            name="non-reasoning-budget", model=mock_model, enable_memory=False, enable_sub_agents=False,
+        )
+        agent = Agent(config=config)
+        with caplog.at_level(logging.WARNING, logger="effgen.core.agent_generation"):
+            agent.run("test", max_tokens=250)
+        assert not any("reasoning model" in r.message for r in caplog.records)
 
 
 class TestAgentResponse:

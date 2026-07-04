@@ -777,6 +777,7 @@ class CLIInterface:
                     system_prompt=args.system_prompt or config.get("system_prompt"),
                     max_iterations=args.max_iterations,
                     temperature=args.temperature,
+                    max_tokens=args.max_tokens,
                     enable_streaming=args.stream,
                     session_id=getattr(args, 'session_id', None),
                     **_preset_overrides,
@@ -823,6 +824,7 @@ class CLIInterface:
                         "You are a helpful AI assistant."),
                     temperature=args.temperature or config.get("temperature", 0.7),
                     max_iterations=args.max_iterations or config.get("max_iterations", 10),
+                    max_tokens=args.max_tokens or config.get("max_tokens"),
                     enable_sub_agents=not args.no_sub_agents,
                     enable_streaming=args.stream
                 )
@@ -2572,8 +2574,17 @@ Model id formats:
     run_parser.add_argument('-n', '--name', help='Agent name')
     run_parser.add_argument('-t', '--tools', nargs='+', help='Tools to enable')
     run_parser.add_argument('-c', '--config', help='Configuration file')
-    run_parser.add_argument('--system-prompt', help='System prompt')
+    run_parser.add_argument(
+        '--system-prompt', '--persona', dest='system_prompt', metavar='TEXT',
+        help='Custom persona / system prompt for this run, e.g. '
+             '"You are a patient Socratic tutor who never gives the answer."',
+    )
     run_parser.add_argument('--temperature', type=float, help='Temperature')
+    run_parser.add_argument('--max-tokens', type=int,
+                            help='Max output tokens (raise for token-heavy or '
+                                 'reasoning models, e.g. gpt-5/o-series, which '
+                                 'spend part of the budget on hidden reasoning '
+                                 'before any visible text)')
     run_parser.add_argument('--max-iterations', type=int, help='Max iterations')
     run_parser.add_argument('--mode', choices=['auto', 'single', 'sub_agents'], help='Execution mode')
     run_parser.add_argument('--no-sub-agents', action='store_true', help='Disable sub-agents')
@@ -2641,6 +2652,11 @@ Model id formats:
              'Steers every reply (unlike --preset, which only labels the session).',
     )
     chat_parser.add_argument('--temperature', type=float, help='Temperature')
+    chat_parser.add_argument('--max-tokens', type=int,
+                             help='Max output tokens per reply (raise for token-heavy '
+                                  'or reasoning models, e.g. gpt-5/o-series, which '
+                                  'spend part of the budget on hidden reasoning '
+                                  'before any visible text)')
     chat_parser.add_argument('--no-sub-agents', action='store_true', help='Disable sub-agents')
     chat_parser.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS,
                              help='Verbose output (show DEBUG/INFO logs)')

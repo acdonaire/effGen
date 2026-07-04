@@ -331,6 +331,28 @@ class TestFireworksAdapterGenerate:
         assert call_kwargs["temperature"] == 0.5
         assert call_kwargs["seed"] == 42
 
+    def test_generate_forwards_penalties(self):
+        """A pinned penalty must reach the request, matching seed/top_p."""
+        from effgen.models.base import GenerationConfig
+        adapter = _loaded_adapter()
+        adapter._client.chat.completions.create.return_value = _make_mock_response("hi")
+        adapter.generate(
+            "Hi",
+            config=GenerationConfig(frequency_penalty=1.5, presence_penalty=0.5),
+        )
+        call_kwargs = adapter._client.chat.completions.create.call_args[1]
+        assert call_kwargs["frequency_penalty"] == 1.5
+        assert call_kwargs["presence_penalty"] == 0.5
+
+    def test_generate_omits_default_penalties(self):
+        """The neutral 0.0 default is not sent."""
+        adapter = _loaded_adapter()
+        adapter._client.chat.completions.create.return_value = _make_mock_response("hi")
+        adapter.generate("Hi")
+        call_kwargs = adapter._client.chat.completions.create.call_args[1]
+        assert "frequency_penalty" not in call_kwargs
+        assert "presence_penalty" not in call_kwargs
+
 
 # ---------------------------------------------------------------------------
 # Tool-calling tests (mocked)

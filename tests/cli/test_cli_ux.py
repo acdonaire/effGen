@@ -336,6 +336,22 @@ def test_prompts_list_json_is_alias_for_format_json():
     assert parser.parse_args(["prompts", "list", "--format", "markdown"]).list_format == "markdown"
 
 
+def test_run_accepts_system_prompt_and_persona_alias():
+    parser = _main.create_parser()
+    persona = "You are Grum, a gruff dwarf blacksmith."
+    assert parser.parse_args(["run", "hi", "--system-prompt", persona]).system_prompt == persona
+    assert parser.parse_args(["run", "hi", "--persona", persona]).system_prompt == persona
+    assert parser.parse_args(["run", "hi"]).system_prompt is None
+
+
+def test_run_and_chat_accept_max_tokens():
+    parser = _main.create_parser()
+    assert parser.parse_args(["run", "hi", "--max-tokens", "2000"]).max_tokens == 2000
+    assert parser.parse_args(["run", "hi"]).max_tokens is None
+    assert parser.parse_args(["chat", "--max-tokens", "2000"]).max_tokens == 2000
+    assert parser.parse_args(["chat"]).max_tokens is None
+
+
 def test_chat_accepts_system_prompt_and_persona_alias():
     parser = _main.create_parser()
     persona = "You are a patient Socratic tutor."

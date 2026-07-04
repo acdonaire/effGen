@@ -13,6 +13,7 @@ The main Agent class with:
 from __future__ import annotations
 
 import asyncio
+import difflib
 import functools
 import logging
 import time
@@ -139,6 +140,14 @@ class AgentConfig:
         system_prompt: System-level instructions
         max_iterations: Maximum tool-use loop iterations
         temperature: Generation temperature
+        top_p: Nucleus-sampling threshold; overridden per call by run(top_p=...)
+        top_k: Top-k sampling cutoff (providers that don't support it ignore it)
+        seed: Sampling seed; a fixed seed plus temperature=0 reproduces a
+            generation exactly, on providers that support it
+        presence_penalty: Penalizes tokens already present anywhere in the text
+        frequency_penalty: Penalizes tokens proportionally to how often they
+            already appeared (the standard anti-repetition knob for long text)
+        repetition_penalty: Multiplicative repeat penalty used by local/HF engines
         enable_sub_agents: Enable sub-agent spawning
         enable_memory: Enable memory systems
         enable_streaming: Enable response streaming
@@ -168,6 +177,16 @@ class AgentConfig:
     # Default output-token budget for every run(). None lets the model pick a
     # size-aware default; run(max_tokens=...) overrides it for a single call.
     max_tokens: int | None = None
+    # Sampling controls. Pinned here they apply to every run(); a run(...)
+    # kwarg of the same name overrides them for a single call. seed and the
+    # penalties default to GenerationConfig's neutral values (no effect on
+    # generation) so existing agents are unaffected until a caller sets one.
+    top_p: float = 0.9
+    top_k: int = 50
+    seed: int | None = None
+    presence_penalty: float = 0.0
+    frequency_penalty: float = 0.0
+    repetition_penalty: float = 1.0
     enable_sub_agents: bool = True
     enable_memory: bool = True
     enable_streaming: bool = False
@@ -225,6 +244,18 @@ class AgentConfig:
 _MODEL_LOAD_KWARGS = frozenset({
     "engine", "engine_config", "tensor_parallel_size", "gpu_memory_utilization",
     "apply_chat_template", "quantization", "trust_remote_code",
+})
+
+# run()'s recognized **kwargs — generation controls plus the checkpoint/debug
+# knobs threaded through the tool loop. A name outside this set (and not
+# starting with "_", reserved for internal call-chain bookkeeping such as
+# resume()'s _resume_scratchpad) is almost always a typo, so run() rejects it
+# instead of silently ignoring it.
+_RUN_KWARGS = frozenset({
+    "debug", "max_tokens", "temperature", "top_p", "top_k", "seed",
+    "presence_penalty", "frequency_penalty", "repetition_penalty",
+    "stop_sequences", "reasoning_effort", "tools",
+    "checkpoint_dir", "checkpoint_interval", "max_iterations",
 })
 
 
@@ -934,6 +965,16 @@ Question: {task}
         Returns:
             AgentResponse with results
         """
+        unrecognized = {k for k in kwargs if k not in _RUN_KWARGS and not k.startswith("_")}
+        if unrecognized:
+            bad = sorted(unrecognized)[0]
+            close = difflib.get_close_matches(bad, sorted(_RUN_KWARGS), n=1, cutoff=0.5)
+            hint = f" Did you mean '{close[0]}'?" if close else ""
+            raise TypeError(
+                f"run() got an unexpected keyword argument '{bad}'.{hint} "
+                f"Recognized run() kwargs: {sorted(_RUN_KWARGS)}."
+            )
+
         start_time = time.time()
         context = context or {}
 
@@ -1029,6 +1070,8 @@ Question: {task}
         # and output_schema=Model / output_model=Model should behave the same.
         if output_model is None and is_pydantic_model_class(raw_schema):
             output_model = raw_schema
+
+        self._warn_reasoning_budget(kwargs.get("max_tokens"), effective_schema is not None)
 
         # Track task start
         self.execution_tracker.track_event(ExecutionEvent(
