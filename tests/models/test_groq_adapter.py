@@ -217,6 +217,38 @@ class TestGroqAdapterGenerate:
         assert tool_call["function"]["name"] == "calculator"
         assert tool_call["function"]["arguments"] == {"expression": "2+2"}
 
+    def test_recovered_tool_call_logs_at_info_not_warning(self, caplog):
+        """The tool_use_failed recovery is not actionable — it must log at
+        INFO (shown only with --verbose) so a successful turn's default
+        output doesn't carry a stray WARNING line."""
+        import logging
+
+        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        adapter._client.chat.completions.create.side_effect = Exception(
+            "Error code: 400 - {'error': {'message': 'Failed to call a function.', "
+            "'type': 'invalid_request_error', 'code': 'tool_use_failed', "
+            "'failed_generation': '<function=calculator{\"expression\": \"2+2\"}</function>'}}"
+        )
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "calculator",
+                "description": "calc",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"expression": {"type": "string"}},
+                },
+            },
+        }]
+        with caplog.at_level(logging.INFO, logger="effgen.models.groq_adapter"):
+            adapter.generate_with_tools("What is 2+2?", tools)
+        recovery_records = [
+            r for r in caplog.records if "tool_use_failed but included a parseable" in r.message
+        ]
+        assert recovery_records, "expected the recovery note to be logged"
+        assert all(r.levelno == logging.INFO for r in recovery_records)
+        assert not any(r.levelno >= logging.WARNING for r in recovery_records)
+
     def test_generate_with_tools_recovers_failed_generation_with_closing_bracket(self):
         adapter = self._loaded_adapter("llama-3.3-70b-versatile")
         adapter._client.chat.completions.create.side_effect = Exception(

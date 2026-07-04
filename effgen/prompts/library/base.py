@@ -50,3 +50,20 @@ class LibraryPrompt:
     def render_fixture(self) -> str:
         """Render with fixture inputs."""
         return self.template(**self.fixture)
+
+    def validate_input(self, inputs: dict[str, Any]) -> list[str]:
+        """Validate a caller-supplied input object against ``input_schema``.
+
+        Checks exactly what was supplied — it does not fall back to
+        ``fixture`` for missing fields. Returns a field-named error message
+        per schema violation (empty list when *inputs* is valid).
+        """
+        from jsonschema import Draft202012Validator
+
+        validator = Draft202012Validator(self.input_schema)
+        errors = sorted(validator.iter_errors(inputs), key=lambda exc: list(exc.absolute_path))
+        messages = []
+        for exc in errors:
+            path = ".".join(str(p) for p in exc.absolute_path)
+            messages.append(f"'{path}': {exc.message}" if path else exc.message)
+        return messages

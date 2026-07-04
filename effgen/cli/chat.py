@@ -590,6 +590,29 @@ class ChatREPL:
             for cmd, desc in _SLASH_COMMANDS.items():
                 print(f"  {cmd:9s} {desc}")
 
+    def _resolve_swap_target(self, new_id: str) -> tuple[str | None, str]:
+        """Resolve a ``/model`` argument the same way a fresh ``chat -m <id>``
+        (no ``--provider``) would.
+
+        A ``provider:model`` prefix pins that provider explicitly, mirroring
+        startup resolution. A bare id clears any provider left over from a
+        prior explicit ``--provider`` flag, so the loader's own auto-detection
+        (catalog lookup / known-prefix matching) picks the right adapter
+        instead of forcing the new id through the *previous* session's
+        provider — which silently keeps the old adapter and fails every turn.
+        """
+        if ":" in new_id:
+            from effgen.models.registry import ProviderRegistry
+
+            prefix, rest = new_id.split(":", 1)
+            try:
+                known = ProviderRegistry.list_providers()
+            except Exception:  # noqa: BLE001
+                known = []
+            if prefix in known and rest:
+                return prefix, rest
+        return None, new_id
+
     def _cmd_model(self, arg: str) -> None:
         if not arg:
             self.cli.print(f"Active model: {self.model_id}")
@@ -597,11 +620,15 @@ class ChatREPL:
             return
         new_id = arg.split()[0]
         old_id = self.model_id
-        self.model_id = new_id
+        old_provider = self.provider
+        new_provider, resolved_id = self._resolve_swap_target(new_id)
+        self.model_id = resolved_id
+        self.provider = new_provider
         try:
             self._rebuild()
         except Exception as e:  # noqa: BLE001
             self.model_id = old_id
+            self.provider = old_provider
             self.cli.print_error(f"Could not switch to '{new_id}': {e}")
             self._teach_model_error(e)
             # Restore the working agent.

@@ -509,7 +509,10 @@ class GroqAdapter(BaseModel):
 
                 failed_tool_call = _parse_failed_generation_tool_call(msg)
                 if tools and "tool_use_failed" in msg_lower and failed_tool_call is not None:
-                    logger.warning(
+                    # Recovered, not actionable — the call still succeeds via
+                    # failed_generation. INFO (not WARNING) so a successful
+                    # turn emits no WARNING line by default; --verbose shows it.
+                    logger.info(
                         "Groq returned tool_use_failed but included a parseable tool call; "
                         "using failed_generation as structured tool call."
                     )

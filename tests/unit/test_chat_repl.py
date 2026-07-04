@@ -352,5 +352,66 @@ def test_banner_shows_session_resume_count(tmp_path, monkeypatch):
     assert any("new (will be saved)" in m for m in cli2.messages)
 
 
+# ---------------------------------------------------------------------------
+# /model provider stickiness — a swap must not keep a stale provider
+# ---------------------------------------------------------------------------
+
+def test_resolve_swap_target_known_provider_prefix_pins_provider():
+    repl, _ = _make_repl(provider="openai", _provider="openai")
+    provider, model_id = repl._resolve_swap_target("groq:llama-3.1-8b-instant")
+    assert provider == "groq"
+    assert model_id == "llama-3.1-8b-instant"
+
+
+def test_resolve_swap_target_bare_id_clears_sticky_provider():
+    repl, _ = _make_repl(provider="openai", _provider="openai")
+    provider, model_id = repl._resolve_swap_target("llama-3.1-8b-instant")
+    assert provider is None
+    assert model_id == "llama-3.1-8b-instant"
+
+
+def test_resolve_swap_target_unknown_prefix_clears_provider_id_unchanged():
+    # An unknown prefix (typo or local-engine prefix) is left for the model
+    # loader's own routing/validation to handle, exactly as at startup.
+    repl, _ = _make_repl(provider="openai", _provider="openai")
+    provider, model_id = repl._resolve_swap_target("transformers:Qwen/Qwen2.5-1.5B-Instruct")
+    assert provider is None
+    assert model_id == "transformers:Qwen/Qwen2.5-1.5B-Instruct"
+
+
+def test_cmd_model_swap_updates_provider_and_does_not_stick():
+    repl, cli = _make_repl(provider="openai", _provider="openai")
+    assert repl.provider == "openai"
+    calls = []
+
+    def _fake_rebuild():
+        calls.append((repl.model_id, repl.provider))
+
+    repl._rebuild = _fake_rebuild
+    repl._cmd_model("groq:llama-3.1-8b-instant")
+
+    assert repl.provider == "groq"
+    assert repl.model_id == "llama-3.1-8b-instant"
+    assert calls == [("llama-3.1-8b-instant", "groq")]
+    assert any("Switched model" in m for m in cli.messages)
+
+
+def test_cmd_model_failed_swap_restores_old_model_and_provider():
+    repl, cli = _make_repl(provider="openai", _provider="openai")
+
+    def _fake_rebuild_fails():
+        raise RuntimeError("Unknown provider or engine prefix 'grok'")
+
+    repl._rebuild = _fake_rebuild_fails
+    repl._teach_model_error = lambda e: None
+    repl._cmd_model("grok:llama-3.1-8b-instant")
+
+    # Never claims success for a swap that can't be resolved.
+    assert repl.model_id == "gpt-5-nano"
+    assert repl.provider == "openai"
+    assert not any("Switched model" in m for m in cli.messages)
+    assert any("Could not switch" in m for m in cli.messages)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

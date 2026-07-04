@@ -1170,10 +1170,17 @@ class CLIInterface:
             elif oidc:
                 self.print_success("Auth: OIDC / JWT")
 
+            public_dashboard = dev_mode or os.environ.get(
+                "EFFGEN_PUBLIC_DASHBOARD", "0"
+            ).strip() == "1"
+
             self.print(f"Starting server on {host}:{port}")
             self.print(f"  OpenAI-compatible API : http://{host}:{port}/v1")
             self.print(f"  Interactive docs      : http://{host}:{port}/docs")
-            self.print(f"  Dashboard             : http://{host}:{port}/dashboard")
+            dashboard_line = f"  Dashboard             : http://{host}:{port}/dashboard"
+            if not public_dashboard:
+                dashboard_line += "  (data requires an API key; set EFFGEN_PUBLIC_DASHBOARD=1 for local viewing)"
+            self.print(dashboard_line)
             self.print()
 
             uvicorn.run(
@@ -2666,6 +2673,10 @@ Model id formats:
             "  EFFGEN_OIDC_ISSUER /  enable OIDC/JWT auth instead of a static key.\n"
             "  EFFGEN_OIDC_CLIENT_ID\n"
             "  EFFGEN_PUBLIC_METRICS=1   serve /metrics without auth (default: auth).\n"
+            "  EFFGEN_PUBLIC_DASHBOARD=1 serve /dashboard/data.json + /dashboard/spans\n"
+            "                        without auth, for local viewing (default: auth;\n"
+            "                        the /dashboard page itself always loads, but its\n"
+            "                        data calls 401 without this or an API key).\n"
             "  EFFGEN_MODEL_POOL_SIZE    loaded models kept warm (default 4).\n"
             "  EFFGEN_NO_DOTENV=1    skip the .env filesystem search entirely, so\n"
             "                        only environment variables the orchestrator set\n"
@@ -2997,12 +3008,14 @@ Model id formats:
     prompts_render = prompts_subparsers.add_parser('render', help='Non-interactive: render a prompt to stdout')
     prompts_render.add_argument('prompt_name', metavar='name', help='Prompt name (e.g. research.literature_review.v1)')
     prompts_render.add_argument('--input', dest='input_file', metavar='FILE',
-                                help='JSON file with input variables (merged over fixture defaults)')
+                                help="JSON file with input variables, validated against the prompt's "
+                                     "input_schema (see 'prompts show <name>'); omit to render the fixture")
 
     prompts_run = prompts_subparsers.add_parser('run', help='Non-interactive: render + run through a model')
     prompts_run.add_argument('prompt_name', metavar='name', help='Prompt name')
     prompts_run.add_argument('--input', dest='input_file', metavar='FILE',
-                             help='JSON file with input variables')
+                             help="JSON file with input variables, validated against the prompt's "
+                                  "input_schema (see 'prompts show <name>'); omit to render the fixture")
     prompts_run.add_argument('--model', required=True, help='Model identifier to run against')
 
     # Load test command
@@ -4651,7 +4664,10 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
         if RICH_AVAILABLE and cli.console:
             from rich.table import Table
             t = Table(title="Prompt Library", show_lines=False)
-            t.add_column("Name", style="cyan")
+            # Names must never be clipped — they're the id a user types back
+            # into `prompts show`/`run`/`render`. "fold" wraps onto extra
+            # lines instead of the default ellipsis truncation.
+            t.add_column("Name", style="cyan", overflow="fold")
             t.add_column("Domain")
             t.add_column("Variant")
             t.add_column("Description")
@@ -4674,10 +4690,11 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
     # ---- show ----
     if cmd == 'show':
         name = args.name
+        from effgen.cli.playground import _key_error_message, _resolve_prompt
         try:
-            p = registry.get(name)
-        except KeyError:
-            cli.print_error(f"Prompt '{name}' not found.")
+            p, _resolved_name = _resolve_prompt(name)
+        except KeyError as exc:
+            cli.print_error(_key_error_message(exc, name))
             return 1
 
         cli.print_header(f"Prompt: {p.name}")

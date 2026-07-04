@@ -69,6 +69,16 @@ body {
 }
 #refresh-btn:hover { color: var(--accent2); }
 
+/* ---- Auth banner ---- */
+.auth-banner {
+  background: rgba(245, 158, 11, 0.12);
+  border-bottom: 1px solid var(--warn);
+  color: var(--text);
+  padding: 0.6rem 1.5rem;
+  font-size: 0.85rem;
+}
+.auth-banner[hidden] { display: none; }
+
 /* ---- Layout ---- */
 .main {
   display: flex;

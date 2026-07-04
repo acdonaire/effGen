@@ -46,6 +46,20 @@
     if (txt) { txt.textContent = online ? "Connected" : "Offline"; }
   }
 
+  function showAuthBanner() {
+    const el = $("auth-banner");
+    if (!el) return;
+    el.textContent = "Dashboard data requires authentication. Restart the server with "
+      + "EFFGEN_PUBLIC_DASHBOARD=1 for local viewing, or supply an API key "
+      + "(Authorization: Bearer <key> or X-API-Key: <key>).";
+    el.hidden = false;
+  }
+
+  function hideAuthBanner() {
+    const el = $("auth-banner");
+    if (el) el.hidden = true;
+  }
+
   // ------------------------------------------------------------------
   // Chart initialisation
   // ------------------------------------------------------------------
@@ -237,8 +251,14 @@
   async function fetchData() {
     try {
       const resp = await fetch("/dashboard/data.json", { cache: "no-store" });
+      if (resp.status === 401) {
+        setStatus(false);
+        showAuthBanner();
+        return;
+      }
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const data = await resp.json();
+      hideAuthBanner();
       setStatus(true);
       renderCards(data);
       renderSLO(data);

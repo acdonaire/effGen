@@ -9,6 +9,8 @@ error is worth retrying and how to report it.
 
 from __future__ import annotations
 
+import ast
+import re
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
@@ -562,3 +564,69 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         return _TRANSIENT
 
     return _UNKNOWN
+
+
+_SDK_ERROR_BODY_RE = re.compile(r"Error code: \d+ - \{")
+
+
+def _balanced_brace_end(text: str, open_index: int) -> int | None:
+    """Return the index just past the ``{...}`` starting at *open_index*
+    (which must be ``{``), respecting quoted strings. ``None`` if unbalanced."""
+    depth = 0
+    in_str = False
+    str_char = ""
+    i = open_index
+    while i < len(text):
+        ch = text[i]
+        if in_str:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == str_char:
+                in_str = False
+        elif ch in ("'", '"'):
+            in_str = True
+            str_char = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return None
+
+
+def simplify_embedded_provider_error(message: str) -> str:
+    """Collapse an embedded raw SDK error body down to its inner message.
+
+    OpenAI-compatible SDKs (openai, groq, together, fireworks, ...) format an
+    HTTP error's ``str()`` as ``Error code: N - {<python-dict-repr of the JSON
+    body>}``. An adapter that embeds that raw text inside its own actionable
+    message (e.g. "request too large for X: <raw body> — reduce the request
+    ...") ends up surfacing a dumped data structure instead of prose. This
+    extracts the body's ``error.message`` field and substitutes it in place of
+    the raw dict, leaving any surrounding text untouched. Returns *message*
+    unchanged if no embedded body is found or it can't be parsed.
+    """
+    match = _SDK_ERROR_BODY_RE.search(message)
+    if not match:
+        return message
+    brace_start = match.end() - 1
+    end = _balanced_brace_end(message, brace_start)
+    if end is None:
+        return message
+    try:
+        parsed = ast.literal_eval(message[brace_start:end])
+    except (ValueError, SyntaxError, RecursionError):
+        return message
+    inner = None
+    if isinstance(parsed, dict):
+        err = parsed.get("error")
+        if isinstance(err, dict) and isinstance(err.get("message"), str):
+            inner = err["message"]
+        elif isinstance(parsed.get("message"), str):
+            inner = parsed["message"]
+    if not inner:
+        return message
+    return message[: match.start()] + inner + message[end:]

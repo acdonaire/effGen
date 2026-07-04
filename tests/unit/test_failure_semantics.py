@@ -33,6 +33,7 @@ from effgen.models.errors import (
     ModelTimeoutError,
     ProviderTransientError,
     classify_provider_error,
+    simplify_embedded_provider_error,
 )
 
 
@@ -131,6 +132,35 @@ def test_classify_by_status_code():
     assert classify_provider_error(_E(413)).category == "invalid_request"
     assert classify_provider_error(_E(413)).should_retry is False
     assert classify_provider_error(_E(503)).should_retry is True
+
+
+def test_simplify_embedded_provider_error_extracts_inner_message():
+    raw = (
+        "request too large for llama-3.1-8b-instant: Error code: 413 - "
+        "{'error': {'message': 'Limit 6000, Requested 9294.', "
+        "'type': 'tokens', 'code': 'rate_limit_exceeded'}} "
+        "— reduce the request (fewer/smaller tools or shorter input) or use a "
+        "larger-context model."
+    )
+    out = simplify_embedded_provider_error(raw)
+    assert "Error code" not in out
+    assert "{" not in out
+    assert out == (
+        "request too large for llama-3.1-8b-instant: Limit 6000, Requested 9294. "
+        "— reduce the request (fewer/smaller tools or shorter input) or use a "
+        "larger-context model."
+    )
+
+
+def test_simplify_embedded_provider_error_noop_without_blob():
+    assert simplify_embedded_provider_error("plain message, nothing embedded") == (
+        "plain message, nothing embedded"
+    )
+
+
+def test_simplify_embedded_provider_error_noop_on_unparseable_blob():
+    raw = "Error code: 500 - {not: valid, python: literal}"
+    assert simplify_embedded_provider_error(raw) == raw
 
 
 def test_classify_by_name_and_message():
@@ -282,6 +312,29 @@ def test_error_message_is_redacted():
     r = _agent(_FakeModel(exc=ProviderTransientError("openai", message=leaked))).run("hi")
     # monkeypatch-free: the real redactor should scrub the key shape
     assert "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in r.metadata["error"]["message"]
+
+
+def test_embedded_sdk_error_body_collapsed_in_response_output():
+    """An adapter's message that embeds a raw SDK error body
+    ('Error code: 413 - {...}') must surface as prose in response.output,
+    not as a dumped Python dict."""
+    raw_body = (
+        "request too large for llama-3.1-8b-instant: Error code: 413 - "
+        "{'error': {'message': 'Request too large for model `llama-3.1-8b-instant` "
+        "on tokens per minute (TPM): Limit 6000, Requested 9294.', "
+        "'type': 'tokens', 'code': 'rate_limit_exceeded'}} "
+        "— reduce the request (fewer/smaller tools or shorter input) or use a "
+        "larger-context model."
+    )
+    r = _agent(
+        _FakeModel(exc=InvalidRequestError("groq", "llama-3.1-8b-instant", raw_body))
+    ).run("hi")
+    assert not r.success
+    assert "Error code" not in r.output
+    assert "{'error'" not in r.output
+    assert "Limit 6000, Requested 9294" in r.output
+    assert "reduce the request" in r.output
+    assert "Error code" not in r.metadata["error"]["message"]
 
 
 # ---------------------------------------------------------------------------

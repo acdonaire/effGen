@@ -116,8 +116,24 @@ def _resolve_prompt(name: str) -> tuple[LibraryPrompt, str]:
         raise KeyError(f"Prompt '{name}' is ambiguous; use one of: {options}") from exc
 
 
-def _key_error_message(exc: KeyError) -> str:
-    return str(exc.args[0]) if exc.args else str(exc)
+def _suggest_prompt_names(name: str, n: int = 3) -> list[str]:
+    """Closest registered prompt names to *name*, for a not-found error."""
+    import difflib
+
+    try:
+        candidates = [p.name for p in registry.all()]
+    except Exception:  # noqa: BLE001
+        return []
+    return difflib.get_close_matches(name, candidates, n=n, cutoff=0.5)
+
+
+def _key_error_message(exc: KeyError, name: str | None = None) -> str:
+    msg = str(exc.args[0]) if exc.args else str(exc)
+    if name and "not found in registry" in msg:
+        suggestions = _suggest_prompt_names(name)
+        if suggestions:
+            msg += f". Did you mean: {', '.join(suggestions)}?"
+    return msg
 
 
 # ---------------------------------------------------------------------------
@@ -200,12 +216,34 @@ def _run_prompt(rendered: str, model: str) -> str:
 # Non-interactive entry-points
 # ---------------------------------------------------------------------------
 
+def _validate_or_report(p: LibraryPrompt, inputs: dict[str, Any]) -> bool:
+    """Validate a non-empty --input object against the prompt's input_schema.
+
+    Returns True when it's safe to render. An empty *inputs* dict means no
+    --input was supplied (the fixture alone drives the render), so it skips
+    validation. Reports one message per violation and leaves rendering to
+    the caller to skip.
+    """
+    if not inputs:
+        return True
+    errors = p.validate_input(inputs)
+    if not errors:
+        return True
+    _print_err(f"Input for '{p.name}' does not match its input_schema:")
+    for msg in errors:
+        _print_err(f"  {msg}")
+    _print(f"Run 'effgen prompts show {p.name}' to see the schema and a valid fixture example.")
+    return False
+
+
 def cmd_render(name: str, inputs: dict[str, Any]) -> int:
     """Non-interactive render: print rendered prompt to stdout."""
     try:
         p, _resolved_name = _resolve_prompt(name)
     except KeyError as exc:
-        _print_err(_key_error_message(exc))
+        _print_err(_key_error_message(exc, name))
+        return 1
+    if not _validate_or_report(p, inputs):
         return 1
     try:
         merged = {**p.fixture, **inputs}
@@ -222,7 +260,9 @@ def cmd_run(name: str, inputs: dict[str, Any], model: str) -> int:
     try:
         p, _resolved_name = _resolve_prompt(name)
     except KeyError as exc:
-        _print_err(_key_error_message(exc))
+        _print_err(_key_error_message(exc, name))
+        return 1
+    if not _validate_or_report(p, inputs):
         return 1
     try:
         merged = {**p.fixture, **inputs}
@@ -348,7 +388,7 @@ class PlaygroundREPL:
         try:
             p, resolved_name = _resolve_prompt(name)
         except KeyError as exc:
-            _print_err(f"{_key_error_message(exc)}. Try 'list' to see available prompts.")
+            _print_err(f"{_key_error_message(exc, name)}. Try 'list' to see available prompts.")
             return
         self.session.prompt_name = resolved_name
         self.session.variables = dict(p.fixture)  # seed with fixture defaults
@@ -486,7 +526,7 @@ class PlaygroundREPL:
         try:
             p, _resolved_name = _resolve_prompt(name)
         except KeyError as exc:
-            _print_err(_key_error_message(exc))
+            _print_err(_key_error_message(exc, name))
             return
         _print(f"\nName:        {p.name}")
         _print(f"Domain:      {p.domain}")

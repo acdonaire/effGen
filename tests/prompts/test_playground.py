@@ -117,6 +117,24 @@ class TestNonInteractive:
         rc = cmd_render("no.such.prompt.v99", {})
         assert rc == 1
 
+    def test_cmd_render_typo_suggests_close_match(self, capsys):
+        from effgen.cli.playground import cmd_render
+
+        rc = cmd_render("research.literature_reviw.v1.zero_shot", {})
+        assert rc == 1
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "Did you mean" in combined
+        assert "research.literature_review.v1.zero_shot" in combined
+
+    def test_cmd_render_unrelated_name_gets_no_suggestion(self, capsys):
+        from effgen.cli.playground import cmd_render
+
+        rc = cmd_render("no.such.prompt.v99", {})
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "Did you mean" not in (captured.out + captured.err)
+
     def test_cmd_render_with_inputs(self, capsys):
         from effgen.cli.playground import cmd_render
 
@@ -146,6 +164,110 @@ class TestNonInteractive:
 
         rc = cmd_render("business.elevator_pitch.v1", {})
         assert rc == 0
+
+
+# -------------------------------------------------------------------------
+# --input validation against input_schema
+# -------------------------------------------------------------------------
+
+class TestInputValidation:
+    def test_array_field_passed_as_string_is_rejected(self, capsys):
+        """A list-valued field passed as a string must fail closed, not
+        silently render one item per character."""
+        from effgen.cli.playground import cmd_render
+
+        rc = cmd_render(
+            "business.email_draft.v1",
+            {
+                "purpose": "announce a maintenance window",
+                "recipient": "all staff",
+                "key_points": "point one; point two; point three",
+                "tone": "formal",
+            },
+        )
+        assert rc == 1
+        captured = capsys.readouterr()
+        combined = " ".join((captured.out + captured.err).split())
+        assert "key_points" in combined
+        assert "not of type 'array'" in combined
+
+    def test_missing_required_field_is_rejected(self, capsys):
+        from effgen.cli.playground import cmd_render
+
+        rc = cmd_render(
+            "business.email_draft.v1",
+            {
+                "purpose": "announce a maintenance window",
+                "recipient": "all staff",
+                "key_points": ["point one", "point two"],
+                # "tone" omitted
+            },
+        )
+        assert rc == 1
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "tone" in combined
+        assert "required" in combined
+
+    def test_out_of_enum_value_is_rejected(self, capsys):
+        from effgen.cli.playground import cmd_render
+
+        rc = cmd_render(
+            "business.email_draft.v1",
+            {
+                "purpose": "announce a maintenance window",
+                "recipient": "all staff",
+                "key_points": ["point one", "point two"],
+                "tone": "urgent",
+            },
+        )
+        assert rc == 1
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "tone" in combined
+
+    def test_correct_array_input_renders(self, capsys):
+        from effgen.cli.playground import cmd_render
+
+        rc = cmd_render(
+            "business.email_draft.v1",
+            {
+                "purpose": "announce a maintenance window",
+                "recipient": "all staff",
+                "key_points": ["point one", "point two"],
+                "tone": "formal",
+            },
+        )
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "point one" in captured.out
+        assert "point two" in captured.out
+
+    def test_no_input_still_renders_fixture(self, capsys):
+        """Omitting --input entirely (empty dict) is not validated — it
+        renders the prompt's own fixture demo."""
+        from effgen.cli.playground import cmd_render
+
+        rc = cmd_render("business.email_draft.v1", {})
+        assert rc == 0
+
+    def test_cli_rejects_char_split_array_input(self, tmp_path):
+        import subprocess
+
+        bad_input = tmp_path / "bad.json"
+        bad_input.write_text(json.dumps({
+            "purpose": "announce a maintenance window",
+            "recipient": "all staff",
+            "key_points": "point one; point two",
+            "tone": "formal",
+        }))
+        result = subprocess.run(
+            [EFFGEN, "prompts", "render", "business.email_draft.v1",
+             "--input", str(bad_input)],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode != 0
+        assert "key_points" in result.stdout or "key_points" in result.stderr
 
 
 # -------------------------------------------------------------------------

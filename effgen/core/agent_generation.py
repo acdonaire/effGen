@@ -21,6 +21,7 @@ from ..models.errors import (
     ModelNotFoundError,
     ModelRefusalError,
     classify_provider_error,
+    simplify_embedded_provider_error,
 )
 from ..observability import get_logger as _get_obs_logger
 from ..utils.structured_logging import (
@@ -589,6 +590,10 @@ class AgentGenerationMixin:
         # the server's error envelope) doesn't get that prefix stacked twice.
         raw = getattr(exc, "message", None) or getattr(exc, "refusal_message", None)
         raw_message = raw if isinstance(raw, str) and raw else str(exc)
+        # An adapter's actionable message can embed a raw SDK error body
+        # ("Error code: 413 - {'error': {...}}") verbatim — collapse that to
+        # its inner text so the response shows prose, not a dumped structure.
+        raw_message = simplify_embedded_provider_error(raw_message)
         try:
             message = get_redactor().scrub(raw_message)
         except Exception:  # redaction must never mask the underlying error

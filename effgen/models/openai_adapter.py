@@ -149,7 +149,11 @@ class OpenAIAdapter(FunctionCallingModel):
         **kwargs,
     ):
         if model_name not in OPENAI_MODELS:
-            logger.warning(
+            # Informational fallback, not an actionable warning — a valid new
+            # or hot-swapped model id just isn't in the bundled catalog yet.
+            # Surfaced at INFO so it shows with --verbose without making a
+            # normal, successful run/chat turn look broken by default.
+            logger.info(
                 f"Model '{model_name}' is not in the OpenAI registry. "
                 f"Using conservative defaults (context=128k, pricing fallback). "
                 f"Call OpenAIAdapter.list_models() for registered ids."

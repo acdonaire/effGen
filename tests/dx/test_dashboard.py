@@ -86,6 +86,19 @@ class TestStaticFiles:
         html = (STATIC_DIR / "index.html").read_text()
         assert "chart.js" in html.lower() or "Chart.js" in html
 
+    def test_index_contains_auth_banner_element(self):
+        html = (STATIC_DIR / "index.html").read_text()
+        assert 'id="auth-banner"' in html
+
+    def test_app_js_shows_banner_on_401(self):
+        js = (STATIC_DIR / "app.js").read_text()
+        assert "showAuthBanner" in js
+        assert "status === 401" in js
+
+    def test_app_js_hides_banner_on_success(self):
+        js = (STATIC_DIR / "app.js").read_text()
+        assert "hideAuthBanner" in js
+
 
 # ---------------------------------------------------------------------------
 # Dashboard data builder
@@ -392,3 +405,53 @@ class TestDashboardAuth:
         client = TestClient(create_app(dev_mode=False), raise_server_exceptions=False)
         resp = client.get("/dashboardevil")
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# `effgen serve` startup banner + --help: the dashboard gap must be
+# discoverable without opening a browser and hitting a 401.
+# ---------------------------------------------------------------------------
+
+class TestServeDashboardDiscoverability:
+    def _run_serve(self, monkeypatch, capsys, **env):
+        from types import SimpleNamespace
+
+        import effgen.cli._main as _main
+
+        for var in ("EFFGEN_API_KEY", "EFFGEN_DEV_MODE", "EFFGEN_PUBLIC_DASHBOARD"):
+            monkeypatch.delenv(var, raising=False)
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
+
+        args = SimpleNamespace(host="127.0.0.1", port=8000, rate_limit=None, verbose=False)
+        cli = _main.CLIInterface()
+        rc = cli.serve_api(args)
+        assert rc == 0
+        return capsys.readouterr().out
+
+    def test_dashboard_line_flags_auth_by_default(self, monkeypatch, capsys):
+        pytest.importorskip("fastapi")
+        out = self._run_serve(monkeypatch, capsys)
+        assert "/dashboard" in out
+        assert "EFFGEN_PUBLIC_DASHBOARD" in out
+
+    def test_dashboard_line_omits_flag_when_public(self, monkeypatch, capsys):
+        pytest.importorskip("fastapi")
+        out = self._run_serve(monkeypatch, capsys, EFFGEN_PUBLIC_DASHBOARD="1")
+        dashboard_lines = [ln for ln in out.splitlines() if "/dashboard" in ln and "v1" not in ln.lower()]
+        assert dashboard_lines
+        assert "EFFGEN_PUBLIC_DASHBOARD" not in dashboard_lines[0]
+
+    def test_serve_help_documents_public_dashboard_var(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        scripts = Path(sys.executable).parent
+        effgen_bin = str(scripts / "effgen") if (scripts / "effgen").exists() else "effgen"
+        result = subprocess.run(
+            [effgen_bin, "serve", "--help"], capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0
+        assert "EFFGEN_PUBLIC_DASHBOARD" in result.stdout
