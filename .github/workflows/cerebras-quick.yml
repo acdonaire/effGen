@@ -144,11 +144,13 @@ jobs:
           def _gen():
               return adapter.generate(
                   "Reply with a single word: ALIVE",
-                  config=GenerationConfig(temperature=0.0, max_tokens=64),
+                  config=GenerationConfig(temperature=0.0, max_tokens=512),
               )
 
-          # gpt-oss-120b is a reasoning model: a tiny max_tokens cap is spent on
-          # reasoning tokens and leaves visible content empty, so give it room.
+          # gpt-oss-120b is a reasoning model: the reasoning pass alone spends
+          # ~70+ completion tokens before any visible content, so a small
+          # max_tokens cap finishes with finish_reason="length" and empty
+          # content. Budget enough room for the reasoning pass plus the answer.
           out = with_retry("generate", _gen)
           if not (out.text or "").strip():
               print(f"FAIL[{model_id}]: generate returned empty text")
