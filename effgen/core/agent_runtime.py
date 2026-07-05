@@ -463,11 +463,19 @@ class AgentRuntimeMixin:
             # by extension into the matching image/audio/video part, so
             # inputs=["photo.png"] works without importing image_from().
             if isinstance(part, str | _Path):
-                from effgen.core.multimodal import part_from
+                from effgen.core.multimodal import _document_extension, part_from
                 from effgen.errors import InvalidMultimodalContent
                 try:
                     part = part_from(part)
                 except InvalidMultimodalContent as exc:
+                    # A recognized document type already carries a complete hint
+                    # pointing at RAG ingestion / the pdf/excel tools; appending
+                    # the image_from import line would only send the user back to
+                    # the media wrappers that do not fit a document.
+                    if _document_extension(str(part)):
+                        raise TypeError(
+                            f"Agent.run(inputs=[...]) item {index}: {exc}"
+                        ) from exc
                     raise TypeError(
                         f"Agent.run(inputs=[...]) item {index}: {exc}. "
                         "Import the helper with: from effgen import image_from"

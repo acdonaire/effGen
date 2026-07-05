@@ -149,14 +149,50 @@ class TestDocumentIngester:
     def test_ingest_unsupported_extension_skipped(self, tmp_path: Path):
         (tmp_path / "ignore.xyz").write_text("should be ignored")
         (tmp_path / "keep.txt").write_text("should be kept")
-        chunks = DocumentIngester(show_progress=False).ingest(tmp_path)
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(tmp_path)
         assert len(chunks) == 1
         assert "kept" in chunks[0].content
+        # The unsupported file is reported, not silently dropped.
+        assert len(ingester.last_skipped) == 1
+        skipped_path, reason = ingester.last_skipped[0]
+        assert "ignore.xyz" in skipped_path
+        assert "unsupported extension '.xyz'" in reason
+        assert ".txt" in reason  # names the supported set
+
+    def test_ingest_directory_reports_every_unsupported_file(self, tmp_path: Path):
+        # A real-world folder mixing recognized and unrecognized formats: every
+        # file is accounted for, either indexed or named in last_skipped —
+        # never dropped without a trace.
+        (tmp_path / "report.txt").write_text("indexable content")
+        (tmp_path / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        (tmp_path / "deck.pptx").write_bytes(b"PK\x03\x04")
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(tmp_path)
+        indexed = {Path(c.source).name for c in chunks}
+        skipped = {Path(p).name for p, _ in ingester.last_skipped}
+        assert indexed == {"report.txt"}
+        assert skipped == {"photo.png", "deck.pptx"}
+
+    def test_ingest_single_unsupported_file_names_extension(self, tmp_path: Path):
+        f = tmp_path / "slides.pptx"
+        f.write_bytes(b"PK\x03\x04")
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(f)
+        assert chunks == []
+        assert len(ingester.last_skipped) == 1
+        _, reason = ingester.last_skipped[0]
+        assert "unsupported extension '.pptx'" in reason
 
     def test_ingest_empty_file(self, tmp_path: Path):
         (tmp_path / "empty.txt").write_text("")
-        chunks = DocumentIngester(show_progress=False).ingest(tmp_path)
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(tmp_path)
         assert chunks == []
+        # Distinct from an unsupported-extension skip reason.
+        _, reason = ingester.last_skipped[0]
+        assert "unsupported extension" not in reason
+        assert "no extractable text" in reason
 
     def test_ingest_large_file_chunks(self, tmp_path: Path):
         # Force chunking by using small chunk_size
@@ -177,6 +213,60 @@ class TestDocumentIngester:
         ingester.reset_dedupe()
         chunks3 = ingester.ingest(tmp_path)
         assert len(chunks3) == 1
+
+    def test_ingest_xlsx(self, tmp_path: Path):
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Budget"
+        ws.append(["Department", "Q1", "Q2"])
+        ws.append(["Engineering", 120000, 125000])
+        ws.append(["Marketing", 60000, 72000])
+        wb.properties.title = "FY26 Budget"
+        wb.properties.creator = "Finance Team"
+        f = tmp_path / "budget.xlsx"
+        wb.save(f)
+
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(f)
+        assert len(chunks) == 1
+        assert ingester.last_skipped == []
+        content = chunks[0].content
+        assert "Budget" in content
+        assert "Engineering" in content
+        assert "125000" in content
+        assert chunks[0].metadata["title"] == "FY26 Budget"
+        assert chunks[0].metadata["author"] == "Finance Team"
+        assert chunks[0].metadata["type"] == "xlsx"
+
+    def test_ingest_xlsx_multi_sheet(self, tmp_path: Path):
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws1 = wb.active
+        ws1.title = "Sales"
+        ws1.append(["region", "total"])
+        ws1.append(["West", 100])
+        ws2 = wb.create_sheet("Costs")
+        ws2.append(["category", "amount"])
+        ws2.append(["Shipping", 20])
+        f = tmp_path / "book.xlsx"
+        wb.save(f)
+
+        chunks = DocumentIngester(show_progress=False).ingest(f)
+        sheets = {c.metadata["sheet"] for c in chunks}
+        assert sheets == {"Sales", "Costs"}
+
+    def test_ingest_xlsx_empty_sheet_skipped(self, tmp_path: Path):
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        f = tmp_path / "blank.xlsx"
+        wb.save(f)  # default sheet with no data rows
+
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(f)
+        assert chunks == []
+        _, reason = ingester.last_skipped[0]
+        assert "no extractable text" in reason
 
     def _write_pdf(self, path: Path, lines: list[str]) -> None:
         reportlab = pytest.importorskip("reportlab")  # noqa: F841
@@ -246,6 +336,40 @@ class TestDocumentIngester:
         assert "scanned.pdf" in skipped_path
         assert "scanned" in reason.lower() or "image-only" in reason.lower()
         assert "OCR" in reason
+
+    def test_pdf_creation_date_normalized_to_iso8601(self, tmp_path: Path):
+        pytest.importorskip("pypdf")
+        pdf = tmp_path / "dated.pdf"
+        self._write_pdf(pdf, ["Some content."])
+        chunks = DocumentIngester(show_progress=False).ingest(pdf)
+        date = chunks[0].metadata.get("date")
+        assert date is not None
+        assert not date.startswith("D:")
+        # ISO-8601: YYYY-MM-DDTHH:MM:SS with a numeric or Z offset.
+        import re
+        assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)?$", date)
+
+
+class TestNormalizePdfDate:
+    def test_normalizes_with_timezone(self):
+        from effgen.rag.ingest import _normalize_pdf_date
+
+        assert _normalize_pdf_date("D:20260705162102-04'00'") == "2026-07-05T16:21:02-04:00"
+
+    def test_normalizes_without_timezone(self):
+        from effgen.rag.ingest import _normalize_pdf_date
+
+        assert _normalize_pdf_date("D:20260705162102") == "2026-07-05T16:21:02"
+
+    def test_leaves_non_matching_value_unchanged(self):
+        from effgen.rag.ingest import _normalize_pdf_date
+
+        assert _normalize_pdf_date("not a pdf date") == "not a pdf date"
+
+    def test_empty_string_unchanged(self):
+        from effgen.rag.ingest import _normalize_pdf_date
+
+        assert _normalize_pdf_date("") == ""
 
 
 # ---------------------------------------------------------------------------

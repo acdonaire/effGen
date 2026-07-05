@@ -58,6 +58,16 @@ class TestPartFrom:
         with pytest.raises(InvalidMultimodalContent, match="infer the media type"):
             part_from(str(p))
 
+    @pytest.mark.parametrize("name", ["report.pdf", "notes.docx", "budget.xlsx", "data.csv"])
+    def test_document_extension_points_to_rag_not_media_wrappers(self, name):
+        # A document handed to the image/audio/video path gets a hint toward
+        # RAG ingestion / the pdf/excel tools, not the unrelated media wrappers.
+        with pytest.raises(InvalidMultimodalContent) as exc:
+            part_from(f"/tmp/{name}")
+        msg = str(exc.value)
+        assert "rag" in msg.lower()
+        assert "image_from" not in msg
+
 
 class TestRunInputsCoercion:
     """`_build_multimodal_prompt` accepts bare paths and gives clear errors."""
@@ -91,3 +101,14 @@ class TestRunInputsCoercion:
             agent._build_multimodal_prompt("x", ["/no/such/file.png"])
         msg = str(exc.value)
         assert "from effgen import image_from" in msg
+
+    def test_document_input_error_points_to_rag_not_media_helpers(self):
+        # inputs=["report.pdf"] is the natural (wrong) call for a document. The
+        # error should route to RAG / the pdf-tool, without the image_from import
+        # line that only fits an image/audio/video mistake.
+        agent = self._agent()
+        with pytest.raises(TypeError) as exc:
+            agent._build_multimodal_prompt("x", ["/tmp/report.pdf"])
+        msg = str(exc.value)
+        assert "rag" in msg.lower()
+        assert "from effgen import image_from" not in msg

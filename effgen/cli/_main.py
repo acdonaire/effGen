@@ -715,9 +715,53 @@ class CLIInterface:
         Args:
             args: Parsed command-line arguments
         """
+        input_files = getattr(args, 'input_files', None)
+
         # Check if we need to launch interactive wizard
-        if args.task is None:
+        if args.task is None and not input_files:
             return self.interactive_wizard(args)
+        if args.task is None:
+            args.task = ""
+
+        # Attach --file/--input content: an image becomes multimodal `inputs=`;
+        # a document is read with the same loaders RAG ingestion uses and
+        # prepended to the task as text context.
+        extra_inputs: list[Any] = []
+        if input_files:
+            from effgen.core.multimodal import _media_kind_from_name, image_from
+            from effgen.rag.ingest import DocumentIngester
+
+            doc_sections = []
+            for file_path in input_files:
+                p = Path(file_path)
+                if not p.exists():
+                    self.print_error(f"--file: file not found: {file_path}")
+                    return 1
+                if _media_kind_from_name(str(p)) == "image":
+                    extra_inputs.append(image_from(p))
+                    continue
+                ingester = DocumentIngester(
+                    show_progress=False, chunk_size=10_000_000,
+                    chunk_overlap=0, dedupe=False,
+                )
+                doc_chunks = ingester.ingest(p)
+                if not doc_chunks:
+                    reason = (
+                        ingester.last_skipped[0][1] if ingester.last_skipped
+                        else "no extractable text"
+                    )
+                    self.print_error(f"--file: could not read {file_path}: {reason}")
+                    return 1
+                doc_text = "\n\n".join(c.content for c in doc_chunks)
+                doc_sections.append(f"--- {p.name} ---\n{doc_text}")
+            if doc_sections:
+                args.task = "\n\n".join(doc_sections) + "\n\n---\n\n" + args.task
+            if extra_inputs and getattr(args, 'stream', False):
+                self.print_error(
+                    "--file with an image is not supported together with "
+                    "--stream; drop --stream or attach a document instead."
+                )
+                return 1
 
         # Headless JSON contract: keep stdout pure (only the JSON result object)
         # by routing all human chatter to stderr and never streaming. `-q --json`
@@ -870,6 +914,9 @@ class CLIInterface:
                 print()  # New line after streaming
             else:
                 # Regular output with a live, accurate status line.
+                run_kwargs = _checkpoint_run_kwargs(args)
+                if extra_inputs:
+                    run_kwargs['inputs'] = extra_inputs
                 try:
                     if animate:
                         reasoning = _progress.is_reasoning_agent(agent)
@@ -879,11 +926,11 @@ class CLIInterface:
                             reasoning=reasoning,
                             tracker=agent.execution_tracker,
                         ):
-                            response = agent.run(args.task, mode=mode, **_checkpoint_run_kwargs(args))
+                            response = agent.run(args.task, mode=mode, **run_kwargs)
                     else:
                         if not quiet:
                             self.print("Thinking...")
-                        response = agent.run(args.task, mode=mode, **_checkpoint_run_kwargs(args))
+                        response = agent.run(args.task, mode=mode, **run_kwargs)
                 except KeyboardInterrupt:
                     self._handle_interrupt(agent)
                     return 130
@@ -2619,6 +2666,13 @@ Model id formats:
              '--session-id` and `effgen sessions`). Recalls prior turns and '
              'saves new ones. (Distinct from `effgen resume --checkpoint`, which '
              'restores a mid-run checkpoint snapshot.)',
+    )
+    run_parser.add_argument(
+        '--file', '--input', dest='input_files', action='append', metavar='PATH',
+        help='Attach a file to the task. An image (.png/.jpg/.gif/.webp/...) is '
+             'passed as multimodal input; a document (.pdf/.docx/.xlsx/.txt/'
+             '.md/.csv/...) is read and prepended to the task as context, using '
+             'the same loaders RAG ingestion uses. Repeatable.',
     )
 
     # Resume command

@@ -4,7 +4,7 @@ Document ingestion pipeline.
 Loads documents from many file formats, extracts metadata, deduplicates
 content, and produces a list of `IngestedChunk` objects ready for indexing.
 
-All third-party loaders (pymupdf, python-docx, bs4, ebooklib) are OPTIONAL.
+All third-party loaders (pymupdf, python-docx, bs4, ebooklib, openpyxl) are OPTIONAL.
 Core formats (txt, md, json, jsonl, csv, html via stdlib) work with no
 external dependencies.
 """
@@ -196,6 +196,38 @@ def _load_html(path: Path) -> list[dict[str, Any]]:
 # Optional loaders
 # ---------------------------------------------------------------------------
 
+_PDF_DATE_RE = re.compile(
+    r"^D:(?P<year>\d{4})(?P<month>\d{2})(?P<day>\d{2})"
+    r"(?P<hour>\d{2})?(?P<minute>\d{2})?(?P<second>\d{2})?"
+    r"(?P<tz>Z|[+-]\d{2}'?\d{2}'?)?"
+)
+
+
+def _normalize_pdf_date(raw: str) -> str:
+    """Convert a PDF ``D:YYYYMMDDHHmmSS±HH'mm'`` date to ISO-8601.
+
+    Returns the input unchanged if it does not match the PDF date format.
+    """
+    if not raw:
+        return raw
+    m = _PDF_DATE_RE.match(raw.strip())
+    if not m:
+        return raw
+    year, month, day = m.group("year"), m.group("month"), m.group("day")
+    hour = m.group("hour") or "00"
+    minute = m.group("minute") or "00"
+    second = m.group("second") or "00"
+    iso = f"{year}-{month}-{day}T{hour}:{minute}:{second}"
+    tz = m.group("tz")
+    if tz == "Z":
+        iso += "+00:00"
+    elif tz:
+        tz_digits = tz.replace("'", "")
+        sign, tz_hour, tz_minute = tz_digits[0], tz_digits[1:3], tz_digits[3:5] or "00"
+        iso += f"{sign}{tz_hour}:{tz_minute}"
+    return iso
+
+
 def _load_pdf_pymupdf(path: Path) -> list[dict[str, Any]]:
     import fitz  # type: ignore  # pymupdf
 
@@ -207,7 +239,8 @@ def _load_pdf_pymupdf(path: Path) -> list[dict[str, Any]]:
         for k in ("title", "author", "subject", "creationDate"):
             v = info.get(k)
             if v:
-                metadata[k.lower().replace("creationdate", "date")] = v
+                dest = "date" if k == "creationDate" else k.lower()
+                metadata[dest] = _normalize_pdf_date(v) if dest == "date" else v
     except Exception:  # best-effort metadata; the document still ingests without it
         pass
     for page in doc:
@@ -228,7 +261,7 @@ def _load_pdf_pypdf(path: Path) -> list[dict[str, Any]]:
                               ("/Subject", "subject"), ("/CreationDate", "date")):
             v = info.get(raw_key)
             if v:
-                metadata[dest] = str(v)
+                metadata[dest] = _normalize_pdf_date(str(v)) if dest == "date" else str(v)
     except Exception:  # best-effort metadata; the document still ingests without it
         pass
     return [{"content": "\n\n".join(pages), "metadata": metadata}]
@@ -298,6 +331,48 @@ def _load_docx(path: Path) -> list[dict[str, Any]]:
     return [{"content": "\n\n".join(paragraphs), "metadata": meta}]
 
 
+def _load_xlsx(path: Path) -> list[dict[str, Any]]:
+    try:
+        import openpyxl  # type: ignore
+    except ImportError as e:
+        raise ImportError(
+            "XLSX support requires openpyxl. Install with: pip install openpyxl "
+            "(or 'effgen[documents]')."
+        ) from e
+
+    wb = openpyxl.load_workbook(str(path), data_only=True)
+    workbook_meta: dict[str, Any] = {"type": "xlsx", "sheet_count": len(wb.sheetnames)}
+    try:
+        props = wb.properties
+        if props.title:
+            workbook_meta["title"] = props.title
+        if props.creator:
+            workbook_meta["author"] = props.creator
+        if props.created:
+            workbook_meta["date"] = (
+                props.created.isoformat()
+                if hasattr(props.created, "isoformat")
+                else str(props.created)
+            )
+    except Exception:  # best-effort metadata; the document still ingests without it
+        pass
+
+    docs: list[dict[str, Any]] = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows = [list(row) for row in ws.iter_rows(values_only=True)]
+        if not rows or all(all(cell is None for cell in row) for row in rows):
+            continue
+        lines = [" | ".join("" if cell is None else str(cell) for cell in row) for row in rows]
+        sheet_meta = {**workbook_meta, "sheet": sheet_name}
+        docs.append({
+            "content": f"Sheet: {sheet_name}\n" + "\n".join(lines),
+            "metadata": sheet_meta,
+        })
+    wb.close()
+    return docs
+
+
 def _load_epub(path: Path) -> list[dict[str, Any]]:
     try:
         import ebooklib  # type: ignore
@@ -347,6 +422,7 @@ LOADERS: dict[str, Callable[[Path], list[dict[str, Any]]]] = {
     ".pdf": _load_pdf,
     ".docx": _load_docx,
     ".epub": _load_epub,
+    ".xlsx": _load_xlsx,
 }
 
 
@@ -360,7 +436,7 @@ class DocumentIngester:
     return `IngestedChunk` objects ready for indexing.
 
     Features:
-    - Multi-format loaders (txt, md, json, jsonl, csv, html, pdf*, docx*, epub*)
+    - Multi-format loaders (txt, md, json, jsonl, csv, html, pdf*, docx*, epub*, xlsx*)
     - Metadata extraction (title, author, date, source)
     - Content deduplication via SHA-256 hash of chunk text
     - Progress tracking via tqdm (optional)
@@ -414,6 +490,7 @@ class DocumentIngester:
         Returns:
             A list of `IngestedChunk` objects.
         """
+        self.last_skipped = []
         paths: list[Path] = []
         if isinstance(source, list | tuple):
             for s in source:
@@ -421,14 +498,20 @@ class DocumentIngester:
         else:
             paths.extend(self._expand(Path(source), recursive))
 
-        self.last_skipped = []
         chunks: list[IngestedChunk] = []
         for path in self._iter_with_progress(paths, "Ingesting"):
+            ext = path.suffix.lower()
+            if ext not in LOADERS:
+                # Every path handed to ingest() is accounted for: an
+                # extension outside LOADERS is reported rather than dropped,
+                # whether it came from a single path or a directory scan.
+                self.last_skipped.append((str(path), self._unsupported_reason(ext)))
+                continue
             try:
                 file_chunks = self._ingest_file(path)
                 if file_chunks:
                     chunks.extend(file_chunks)
-                elif path.suffix.lower() == ".pdf":
+                elif ext == ".pdf":
                     # A PDF loads but yields no text most often because it is
                     # a scanned/image-only PDF: the pages are images with no
                     # text layer, and ingestion does not run OCR on them.
@@ -438,10 +521,12 @@ class DocumentIngester:
                         "or image-only PDF); OCR is not applied during ingestion",
                     ))
                 else:
-                    # Loaded but produced nothing (e.g. an unsupported extension).
-                    self.last_skipped.append(
-                        (str(path), "no extractable text or unsupported file type")
-                    )
+                    # A supported extension that loaded but produced no
+                    # usable content (empty file, blank sheet, ...).
+                    self.last_skipped.append((
+                        str(path),
+                        "file contained no extractable text (empty or whitespace-only)",
+                    ))
             except ImportError as e:
                 logger.warning("Skipping %s: %s", path, e)
                 self.last_skipped.append((str(path), str(e)))
@@ -449,18 +534,25 @@ class DocumentIngester:
                 logger.warning("Failed to ingest %s: %s", path, e)
                 self.last_skipped.append((str(path), str(e)))
 
-        logger.info("Ingested %d chunks from %d files", len(chunks), len(paths))
+        logger.info(
+            "Ingested %d chunks from %d file(s) (%d skipped)",
+            len(chunks), len(paths), len(self.last_skipped),
+        )
         return chunks
+
+    def _unsupported_reason(self, ext: str) -> str:
+        label = ext if ext else "(no extension)"
+        return (
+            f"unsupported extension '{label}'; supported: "
+            f"{', '.join(self.supported_extensions())}"
+        )
 
     def _expand(self, path: Path, recursive: bool) -> list[Path]:
         if path.is_file():
             return [path]
         if path.is_dir():
             pattern = "**/*" if recursive else "*"
-            return [
-                p for p in path.glob(pattern)
-                if p.is_file() and p.suffix.lower() in LOADERS
-            ]
+            return [p for p in path.glob(pattern) if p.is_file()]
         logger.warning("Path does not exist: %s", path)
         return []
 

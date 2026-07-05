@@ -317,6 +317,24 @@ def _media_kind_from_name(name: str) -> str | None:
     return None
 
 
+def _document_extension(name: str) -> str | None:
+    """Return the extension if ``name`` looks like a document effGen can read
+    via ingestion (PDF/DOCX/XLSX/text/...) rather than as image/audio/video.
+
+    Returns ``None`` for anything not recognized as a document format, so
+    callers can fall through to their own "unknown media type" handling.
+    """
+    base = name.split("?", 1)[0].split("#", 1)[0]
+    ext = os.path.splitext(base)[1].lower()
+    if not ext:
+        return None
+    try:
+        from effgen.rag.ingest import LOADERS
+    except ImportError:
+        return None
+    return ext if ext in LOADERS else None
+
+
 def part_from(source: str | Path) -> ImagePart | AudioPart | VideoPart:
     """Wrap a bare file path or URL as the matching multimodal ContentPart.
 
@@ -329,7 +347,10 @@ def part_from(source: str | Path) -> ImagePart | AudioPart | VideoPart:
     Raises:
         InvalidMultimodalContent: if the media kind can't be determined from the
             name — pass ``image_from(...)`` / ``audio_from(...)`` /
-            ``video_from(...)`` explicitly in that case.
+            ``video_from(...)`` explicitly in that case. A recognized document
+            extension (PDF/DOCX/XLSX/text/...) raises a message that points at
+            RAG ingestion or the ``pdf``/``excel`` tools instead, since none of
+            the three media wrappers fit a document.
     """
     name = str(source)
     kind = _media_kind_from_name(name)
@@ -339,6 +360,15 @@ def part_from(source: str | Path) -> ImagePart | AudioPart | VideoPart:
         return audio_from(source)
     if kind == "video":
         return video_from(source)
+    doc_ext = _document_extension(name)
+    if doc_ext:
+        raise InvalidMultimodalContent(
+            "source",
+            f"{name!r} is a document ('{doc_ext}'), not an image, audio, or "
+            "video file. Read it with create_agent(\"rag\", "
+            f"knowledge_base=[{name!r}]) to answer questions grounded in its "
+            "content, or extract its text directly with the 'pdf'/'excel' tool.",
+        )
     raise InvalidMultimodalContent(
         "source",
         f"Could not infer the media type of {name!r} from its extension. "
