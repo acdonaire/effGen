@@ -91,17 +91,18 @@ All tools extend `BaseTool` from `effgen.tools.base_tool`:
 from effgen.tools.base_tool import BaseTool, ToolMetadata, ToolCategory, ParameterSpec, ParameterType
 
 class MyTool(BaseTool):
-    @property
-    def metadata(self) -> ToolMetadata:
-        return ToolMetadata(
-            name="my_tool",
-            description="What this tool does",
-            category=ToolCategory.DATA_PROCESSING,
-            parameters=[
-                ParameterSpec(name="input", type=ParameterType.STRING,
-                              description="Input text", required=True),
-            ],
-            returns={"type": "object"},
+    def __init__(self):
+        super().__init__(
+            metadata=ToolMetadata(
+                name="my_tool",
+                description="What this tool does",
+                category=ToolCategory.DATA_PROCESSING,
+                parameters=[
+                    ParameterSpec(name="input", type=ParameterType.STRING,
+                                  description="Input text", required=True),
+                ],
+                returns={"type": "object"},
+            )
         )
 
     async def _execute(self, **kwargs) -> Dict[str, Any]:

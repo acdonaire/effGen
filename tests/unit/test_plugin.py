@@ -7,8 +7,15 @@ from unittest.mock import patch
 
 import pytest
 
+from effgen.tools.base_tool import (
+    BaseTool,
+    ParameterSpec,
+    ParameterType,
+    ToolCategory,
+    ToolMetadata,
+)
 from effgen.tools.plugin import PluginManager, ToolPlugin
-from effgen.tools.registry import get_registry
+from effgen.tools.registry import ToolRegistry, get_registry
 
 
 @pytest.fixture(autouse=True)
@@ -52,6 +59,107 @@ class TestToolPluginBase:
         registry = get_registry()
         registered = plugin.register(registry)
         assert registered == []
+
+    def test_register_accepts_instance_alongside_class(self):
+        """A ToolPlugin.tools list may mix BaseTool subclasses and instances
+        (e.g. an @tool-decorated function), matching what register_tool accepts.
+        """
+        from effgen import tool
+
+        class Echo(BaseTool):
+            def __init__(self):
+                super().__init__(metadata=ToolMetadata(
+                    name="echo_plugin_tool",
+                    description="Echo",
+                    category=ToolCategory.SYSTEM,
+                    parameters=[ParameterSpec(
+                        name="msg", type=ParameterType.STRING,
+                        description="msg", required=True,
+                    )],
+                ))
+
+            async def _execute(self, **kwargs):
+                return {"echo": kwargs["msg"]}
+
+        @tool
+        def triple_plugin_tool(x: int) -> int:
+            """Triple x.
+
+            Args:
+                x: number to triple.
+            """
+            return x * 3
+
+        class MixedPlugin(ToolPlugin):
+            name = "mixed"
+            version = "1.0.0"
+            tools = [Echo, triple_plugin_tool]
+
+        registry = ToolRegistry()
+        registered = MixedPlugin().register(registry)
+        assert set(registered) == {"echo_plugin_tool", "triple_plugin_tool"}
+        assert registry.is_registered("echo_plugin_tool")
+        assert registry.is_registered("triple_plugin_tool")
+
+        async def _run():
+            tool_obj = await registry.get_tool("triple_plugin_tool")
+            return await tool_obj.execute(x=7)
+
+        assert asyncio.run(_run()).output == 21
+
+
+class TestRegisterToolAcceptsInstances:
+    """register_tool() takes a BaseTool subclass OR a ready-made instance."""
+
+    def test_registers_function_tool_instance(self):
+        from effgen import tool
+        from effgen.tools.registry import ToolRegistrationError
+
+        @tool
+        def double_reg_test(x: int) -> int:
+            """Double x.
+
+            Args:
+                x: number to double.
+            """
+            return x * 2
+
+        registry = ToolRegistry()
+        registry.register_tool(double_reg_test)
+        assert registry.is_registered("double_reg_test")
+
+        async def _run():
+            t = await registry.get_tool("double_reg_test")
+            return await t.execute(x=5)
+
+        assert asyncio.run(_run()).output == 10
+
+        with pytest.raises(ToolRegistrationError, match="BaseTool"):
+            registry.register_tool(123)
+
+        def plain_fn(x: int) -> int:
+            return x
+
+        with pytest.raises(ToolRegistrationError, match="Tool.from_function"):
+            registry.register_tool(plain_fn)
+
+    def test_class_registration_still_works(self):
+        """The original class-based path is unaffected (backward compatible)."""
+        class Greeter(BaseTool):
+            def __init__(self):
+                super().__init__(metadata=ToolMetadata(
+                    name="greeter_reg_test",
+                    description="Greets.",
+                    category=ToolCategory.SYSTEM,
+                    parameters=[],
+                ))
+
+            async def _execute(self, **kwargs):
+                return {"greeting": "hi"}
+
+        registry = ToolRegistry()
+        registry.register_tool(Greeter)
+        assert registry.is_registered("greeter_reg_test")
 
 
 class TestPluginManagerDiscovery:

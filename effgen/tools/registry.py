@@ -14,6 +14,7 @@ import inspect
 import logging
 import os
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -67,14 +68,18 @@ class ToolRegistry:
 
     Example:
         registry = ToolRegistry()
-        registry.register_tool(MyTool)
+        registry.register_tool(MyTool)          # a BaseTool subclass
+        registry.register_tool(my_function_tool)  # or a BaseTool instance (e.g. from @tool)
         tool = await registry.get_tool("my_tool")
         result = await tool.execute(param="value")
     """
 
     def __init__(self):
         """Initialize the tool registry."""
-        self._tools: dict[str, type[BaseTool]] = {}
+        # A registered entry is either a class (constructed fresh on first
+        # lookup) or a zero-arg factory closing over a pre-built instance
+        # (registered directly, e.g. a ``@tool``-decorated function).
+        self._tools: dict[str, type[BaseTool] | Callable[[], BaseTool]] = {}
         self._instances: dict[str, BaseTool] = {}
         self._metadata_cache: dict[str, ToolMetadata] = {}
         self._dependencies: dict[str, set[str]] = defaultdict(set)
@@ -135,36 +140,52 @@ class ToolRegistry:
 
     def register_tool(
         self,
-        tool_class: type[BaseTool],
+        tool_class: type[BaseTool] | BaseTool,
         override: bool = False
     ) -> None:
         """
-        Register a tool class with the registry.
+        Register a tool with the registry.
+
+        Accepts either a ``BaseTool`` subclass (the registry constructs and owns
+        each instance) or a ready-made ``BaseTool`` instance — including the
+        ``FunctionTool`` produced by ``@tool`` / ``Tool.from_function``, which
+        returns instances rather than classes. A registered instance is reused
+        for every lookup instead of being reconstructed.
 
         Args:
-            tool_class: The tool class to register (must inherit from BaseTool)
+            tool_class: A ``BaseTool`` subclass, or a ``BaseTool`` instance.
             override: Whether to override existing tool with same name
 
         Raises:
             ToolRegistrationError: If registration fails
         """
-        # Validate tool class
-        if not inspect.isclass(tool_class):
-            raise ToolRegistrationError(f"Expected class, got {type(tool_class)}")
-
-        if not issubclass(tool_class, BaseTool):
+        if isinstance(tool_class, BaseTool):
+            instance = tool_class
+            metadata = instance.metadata
+            name = metadata.name
+            constructor: Callable[[], BaseTool] = lambda: instance  # noqa: E731
+            dependencies = instance.dependencies
+        elif inspect.isclass(tool_class) and issubclass(tool_class, BaseTool):
+            # Create temporary instance to get metadata
+            try:
+                temp_instance = tool_class()
+                metadata = temp_instance.metadata
+                name = metadata.name
+            except Exception as e:
+                raise ToolRegistrationError(
+                    f"Failed to instantiate tool {tool_class.__name__}: {e}"
+                )
+            constructor = tool_class
+            dependencies = temp_instance.dependencies
+        elif inspect.isclass(tool_class):
             raise ToolRegistrationError(
                 f"Tool class {tool_class.__name__} must inherit from BaseTool"
             )
-
-        # Create temporary instance to get metadata
-        try:
-            temp_instance = tool_class()
-            metadata = temp_instance.metadata
-            name = metadata.name
-        except Exception as e:
+        else:
             raise ToolRegistrationError(
-                f"Failed to instantiate tool {tool_class.__name__}: {e}"
+                f"Expected a BaseTool subclass or instance, got {type(tool_class)!r}. "
+                "A plain function must be wrapped first, e.g. "
+                "register_tool(effgen.tool(fn)) or register_tool(Tool.from_function(fn))."
             )
 
         # Check for name collision
@@ -174,13 +195,13 @@ class ToolRegistry:
             return
 
         # Register the tool
-        self._tools[name] = tool_class
+        self._tools[name] = constructor
         self._metadata_cache[name] = metadata
         self._categories[metadata.category].add(name)
 
         # Store dependencies
-        if temp_instance.dependencies:
-            self._dependencies[name] = set(temp_instance.dependencies)
+        if dependencies:
+            self._dependencies[name] = set(dependencies)
 
         logger.debug(f"Registered tool: {name} (v{metadata.version})")
 

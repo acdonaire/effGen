@@ -161,6 +161,91 @@ def test_tool_usable_in_agent_config():
     assert "ping" in {t.name for t in cfg.tools}
 
 
+def test_tool_array_param_carries_element_type():
+    """list[str]/list[int] populate schema `items`, not a bare `array`."""
+    from effgen import tool
+
+    @tool
+    def join_tags(tags: list[str]) -> str:
+        """Join tags.
+
+        Args:
+            tags: The tags to join.
+        """
+        return ",".join(tags)
+
+    @tool
+    def sum_ints(values: list[int]) -> int:
+        """Sum integers.
+
+        Args:
+            values: The integers to sum.
+        """
+        return sum(values)
+
+    tags_schema = join_tags.metadata.to_json_schema()["parameters"]["properties"]["tags"]
+    assert tags_schema["items"] == {"type": "string"}
+
+    values_schema = sum_ints.metadata.to_json_schema()["parameters"]["properties"]["values"]
+    assert values_schema["items"] == {"type": "integer"}
+
+
+def test_tool_untyped_array_param_has_no_items():
+    """A bare `list` annotation (no element type) still emits no `items` — no regression."""
+    from effgen import tool
+
+    @tool
+    def echo_list(items: list) -> list:
+        """Echo a list.
+
+        Args:
+            items: items to echo.
+        """
+        return items
+
+    schema = echo_list.metadata.to_json_schema()["parameters"]["properties"]["items"]
+    assert schema["type"] == "array"
+    assert "items" not in schema
+
+
+def test_tool_unknown_category_warns_and_falls_back_to_system(caplog):
+    """@tool(category="typo") warns naming the bad value + valid ones, then falls back."""
+    from effgen import tool
+    from effgen.tools.base_tool import ToolCategory
+
+    with caplog.at_level("WARNING"):
+        @tool(category="not_a_real_category")
+        def f(x: int) -> int:
+            """f.
+
+            Args:
+                x: x
+            """
+            return x
+
+    assert f.metadata.category == ToolCategory.SYSTEM
+    assert any("not_a_real_category" in rec.message for rec in caplog.records)
+    assert any("computation" in rec.message for rec in caplog.records)  # a valid value is named
+
+
+def test_tool_known_category_string_is_quiet(caplog):
+    from effgen import tool
+    from effgen.tools.base_tool import ToolCategory
+
+    with caplog.at_level("WARNING"):
+        @tool(category="computation")
+        def g(x: int) -> int:
+            """g.
+
+            Args:
+                x: x
+            """
+            return x
+
+    assert g.metadata.category == ToolCategory.COMPUTATION
+    assert not caplog.records
+
+
 # --------------------------------------------------------------------------- #
 # Preset errors + zero-config guidance
 # --------------------------------------------------------------------------- #

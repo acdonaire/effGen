@@ -16,7 +16,7 @@ Your plugin's tools will be auto-discovered by effGen via Python entry points.
 
 ## Writing a Tool
 
-Create a class that extends `BaseTool`:
+Create a class that extends `BaseTool`, passing its `ToolMetadata` to `super().__init__()`:
 
 ```python
 from effgen.tools.base_tool import (
@@ -24,26 +24,37 @@ from effgen.tools.base_tool import (
 )
 
 class MyTool(BaseTool):
-    @property
-    def metadata(self) -> ToolMetadata:
-        return ToolMetadata(
-            name="my_tool",
-            description="Does something useful.",
-            category=ToolCategory.DATA_PROCESSING,
-            parameters=[
-                ParameterSpec(
-                    name="input",
-                    type=ParameterType.STRING,
-                    description="Input text",
-                    required=True,
-                ),
-            ],
-            returns={"type": "object", "properties": {"result": {"type": "string"}}},
+    def __init__(self):
+        super().__init__(
+            metadata=ToolMetadata(
+                name="my_tool",
+                description="Does something useful.",
+                category=ToolCategory.DATA_PROCESSING,
+                parameters=[
+                    ParameterSpec(
+                        name="input",
+                        type=ParameterType.STRING,
+                        description="Input text",
+                        required=True,
+                    ),
+                ],
+                returns={"type": "object", "properties": {"result": {"type": "string"}}},
+            )
         )
 
     async def _execute(self, **kwargs):
         return {"result": kwargs["input"].upper()}
 ```
+
+`MyTool()` takes no arguments — `register_tool` and the plugin loader both construct
+tools this way — so the metadata must come from `__init__`, not from overriding the
+`metadata` property directly.
+
+For a quick one-off tool, the `@tool` decorator (or `Tool.from_function`) skips this
+boilerplate entirely and infers the schema from a plain function's signature and
+docstring — see `docs/tutorials/custom-tools.md`. Its output can be passed directly
+into `Agent(tools=[...])`, and also registered directly with `register_tool(...)` or
+listed in a `ToolPlugin.tools = [...]` alongside `BaseTool` subclasses.
 
 ## Registering Tools via Plugin Class
 

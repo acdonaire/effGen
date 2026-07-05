@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import types
 import typing
 from collections.abc import Callable
@@ -53,6 +54,8 @@ from .base_tool import (
 )
 
 __all__ = ["FunctionTool", "Tool", "tool"]
+
+_logger = logging.getLogger(__name__)
 
 
 # Python annotation -> effGen ParameterType. Anything unrecognised maps to ANY
@@ -99,13 +102,32 @@ def _unwrap_annotation(annotation: Any) -> tuple[Any, list[Any] | None]:
     return annotation, None
 
 
-def _param_type_of(annotation: Any) -> tuple[ParameterType, list[Any] | None]:
+def _array_item_type(annotation: Any) -> ParameterType | None:
+    """Resolve the element type of a ``list[T]``/``tuple[T, ...]`` annotation.
+
+    Returns ``None`` when *annotation* isn't a parametrised sequence, or its
+    element type isn't one ``ParameterType`` can represent — the caller then
+    emits an array schema with no ``items``, same as before this existed.
+    """
+    args = get_args(annotation)
+    if not args:
+        return None
+    elem, _ = _unwrap_annotation(args[0])
+    elem = get_origin(elem) or elem
+    if isinstance(elem, type):
+        return _TYPE_MAP.get(elem)
+    return None
+
+
+def _param_type_of(annotation: Any) -> tuple[ParameterType, list[Any] | None, ParameterType | None]:
     base, enum = _unwrap_annotation(annotation)
-    # Use the origin for parametrised generics (list[int] -> list).
-    base = get_origin(base) or base
-    if isinstance(base, type):
-        return _TYPE_MAP.get(base, ParameterType.ANY), enum
-    return ParameterType.ANY, enum
+    items_type = None
+    origin = get_origin(base) or base
+    if isinstance(origin, type) and origin in (list, tuple):
+        items_type = _array_item_type(base)
+    if isinstance(origin, type):
+        return _TYPE_MAP.get(origin, ParameterType.ANY), enum, items_type
+    return ParameterType.ANY, enum, items_type
 
 
 def _parse_docstring(
@@ -255,7 +277,7 @@ class FunctionTool(BaseTool):
                 # *args/**kwargs can't be described as named schema params.
                 continue
             annotation = hints.get(pname, param.annotation)
-            ptype, enum = _param_type_of(annotation)
+            ptype, enum, items_type = _param_type_of(annotation)
             required = param.default is inspect.Parameter.empty
             default = None if param.default is inspect.Parameter.empty else param.default
             parameters.append(
@@ -266,6 +288,7 @@ class FunctionTool(BaseTool):
                     required=required,
                     default=default,
                     enum=enum,
+                    items_type=items_type,
                 )
             )
 
@@ -273,6 +296,12 @@ class FunctionTool(BaseTool):
             try:
                 category = ToolCategory(category)
             except ValueError:
+                valid = ", ".join(c.value for c in ToolCategory)
+                _logger.warning(
+                    "@tool: unknown category %r for '%s' — falling back to %s. "
+                    "Valid values: %s.",
+                    category, tool_name, ToolCategory.SYSTEM.value, valid,
+                )
                 category = None
         tool_category = category or ToolCategory.SYSTEM
 

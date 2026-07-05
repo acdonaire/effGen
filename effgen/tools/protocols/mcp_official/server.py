@@ -111,9 +111,14 @@ class EffGenMCPServer:
         expose_unsafe_tools: bool = False,
         allowed_tools: list[str] | None = None,
         blocked_tools: list[str] | None = None,
+        config: EffGenMCPServerConfig | None = None,
     ):
         """
         Initialize EffGen MCP server.
+
+        Takes either the fields directly (``name=``, ``version=``, ...) or a
+        single ``config=EffGenMCPServerConfig(...)``. When both are given,
+        ``config`` wins for every field it sets.
 
         Args:
             name: Server name
@@ -125,7 +130,17 @@ class EffGenMCPServer:
             allowed_tools: If set, expose ONLY these tools (an explicit opt-in
                 that overrides the unsafe-tool block for the named tools).
             blocked_tools: Additional tool names to hide regardless of the above.
+            config: An :class:`EffGenMCPServerConfig` bundling the above fields.
         """
+        if config is not None:
+            name = config.name
+            version = config.version
+            instructions = config.instructions
+            tools_registry = config.tools_registry
+            expose_unsafe_tools = config.expose_unsafe_tools
+            allowed_tools = config.allowed_tools
+            blocked_tools = config.blocked_tools
+
         self.name = name
         self.version = version
         self.instructions = instructions or (

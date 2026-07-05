@@ -34,14 +34,15 @@ class ToolPlugin:
     """Base class for external tool plugins.
 
     Subclass this and populate ``name``, ``version``, and ``tools`` with
-    your custom ``BaseTool`` subclasses.
+    your custom ``BaseTool`` subclasses — or ready-made ``BaseTool``
+    instances, such as a function decorated with ``@tool``.
 
     Example::
 
         class MyPlugin(ToolPlugin):
             name = "my_tools"
             version = "1.0.0"
-            tools = [MyCustomTool, AnotherTool]
+            tools = [MyCustomTool, AnotherTool, my_decorated_tool]
     """
 
     _DEFAULT_VERSION = "0.0.0"
@@ -49,14 +50,14 @@ class ToolPlugin:
     name: str = ""
     version: str = _DEFAULT_VERSION
     description: str = ""
-    tools: list[type[BaseTool]] = []
+    tools: list[type[BaseTool] | BaseTool] = []
 
     def __init__(
         self,
         name: str | None = None,
         version: str | None = None,
         description: str | None = None,
-        tools: list[type[BaseTool]] | None = None,
+        tools: list[type[BaseTool] | BaseTool] | None = None,
     ):
         # Constructor args take priority, then class-level attrs, then defaults
         if name is not None:
@@ -83,10 +84,13 @@ class ToolPlugin:
             List of registered tool names.
         """
         registered: list[str] = []
-        for tool_cls in self.tools:
+        for tool_obj in self.tools:
             try:
-                registry.register_tool(tool_cls)
-                tool_name = tool_cls().metadata.name if hasattr(tool_cls, 'metadata') else tool_cls.__name__
+                registry.register_tool(tool_obj)
+                if isinstance(tool_obj, BaseTool):
+                    tool_name = tool_obj.metadata.name
+                else:
+                    tool_name = tool_obj().metadata.name if hasattr(tool_obj, 'metadata') else tool_obj.__name__
                 registered.append(tool_name)
                 logger.info(
                     "Plugin '%s' registered tool '%s'", self.name, tool_name
@@ -94,7 +98,7 @@ class ToolPlugin:
             except Exception as exc:
                 logger.warning(
                     "Plugin '%s' failed to register tool %s: %s",
-                    self.name, tool_cls.__name__, exc,
+                    self.name, getattr(tool_obj, "__name__", type(tool_obj).__name__), exc,
                 )
         return registered
 

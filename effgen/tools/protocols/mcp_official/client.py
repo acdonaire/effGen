@@ -115,7 +115,16 @@ class EffGenMCPClient:
         logger.info(f"Initialized MCP client for server: {config.name}")
 
     async def connect(self) -> None:
-        """Connect to the MCP server."""
+        """Connect to the MCP server.
+
+        ``connect()``, any tool/resource/prompt calls, and the matching
+        ``disconnect()`` must run inside the **same** ``asyncio.run()`` (or
+        event loop) — the transport is loop-affine and cannot be closed from a
+        different loop/task. Prefer ``async with EffGenMCPClient(...)``, which
+        guarantees this by construction; calling ``connect()`` in one
+        ``asyncio.run()`` and ``disconnect()`` in a separate later one leaves
+        the transport's resources stranded on the now-closed first loop.
+        """
         if self._connected:
             return
 
@@ -173,20 +182,42 @@ class EffGenMCPClient:
             raise
 
     async def disconnect(self) -> None:
-        """Disconnect from the MCP server."""
+        """Disconnect from the MCP server.
+
+        Must be awaited from the same event loop ``connect()`` ran on — the
+        underlying transport's cancel scopes are bound to that loop/task and
+        cannot be torn down from another one (this is what ``async with
+        EffGenMCPClient(...)`` guarantees by construction). Calling it from a
+        different loop skips the (unrecoverable) transport teardown and logs a
+        warning instead of letting the anyio cancel-scope error surface.
+        """
         if not self._connected:
             return
 
         try:
-            if self._exit_stack is not None:
+            current_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._loop is not None and current_loop is not self._loop:
+            logger.warning(
+                "disconnect() for MCP server '%s' was called from a different "
+                "event loop than connect() used; the transport is bound to that "
+                "loop and cannot be closed from here. Call connect()/disconnect() "
+                "within the same asyncio.run() (or event loop), or use "
+                "`async with EffGenMCPClient(...)`.",
+                self.config.name,
+            )
+        elif self._exit_stack is not None:
+            try:
                 await self._exit_stack.aclose()
-        except Exception as e:
-            logger.error(f"Error during disconnect: {e}", exc_info=True)
-        finally:
-            self._exit_stack = None
-            self._connected = False
-            self.session = None
-            logger.info(f"Disconnected from MCP server: {self.config.name}")
+            except Exception as e:
+                logger.error(f"Error during disconnect: {e}", exc_info=True)
+
+        self._exit_stack = None
+        self._connected = False
+        self.session = None
+        logger.info(f"Disconnected from MCP server: {self.config.name}")
 
     async def _discover(self) -> None:
         """Discover server capabilities, tools, and resources."""

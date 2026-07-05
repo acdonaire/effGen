@@ -7,6 +7,7 @@ with the official ``mcp`` Python SDK — the real interop path. They require the
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import textwrap
@@ -111,3 +112,29 @@ async def test_effgen_client_stdio_round_trip():
         res = await client.call_tool("calculator", {"expression": "2**10"})
         payload = json.loads(res.content[0].text)
         assert payload["output"]["result"] == 1024
+
+
+def test_disconnect_from_different_loop_warns_instead_of_raising(caplog):
+    """connect() and disconnect() called from two separate ``asyncio.run()``
+    invocations is a usage mistake (the transport is loop-affine) — it must not
+    raise out of ``disconnect()``, and must log one actionable warning naming
+    the mismatch instead of an anyio cancel-scope traceback.
+    """
+    code = _SERVER_TEMPLATE.format(kwargs="")
+    cfg = MCPServerConfig(
+        name="cross-loop", transport="stdio", command=sys.executable, args=["-c", code]
+    )
+    client = EffGenMCPClient(cfg)
+    asyncio.run(client.connect())
+    try:
+        assert "calculator" in {t.name for t in client.get_tools()}
+        with caplog.at_level("WARNING"):
+            asyncio.run(client.disconnect())  # different loop than connect()
+    finally:
+        assert client.session is None
+        assert client._connected is False
+
+    warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+    assert any("different event loop" in msg for msg in warnings)
+    errors = [r.message for r in caplog.records if r.levelname == "ERROR"]
+    assert not any("Error during disconnect" in msg for msg in errors)

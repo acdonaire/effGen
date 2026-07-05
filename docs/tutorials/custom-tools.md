@@ -53,13 +53,27 @@ def add(a: int, b: int) -> int:
 add_tool = Tool.from_function(add)
 ```
 
+`@tool`/`Tool.from_function` return a tool instance, not a class. To make it show
+up in `effgen tools list`, `effgen run -t <name>`, or an MCP server, register that
+instance directly:
+
+```python
+from effgen.tools import get_registry
+
+get_registry().register_tool(word_count)
+```
+
+`register_tool` accepts a `BaseTool` instance exactly this way, alongside the
+class-based form used by `BaseTool` subclasses below — a `ToolPlugin.tools` list
+can also mix instances and subclasses.
+
 The sections below show the full `BaseTool` interface — reach for it when you
 need rich parameter validation, custom initialization, or lifecycle hooks.
 
 ## Basic Tool Structure
 
 Every tool extends `BaseTool` and implements two things:
-1. A `metadata` property describing the tool
+1. An `__init__` that passes a `ToolMetadata` to `super().__init__()`
 2. An `_execute` async method that does the work
 
 ```python
@@ -68,26 +82,31 @@ from effgen.tools.base_tool import (
 )
 
 class UpperCaseTool(BaseTool):
-    @property
-    def metadata(self) -> ToolMetadata:
-        return ToolMetadata(
-            name="uppercase",
-            description="Convert text to uppercase",
-            category=ToolCategory.DATA_PROCESSING,
-            parameters=[
-                ParameterSpec(
-                    name="text",
-                    type=ParameterType.STRING,
-                    description="Text to convert",
-                    required=True,
-                ),
-            ],
-            returns={"type": "object", "properties": {"result": {"type": "string"}}},
+    def __init__(self):
+        super().__init__(
+            metadata=ToolMetadata(
+                name="uppercase",
+                description="Convert text to uppercase",
+                category=ToolCategory.DATA_PROCESSING,
+                parameters=[
+                    ParameterSpec(
+                        name="text",
+                        type=ParameterType.STRING,
+                        description="Text to convert",
+                        required=True,
+                    ),
+                ],
+                returns={"type": "object", "properties": {"result": {"type": "string"}}},
+            )
         )
 
     async def _execute(self, **kwargs):
         return {"result": kwargs["text"].upper()}
 ```
+
+`UpperCaseTool()` takes no arguments, so the metadata must be supplied from
+`__init__` via `super().__init__(metadata=...)` — this is how `Agent(tools=[...])`,
+`register_tool`, and the plugin loader all construct a tool.
 
 ## Using Your Tool
 
