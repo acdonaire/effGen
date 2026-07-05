@@ -386,10 +386,12 @@ class BudgetExceededError(Exception):
         self.provider = provider
         self.model = model
         ctx = f" (provider={provider!r}, model={model!r})" if provider else ""
+        from effgen.models._cost import format_usd
         super().__init__(
-            f"{period.capitalize()} budget ${budget_usd:.4f} exceeded: "
-            f"actual=${actual_usd:.4f}{ctx}. "
-            "Router will attempt failover to a free-tier provider."
+            f"{period.capitalize()} budget {format_usd(budget_usd)} exceeded: "
+            f"actual={format_usd(actual_usd)}{ctx}. Raised to the caller; a "
+            "router configured with a fallback_chain can attempt failover to "
+            "a free-tier provider instead of raising."
         )
 
 

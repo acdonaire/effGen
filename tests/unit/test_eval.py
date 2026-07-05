@@ -163,6 +163,7 @@ class TestEvalResult:
         assert r.score == 0.0
         assert r.passed is False
         assert r.latency == 0.0
+        assert r.cost_usd is None
 
 
 class TestSuiteResults:
@@ -187,6 +188,16 @@ class TestSuiteResults:
         assert s["accuracy"] == 0.5
         assert "easy" in s["by_difficulty"]
         assert "hard" in s["by_difficulty"]
+        assert s["total_cost_usd"] is None
+
+    def test_summary_reports_total_cost_when_known(self):
+        tc = TestCase(query="q1")
+        results = SuiteResults(
+            suite_name="test",
+            results=[EvalResult(test_case=tc, score=1.0, passed=True, cost_usd=0.001234567)],
+            total_cost_usd=0.001234567,
+        )
+        assert results.summary()["total_cost_usd"] == round(0.001234567, 8)
 
     def test_to_json(self):
         results = SuiteResults(suite_name="json_test", accuracy=0.75)
@@ -271,6 +282,73 @@ class TestAgentEvaluator:
         result = evaluator.run_case(tc)
         assert result.passed is False
         assert result.score == 0.0
+
+    def test_run_case_cost_usd_is_none_for_a_model_with_no_price_data(self):
+        """MockModel reports no cost_usd metadata — the same shape a real
+        local-model run reports — and that must read as None, not $0."""
+        agent = self._make_agent(["Thought: done\nFinal Answer: 42"])
+        evaluator = AgentEvaluator(agent)
+        result = evaluator.run_case(TestCase(query="q", expected_output="42"))
+        assert result.cost_usd is None
+
+    def test_run_case_captures_cost_usd_from_response_metadata(self, monkeypatch):
+        agent = self._make_agent(["Thought: done\nFinal Answer: 42"])
+        real_run = agent.run
+
+        def _run_with_cost(query, *a, **kw):
+            resp = real_run(query, *a, **kw)
+            resp.metadata["cost_usd"] = 0.002
+            return resp
+
+        monkeypatch.setattr(agent, "run", _run_with_cost)
+        evaluator = AgentEvaluator(agent)
+        result = evaluator.run_case(TestCase(query="q", expected_output="42"))
+        assert result.cost_usd == 0.002
+
+    def test_aggregate_sums_known_costs_and_ignores_none(self, monkeypatch):
+        agent = self._make_agent([
+            "Thought: done\nFinal Answer: 5",
+            "Thought: done\nFinal Answer: 10",
+        ])
+        real_run = agent.run
+        costs = iter([0.001, None])
+
+        def _run_with_cost(query, *a, **kw):
+            resp = real_run(query, *a, **kw)
+            cost = next(costs)
+            if cost is not None:
+                resp.metadata["cost_usd"] = cost
+            return resp
+
+        monkeypatch.setattr(agent, "run", _run_with_cost)
+        evaluator = AgentEvaluator(agent)
+
+        class FakeSuite:
+            name = "mixed"
+            test_cases = [
+                TestCase(query="2+3?", expected_output="5"),
+                TestCase(query="5+5?", expected_output="10"),
+            ]
+
+        results = evaluator.run_suite(FakeSuite())
+        assert results.total_cost_usd == pytest.approx(0.001)
+
+    def test_aggregate_total_cost_is_none_when_every_case_is_unpriced(self):
+        agent = self._make_agent([
+            "Thought: done\nFinal Answer: 5",
+            "Thought: done\nFinal Answer: 10",
+        ])
+        evaluator = AgentEvaluator(agent)
+
+        class FakeSuite:
+            name = "unpriced"
+            test_cases = [
+                TestCase(query="2+3?", expected_output="5"),
+                TestCase(query="5+5?", expected_output="10"),
+            ]
+
+        results = evaluator.run_suite(FakeSuite())
+        assert results.total_cost_usd is None
 
     def test_semantic_similarity_fallback_surfaces_in_suite_metadata(self, monkeypatch):
         """A silent scoring-mode fallback must be visible in the suite summary
@@ -682,6 +760,104 @@ class TestModelComparison:
     def test_empty_matrix(self):
         matrix = ComparisonMatrix()
         assert "No scores" in matrix.to_markdown()
+
+    def test_comparison_matrix_to_markdown_includes_cost_table(self):
+        matrix = ComparisonMatrix(
+            scores=[
+                ModelScore("model-a", "math", accuracy=0.9, avg_latency=1.0, avg_cost_usd=0.002),
+                ModelScore("model-b", "math", accuracy=0.7, avg_latency=0.5, avg_cost_usd=None),
+            ],
+            recommendations={"math": "model-a"},
+        )
+        md = matrix.to_markdown()
+        assert "Avg Cost (USD/run)" in md
+        assert "$0.002000" in md
+        assert "unpriced" in md
+
+    def test_comparison_matrix_to_dict_includes_cost_and_optimize(self):
+        matrix = ComparisonMatrix(
+            scores=[ModelScore("m", "s", accuracy=0.5, avg_cost_usd=0.001)],
+            optimize="cost",
+        )
+        d = matrix.to_dict()
+        assert d["scores"][0]["avg_cost_usd"] == 0.001
+        assert d["optimize"] == "cost"
+
+    def test_optimize_cost_prefers_cheaper_qualifying_model(self, monkeypatch):
+        # Both meet the accuracy threshold; "cheap" costs less than "pricey"
+        # even though both answer correctly — cost should decide.
+        agent_cheap = self._make_agent(["Thought: done\nFinal Answer: 5"] * 5)
+        agent_pricey = self._make_agent(["Thought: done\nFinal Answer: 5"] * 5)
+
+        def _inject(agent, cost):
+            real_run = agent.run
+
+            def _run(query, *a, **kw):
+                resp = real_run(query, *a, **kw)
+                resp.metadata["cost_usd"] = cost
+                return resp
+            monkeypatch.setattr(agent, "run", _run)
+
+        _inject(agent_cheap, 0.0001)
+        _inject(agent_pricey, 0.01)
+
+        class FakeSuite:
+            name = "mini"
+            test_cases = [TestCase(query="2+3?", expected_output="5")]
+
+        comparison = ModelComparison(pass_threshold=0.5)
+        matrix = comparison.run(
+            agents={"cheap": agent_cheap, "pricey": agent_pricey},
+            suites=[FakeSuite()],
+            optimize="cost",
+        )
+        assert all(s.accuracy == 1.0 for s in matrix.scores)  # both qualify
+        by_name = {s.model_name: s.avg_cost_usd for s in matrix.scores}
+        assert by_name["cheap"] < by_name["pricey"]
+        assert matrix.recommendations["mini"] == "cheap"
+
+    def test_optimize_cost_falls_back_to_full_field_when_none_qualify(self):
+        from effgen.eval.comparison import _select_recommendation
+
+        low_acc_cheap = ModelScore("cheap", "math", accuracy=0.1, avg_latency=0.1, avg_cost_usd=0.0001)
+        low_acc_pricey = ModelScore("pricey", "math", accuracy=0.2, avg_latency=0.1, avg_cost_usd=0.01)
+        best = _select_recommendation(
+            [low_acc_cheap, low_acc_pricey], pass_threshold=0.5, optimize="cost",
+        )
+        # Neither meets the 0.5 threshold, so the full field is considered —
+        # cost still decides among the fallback pool.
+        assert best.model_name == "cheap"
+
+    def test_optimize_latency_prefers_faster_qualifying_model(self):
+        from effgen.eval.comparison import _select_recommendation
+
+        fast = ModelScore("fast", "math", accuracy=1.0, avg_latency=0.01, total_tokens=50)
+        slow = ModelScore("slow", "math", accuracy=1.0, avg_latency=5.0, total_tokens=50)
+        best = _select_recommendation([fast, slow], pass_threshold=0.5, optimize="latency")
+        assert best.model_name == "fast"
+
+    def test_optimize_latency_restricts_to_qualifying_candidates(self):
+        from effgen.eval.comparison import _select_recommendation
+
+        fast_but_wrong = ModelScore("fast", "math", accuracy=0.0, avg_latency=0.01)
+        slower_but_right = ModelScore("slow", "math", accuracy=1.0, avg_latency=2.0)
+        best = _select_recommendation(
+            [fast_but_wrong, slower_but_right], pass_threshold=0.5, optimize="latency",
+        )
+        assert best.model_name == "slow"
+
+    def test_default_optimize_is_accuracy(self):
+        agent_a = self._make_agent(["Thought: done\nFinal Answer: 5"] * 5)
+        agent_b = self._make_agent(["Thought: done\nFinal Answer: wrong"] * 5)
+
+        class FakeSuite:
+            name = "mini"
+            test_cases = [TestCase(query="2+3?", expected_output="5")]
+
+        matrix = ModelComparison().run(
+            agents={"model-a": agent_a, "model-b": agent_b}, suites=[FakeSuite()],
+        )
+        assert matrix.optimize == "accuracy"
 
 
 # ---------------------------------------------------------------------------

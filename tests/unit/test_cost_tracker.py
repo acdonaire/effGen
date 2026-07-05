@@ -186,3 +186,135 @@ class TestBudgetConfigOverride:
         with pytest.raises(BudgetExceededError):
             # 1M gpt-4o-mini output tokens costs well over $0.01.
             CostTracker.get().record("openai", "gpt-4o-mini", 0, 1_000_000)
+
+
+class TestPreflightBudgetGate:
+    """check_preflight() refuses a call before it is billed, unlike the
+    post-spend check inside record() which only fires once a call's tokens
+    (and therefore its cost) are already known."""
+
+    def test_raises_when_spend_already_at_cap(self, tmp_path, monkeypatch):
+        import json as _json
+
+        from effgen.models.errors import BudgetExceededError
+        cfg = tmp_path / "budget.json"
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
+
+        tracker = CostTracker.get()
+        # Spend $0.05 while no budget is configured yet.
+        tracker.record("openai", "gpt-4o-mini", cost_usd=0.05)
+        # Configure a cap already below that spend.
+        cfg.write_text(_json.dumps({"daily": 0.01}))
+
+        with pytest.raises(BudgetExceededError):
+            tracker.check_preflight("openai", "gpt-4o-mini")
+
+    def test_does_not_bill_anything(self, tmp_path, monkeypatch):
+        """A refused preflight check must not add to recorded spend."""
+        import json as _json
+
+        from effgen.models.errors import BudgetExceededError
+        cfg = tmp_path / "budget.json"
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
+
+        tracker = CostTracker.get()
+        tracker.record("openai", "gpt-4o-mini", cost_usd=0.05)
+        cfg.write_text(_json.dumps({"daily": 0.01}))
+        before = tracker.total_cost()
+
+        with pytest.raises(BudgetExceededError):
+            tracker.check_preflight("openai", "gpt-4o-mini")
+
+        assert tracker.total_cost() == before
+
+    def test_passes_when_under_budget(self, tmp_path, monkeypatch):
+        import json as _json
+        cfg = tmp_path / "budget.json"
+        cfg.write_text(_json.dumps({"daily": 100.0}))
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
+
+        CostTracker.get().check_preflight("openai", "gpt-4o-mini")  # no raise
+
+    def test_passes_when_no_budget_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(tmp_path / "absent.json"))
+        CostTracker.get().check_preflight("openai", "gpt-4o-mini")  # no raise
+
+    def test_model_generate_refuses_before_the_call_when_over_budget(self, tmp_path, monkeypatch):
+        """BaseModel.generate() runs the preflight check before invoking the
+        engine's own generate body (see effgen.models.base)."""
+        import json as _json
+
+        from effgen.models.errors import BudgetExceededError
+        from tests.fixtures.mock_models import MockModel
+
+        cfg = tmp_path / "budget.json"
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
+
+        tracker = CostTracker.get()
+        tracker.record("transformers", "mock-model", cost_usd=1.0)
+        cfg.write_text(_json.dumps({"daily": 0.01}))
+
+        model = MockModel(responses=["hi"])
+        with pytest.raises(BudgetExceededError):
+            model.generate("hello")
+        # The engine's own generate body never ran.
+        assert model.call_count == 0
+
+    def test_model_generate_stream_refuses_before_the_call_when_over_budget(
+        self, tmp_path, monkeypatch,
+    ):
+        import json as _json
+
+        from effgen.models.errors import BudgetExceededError
+        from tests.fixtures.mock_models import MockModel
+
+        cfg = tmp_path / "budget.json"
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
+
+        tracker = CostTracker.get()
+        tracker.record("transformers", "mock-model", cost_usd=1.0)
+        cfg.write_text(_json.dumps({"daily": 0.01}))
+
+        model = MockModel(responses=["hi"])
+        with pytest.raises(BudgetExceededError):
+            model.generate_stream("hello")
+        assert model.call_count == 0
+
+    def test_model_generate_unaffected_when_under_budget(self, tmp_path, monkeypatch):
+        import json as _json
+
+        from tests.fixtures.mock_models import MockModel
+
+        cfg = tmp_path / "budget.json"
+        cfg.write_text(_json.dumps({"daily": 100.0}))
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(cfg))
+
+        model = MockModel(responses=["hi"])
+        result = model.generate("hello")
+        assert result.text == "hi"
+        assert model.call_count == 1
+
+
+class TestFormatUsd:
+    """format_usd() preserves significant digits for sub-cent amounts instead
+    of a fixed :.4f that rounds a tiny cap away."""
+
+    def test_zero(self):
+        from effgen.models._cost import format_usd
+        assert format_usd(0.0) == "$0.0000"
+
+    def test_ordinary_amount_uses_four_decimals(self):
+        from effgen.models._cost import format_usd
+        assert format_usd(1.5) == "$1.5000"
+        assert format_usd(0.005) == "$0.0050"
+
+    def test_sub_cent_amount_keeps_significant_digits(self):
+        from effgen.models._cost import format_usd
+        # Under a fixed :.4f this rounds to $0.0001 — losing the cap entirely.
+        assert format_usd(0.00005) == "$0.00005"
+
+    def test_very_small_amount_still_visible(self):
+        from effgen.models._cost import format_usd
+        result = format_usd(0.0000023)
+        assert result != "$0.0000"
+        assert "23" in result or "2.3" in result

@@ -25,18 +25,29 @@ class ModelScore:
     accuracy: float = 0.0
     avg_latency: float = 0.0
     total_tokens: int = 0
+    avg_cost_usd: float | None = None
     avg_tool_accuracy: float = 0.0
     error: str | None = None
 
 
-def _recommendation_key(score: "ModelScore") -> tuple[float, float, float]:
-    """Sort key for "best model" — higher is better.
+def _recommendation_key(score: "ModelScore", optimize: str = "accuracy") -> tuple[float, ...]:
+    """Sort key for "best model" under *optimize* — higher is better.
 
-    Primary: accuracy (higher wins). Tie-breaks: lower ``avg_latency`` then lower
-    ``total_tokens`` (negated so "higher is better" still holds). When latency and
-    tokens are also equal, the first-seen model is kept (strict ``>`` comparison),
-    preserving the prior stable ordering for genuine ties.
+    - ``"accuracy"`` (default): accuracy first, tie-broken on lower
+      ``avg_latency`` then lower ``total_tokens`` (negated so "higher is
+      better" still holds). When latency and tokens are also equal, the
+      first-seen model is kept (strict ``>`` comparison), preserving the
+      prior stable ordering for genuine ties.
+    - ``"cost"``: lower ``avg_cost_usd`` first (unpriced/free models sort as
+      ``$0``), tie-broken on higher accuracy then lower latency.
+    - ``"latency"``: lower ``avg_latency`` first, tie-broken on higher
+      accuracy then lower ``total_tokens``.
     """
+    cost = score.avg_cost_usd if score.avg_cost_usd is not None else 0.0
+    if optimize == "cost":
+        return (-cost, score.accuracy, -float(score.avg_latency))
+    if optimize == "latency":
+        return (-float(score.avg_latency), score.accuracy, -float(score.total_tokens))
     return (score.accuracy, -float(score.avg_latency), -float(score.total_tokens))
 
 
@@ -47,9 +58,12 @@ class ComparisonMatrix:
     Attributes:
         scores: List of per-model-per-suite scores.
         recommendations: ``{suite: model_name}`` best model per suite.
+        optimize: What the recommendation optimized for (``"accuracy"``,
+            ``"cost"``, or ``"latency"``).
     """
     scores: list[ModelScore] = field(default_factory=list)
     recommendations: dict[str, str] = field(default_factory=dict)
+    optimize: str = "accuracy"
 
     def to_markdown(self) -> str:
         """Render the matrix as a Markdown table."""
@@ -97,9 +111,25 @@ class ComparisonMatrix:
                     cells.append("—")
             lines.append(f"| {m} | " + " | ".join(cells) + " |")
 
+        # Cost table — "unpriced"/free models (avg_cost_usd is None) read as
+        # "—" rather than a fabricated $0, mirroring `effgen cost`'s labeling.
+        lines.extend(["", "## Avg Cost (USD/run)", ""])
+        lines.extend([header.replace("Accuracy", "Cost"), sep])
+        for m in models:
+            cells = []
+            for su in suites:
+                sc = lookup.get((m, su))
+                if sc and not sc.error and sc.avg_cost_usd is not None:
+                    cells.append(f"${sc.avg_cost_usd:.6f}")
+                elif sc and not sc.error:
+                    cells.append("unpriced")
+                else:
+                    cells.append("—")
+            lines.append(f"| {m} | " + " | ".join(cells) + " |")
+
         # Recommendations
         if self.recommendations:
-            lines.extend(["", "## Recommendations", ""])
+            lines.extend(["", f"## Recommendations (optimized for {self.optimize})", ""])
             for su, model in sorted(self.recommendations.items()):
                 lines.append(f"- **{su}**: {model}")
 
@@ -114,12 +144,14 @@ class ComparisonMatrix:
                     "accuracy": s.accuracy,
                     "avg_latency": s.avg_latency,
                     "total_tokens": s.total_tokens,
+                    "avg_cost_usd": s.avg_cost_usd,
                     "avg_tool_accuracy": s.avg_tool_accuracy,
                     "error": s.error,
                 }
                 for s in self.scores
             ],
             "recommendations": self.recommendations,
+            "optimize": self.optimize,
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -151,17 +183,25 @@ class ModelComparison:
         self,
         agents: dict[str, Any],
         suites: list[Any],
+        optimize: str = "accuracy",
     ) -> ComparisonMatrix:
         """Evaluate all *agents* on all *suites*.
 
         Args:
             agents: ``{model_name: agent_instance}``
             suites: List of ``TestSuite`` instances.
+            optimize: What the per-suite recommendation optimizes for —
+                ``"accuracy"`` (default, highest accuracy wins), ``"cost"``
+                (cheapest average run wins among candidates meeting
+                ``pass_threshold`` accuracy), or ``"latency"`` (fastest
+                average run wins among the same qualifying candidates). If no
+                candidate meets the threshold, the full field is considered
+                so a recommendation is always produced.
 
         Returns:
             A :class:`ComparisonMatrix` with scores and recommendations.
         """
-        matrix = ComparisonMatrix()
+        matrix = ComparisonMatrix(optimize=optimize)
 
         for model_name, agent in agents.items():
             evaluator = AgentEvaluator(
@@ -174,12 +214,19 @@ class ModelComparison:
                 logger.info("Evaluating %s on %s ...", model_name, suite_name)
                 try:
                     results: SuiteResults = evaluator.run_suite(suite)
+                    num_cases = len(results.results) or 1
+                    avg_cost_usd = (
+                        results.total_cost_usd / num_cases
+                        if results.total_cost_usd is not None
+                        else None
+                    )
                     matrix.scores.append(ModelScore(
                         model_name=model_name,
                         suite_name=suite_name,
                         accuracy=results.accuracy,
                         avg_latency=results.avg_latency,
                         total_tokens=results.total_tokens,
+                        avg_cost_usd=avg_cost_usd,
                         avg_tool_accuracy=results.avg_tool_accuracy,
                     ))
                 except Exception as exc:
@@ -190,16 +237,47 @@ class ModelComparison:
                         error=str(exc),
                     ))
 
-        # Generate recommendations: highest accuracy per suite, breaking ties on
-        # lower latency, then fewer tokens — so a "good enough" tie recommends the
-        # cheaper/faster model instead of whichever happened to be listed first.
-        suite_best: dict[str, ModelScore] = {}
+        # Generate recommendations per suite. For "accuracy" (default): highest
+        # accuracy, breaking ties on lower latency then fewer tokens — so a
+        # "good enough" tie recommends the cheaper/faster model instead of
+        # whichever happened to be listed first. For "cost"/"latency": restrict
+        # to candidates that meet pass_threshold accuracy (falling back to the
+        # full field if none qualify) and pick the cheapest/fastest among them.
+        by_suite: dict[str, list[ModelScore]] = {}
         for s in matrix.scores:
             if s.error:
                 continue
-            cur = suite_best.get(s.suite_name)
-            if cur is None or _recommendation_key(s) > _recommendation_key(cur):
-                suite_best[s.suite_name] = s
-        matrix.recommendations = {k: v.model_name for k, v in suite_best.items()}
+            by_suite.setdefault(s.suite_name, []).append(s)
+
+        recommendations: dict[str, str] = {}
+        for suite_name, candidates in by_suite.items():
+            best = _select_recommendation(candidates, self.pass_threshold, optimize)
+            recommendations[suite_name] = best.model_name
+        matrix.recommendations = recommendations
 
         return matrix
+
+
+def _select_recommendation(
+    candidates: list[ModelScore],
+    pass_threshold: float,
+    optimize: str,
+) -> ModelScore:
+    """Pick the recommended model for one suite from its *candidates*.
+
+    ``"accuracy"`` considers the full field. ``"cost"``/``"latency"``
+    restrict to candidates meeting *pass_threshold* accuracy first (falling
+    back to the full field if none qualify) so a recommendation is always
+    produced, then rank by :func:`_recommendation_key`. The first-seen
+    candidate is kept on an exact tie.
+    """
+    if optimize in ("cost", "latency"):
+        qualified = [c for c in candidates if c.accuracy >= pass_threshold]
+        pool = qualified or candidates
+    else:
+        pool = candidates
+    best = pool[0]
+    for c in pool[1:]:
+        if _recommendation_key(c, optimize) > _recommendation_key(best, optimize):
+            best = c
+    return best

@@ -1395,8 +1395,8 @@ class CLIInterface:
             except ValueError:
                 self.print_error(f"Budget value must be a number, got: {value_str!r}")
                 return
-            from effgen.models._cost import _BUDGET_CONFIG_PATH
-            budget_path = _BUDGET_CONFIG_PATH
+            from effgen.models._cost import _budget_config_path
+            budget_path = _budget_config_path()
             budget_path.parent.mkdir(parents=True, exist_ok=True)
             existing: dict = {}
             if budget_path.exists():
@@ -1766,13 +1766,22 @@ class CLIInterface:
     @staticmethod
     def _price_cell(rec) -> str:
         """Format a model's input/output price per 1M tokens for a table cell."""
-        if rec.free_tier and rec.price_in_per_1m in (None, 0) and rec.price_out_per_1m in (None, 0):
-            return "free"
         pin, pout = rec.price_in_per_1m, rec.price_out_per_1m
-        if pin is None and pout is None:
-            return "—"
-        fmt = lambda v: ("?" if v is None else (f"${v:g}" if v else "$0"))  # noqa: E731
-        return f"{fmt(pin)}/{fmt(pout)}"
+        # A genuinely nonzero published rate is shown as-is (mirrors
+        # ``_catalog_pricing`` in ``effgen.models._cost``, the single source of
+        # truth for how a $0 row is labeled).
+        if (pin or 0) > 0 or (pout or 0) > 0:
+            fmt = lambda v: ("?" if v is None else f"${v:g}")  # noqa: E731
+            return f"{fmt(pin)}/{fmt(pout)}"
+        # No nonzero rate: a genuine free tier reads "free"; a non-token billing
+        # note reads "metered"; anything else (including an explicit 0/0 with no
+        # free-tier flag) has no published price and reads "unpriced" rather than
+        # a fabricated "$0".
+        if rec.free_tier:
+            return "free"
+        if rec.price_note:
+            return "metered"
+        return "unpriced"
 
     # File extensions that count as actual model weights (an ".index.json" is a
     # shard manifest, not weights — a repo with only a manifest is still partial).
@@ -2967,6 +2976,14 @@ Model id formats:
                                  help='Emit the comparison matrix as JSON to stdout (for CI gating)')
     compare_parser.add_argument('--preset', choices=_preset_choices,
                                  help='Use a preset agent configuration')
+    compare_parser.add_argument('--optimize', choices=['accuracy', 'cost', 'latency'],
+                                 default='accuracy',
+                                 help="What the recommendation optimizes for (default: accuracy — "
+                                      "highest accuracy, tie-broken on lower latency then fewer "
+                                      "tokens). 'cost'/'latency' recommend the cheapest/fastest "
+                                      "model among those meeting --threshold accuracy (falling "
+                                      "back to the full field if none qualify), tie-broken on "
+                                      "higher accuracy.")
     compare_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
                                  help='Disable the live progress bar (plain output)')
 
@@ -3118,8 +3135,8 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
     cost_cmd = getattr(args, 'cost_command', None)
 
     # Budget management subcommands
-    from effgen.models._cost import _BUDGET_CONFIG_PATH
-    budget_path = _BUDGET_CONFIG_PATH
+    from effgen.models._cost import _budget_config_path, format_usd
+    budget_path = _budget_config_path()
 
     if cost_cmd == 'set-budget':
         amount = float(args.amount)
@@ -3132,7 +3149,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
                 pass
         existing['daily'] = amount
         budget_path.write_text(_json.dumps(existing, indent=2))
-        cli.print_success(f"Daily budget set to ${amount:.4f} USD")
+        cli.print_success(f"Daily budget set to {format_usd(amount)} USD")
         return 0
 
     if cost_cmd == 'clear-budget':
@@ -3271,14 +3288,14 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
         cli.console.print(table)
         cli.console.print(f"\n[bold]Total:[/bold] {total_requests} requests  "
                           f"[green]${total_cost:.6f} USD[/green]")
-        if daily_budget is not None:
+        if daily_budget is not None and cost_cmd in (None, 'today'):
             ratio = total_cost / daily_budget if daily_budget > 0 else 0
             filled = min(20, max(0, int(ratio * 20)))
             bar = "█" * filled + "░" * (20 - filled)
             color = "red" if ratio >= 1.0 else "yellow" if ratio >= 0.8 else "green"
             cli.console.print(
                 f"[bold]Daily budget:[/bold] [{color}]{bar}[/{color}] "
-                f"${total_cost:.4f} / ${daily_budget:.4f} ({ratio*100:.0f}%)"
+                f"{format_usd(total_cost)} / {format_usd(daily_budget)} ({ratio*100:.0f}%)"
             )
     else:
         print(f"\neffGen Cost Summary — {period_label}")
@@ -3296,9 +3313,9 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
                 print(f"{r['provider']:<12} {model:<48} {r['requests']:>5} {cost_label:>12}")
         print("-" * 80)
         print(f"{'TOTAL':<12} {'':<48} {total_requests:>5} ${total_cost:>11.6f}")
-        if daily_budget is not None:
+        if daily_budget is not None and cost_cmd in (None, 'today'):
             ratio = total_cost / daily_budget if daily_budget > 0 else 0
-            print(f"\nDaily budget: ${total_cost:.4f} / ${daily_budget:.4f} ({ratio*100:.0f}%)")
+            print(f"\nDaily budget: {format_usd(total_cost)} / {format_usd(daily_budget)} ({ratio*100:.0f}%)")
 
     return 0
 
@@ -4186,6 +4203,7 @@ def _handle_compare_command(args, cli) -> int:
     preset_name = getattr(args, 'preset', None)
     difficulty = getattr(args, 'difficulty', None)
     max_cases = getattr(args, 'max_cases', None)
+    optimize = getattr(args, 'optimize', 'accuracy')
     json_mode = getattr(args, 'output_json', False)
     if json_mode:
         cli._human_to_stderr = True
@@ -4238,7 +4256,7 @@ def _handle_compare_command(args, cli) -> int:
 
         cli.print(f"\nComparing {len(agents)} models on {suite_name} ({len(suite)} cases)...")
         comparison = ModelComparison(scoring=scoring, pass_threshold=threshold)
-        matrix = comparison.run(agents, [suite])
+        matrix = comparison.run(agents, [suite], optimize=optimize)
 
         # Display
         cli.print(matrix.to_markdown())

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import warnings
@@ -49,6 +50,54 @@ def _load_budget() -> dict:
     except Exception:
         logger.debug("Failed to load budget config; treating as empty", exc_info=True)
     return {}
+
+
+def _configured_budgets(budget_cfg: dict) -> list[tuple[str, float]]:
+    """Return the ``(period, budget_usd)`` pairs with a valid positive cap.
+
+    Skips a period that is absent, non-numeric, or <= 0 (logging a warning for
+    the non-numeric case) so callers can iterate only the budgets that apply.
+    """
+    result = []
+    for period in ("daily", "monthly"):
+        raw_budget = budget_cfg.get(period)
+        if raw_budget is None:
+            continue
+        try:
+            budget_usd = float(raw_budget)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid %s budget value: %r", period, raw_budget)
+            continue
+        if budget_usd <= 0:
+            continue
+        result.append((period, budget_usd))
+    return result
+
+
+def format_usd(amount: float) -> str:
+    """Format a USD amount with enough significant digits for sub-cent values.
+
+    Amounts of ``$0.0001`` or more use the familiar 4-decimal form
+    (``$1.2300``); smaller amounts switch to enough decimal places to keep at
+    least two significant digits, then drop trailing zeros, so a cap like
+    ``$0.00005`` prints as ``$0.00005`` rather than rounding to ``$0.0001``
+    (or vanishing to ``$0.0000``) under a fixed ``:.4f``.
+    """
+    if amount == 0:
+        return "$0.0000"
+    magnitude = abs(amount)
+    if magnitude >= 0.0001:
+        return f"${amount:.4f}"
+    exponent = math.floor(math.log10(magnitude))
+    decimals = -exponent + 1
+    text = f"{amount:.{decimals}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return f"${text}"
+
+
+# Internal alias kept short for call sites in this module.
+_format_usd = format_usd
 
 # ---------------------------------------------------------------------------
 # Pricing resolution
@@ -203,7 +252,15 @@ def _catalog_pricing(provider: str, model: str) -> tuple[float, float, str, str]
 
     pin = rec.price_in_per_1m
     pout = rec.price_out_per_1m
-    if pin is not None or pout is not None:
+    # A genuinely nonzero published price wins over free_tier: some providers
+    # (e.g. Gemini) flag a model free_tier=True to mean "usable within a free
+    # quota" while still publishing the real per-token rate that applies
+    # beyond that quota, so a nonzero price is the more accurate label there.
+    # A catalog entry with an explicit 0/0 price is a different situation —
+    # some Together entries carry this without knowing the real rate — so it
+    # is never treated as "priced" on its own; it falls through to the
+    # free_tier / price_note / unpriced checks below instead.
+    if (pin is not None and pin > 0) or (pout is not None and pout > 0):
         return (float(pin or 0.0), float(pout or 0.0), "priced", rec.price_note or "")
     if rec.free_tier:
         return (0.0, 0.0, "free", rec.price_note or "")
@@ -418,22 +475,34 @@ class CostTracker:
         self._check_budget(provider=provider, model=model, cost=cost)
         return cost
 
+    def check_preflight(self, provider: str, model: str) -> None:
+        """Refuse to start a call when a configured budget is already at/over its cap.
+
+        Called before the provider call is made (see
+        :func:`effgen.models.base._preflight_budget_check`), so a call refused
+        here is never billed. This is a pre-existing-spend check only: it
+        cannot foresee the cost of the call about to be made, so a call that
+        pushes spend past the cap for the first time is still allowed through
+        here and is caught after the fact by :meth:`_check_budget` inside
+        :meth:`record`.
+        """
+        budget_cfg = _load_budget()
+        for period, budget_usd in _configured_budgets(budget_cfg):
+            spend = self._period_spend(period)
+            if spend >= budget_usd:
+                from effgen.models.errors import BudgetExceededError
+                raise BudgetExceededError(
+                    budget_usd=budget_usd,
+                    actual_usd=spend,
+                    period=period,
+                    provider=provider,
+                    model=model,
+                )
+
     def _check_budget(self, provider: str, model: str, cost: float) -> None:
         """Emit a warning or raise BudgetExceededError for configured budgets."""
         budget_cfg = _load_budget()
-        for period in ("daily", "monthly"):
-            raw_budget = budget_cfg.get(period)
-            if raw_budget is None:
-                continue
-
-            try:
-                budget_usd = float(raw_budget)
-            except (TypeError, ValueError):
-                logger.warning("Ignoring invalid %s budget value: %r", period, raw_budget)
-                continue
-            if budget_usd <= 0:
-                continue
-
+        for period, budget_usd in _configured_budgets(budget_cfg):
             spend = self._period_spend(period)
             previous_spend = max(0.0, spend - cost)
             ratio = spend / budget_usd
@@ -452,8 +521,8 @@ class CostTracker:
 
             if previous_spend < budget_usd * 0.8 <= spend:
                 warnings.warn(
-                    f"effGen {period} budget warning: ${spend:.4f} / ${budget_usd:.4f} "
-                    f"({ratio * 100:.0f}%) spent.",
+                    f"effGen {period} budget warning: {_format_usd(spend)} / "
+                    f"{_format_usd(budget_usd)} ({ratio * 100:.0f}%) spent.",
                     UserWarning,
                     stacklevel=4,
                 )

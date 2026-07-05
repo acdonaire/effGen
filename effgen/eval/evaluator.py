@@ -119,6 +119,8 @@ class EvalResult:
         passed: Whether the test case passed.
         latency: Wall-clock seconds for agent.run().
         tokens_used: Total tokens consumed.
+        cost_usd: USD cost of the run, or ``None`` when the model/provider
+            publishes no per-token price (e.g. a local model).
         tool_accuracy: Fraction of expected tools that were called.
         tools_called: Names of tools the agent actually invoked.
         scoring_mode: Which scoring mode produced the score.
@@ -130,6 +132,7 @@ class EvalResult:
     passed: bool = False
     latency: float = 0.0
     tokens_used: int = 0
+    cost_usd: float | None = None
     tool_accuracy: float = 0.0
     tools_called: list[str] = field(default_factory=list)
     scoring_mode: ScoringMode = ScoringMode.CONTAINS
@@ -146,6 +149,8 @@ class SuiteResults:
         accuracy: Fraction of test cases that passed.
         avg_latency: Mean latency across test cases (seconds).
         total_tokens: Sum of tokens consumed.
+        total_cost_usd: Sum of per-case cost, or ``None`` when no case
+            reported a known price (e.g. every case ran on a local model).
         avg_tool_accuracy: Mean tool accuracy.
         metadata: Extra info (model name, timestamp, etc.).
     """
@@ -154,6 +159,7 @@ class SuiteResults:
     accuracy: float = 0.0
     avg_latency: float = 0.0
     total_tokens: int = 0
+    total_cost_usd: float | None = None
     avg_tool_accuracy: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -176,6 +182,9 @@ class SuiteResults:
             "accuracy": self.accuracy,
             "avg_latency": round(self.avg_latency, 4),
             "total_tokens": self.total_tokens,
+            "total_cost_usd": (
+                round(self.total_cost_usd, 8) if self.total_cost_usd is not None else None
+            ),
             "avg_tool_accuracy": round(self.avg_tool_accuracy, 4),
             "by_difficulty": by_difficulty,
             "metadata": self.metadata,
@@ -322,12 +331,15 @@ class AgentEvaluator:
             response = self.agent.run(tc.query)
             output = response.output if hasattr(response, "output") else str(response)
             tokens = response.tokens_used if hasattr(response, "tokens_used") else 0
+            metadata = getattr(response, "metadata", None) or {}
+            cost_usd = metadata.get("cost_usd")
             # Extract tool names from execution trace
             tools_called = self._extract_tools(response)
         except Exception as exc:
             logger.warning("Agent error on query %r: %s", tc.query[:60], exc)
             output = f"ERROR: {exc}"
             tokens = 0
+            cost_usd = None
             tools_called = []
         latency = time.perf_counter() - start
 
@@ -341,6 +353,7 @@ class AgentEvaluator:
             passed=score >= self.pass_threshold,
             latency=latency,
             tokens_used=tokens,
+            cost_usd=cost_usd,
             tool_accuracy=tool_acc,
             tools_called=tools_called,
             scoring_mode=self.scoring,
@@ -400,12 +413,15 @@ class AgentEvaluator:
         # scored on a different metric than requested is never invisible.
         if any(r.details.get("scoring_fallback") for r in results):
             metadata["scoring_fallback"] = "contains"
+        known_costs = [r.cost_usd for r in results if r.cost_usd is not None]
+        total_cost_usd = sum(known_costs) if known_costs else None
         return SuiteResults(
             suite_name=suite_name,
             results=results,
             accuracy=sum(1 for r in results if r.passed) / n,
             avg_latency=sum(r.latency for r in results) / n,
             total_tokens=sum(r.tokens_used for r in results),
+            total_cost_usd=total_cost_usd,
             avg_tool_accuracy=sum(r.tool_accuracy for r in results) / n,
             metadata=metadata,
         )

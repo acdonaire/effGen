@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -17,8 +18,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def isolated_budget_path(tmp_path, monkeypatch):
-    """Keep CLI budget tests away from the real user config."""
+    """Keep CLI budget tests on a private budget file — not the shared
+    session-wide isolation path from conftest, nor the developer's real
+    ~/.effgen/budget.json. ``EFFGEN_BUDGET_CONFIG`` is the one override every
+    read/write/display path honors (see ``_budget_config_path()``)."""
     monkeypatch.setattr(cost_mod, "_BUDGET_CONFIG_PATH", tmp_path / "budget.json")
+    monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(tmp_path / "budget.json"))
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +50,10 @@ def _args(**kwargs):
 
 
 def _clear_budget():
+    from pathlib import Path
+    env_path = os.environ.get("EFFGEN_BUDGET_CONFIG")
+    if env_path:
+        Path(env_path).unlink(missing_ok=True)
     try:
         cost_mod._BUDGET_CONFIG_PATH.unlink(missing_ok=True)
     except Exception:
@@ -75,10 +84,9 @@ class TestBudgetManagementCLI:
         from effgen.cli import _handle_cost_command
         cli = _make_cli()
         args = _args(cost_command="set-budget", amount=2.5)
-        budget_path = tmp_path / "budget.json"
-        with patch("effgen.models._cost._BUDGET_CONFIG_PATH", budget_path):
-            code = _handle_cost_command(args, cli)
+        code = _handle_cost_command(args, cli)
         assert code == 0
+        budget_path = tmp_path / "budget.json"
         cfg = json.loads(budget_path.read_text())
         assert cfg.get("daily") == 2.5
 
@@ -86,18 +94,16 @@ class TestBudgetManagementCLI:
         """'effgen config set budget.daily 1.5' writes the budget file."""
         cli = _make_cli()
         args = _args(config_command="set", key="budget.daily", value="1.5")
+        cli._config_set(args)
         budget_path = tmp_path / "budget.json"
-        with patch("effgen.models._cost._BUDGET_CONFIG_PATH", budget_path):
-            cli._config_set(args)
         cfg = json.loads(budget_path.read_text())
         assert cfg.get("daily") == 1.5
 
     def test_config_set_budget_monthly(self, tmp_path):
         cli = _make_cli()
         args = _args(config_command="set", key="budget.monthly", value="10")
+        cli._config_set(args)
         budget_path = tmp_path / "budget.json"
-        with patch("effgen.models._cost._BUDGET_CONFIG_PATH", budget_path):
-            cli._config_set(args)
         cfg = json.loads(budget_path.read_text())
         assert cfg.get("monthly") == 10.0
 
@@ -106,19 +112,65 @@ class TestBudgetManagementCLI:
         args = _args(config_command="set", key="unknown.key", value="xyz")
         cli._config_set(args)  # Should not raise
 
-    def test_clear_budget(self):
+    def test_clear_budget(self, tmp_path):
         """'effgen cost clear-budget' removes the budget limits."""
-        cost_mod._BUDGET_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        cost_mod._BUDGET_CONFIG_PATH.write_text(json.dumps({"daily": 5.0}))
+        budget_path = tmp_path / "budget.json"
+        budget_path.parent.mkdir(parents=True, exist_ok=True)
+        budget_path.write_text(json.dumps({"daily": 5.0}))
 
         from effgen.cli import _handle_cost_command
         cli = _make_cli()
         args = _args(cost_command="clear-budget")
         code = _handle_cost_command(args, cli)
         assert code == 0
-        if cost_mod._BUDGET_CONFIG_PATH.exists():
-            cfg = json.loads(cost_mod._BUDGET_CONFIG_PATH.read_text())
+        if budget_path.exists():
+            cfg = json.loads(budget_path.read_text())
             assert "daily" not in cfg
+
+    def test_set_budget_honors_effgen_budget_config_override(self, tmp_path, monkeypatch):
+        """`set-budget` writes to EFFGEN_BUDGET_CONFIG's target, not the
+        developer's real ~/.effgen/budget.json, when the override is set."""
+        override_path = tmp_path / "override" / "budget.json"
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(override_path))
+        real_home_path = tmp_path / "budget.json"  # what the fixture set _BUDGET_CONFIG_PATH to
+
+        from effgen.cli import _handle_cost_command
+        cli = _make_cli()
+        args = _args(cost_command="set-budget", amount=3.0)
+        code = _handle_cost_command(args, cli)
+        assert code == 0
+        assert json.loads(override_path.read_text()).get("daily") == 3.0
+        assert not real_home_path.exists()
+
+    def test_config_set_budget_honors_effgen_budget_config_override(self, tmp_path, monkeypatch):
+        """`config set budget.daily` writes to EFFGEN_BUDGET_CONFIG's target too."""
+        override_path = tmp_path / "override" / "budget.json"
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(override_path))
+        real_home_path = tmp_path / "budget.json"
+
+        cli = _make_cli()
+        args = _args(config_command="set", key="budget.daily", value="4.0")
+        cli._config_set(args)
+        assert json.loads(override_path.read_text()).get("daily") == 4.0
+        assert not real_home_path.exists()
+
+    def test_cost_display_honors_effgen_budget_config_override(self, tmp_path, monkeypatch):
+        """The `cost` display reads the same EFFGEN_BUDGET_CONFIG path as the
+        writers, so what a user sets is what they see (no read/write split)."""
+        override_path = tmp_path / "override" / "budget.json"
+        override_path.parent.mkdir(parents=True)
+        override_path.write_text(json.dumps({"daily": 7.0}))
+        monkeypatch.setenv("EFFGEN_BUDGET_CONFIG", str(override_path))
+
+        from effgen.cli import _handle_cost_command
+        cli = _make_cli()
+        args = _args(cost_command="today", output_json=True)
+        with patch("effgen.models._cost_store.SQLiteCostStore.query_today", return_value=[]):
+            with patch("builtins.print") as mock_print:
+                code = _handle_cost_command(args, cli)
+        assert code == 0
+        printed = "".join(str(c.args[0]) for c in mock_print.call_args_list)
+        assert json.loads(printed)["daily_budget_usd"] == 7.0
 
 
 # ---------------------------------------------------------------------------
@@ -265,4 +317,9 @@ class TestBudgetExceededIntegration:
         msg = str(err)
         assert "daily" in msg.lower()
         assert "1.5" in msg or "1.50" in msg
+        # The error is raised to a plain Agent.run() caller too, where no
+        # failover happens — the message must describe failover as something a
+        # router *can* do, not something that unconditionally will happen.
         assert "failover" in msg.lower()
+        assert "fallback_chain" in msg
+        assert "router will attempt" not in msg.lower()

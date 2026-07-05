@@ -126,10 +126,29 @@ def _stamp_latency(result: Any, elapsed_s: float) -> Any:
     return result
 
 
+def _preflight_budget_check(model: "BaseModel") -> None:
+    """Refuse to start a call when a configured budget is already at or over its cap.
+
+    Runs before the provider call is made, so a call refused here never reaches
+    the network and is never billed — unlike the check inside
+    ``CostTracker.record()``, which runs after a call's tokens are already known
+    and its cost already persisted. A tracker or budget-config read failure is
+    swallowed (best-effort; the post-spend check still applies as a backstop).
+    """
+    try:
+        from effgen.models._cost import CostTracker
+    except ImportError:
+        return
+    provider = getattr(getattr(model, "model_type", None), "value", "") or ""
+    model_name = getattr(model, "model_name", "") or ""
+    CostTracker.get().check_preflight(provider, model_name)
+
+
 def _timed_generate(func):
-    """Wrap a ``generate`` method so its result carries call latency."""
+    """Wrap a ``generate`` method with a pre-call budget check and call latency."""
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
+        _preflight_budget_check(self)
         start = time.perf_counter()
         result = func(self, *args, **kwargs)
         return _stamp_latency(result, time.perf_counter() - start)
@@ -138,7 +157,8 @@ def _timed_generate(func):
 
 
 def _timed_generate_batch(func):
-    """Wrap a ``generate_batch`` method so each result carries call latency.
+    """Wrap a ``generate_batch`` method with a pre-call budget check so each
+    result carries call latency.
 
     The whole batch shares one wall-clock measurement (the per-item split isn't
     knowable here); each result gets it via ``setdefault`` so an engine that
@@ -146,6 +166,7 @@ def _timed_generate_batch(func):
     """
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
+        _preflight_budget_check(self)
         start = time.perf_counter()
         results = func(self, *args, **kwargs)
         elapsed = time.perf_counter() - start
@@ -153,6 +174,21 @@ def _timed_generate_batch(func):
             for r in results:
                 _stamp_latency(r, elapsed)
         return results
+    wrapper.__effgen_timed__ = True
+    return wrapper
+
+
+def _budget_gated_stream(func):
+    """Wrap a ``generate_stream`` method with a pre-call budget check.
+
+    The check runs synchronously when the caller invokes ``generate_stream``
+    (not on first ``next()``), so a refusal happens before any token request
+    reaches the provider.
+    """
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        _preflight_budget_check(self)
+        return func(self, *args, **kwargs)
     wrapper.__effgen_timed__ = True
     return wrapper
 
@@ -171,16 +207,22 @@ class BaseModel(ABC):
     """
 
     def __init_subclass__(cls, **kwargs):
-        """Auto-instrument each engine's ``generate``/``generate_batch`` with timing.
+        """Auto-instrument each engine's generation methods with a budget
+        pre-check and call timing.
 
-        Every concrete engine that defines ``generate``/``generate_batch`` gets its
-        result(s) stamped with ``latency_ms``/``duration_s`` (see ``_stamp_latency``)
-        without each engine repeating the bookkeeping. Abstract or already-wrapped
-        methods are left alone, so this is safe across the engine hierarchy.
+        Every concrete engine that defines ``generate``/``generate_batch``/
+        ``generate_stream`` gets a pre-call check against any configured
+        daily/monthly budget (refusing before the provider call is made once
+        the period is already at or over its cap) and, for ``generate``/
+        ``generate_batch``, its result(s) stamped with ``latency_ms``/
+        ``duration_s`` (see ``_stamp_latency``) — without each engine repeating
+        the bookkeeping. Abstract or already-wrapped methods are left alone, so
+        this is safe across the engine hierarchy.
         """
         super().__init_subclass__(**kwargs)
         for name, wrapper in (("generate", _timed_generate),
-                              ("generate_batch", _timed_generate_batch)):
+                              ("generate_batch", _timed_generate_batch),
+                              ("generate_stream", _budget_gated_stream)):
             func = cls.__dict__.get(name)
             if (
                 func is not None
