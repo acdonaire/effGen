@@ -170,6 +170,28 @@ def _restore_provider_registry(_provider_registry_snapshot):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _restore_server_auth_env():
+    """Restore EFFGEN_API_KEY after every test (order-independence).
+
+    ``effgen serve`` mints an ephemeral key into ``os.environ`` when no auth is
+    configured. A test that drives the serve command in-process (with
+    ``uvicorn.run`` stubbed) therefore leaves that key in the process
+    environment. Because the server reads ``EFFGEN_API_KEY`` when it builds its
+    auth middleware, a leaked key silently switches later server tests into
+    API-key mode and makes them reject valid JWTs with 401. Snapshot the value
+    at setup and restore it at teardown so serve-invoking tests cannot pollute
+    the ones that run after them.
+    """
+    _sentinel = object()
+    _prev = os.environ.get("EFFGEN_API_KEY", _sentinel)
+    yield
+    if _prev is _sentinel:
+        os.environ.pop("EFFGEN_API_KEY", None)
+    else:
+        os.environ["EFFGEN_API_KEY"] = _prev
+
+
 # ---------------------------------------------------------------------------
 # Mock Model Fixtures
 # ---------------------------------------------------------------------------
