@@ -117,6 +117,7 @@ print(f"Answer: {result.output}")
 
 | | Date | Update |
 |:---:|:---|:---|
+| ✨ | **5 Jul 2026** | **v0.3.2 Released** — Usability, Robustness & Polish: structured output + cost gates + document input on the CLI (`batch --schema`, `eval --fail-under`, `compare --optimize cost`, `run --file`), clinical-grade PHI redaction with a `phi` preset, native web-search sources that never vanish, sampling controls (`seed`/`frequency_penalty`) that take effect, a server that returns real HTTP status on failure, provider/model/status-labeled `/metrics` with top-level alerting/SLO exports, batch that survives malformed rows with per-job cost, spreadsheet ingestion, the `general` preset on Gemini, and prompt-library input validation. No breaking changes. [Changelog](CHANGELOG.md#032---2026-07-05) |
 | ✨ | **29 Jun 2026** | **v0.3.1 Released** — Real-World Usability & Polish: grounded `response.sources`/`.citations`, reasoning models (gpt-5/o-series) finish token-heavy tasks, custom personas honored on every path, fail-closed multi-agent teams/workflows, an OpenAI-compatible server with no silent tool/embedding downgrades, one-call domain agents (`LegalDomain().to_agent(...)`), `effgen run --json` + auto-discovered tool plugins + deadlock-free sync `run()` over MCP, grammar-constrained local structured output, physical GPU memory in `models status`, the REPL sandbox toggle out of the model's hands, PDFs that ingest, and per-call latency with readable sub-cent costs. No breaking changes. [Changelog](CHANGELOG.md#031---2026-06-29) |
 | 🎯 | **19 Jun 2026** | **v0.3.0 Released** — Stabilization & Hardening: fail-closed `Agent.run()` (no silent success; typed redacted errors; smart retries), a self-updating drift-aware model catalog (`effgen models refresh`), real GPU support (`temperature=0`, deadlock-free allocator), a fail-closed API server (forged-JWT rejected, secure CORS/metrics/RBAC/budget), hardened built-in tools (REPL timeout, one shared SSRF guard, path confinement, no unsafe pickle/eval), `import effgen` in ~20 ms, faster streaming + agent loop, a quiet scriptable CLI, and a live "thinking" UX. No breaking changes. [Changelog](CHANGELOG.md#030---2026-06-19) |
 
@@ -344,7 +345,58 @@ Observability<br/>
 </div>
 
 <details open>
-<summary><b>🆕 What's new in v0.3.1 — Real-World Usability & Polish</b></summary>
+<summary><b>🆕 What's new in v0.3.2 — Usability, Robustness & Polish</b></summary>
+
+<br/>
+
+**v0.3.2 keeps sanding down the edges** — this time for a reliability engineer, a trust auditor, a
+security engineer, an ETL engineer, a clinical analyst, an SRE, a localizer, a CI gatekeeper, a
+non-technical operator, a game writer, a plugin author, a FinOps owner, and a document specialist. No new
+providers or subsystems — the surfaces you already reach for are now more predictable, and every quiet
+trap now surfaces a clear, typed error. **No breaking API changes** — every change is additive.
+
+| Area | What changed |
+|------|--------------|
+| **Structured output on the CLI** | `effgen batch --schema` validates every row against a JSON Schema / Pydantic model; the output file is lossless (cost, tokens, parsed, failure reason); `--temperature`, `--persona`, `--resume` too. |
+| **CI accuracy gates** | `effgen eval --fail-under 0.8` drives the exit code, and `--compare-baseline` fails the build on a real regression. |
+| **Cost-aware selection** | `effgen compare --optimize cost` adds a `$/run` column and picks the cheapest good-enough model. |
+| **Document & file input** | `effgen run --file report.pdf` reads a PDF/DOCX/XLSX/text document or an image — no Python needed. |
+| **Clinical-grade redaction** | PHI redaction covers name/DOB/MRN/address/member-ID, `custom_patterns`, strict fail-closed mode, and a new `phi` preset. |
+| **Grounding that never vanishes** | Native web search surfaces the URLs it searched even when the model answers without inline citations. |
+| **Sampling that takes effect** | `seed`, `frequency_penalty`, `presence_penalty`, `top_k` reach the model; an unknown `run()` kwarg is now rejected. |
+| **A consistent server** | A failed completion returns a real 4xx/5xx envelope instead of an HTTP 200 with the error as the answer. |
+| **Observability you alert on** | `/metrics` carries provider/model/status labels; `AlertWebhook`/`SLOTracker` are exported top-level. |
+| **Resilient batch & intake** | One malformed row no longer aborts the job (skipped + reported), spreadsheets ingest, and a folder ingest never silently drops a file. |
+
+```python
+from effgen import PIIGuardrail, get_guardrail_preset
+
+# Redaction that covers the labeled clinical identifiers, plus site-specific patterns.
+g = PIIGuardrail(action="redact", custom_patterns=[(r"MRN[:#]\s*\d+", "[MRN REDACTED]")])
+print(g.check("Jane Doe  DOB: 1980-02-14  MRN: 55123").modified_content)
+# "[NAME REDACTED]  DOB: [DOB REDACTED]  MRN: [MRN REDACTED]"
+
+chain = get_guardrail_preset("phi")   # redaction + fail-closed strict mode
+```
+
+```bash
+effgen batch --input tickets.jsonl --output out.jsonl -m groq:llama-3.1-8b-instant --schema schema.json
+effgen eval --suite cases.jsonl -m groq:llama-3.1-8b-instant --fail-under 0.9   # exit 1 if it drops
+effgen compare --models "groq:llama-3.1-8b-instant,gemini:gemini-3.1-flash-lite" --suite cases.jsonl --optimize cost
+effgen run "What was Q3 revenue?" --file report.pdf -m groq:llama-3.1-8b-instant
+```
+
+[Full v0.3.2 changelog →](CHANGELOG.md#032---2026-07-05)
+
+</details>
+
+<details>
+<summary><b>📦 Previous releases — v0.3.1 down to v0.2.0 (click to expand)</b></summary>
+
+<br/>
+
+<details>
+<summary><b>What's new in v0.3.1 — Real-World Usability & Polish</b></summary>
 
 <br/>
 
@@ -389,9 +441,6 @@ effgen models status                                    # physical GPU memory; w
 [Full v0.3.1 changelog →](CHANGELOG.md#031---2026-06-29)
 
 </details>
-
-<details>
-<summary><b>📦 Previous releases — v0.3.0 down to v0.2.0 (click to expand)</b></summary>
 
 <br/>
 

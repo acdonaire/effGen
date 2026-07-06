@@ -7,6 +7,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.2] - 2026-07-05
+
+### Highlights
+
+**effGen v0.3.2** is another **usability, robustness & polish** point release, again driven by living with
+the framework as real professionals do — a reliability/QA engineer re-certifying results integrity, a
+trust & grounding auditor, a platform/security engineer, an integration & local-serving engineer, a
+data/ETL engineer running batch at volume, a clinical informatics analyst, a site-reliability engineer, a
+localization specialist, a model-evaluation engineer wiring CI gates, a non-technical product/ops user, a
+narrative/game writer, a plugin & tool author, a multi-provider FinOps cost optimizer, and an
+accessibility & document-processing specialist. It adds no new providers and no new heavyweight
+subsystems; it seals the sharp edges those users hit and makes the surfaces they already reach for
+predictable. **No breaking API changes** — every addition is additive, and every previously-silent trap
+now surfaces a clear, typed error.
+
+### Added — new surface
+
+- **Structured output from the CLI.** `effgen batch --schema <file.json>` / `--output-model
+  module:Class` validates every row against a JSON Schema or a Pydantic model; a row that can't be
+  coerced is flagged failed with a reason instead of a silently off-schema string. `batch` also gained
+  `--temperature`, `--system-prompt`/`--persona`, `-i`/`-o` aliases, and `--resume` to skip rows already
+  present in the output file.
+- **A CI accuracy gate.** `effgen eval --fail-under 0.8` sets a suite-level accuracy threshold that drives
+  the exit code, and `--compare-baseline` now returns a non-zero exit when it detects a blocking
+  regression — so a real accuracy drop fails the build. `eval`/`compare` gained `--temperature` for
+  reproducible scoring and `--baseline-dir` to keep baselines in your own repo.
+- **Cost-aware model selection.** `effgen compare --optimize {accuracy,cost,latency}` adds an average
+  `$/run` column and factors price into the recommendation, so a bake-off between two equally-accurate
+  models can pick the cheaper one; `compare --json` now carries per-model cost.
+- **Document and file input on the CLI.** `effgen run --file report.pdf` (repeatable, also `--input`)
+  reads a PDF/DOCX/XLSX/text document into the task, or feeds an image through the vision path — document
+  work without writing Python.
+- **A clinical de-identification posture.** A new `phi` guardrail preset (`get_guardrail_preset("phi")` /
+  `phi_guardrails()`) pairs redaction with a fail-closed strict mode, and `PIIGuardrail` gained
+  `custom_patterns` / `custom_terms` and a `strict` option.
+- **Alerting & SLO building blocks are now public.** `Alert`, `AlertSeverity`, `AlertWebhook`, `SLO`,
+  `SLOTracker`, `check_slo_and_alert`, and `validate_alert_rules_yaml` are exported top-level, and a thin
+  SLO-to-alert bridge evaluates rules against the live meter and fires a webhook.
+- **Sampling controls and a config `max_tokens`.** `AgentConfig` accepts `max_tokens`, `top_p`, `seed`,
+  `frequency_penalty`, and `presence_penalty` so they can be pinned once for an agent.
+
+The top-level public surface grew from 197 to 204 names (the seven alerting/SLO exports); no public name
+was removed or renamed.
+
+### Changed — results integrity on the generation path
+
+- **A dict `output_schema` now populates `metadata["parsed"]`** with the parsed object, matching the
+  Pydantic `output_model` behavior — a caller reading `parsed` no longer gets `None` for a schema that
+  extracted correctly.
+- **An empty or whitespace-only task is rejected before any model call** with a typed error, instead of
+  being sent to the model and billed as a `success=True` result.
+- **`AgentResponse.tokens_used` reports total tokens**, matching its documentation and the Prometheus
+  token counters, so usage dashboards no longer under-count by the prompt tokens.
+- A raw `GenerationResult` carries a truncation signal when `finish_reason="length"`, `run_async()` lists
+  `output_schema`/`output_model` in its signature, `AgentConfig` no longer requires `name`, and
+  `cost_usd` is the one canonical cost key on raw metadata.
+
+### Changed — grounding you can trace
+
+- **Native web search now surfaces the URLs it searched even when the model answers without inline
+  citations.** On the OpenAI native/hybrid path, `response.sources` is populated from the search results
+  (`web_search_call.action.sources`) so an answer built on a search is never handed back with empty
+  provenance; inline `url_citation` annotations remain the higher-precision `.citations`.
+- **Partial document ingestion tells you what it skipped.** When some files index and others fail, the
+  skipped files are named with a reason (previously discarded unless *every* file failed), and a
+  pre-built `VectorMemoryStore` uses a `title`/`doc`/`name` metadata value for human-traceable citations.
+
+### Changed — a consistent server contract
+
+- **A failed non-streaming completion returns a real HTTP status.** A generation failure is returned as a
+  4xx/5xx error envelope (mirroring the streaming path) instead of an HTTP 200 whose `message.content` is
+  the error text — so an OpenAI-client pipeline raises instead of treating the error string as an answer.
+- An unknown provider prefix returns a typed 4xx that lists the known providers (instead of a 500 leaking
+  the local-loader internals), `/v1/models` reflects the servable catalog, credential redaction covers the
+  AWS secret access key and plaintext role-label injections, and throttled responses carry the standard
+  `RateLimit-*` headers.
+
+### Changed — batch that survives real data
+
+- **A per-job cost and token total** print on the "Batch complete" line and land in `BatchResult`, and the
+  written output file is lossless — each row carries `cost_usd`, token counts, the validated `parsed`
+  object, and a failure reason.
+- **One malformed input row no longer aborts the whole job.** A bad line is skipped and reported (named by
+  file and line number) as a failed row, with `--strict` to hard-fail instead.
+
+### Changed — clinical-grade redaction
+
+- **PHI redaction covers the labeled clinical identifiers.** Label-anchored patterns catch patient name,
+  date of birth, medical record number, address, and member/beneficiary ID; SSN detection now matches
+  space-separated and undelimited forms; and the strict mode fails closed when a high-risk field can't be
+  fully redacted. A redaction summary (types and counts) is surfaced in `response.metadata`.
+
+### Changed — observability an on-call rotation can use
+
+- **Server metrics carry the labels you alert on.** The request path records provider/model/status-labeled
+  token, latency, and request counters, so you can graph error rate by status and cost/latency by model
+  straight from `/metrics`. The Helm chart's Prometheus scrape works out of the box, the AWS Lambda
+  runtime moved to a supported version, and `EFFGEN_NO_DOTENV=1` disables the filesystem `.env` walk for
+  a production process.
+
+### Changed — orchestration, evaluation & selection
+
+- **The `general` preset runs on Gemini.** Array-typed tool parameters missing an `items` subschema are
+  sanitized in the Gemini adapter, so a preset with array-param tools no longer 400s.
+- **Workflow YAML honors an `edges:` block** (and warns on unknown top-level keys) instead of silently
+  dropping the DAG's wiring and reporting the workflow valid; custom `eval`/`compare` datasets accept
+  `input`/`prompt`/`question` as aliases for `query` and name the missing field on a load error; and a
+  single oversized request is classified as payload-too-large (413) rather than routed through the
+  rate-limit/failover path.
+
+### Changed — trustworthy prompt library & terminal UX
+
+- **The prompt library validates `--input` against the template's own schema.** `prompts run`/`render`
+  rejects a missing required field, a wrong type, or an out-of-enum value with a field-named error and a
+  non-zero exit, instead of rendering silently-wrong text and billing it (a list-valued field passed as a
+  string no longer renders one bullet per character).
+- The `chat` `/model` hot-swap honors a `provider:` prefix (or refuses the swap) rather than printing
+  "Switched" and then failing every turn, the advertised dashboard shows an on-screen reason when its data
+  endpoints require auth (with `EFFGEN_PUBLIC_DASHBOARD` documented in `serve --help`), a failed run shows
+  the classified message instead of the raw provider JSON, and adapter warnings stay out of normal stdout.
+
+### Changed — sampling controls that take effect
+
+- **`seed`, `frequency_penalty`, `presence_penalty`, and `top_k` now reach the model** through
+  `Agent.run()` and `AgentConfig`, matching what `GenerationConfig` already advertised — a writer can pin
+  a seed to reproduce a generation or dial down repetition in long prose. An unrecognized `run()` keyword
+  is now rejected with a clear message instead of being silently swallowed, and the Groq adapter forwards
+  the penalties the OpenAI adapter already did.
+
+### Changed — extend effGen without hitting a seam
+
+- **A `@tool`/`Tool.from_function` instance can be registered** (and published to the CLI, plugin
+  discovery, and the MCP server), the plugin-development guide's tool example runs as written, a
+  `list[str]`/`list[int]` annotation carries its element type into the tool schema, and a mistyped
+  `@tool(category=...)` is warned about instead of silently coerced.
+
+### Changed — document intake & FinOps accuracy
+
+- **Spreadsheets ingest.** `.xlsx` files are read into a RAG corpus (rows to text, workbook metadata
+  carried through), and a directory ingest never silently drops a file — anything it can't parse is named
+  in the skip report rather than quietly excluded. PDF dates are normalized to ISO-8601.
+- **The budget config location is honored end-to-end.** `EFFGEN_BUDGET_CONFIG` now redirects the CLI
+  display and every write (not just the enforcement read), so setting a budget no longer clobbers your real
+  `~/.effgen/budget.json`; an unpriced catalog entry reads as unpriced rather than a fabricated
+  `$0.000000`; and a pre-flight budget gate refuses a call once the period is already over budget.
+
+### Fixed
+
+- Corrected the priced-vs-unpriced classification for catalog entries carrying a `0/0` price on a
+  non-free-tier model (they now read as unpriced), and the `/bin/bash` local-run pricing.
+- Closed the evaluator's agent in a `finally` block (no more garbage-collected-without-close warning),
+  added `--no-animation` to `compare` for flag parity with `eval`, and surfaced a
+  `semantic_similarity`-to-`contains` scoring fallback in the results.
+- Quieted the MCP client's manual-teardown traceback and reconciled `EffGenMCPServerConfig` with the
+  server constructor.
+
 ## [0.3.1] - 2026-06-29
 
 ### Highlights

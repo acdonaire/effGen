@@ -1,5 +1,88 @@
 # effGen Release Notes
 
+## v0.3.2 — July 5, 2026
+
+**effGen v0.3.2 is another usability, robustness & polish release.** Where v0.3.1 sanded down the edges a
+first wave of professionals hit, v0.3.2 keeps going — a reliability engineer re-certifying results
+integrity, a trust auditor tracing every source, a security engineer red-teaming the server, an ETL
+engineer running batch at volume, a clinical analyst who cannot leak a patient identifier, an SRE living
+in `/metrics`, a localization specialist, a CI gatekeeper, a non-technical operator, a game writer, a
+plugin author, a FinOps owner watching spend, and a document specialist feeding it messy files. It adds no
+new providers and no new subsystems; it makes the surfaces you already reach for predictable, and turns
+every quiet trap into a clear, typed error. There are no breaking API changes.
+
+### Structured output, cost gates, and document input reach the command line
+
+The two things power users kept dropping into Python for are now on the CLI. `effgen batch --schema
+schema.json` validates every row against a JSON Schema (or `--output-model module:Class`), and the written
+file is lossless — each row carries its cost, tokens, the parsed object, and, if it failed, the reason.
+`effgen eval --fail-under 0.8` turns evaluation into a real CI gate that drives the exit code, and a
+detected regression under `--compare-baseline` now fails the build instead of passing silently. `effgen
+compare --optimize cost` adds a `$/run` column and picks the cheapest good-enough model. And `effgen run
+--file report.pdf` finally lets a CLI-first user hand effGen a document or an image without writing a line
+of Python.
+
+```bash
+effgen batch --input tickets.jsonl --output out.jsonl -m groq:llama-3.1-8b-instant --schema schema.json
+effgen eval --suite cases.jsonl -m groq:llama-3.1-8b-instant --fail-under 0.9   # exit 1 if it drops
+effgen compare --models "groq:llama-3.1-8b-instant,gemini:gemini-3.1-flash-lite" --suite cases.jsonl --optimize cost
+effgen run "What was Q3 revenue?" --file report.pdf -m groq:llama-3.1-8b-instant
+```
+
+### Redaction you can defend, and a server that fails with the right status code
+
+For anyone handling regulated data, `PIIGuardrail` now removes the labeled clinical identifiers it used to
+leave behind — patient name, date of birth, medical record number, address, member ID — matches
+space-separated and undelimited SSNs, takes `custom_patterns` for site-specific formats, and can fail
+closed in strict mode. A new `phi` guardrail preset packages it. On the server side, a failed
+non-streaming completion now returns a real 4xx/5xx error envelope instead of an HTTP 200 with the error
+stuffed into the answer, so an OpenAI-client pipeline raises instead of trusting a failure as a result.
+
+```python
+from effgen import PIIGuardrail, get_guardrail_preset
+
+g = PIIGuardrail(action="redact", custom_patterns=[(r"MRN[:#]\s*\d+", "[MRN REDACTED]")])
+print(g.check("Jane Doe  DOB: 1980-02-14  MRN: 55123").modified_content)
+# "[NAME REDACTED]  DOB: [DOB REDACTED]  MRN: [MRN REDACTED]"
+
+chain = get_guardrail_preset("phi")   # redaction + fail-closed strict mode
+```
+
+### Grounding that never vanishes, sampling that takes effect
+
+Native web search used to hand back an empty `response.sources` whenever the model answered without inline
+citations — even though the search ran. Now the URLs it searched are surfaced as sources, so an answer
+built on a search always carries its provenance. And the creativity knobs a writer reaches for —
+`seed`, `frequency_penalty`, `presence_penalty`, `top_k` — now actually reach the model through
+`Agent.run()` and `AgentConfig`, instead of being silently accepted and ignored; an unknown keyword is now
+rejected outright instead of swallowed.
+
+```python
+from effgen import Agent
+from effgen.core.agent import AgentConfig
+
+agent = Agent(config=AgentConfig(name="writer", model="groq:llama-3.1-8b-instant"))
+agent.run("Write an atmospheric opening line.", seed=7, frequency_penalty=0.4)   # reproducible, less repetitive
+```
+
+### Observability an on-call rotation lives on, and batch that survives real data
+
+Server `/metrics` now carries the provider, model, and status-code labels you actually alert on, so you
+can graph error rate by status and cost by model straight from Prometheus — and the alerting and SLO
+building blocks (`AlertWebhook`, `SLOTracker`, `check_slo_and_alert`) are exported top-level with a thin
+bridge that fires a webhook when a rule trips. Batch jobs no longer die on one malformed input line (it's
+skipped and reported by file and line number), print a per-job cost total, and can `--resume` a partial
+run. Spreadsheets ingest into RAG, a directory ingest never silently drops a file it can't parse, the
+`general` preset runs on Gemini, workflow YAML honors an `edges:` block, and the prompt library validates
+your input against the template's own schema instead of billing silently-wrong output.
+
+### Upgrade
+
+`pip install --upgrade effgen`. Everything above is additive — no code changes required. The public API
+grew by the seven alerting/SLO exports (197 → 204 names); nothing was removed or renamed.
+
+---
+
 ## v0.3.1 — June 29, 2026
 
 **effGen v0.3.1 is a real-world usability & polish release.** Where v0.3.0 hardened the framework, v0.3.1
