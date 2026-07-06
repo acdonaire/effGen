@@ -58,7 +58,7 @@
 ### SmolLM2-1.7B-Instruct (Score: 4.0/10)
 - **Critical:** Cannot invoke tools at all — outputs "No tools available" for calculator, multi-tool, file ops, and streaming tests
 - **Root cause:** Model does not generate ReAct-format `Action:` / `Action Input:` text reliably
-- **Working:** Q&A (no tools needed), error recovery (framework handles gracefully), pipeline (synthesis only)
+- **Working:** Q&A (no tools needed), error recovery (framework handles without crashing), pipeline (synthesis only)
 - **Recommendation:** Not suitable for tool-calling agents. Use only for pure Q&A or as a synthesis/summarizer model
 
 ### gemma-3-4b-it (Score: 8.0/10)
@@ -71,7 +71,7 @@
 ### Qwen2.5-0.5B-Instruct (Score: 7.0/10)
 - **No FAILs** — all 10 agents produce some output (0 crashes)
 - **6 PARTIALs:** Degraded quality across Q&A (thermodynamics), file ops (read, error handling), coding (sort), conversation (contextual tool), error recovery (tool crash, max iters), streaming (no-tool mode)
-- **Strength:** Remarkably robust for 0.5B — framework handles its limitations gracefully
+- **Strength:** Remarkably robust for 0.5B — framework handles its limitations without crashing
 - **Recommendation:** Viable as a fast, lightweight agent for simple tasks. Upgrade to 1.5B for production use
 
 ### Llama-3.2-3B-Instruct (Score: 8.5/10)

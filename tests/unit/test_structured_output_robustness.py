@@ -102,7 +102,7 @@ def test_fast_path_value_already_valid_via_extract():
 
 
 # --------------------------------------------------------------------------- #
-# Honest failure
+# Reported failure
 # --------------------------------------------------------------------------- #
 def test_honest_failure_preserves_raw_and_reports_error():
     model = _PlainModel(["definitely not json", "still prose", "nope"])

@@ -168,7 +168,7 @@ for prompt in test_prompts:
     except ModelRefusalError as e:
         print(f"\nPrompt: {prompt[:60]}...")
         print(f"  ModelRefusalError: {e.refusal_message[:100]}")
-        print("  (handled gracefully — application can show a safe fallback)")
+        print("  (handled without raising — application can show a safe fallback)")
 
 adapter.unload()
 print("\n\nAll structured output examples completed successfully.")

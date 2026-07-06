@@ -1043,7 +1043,7 @@ class FrameworkVerifier:
             from effgen.tools import get_registry
 
             registry = get_registry()
-            # Should handle gracefully
+            # Should handle without raising
             assert not registry.is_registered("nonexistent_tool")
             self.log_verbose("  Invalid tool name handled")
 

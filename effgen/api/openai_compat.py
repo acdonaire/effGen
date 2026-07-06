@@ -663,7 +663,7 @@ def create_openai_router(
                     payload = build_chat_chunk(model, text, chat_id=chat_id)
                     yield f"data: {json.dumps(payload)}\n\n"
                 except Exception as e:  # noqa: BLE001
-                    # Honest mid-stream failure: emit a terminal error event
+                    # Mid-stream failure: emit a terminal error event
                     # (redacted) instead of silently truncating or buffering it
                     # into a content chunk.
                     _, _etype, _ecode = _classify_http(e)

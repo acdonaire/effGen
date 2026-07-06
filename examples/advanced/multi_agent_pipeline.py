@@ -12,7 +12,7 @@ Tests:
   - T3: Parallel sub-agents — independent subtasks
   - T4: Sequential sub-agents — dependent subtasks, context passed
   - T5: Synthesis quality — results combined into coherent answer
-  - T6: Error handling — pipeline handles failure gracefully
+  - T6: Error handling — pipeline handles failure without crashing
   - T7: User-explicit trigger — fuzzy matching for sub-agent requests
   - T8: Hard 4-stage pipeline (generate → solve → verify → report)
   - T9: Hard 3-agent sub-agent (shopping cart + tax + payment comparison)

@@ -55,7 +55,7 @@ def test_get_metadata_discovers():
 
 
 # --------------------------------------------------------------------------
-# Honest envelopes — no double-wrapped success/failure
+# Result envelopes — no double-wrapped success/failure
 # --------------------------------------------------------------------------
 
 def test_inner_status_helper():

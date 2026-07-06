@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-try:  # rich is a base dependency, but degrade gracefully if it is absent.
+try:  # rich is a base dependency, but degrade to plain output if it is absent.
     from rich.console import Console
     from rich.theme import Theme
 

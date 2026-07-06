@@ -110,7 +110,7 @@ def test_final_answer_sanitized_and_stored():
 
 
 # --------------------------------------------------------------------------- #
-# Honest mid-stream errors
+# Mid-stream errors
 # --------------------------------------------------------------------------- #
 
 def test_mid_stream_error_raises_not_buffered_direct():

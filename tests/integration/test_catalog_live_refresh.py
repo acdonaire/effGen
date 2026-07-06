@@ -47,7 +47,7 @@ def test_default_model_is_live(provider):
     assert live, f"{provider}: live model list came back empty"
 
     if default not in live:
-        # Honest stale-registry signal rather than a hard failure.
+        # Stale-registry signal rather than a hard failure.
         pytest.xfail(
             f"{provider} default {default!r} is no longer in the live catalog; "
             f"run `effgen models refresh --provider {provider}`. "

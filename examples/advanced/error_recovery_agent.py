@@ -296,7 +296,7 @@ def test_p7_t1_invalid_input(model, model_name):
 
     # The model should try to use calculator, possibly get an error, and retry or answer directly
     return run_test(
-        agent, "T1", "Invalid tool input — agent handles bad math gracefully",
+        agent, "T1", "Invalid tool input — agent handles bad math without crashing",
         "Calculate the value of 'not_a_number + abc'. If the calculator cannot handle it, explain why.",
         check_fn=lambda out, resp: (
             # Agent should either: get an error and explain, OR answer from knowledge
@@ -536,7 +536,7 @@ def test_p7_t7_fallback_exhaustion(model, model_name):
         agent, "T7", "Fallback chain exhaustion — all fallbacks fail",
         "What is 7 * 8? Use the calculator tool.",
         check_fn=lambda out, resp: (
-            # Agent should handle this gracefully — either answer from knowledge or report failure
+            # Agent should handle this without crashing — either answer from knowledge or report failure
             len(out) > 3
         ),
     )

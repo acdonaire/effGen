@@ -86,7 +86,7 @@ result = asyncio.run(tool.execute(
 
 ## Error Handling
 
-Malformed or unavailable feeds are handled gracefully:
+Malformed or unavailable feeds are handled without raising:
 - Missing/unreachable feed: returns `success=False` with a descriptive `error` field
 - HTML or non-feed URLs: logs a warning and returns `success=True` with empty `entries`
 - Partially malformed feed (for example encoding issues): logs a warning and returns whatever entries could be parsed

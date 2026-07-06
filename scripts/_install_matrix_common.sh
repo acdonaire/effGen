@@ -157,7 +157,7 @@ check_cli_smoke() {
     ok "CLI smoke OK ($("${VENV_DIR}/bin/effgen" --version 2>&1 | head -1))"
 }
 
-# Minimal local inference on a tiny model. Skips gracefully if torch/cuda absent
+# Minimal local inference on a tiny model. Skips with a message if torch/cuda absent
 # and the caller asked for a GPU run. cpu runs always attempt the tiny model.
 check_minimal_inference() {
     local require_gpu="${1:-0}"

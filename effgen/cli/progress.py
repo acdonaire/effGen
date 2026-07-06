@@ -26,7 +26,7 @@ import sys
 import time
 from typing import Any
 
-try:  # rich is an install dependency, but degrade gracefully if it is absent.
+try:  # rich is an install dependency, but degrade to plain output if it is absent.
     from rich.live import Live
     from rich.progress import (
         BarColumn,

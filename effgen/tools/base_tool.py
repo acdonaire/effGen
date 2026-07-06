@@ -585,7 +585,7 @@ class BaseTool(ABC):
 
             execution_time = time.time() - start_time
 
-            # Honest envelope: many tools report their own outcome inside the
+            # Result envelope: many tools report their own outcome inside the
             # returned dict (``{"success": False, ...}``). Never bury a failure
             # inside a "successful" ToolResult — reflect the real outcome so the
             # outer and inner status agree.

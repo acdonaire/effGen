@@ -409,7 +409,7 @@ class VideoSource:
         """Return True if the video has at least one audio stream."""
         ffprobe = shutil.which("ffprobe")
         if ffprobe is None:
-            # If ffprobe is absent, attempt extraction anyway (ffmpeg will fail gracefully)
+            # If ffprobe is absent, attempt extraction anyway (ffmpeg will report the failure)
             return True
         cmd = [
             ffprobe,

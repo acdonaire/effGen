@@ -266,7 +266,7 @@ class EmbeddingEngine:
                             f"({exc}); set EFFGEN_EMBEDDINGS_STRICT=0 to allow the "
                             "lexical TF-IDF fallback"
                         ) from exc
-                    # Honest, non-spammy fallback: warn once per model, record it
+                    # Non-spammy fallback: warn once per model, record it
                     # so the response can tell the caller the vectors are lexical.
                     self._fallback_models.add(resolved)
                     logger.warning(

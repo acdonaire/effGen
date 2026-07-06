@@ -135,7 +135,7 @@ for paper in result["data"]["papers"][:3]:
 ## News & RSS
 
 ### RSSFeedTool
-**Fetch, browse, and full-text search any RSS/Atom feed by URL. Handles malformed feeds gracefully.**
+**Fetch, browse, and full-text search any RSS/Atom feed by URL. Handles malformed feeds without raising.**
 
 ```python
 from effgen.tools.builtin.rss import RSSFeedTool

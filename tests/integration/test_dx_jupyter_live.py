@@ -2,7 +2,7 @@
 
 Drives the magics inside a REAL IPython kernel via ``jupyter_client`` (no
 mocking of model behaviour) against a cheap cloud model, and asserts that the
-Phase-35 rich result card (``AgentResponse._repr_html_``) is rendered in the
+rich result card (``AgentResponse._repr_html_``) is rendered in the
 notebook output. Skipped when no OpenAI key or when the kernel stack is absent.
 """
 
@@ -65,7 +65,7 @@ def test_magics_render_rich_card_in_real_kernel():
         )
         assert status == "ok"
 
-        # The Phase-35 HTML card must be among the rendered outputs.
+        # The HTML result card must be among the rendered outputs.
         html_blobs = [
             content["data"]["text/html"]
             for mt, content in outputs

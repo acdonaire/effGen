@@ -5,7 +5,7 @@ These tests make real API calls to Replicate and require:
   - REPLICATE_API_TOKEN in the environment
   - A Replicate account with billing credits
 
-Skip gracefully if the token is absent or account has no credits.
+Skip with a message if the token is absent or account has no credits.
 """
 
 from __future__ import annotations

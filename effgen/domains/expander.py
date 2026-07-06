@@ -61,7 +61,7 @@ class KeywordExpander:
     and ``"what is python"`` rather than one-word synonyms. Enable WordNet for
     actual synonyms.
 
-    Strategies gracefully degrade:
+    Strategies degrade in order:
     - Templates: always available; deterministic search-query variants.
     - LLM: skipped if no model is provided.
     - WordNet: opt-in (``use_wordnet=True``); skipped with a note if ``nltk``

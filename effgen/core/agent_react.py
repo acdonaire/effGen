@@ -470,7 +470,7 @@ class AgentReActMixin:
 
                 previous_actions.append(current_pair)
 
-                # Check if tool is available (handle no-tool mode gracefully)
+                # Check if tool is available (handle no-tool mode without raising)
                 if not self.tools or action not in self.tools:
                     # No tools available - model is hallucinating tools
                     # Guide it to provide direct answer
@@ -1346,7 +1346,7 @@ class AgentReActMixin:
             # locally.  If we end up here it means the ReAct loop tried to call one
             # directly (e.g. "Action: openai_web_search") — either because the model
             # isn't the matching provider, or the native dispatch was bypassed.
-            # Return a helpful note so the loop can recover gracefully instead of
+            # Return a helpful note so the loop can recover instead of
             # surfacing a raw "cannot be executed locally" RuntimeError.
             native_hint = self._native_tool_loop_hint(tool, tool_name)
             if native_hint is not None:

@@ -196,7 +196,7 @@ def test_workflow_model_ids_exist_in_catalog():
     cerebras = catalog_ids("cerebras")
     groq = catalog_ids("groq")
 
-    # ids hard-coded in the smoke workflows (kept in lockstep with Phase-8 catalog)
+    # ids hard-coded in the smoke workflows (kept in lockstep with the bundled catalog)
     assert "gpt-oss-120b" in cerebras, "nightly/cerebras-quick references a dead cerebras id"
     assert "openai/gpt-oss-20b" in groq, "groq smoke references a dead groq id"
     assert "llama-3.1-8b-instant" in groq, "groq fallback references a dead groq id"

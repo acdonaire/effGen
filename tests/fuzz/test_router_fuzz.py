@@ -5,7 +5,7 @@ Asserts that:
   1. Router always returns a valid RouterDecision or raises NoCandidateError.
   2. No silent null/empty outputs — a result is always one or the other.
   3. RouterDecision.chosen is always a valid ProviderModelPair.
-  4. estimate_complexity handles arbitrary query strings gracefully.
+  4. estimate_complexity handles arbitrary query strings without raising.
   5. candidate_unavailable_reason never crashes on arbitrary inputs.
 
 Exit criterion: ≥500 examples per test.

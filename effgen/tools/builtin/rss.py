@@ -149,7 +149,7 @@ class RSSFeedTool(BaseTool):
                     "Fetch, browse, and search RSS/Atom feeds from any URL. "
                     "Operations: fetch (all entries), latest (N most recent entries), "
                     "search_in_feed (keyword search within a feed). "
-                    "Handles malformed feeds gracefully. No authentication required."
+                    "Handles malformed feeds without raising. No authentication required."
                 ),
                 category=ToolCategory.INFORMATION_RETRIEVAL,
                 parameters=[

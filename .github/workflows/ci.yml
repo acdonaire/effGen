@@ -54,7 +54,7 @@ jobs:
           pip install "mypy>=1.7.0"
 
       # effGen ships py.typed; this lane type-checks the public surface so the
-      # annotations users see stay honest. It is advisory (allowed to warn) —
+      # annotations users see stay accurate. It is advisory (allowed to warn) —
       # the hard gate that public stubs resolve lives in the unit tests.
       - name: mypy (public API surface)
         run: bash scripts/check_public_types.sh

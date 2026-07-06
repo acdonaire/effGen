@@ -57,7 +57,7 @@ class MLXVLMEngine(MLXEngine):
             trust_remote_code: Whether to trust remote code from HuggingFace
             apply_chat_template: Whether to auto-apply chat template (default: True)
             system_prompt: Optional system prompt for chat template
-            **kwargs: Additional parameters (ignored gracefully for compatibility)
+            **kwargs: Additional parameters (ignored for compatibility)
         """
         super().__init__(
             model_name=model_name,

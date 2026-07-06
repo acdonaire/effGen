@@ -9,7 +9,7 @@ Two test modes:
 2.  **Fetch-handler tests** (run when Node ≥18 is available) — exercise the
     fetch handler with a tiny Node harness that feeds synthetic ``Request``
     objects and asserts on the returned ``Response`` objects.  No Cloudflare
-    account or wrangler login required; falls back gracefully when Node is
+    account or wrangler login required; skips with a message when Node is
     absent.
 
 Exit criteria:

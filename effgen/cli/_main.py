@@ -3263,7 +3263,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
     total_cost = sum(r['cost_usd'] for r in rows)
     total_requests = sum(r['requests'] for r in rows)
 
-    # Honest cost label: a genuine free tier reads "free" and a model with no
+    # Cost label: a genuine free tier reads "free" and a model with no
     # published price reads "unpriced", instead of a misleading "$0.000000".
     from effgen.models._cost import pricing_status as _pricing_status
 

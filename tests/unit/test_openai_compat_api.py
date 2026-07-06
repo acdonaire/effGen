@@ -260,7 +260,7 @@ class TestStructuredErrors:
         assert r.status_code == 502, r.status_code
 
     def test_forged_client_token_still_401(self):
-        """Phase-18 regression guard: the server's own client-auth rejection
+        """Regression guard: the server's own client-auth rejection
         stays 401 even though upstream auth failures now map to 502/503."""
         c = _client(api_key="secret", runner=_ok_runner)
         r = c.post("/v1/chat/completions", headers={"Authorization": "Bearer forged"},

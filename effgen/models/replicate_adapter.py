@@ -366,7 +366,7 @@ class ReplicateAdapter(BaseModel):
 
         while prediction.status not in _TERMINAL_STATUSES:
             if time.monotonic() >= deadline:
-                # Try to cancel the hung prediction gracefully
+                # Try to cancel the hung prediction
                 try:
                     prediction.cancel()
                 except Exception:

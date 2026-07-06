@@ -291,7 +291,7 @@ class MultiAgentOrchestrator:
                 f"assign_task() task must be a string; got {type(task).__name__}."
             )
 
-        # Honest empty-team guard: a team with no agents cannot succeed.
+        # Empty-team guard: a team with no agents cannot succeed.
         if not team.agents:
             return TeamResponse(
                 output="Error: team has no agents to run the task.",
@@ -501,7 +501,7 @@ class MultiAgentOrchestrator:
         # Synthesize results
         synthesis = self._synthesize_parallel_results(task, responses)
 
-        # Honest: success only if at least one agent actually succeeded.
+        # Success only if at least one agent actually succeeded.
         success = any(r["success"] for r in responses)
         meta: dict[str, Any] = dict(_aggregate_usage(responses))
         if not success:
@@ -641,7 +641,7 @@ Provide a comprehensive final answer."""
             context=context
         )
 
-        # Honest success: the manager's synthesis must succeed AND no worker may
+        # Success requires the manager's synthesis to succeed AND no worker to
         # have failed (a dropped/failed specialist must not pass silently).
         worker_ok = all(r["success"] for r in responses) if responses else True
         success = final_response.success and worker_ok
@@ -727,7 +727,7 @@ Consider the above viewpoints and provide your perspective or refined answer."""
             if consensus_score > 0.8:
                 break
 
-        # Honest success: at least one agent ran and no agent failed at any point
+        # Success requires at least one agent to have run with no agent failing at any point
         # (fail-closed — a failing collaborator must not be hidden by a True).
         success = bool(current_responses) and not any_failure
         meta: dict[str, Any] = dict(_aggregate_usage(current_responses))

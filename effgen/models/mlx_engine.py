@@ -73,7 +73,7 @@ class MLXEngine(BatchModel):
             system_prompt: Optional system prompt for chat template
             adapter_path: Optional path to LoRA adapter weights
             lazy_load: Whether to use MLX lazy loading for reduced memory usage
-            **kwargs: Additional parameters (ignored gracefully for compatibility)
+            **kwargs: Additional parameters (ignored for compatibility)
         """
         # Use ModelType.MLX if available, else create a compatible fallback
         try:

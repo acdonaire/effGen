@@ -428,7 +428,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def load_pdf(path: Path) -> list[dict[str, Any]]:
     """
-    Load PDF file. Tries pymupdf (fitz), then pdfplumber, then falls back gracefully.
+    Load PDF file. Tries pymupdf (fitz), then pdfplumber, then falls back to the next backend.
     """
     text_pages: list[str] = []
 
