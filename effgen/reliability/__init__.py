@@ -1,7 +1,7 @@
 """
 effGen Reliability Primitives.
 
-Provides production-grade reliability patterns:
+Provides reliability patterns:
 - :class:`~effgen.reliability.timeouts.TimeoutConfig` — explicit timeouts for every path
 - :class:`~effgen.reliability.retry.Retry` / :func:`~effgen.reliability.retry.retryable` — jittered exponential backoff
 - :class:`~effgen.reliability.circuit.CircuitBreaker` — closed → open → half-open state machine

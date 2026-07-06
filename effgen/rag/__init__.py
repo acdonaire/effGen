@@ -1,7 +1,7 @@
 """
 effgen.rag — Advanced Retrieval-Augmented Generation pipeline.
 
-Provides a production-grade RAG pipeline built on top of the existing
+Provides a RAG pipeline built on top of the existing
 `effgen.tools.builtin.retrieval` primitives:
 
 - DocumentIngester: load documents from many formats with metadata + dedup.

@@ -55,7 +55,7 @@ def install_production_middleware(
     shutdown_timeout: float = 10.0,
     rate_limit_per_minute: int | None = None,
 ) -> None:
-    """Install production-grade middleware on a FastAPI ``app``.
+    """Install the standard middleware stack on a FastAPI ``app``.
 
     Safe to call even if FastAPI/Starlette is not importable (no-op).
 
