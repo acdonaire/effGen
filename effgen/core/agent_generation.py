@@ -145,8 +145,10 @@ class AgentGenerationMixin:
         if outcome.success and outcome.json_str is not None:
             response.output = outcome.json_str
             response.metadata["structured_output"] = True
-            # Preserve the historical flag for any consumer that checks it.
-            response.metadata["structured_output_reprompted"] = outcome.attempts > 0
+            # True only when a text reprompt actually ran — grammar/native
+            # constraint attempts also count toward `attempts` but are not a
+            # reprompt, so `attempts > 0` alone would mislabel them as one.
+            response.metadata["structured_output_reprompted"] = outcome.method == "reprompt"
             if output_model is not None:
                 response.metadata["parsed"] = self._parse_with_pydantic(
                     output_model, outcome.parsed,
@@ -533,7 +535,9 @@ class AgentGenerationMixin:
             kind, hint = "tight_budget", (
                 f"'{name}' is a reasoning model with max_tokens={max_tokens} — it can "
                 f"spend the whole budget on hidden reasoning and return no visible "
-                f"text. Consider max_tokens>={min_tokens}."
+                f"text. Consider max_tokens>={min_tokens}. This can happen even at "
+                f"temperature=0: the reasoning-token allocation is provider-controlled "
+                f"and is not made deterministic by a fixed temperature."
             )
 
         warn_key = (name, kind)

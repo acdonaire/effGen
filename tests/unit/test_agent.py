@@ -200,6 +200,9 @@ class TestAgentRun:
         with caplog.at_level(logging.WARNING, logger="effgen.core.agent_generation"):
             agent.run("test", max_tokens=250)
         assert any("reasoning model" in r.message for r in caplog.records)
+        # The hint also sets expectations about temperature=0 on a tight
+        # budget: it does not make reasoning-budget exhaustion deterministic.
+        assert any("temperature=0" in r.message for r in caplog.records)
 
     def test_warn_reasoning_budget_silent_for_non_reasoning_model(self, mock_model, caplog):
         import logging

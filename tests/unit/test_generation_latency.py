@@ -12,6 +12,8 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 
+import pytest
+
 from effgen.models.base import (
     BaseModel,
     GenerationConfig,
@@ -79,6 +81,61 @@ class _LengthTruncatedEngine(_TinyEngine):
         )
 
 
+class _PricedEngine(_TinyEngine):
+    """An engine that reports a per-call ``cost_usd`` but no cumulative total —
+    mirrors adapters (Groq, Cerebras, Together, Fireworks, Replicate) that price
+    each call without tracking a running total themselves."""
+
+    def __init__(self, cost_usd: float):
+        super().__init__()
+        self._cost_usd = cost_usd
+
+    def generate(self, prompt, config=None, **kwargs):
+        return GenerationResult(
+            text="x", tokens_used=1, finish_reason="stop", model_name=self.model_name,
+            metadata={"cost_usd": self._cost_usd},
+        )
+
+
+class _SelfTrackedCostEngine(_TinyEngine):
+    """An engine that already tracks its own cumulative ``total_cost`` (like the
+    OpenAI/Gemini/Anthropic adapters) — the generic accumulator must not touch it."""
+
+    def __init__(self):
+        super().__init__()
+        self.total_cost = 0.0
+
+    def generate(self, prompt, config=None, **kwargs):
+        cost = 0.01
+        self.total_cost += cost
+        return GenerationResult(
+            text="x", tokens_used=1, finish_reason="stop", model_name=self.model_name,
+            metadata={"cost_usd": cost, "total_cost": self.total_cost},
+        )
+
+
+class _ReasoningEngine(_TinyEngine):
+    """An engine named like a reasoning model that can return empty text when
+    ``finish_reason == "length"`` — mimics gpt-5*/o-series exhausting the token
+    budget on hidden reasoning before any visible token."""
+
+    def __init__(self, *, empty: bool):
+        super().__init__()
+        self.model_name = "gpt-5-nano"
+        self._empty = empty
+
+    def generate(self, prompt, config=None, **kwargs):
+        if self._empty:
+            return GenerationResult(
+                text="", tokens_used=500, finish_reason="length",
+                model_name=self.model_name, metadata={},
+            )
+        return GenerationResult(
+            text="hi", tokens_used=5, finish_reason="stop",
+            model_name=self.model_name, metadata={},
+        )
+
+
 def test_generate_stamps_latency():
     r = _TinyEngine().generate("hi")
     assert "latency_ms" in r.metadata and "duration_s" in r.metadata
@@ -119,3 +176,96 @@ def test_wrapping_is_idempotent_across_subclassing():
     # wrapped (the marker prevents re-wrapping an already-timed method).
     assert getattr(_TinyEngine.generate, "__effgen_timed__", False) is True
     assert getattr(_SelfTimedEngine.generate, "__effgen_timed__", False) is True
+
+
+# --------------------------------------------------------------------------- #
+# cumulative total_cost, extended to every adapter (not just OpenAI/Gemini/
+# Anthropic, which already tracked it themselves)
+# --------------------------------------------------------------------------- #
+
+
+def test_generate_accumulates_total_cost_across_calls():
+    engine = _PricedEngine(cost_usd=0.001)
+    r1 = engine.generate("a")
+    r2 = engine.generate("b")
+    assert r1.metadata["total_cost"] == 0.001
+    assert r2.metadata["total_cost"] == pytest.approx(0.002)
+    assert engine.get_total_cost() == pytest.approx(0.002)
+
+
+def test_reset_cost_zeroes_the_running_total():
+    engine = _PricedEngine(cost_usd=0.001)
+    engine.generate("a")
+    engine.reset_cost()
+    assert engine.get_total_cost() == 0.0
+    r = engine.generate("b")
+    assert r.metadata["total_cost"] == pytest.approx(0.001)
+
+
+def test_no_total_cost_when_engine_reports_no_cost():
+    # A local/unpriced engine has no cost_usd, so no fabricated total_cost key.
+    r = _TinyEngine().generate("hi")
+    assert "cost_usd" not in r.metadata
+    assert "total_cost" not in r.metadata
+
+
+def test_self_tracked_total_cost_is_not_double_counted():
+    # An adapter that already stamps its own cumulative total_cost (OpenAI,
+    # Gemini, Anthropic) keeps exactly its own number — the generic accumulator
+    # skips a result that already carries the key.
+    engine = _SelfTrackedCostEngine()
+    r1 = engine.generate("a")
+    r2 = engine.generate("b")
+    assert r1.metadata["total_cost"] == pytest.approx(0.01)
+    assert r2.metadata["total_cost"] == pytest.approx(0.02)
+
+
+def test_generate_batch_accumulates_total_cost_per_item():
+    class _PricedBatchEngine(_PricedEngine):
+        def generate_batch(self, prompts, config=None, **kwargs):
+            return [self.generate(p) for p in prompts]
+
+    engine = _PricedBatchEngine(cost_usd=0.001)
+    results = engine.generate_batch(["a", "b", "c"])
+    assert [r.metadata["total_cost"] for r in results] == [
+        pytest.approx(0.001), pytest.approx(0.002), pytest.approx(0.003),
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# a silent-empty raw generate() on a reasoning model logs a visible warning
+# --------------------------------------------------------------------------- #
+
+
+def test_reasoning_model_empty_truncated_result_logs_warning(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="effgen.models.base"):
+        r = _ReasoningEngine(empty=True).generate("say hi")
+    assert r.text == ""
+    assert any(
+        "exhausting its token budget on internal reasoning" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_reasoning_model_non_empty_result_does_not_warn(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="effgen.models.base"):
+        r = _ReasoningEngine(empty=False).generate("say hi")
+    assert r.text == "hi"
+    assert not any(
+        "exhausting its token budget" in rec.message for rec in caplog.records
+    )
+
+
+def test_non_reasoning_model_empty_truncated_result_does_not_warn(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="effgen.models.base"):
+        r = _LengthTruncatedEngine().generate("hi")
+    assert r.text == ""
+    assert not any(
+        "exhausting its token budget" in rec.message for rec in caplog.records
+    )

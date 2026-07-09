@@ -8,12 +8,15 @@ ensuring consistent behavior across vLLM, Transformers, and API adapters.
 from __future__ import annotations
 
 import functools
+import logging
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
 
 
 class ModelType(Enum):
@@ -68,7 +71,15 @@ class GenerationConfig:
 
 @dataclass
 class GenerationResult:
-    """Result from a generation call."""
+    """Result from a generation call.
+
+    On a reasoning model, ``text`` can be empty even on a normal (non-error)
+    return: the output-token budget is spent on hidden reasoning before any
+    visible token is emitted. This is reported as ``finish_reason == "length"``
+    and ``metadata["truncated"] is True`` — check either before trusting an
+    empty ``text``/``str(result)``, or call through :class:`~effgen.core.agent.Agent`
+    instead, which already raises a clear error in that case.
+    """
     text: str
     tokens_used: int
     finish_reason: str
@@ -126,6 +137,53 @@ def _stamp_latency(result: Any, elapsed_s: float) -> Any:
     return result
 
 
+def _stamp_cost(model: "BaseModel", result: Any) -> None:
+    """Accumulate this call's cost onto the model instance's running total.
+
+    Populates ``metadata["total_cost"]`` via presence check, so an adapter that
+    already tracks its own cumulative total (OpenAI, Gemini, Anthropic) keeps
+    its own bookkeeping untouched; every other adapter gets the same
+    cumulative-cost field for free, derived from the ``cost_usd`` it already
+    reports per call. Skipped when the result carries no ``cost_usd`` (e.g.
+    local engines that do not price calls).
+    """
+    if not isinstance(result, GenerationResult):
+        return
+    meta = result.metadata
+    if meta is None or "total_cost" in meta:
+        return
+    cost = meta.get("cost_usd")
+    if cost is None:
+        return
+    model.total_cost = getattr(model, "total_cost", 0.0) + cost
+    meta["total_cost"] = model.total_cost
+
+
+def _warn_if_silently_empty(model: "BaseModel", result: Any) -> None:
+    """Log a warning when a reasoning model's raw ``generate()`` call returns
+    empty text because its output budget was spent on hidden reasoning before
+    any visible token (``finish_reason == "length"``).
+
+    :class:`~effgen.core.agent.Agent` already detects and escalates this case;
+    a caller using ``model.generate()`` directly has no such safety net, so an
+    empty ``GenerationResult`` would otherwise look like a working call that
+    produced nothing.
+    """
+    if not isinstance(result, GenerationResult):
+        return
+    if result.text or result.finish_reason != "length":
+        return
+    from ._adapter_utils import needs_reasoning_headroom
+    if not needs_reasoning_headroom(model):
+        return
+    logger.warning(
+        "%s returned empty text after exhausting its token budget on internal "
+        "reasoning (finish_reason='length'). Increase max_tokens, or check "
+        "metadata['truncated'] before trusting an empty result.",
+        getattr(model, "model_name", model.__class__.__name__),
+    )
+
+
 def _preflight_budget_check(model: "BaseModel") -> None:
     """Refuse to start a call when a configured budget is already at or over its cap.
 
@@ -151,7 +209,10 @@ def _timed_generate(func):
         _preflight_budget_check(self)
         start = time.perf_counter()
         result = func(self, *args, **kwargs)
-        return _stamp_latency(result, time.perf_counter() - start)
+        result = _stamp_latency(result, time.perf_counter() - start)
+        _stamp_cost(self, result)
+        _warn_if_silently_empty(self, result)
+        return result
     wrapper.__effgen_timed__ = True
     return wrapper
 
@@ -173,6 +234,8 @@ def _timed_generate_batch(func):
         if isinstance(results, list):
             for r in results:
                 _stamp_latency(r, elapsed)
+                _stamp_cost(self, r)
+                _warn_if_silently_empty(self, r)
         return results
     wrapper.__effgen_timed__ = True
     return wrapper
@@ -378,6 +441,18 @@ class BaseModel(ABC):
             bool: True if model is loaded and ready for inference
         """
         return self._is_loaded
+
+    def get_total_cost(self) -> float:
+        """Cumulative cost (USD) charged to this model instance since it was
+        created or since :meth:`reset_cost` was last called. Populated from
+        each call's ``cost_usd``; local/unpriced engines stay at ``0.0``.
+        """
+        return getattr(self, "total_cost", 0.0)
+
+    def reset_cost(self) -> None:
+        """Reset this instance's cumulative cost counter (see
+        :meth:`get_total_cost`) back to zero."""
+        self.total_cost = 0.0
 
     def get_metadata(self) -> dict[str, Any]:
         """

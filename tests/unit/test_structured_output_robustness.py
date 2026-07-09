@@ -264,6 +264,21 @@ def test_agent_surfaces_attempts_on_success():
     assert resp.metadata["structured_output"] is True
     assert resp.metadata["structured_output_attempts"] == 1
     assert resp.metadata["structured_output_method"] == "native"
+    # A single native-JSON-mode call is not a reprompt: attempts > 0 alone
+    # would mislabel this as a repair loop that never ran.
+    assert resp.metadata["structured_output_reprompted"] is False
+
+
+def test_agent_reprompted_flag_true_only_for_the_reprompt_fallback():
+    # No native JSON support (_PlainModel) forces the reprompt fallback; the
+    # first reprompt attempt succeeds, so method == "reprompt" and the flag
+    # accurately reports that a repair loop ran.
+    agent = _agent_with(_PlainModel([VALID]))
+    resp = agent._apply_structured_output(_response("some prose"), SCHEMA, None, "capital?")
+    assert resp.success is True
+    assert resp.metadata["structured_output_method"] == "reprompt"
+    assert resp.metadata["structured_output_attempts"] == 1
+    assert resp.metadata["structured_output_reprompted"] is True
 
 
 def test_agent_fast_path_zero_attempts_when_answer_already_valid():
