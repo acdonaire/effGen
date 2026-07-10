@@ -28,6 +28,15 @@ _slog = get_structured_logger(__name__)
 # Canonical structured observability logger — emits redacted JSON lines with OTel context
 _obs_log = _get_obs_logger(__name__)
 
+# Mirrors AgentConfig.system_prompt's default (effgen/core/agent.py) — kept as
+# a literal here rather than imported to preserve this module's dependency-free
+# leaf status.
+DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant."
+IMAGE_GROUNDING_GUIDANCE = (
+    "Describe images objectively — state only what is visible, and say so "
+    "explicitly when a requested detail is not shown."
+)
+
 
 _PROVIDER_BY_CLASS_PREFIX: dict[str, str] = {
     "OpenAI": "openai",
@@ -490,7 +499,17 @@ class AgentRuntimeMixin:
 
         messages: list[Message] = []
         if self.config.system_prompt:
-            messages.append(Message(role=Role.SYSTEM, content=[TextPart(text=self.config.system_prompt)]))
+            system_text = self.config.system_prompt
+            # The unconfigured default persona carries no grounding guidance
+            # for images, unlike the multimodal preset's system prompt. Add
+            # the same "describe only what's visible" discipline here so a
+            # plain Agent(inputs=[image_from(...)]) call gets it too, without
+            # touching a caller's own custom system_prompt.
+            if system_text == DEFAULT_SYSTEM_PROMPT and any(
+                getattr(part, "type", None) == "image" for part in content
+            ):
+                system_text = f"{system_text} {IMAGE_GROUNDING_GUIDANCE}"
+            messages.append(Message(role=Role.SYSTEM, content=[TextPart(text=system_text)]))
         messages.append(Message(role=Role.USER, content=content))
         return messages
 

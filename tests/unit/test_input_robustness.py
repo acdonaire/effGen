@@ -16,7 +16,7 @@ import urllib.request
 
 import pytest
 
-from effgen.core.agent import Agent
+from effgen.core.agent import Agent, AgentConfig
 from effgen.core.messages import ImagePart, Message, Role, TextPart
 from effgen.core.multimodal import _FETCH_USER_AGENT, _fetch_url, image_from
 
@@ -146,3 +146,45 @@ def test_fetch_url_sends_user_agent(monkeypatch):
     assert out == b"data"
     assert captured["ua"] == _FETCH_USER_AGENT
     assert "urllib" not in (captured["ua"] or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# The default agent's image inputs= carry the same grounding guidance the
+# multimodal preset already has, without touching a caller's own persona.
+# ---------------------------------------------------------------------------
+
+def _mock_agent(system_prompt: str | None = None) -> Agent:
+    from tests.fixtures.mock_models import MockModel
+
+    kwargs = {"model": MockModel(responses=["ok"])}
+    if system_prompt is not None:
+        kwargs["system_prompt"] = system_prompt
+    return Agent(config=AgentConfig(**kwargs))
+
+
+def test_default_persona_gains_image_grounding_guidance():
+    agent = _mock_agent()
+    messages = agent._build_multimodal_prompt("describe this", [_img()])
+    system_text = messages[0].content[0].text
+    assert system_text.startswith("You are a helpful AI assistant.")
+    assert "state only what is visible" in system_text
+
+
+def test_default_persona_unchanged_without_an_image():
+    """Audio-only inputs don't need the image-grounding line appended."""
+    from effgen.core.multimodal import audio_from
+
+    agent = _mock_agent()
+    messages = agent._build_multimodal_prompt(
+        "transcribe this", [audio_from(b"RIFF" + b"0" * 32, mime="audio/wav")]
+    )
+    system_text = messages[0].content[0].text
+    assert system_text == "You are a helpful AI assistant."
+
+
+def test_custom_persona_not_modified_by_image_input():
+    """A caller's own system_prompt is never rewritten, even with an image."""
+    custom = "You are a pirate. Speak in pirate slang."
+    agent = _mock_agent(system_prompt=custom)
+    messages = agent._build_multimodal_prompt("describe this", [_img()])
+    assert messages[0].content[0].text == custom

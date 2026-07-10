@@ -95,7 +95,10 @@ class TestCreateAgent:
         """Verify all presets can be created without error."""
         model = self._mock_model()
         for name in EXPECTED_PRESETS:
-            agent = create_agent(name, model)
+            # The rag preset requires knowledge_base= (see TestRagKnowledgeBase);
+            # every other preset needs only a model.
+            kwargs = {"knowledge_base": "placeholder text."} if name == "rag" else {}
+            agent = create_agent(name, model, **kwargs)
             assert agent is not None
 
     def test_unknown_preset_reported_before_missing_model(self):
@@ -323,6 +326,13 @@ class TestRagKnowledgeBase:
             create_agent(
                 "rag", self._mock_model(), knowledge_base=["", "   "]
             )
+
+    def test_missing_knowledge_base_fails_as_loud_as_empty(self):
+        """Omitting `knowledge_base=` entirely is as plausible a mistake as
+        passing an empty one, and must fail the same way — never build a
+        retrieval agent with zero documents indexed."""
+        with pytest.raises(ValueError, match="knowledge_base"):
+            create_agent("rag", self._mock_model())
 
     def test_typod_path_fails_loud_not_indexed_literally(self):
         """A path-like entry that doesn't exist is a typo, not a document:

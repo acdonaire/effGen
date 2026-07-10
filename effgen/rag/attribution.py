@@ -18,7 +18,10 @@ class Citation:
         index: 1-based citation number (for inline `[1]` markers).
         source: source identifier (file path, URL, etc.).
         chunk_id: unique chunk ID in the index.
-        relevance_score: relevance score of the chunk.
+        relevance_score: relevance score of the chunk. A web-search-derived
+            citation has no reranker score to fill this from, so it carries
+            the dataclass default of ``0.0`` — read that as "unscored", not
+            as "scored zero relevance".
         quote: short quote from the chunk (up to ~200 chars).
         page: optional page number (PDF).
         section: optional section / breadcrumb.

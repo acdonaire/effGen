@@ -636,12 +636,14 @@ def create_agent(
             ``source``, ``url``, ``title``, ``doc``, or ``name`` is present on
             the entry's ``metadata`` (in that order); set one of those keys
             when you add an entry to get a human-readable citation instead of
-            the entry's internal id. Raises ``ValueError`` if the sources yield zero
-            documents, so a typo'd path or empty text fails loudly rather than
-            producing a silent empty-index agent. If some sources ingest and
-            others don't (e.g. a corrupt or unreadable file alongside good
-            ones), a ``RuntimeWarning`` names each skipped source and why,
-            so the agent is never queried against a silently partial corpus.
+            the entry's internal id. Required for the ``rag`` preset: omitting
+            it raises ``ValueError`` the same way an explicit empty list does.
+            Also raises ``ValueError`` if the sources yield zero documents, so a
+            typo'd path or empty text fails loudly rather than producing a
+            silent empty-index agent. If some sources ingest and others don't
+            (e.g. a corrupt or unreadable file alongside good ones), a
+            ``RuntimeWarning`` names each skipped source and why, so the agent
+            is never queried against a silently partial corpus.
         system_prompt: Override the preset's (or domain's) system prompt.
         max_iterations: Override max iterations.
         temperature: Override temperature.
@@ -784,8 +786,19 @@ def create_agent(
     # Special handling for RAG preset: ingest knowledge base on creation.
     # Failures here are LOUD: a knowledge_base that ingests to zero documents
     # raises instead of silently producing an empty-index agent that answers
-    # "No documents in index." with success=True.
-    if preset == "rag" and knowledge_base is not None:
+    # "No documents in index." with success=True. A missing knowledge_base is
+    # treated the same as an explicit empty one — omitting the argument is as
+    # plausible a mistake as passing an empty list, and both must fail before
+    # any model call rather than build a retrieval agent with nothing indexed.
+    if preset == "rag":
+        if knowledge_base is None:
+            raise ValueError(
+                "create_agent('rag', ...) needs `knowledge_base=` — a file or "
+                "directory path, a raw text string, a list of them, or a "
+                "VectorMemoryStore. The rag preset never builds a retrieval "
+                "agent with zero documents indexed; pass one, e.g. "
+                "create_agent('rag', model, knowledge_base='notes.txt')."
+            )
         _ingest_rag_knowledge_base(tools, knowledge_base)
 
     if extra_tools:

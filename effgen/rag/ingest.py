@@ -531,8 +531,12 @@ class DocumentIngester:
                 logger.warning("Skipping %s: %s", path, e)
                 self.last_skipped.append((str(path), str(e)))
             except Exception as e:
+                # The raw parser exception (e.g. pypdf's "No /Root object! -
+                # Is this really a PDF?") is not plain English next to the
+                # other skip reasons above; keep it in the log for debugging
+                # but report a normalized reason as the primary message.
                 logger.warning("Failed to ingest %s: %s", path, e)
-                self.last_skipped.append((str(path), str(e)))
+                self.last_skipped.append((str(path), self._corrupt_file_reason(ext)))
 
         logger.info(
             "Ingested %d chunks from %d file(s) (%d skipped)",
@@ -546,6 +550,19 @@ class DocumentIngester:
             f"unsupported extension '{label}'; supported: "
             f"{', '.join(self.supported_extensions())}"
         )
+
+    _CORRUPT_FILE_LABELS: dict[str, str] = {
+        ".pdf": "PDF",
+        ".docx": "DOCX",
+        ".xlsx": "XLSX",
+        ".epub": "EPUB",
+        ".json": "JSON",
+        ".jsonl": "JSONL",
+    }
+
+    def _corrupt_file_reason(self, ext: str) -> str:
+        label = self._CORRUPT_FILE_LABELS.get(ext, ext.lstrip(".").upper() or "file")
+        return f"file is not a valid {label} (corrupt or truncated)"
 
     def _expand(self, path: Path, recursive: bool) -> list[Path]:
         if path.is_file():

@@ -297,6 +297,8 @@ class TestDocumentIngester:
     def test_ingest_records_skip_reason(self, tmp_path: Path):
         # A file that cannot be parsed is recorded with its reason so callers can
         # surface *why* nothing was indexed instead of a bare "0 documents".
+        # The reason is a normalized, plain-English message — not the raw
+        # parser exception text (e.g. pypdf's "No /Root object!").
         pytest.importorskip("pypdf")
         bad = tmp_path / "broken.pdf"
         bad.write_text("this is not a real pdf")
@@ -306,7 +308,27 @@ class TestDocumentIngester:
         assert len(ingester.last_skipped) == 1
         skipped_path, reason = ingester.last_skipped[0]
         assert "broken.pdf" in skipped_path
-        assert reason  # a non-empty explanation
+        assert reason == "file is not a valid PDF (corrupt or truncated)"
+
+    def test_corrupt_docx_skip_reason_is_normalized(self, tmp_path: Path):
+        pytest.importorskip("docx")
+        bad = tmp_path / "broken.docx"
+        bad.write_bytes(b"not a real docx zip")
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(bad)
+        assert chunks == []
+        _, reason = ingester.last_skipped[0]
+        assert reason == "file is not a valid DOCX (corrupt or truncated)"
+
+    def test_corrupt_xlsx_skip_reason_is_normalized(self, tmp_path: Path):
+        pytest.importorskip("openpyxl")
+        bad = tmp_path / "broken.xlsx"
+        bad.write_bytes(b"not a real xlsx zip")
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(bad)
+        assert chunks == []
+        _, reason = ingester.last_skipped[0]
+        assert reason == "file is not a valid XLSX (corrupt or truncated)"
 
     def test_image_only_pdf_skip_reason_names_scanned_pdf(self, tmp_path: Path):
         # A valid PDF whose pages are images with no text layer (a scanned
@@ -845,6 +867,14 @@ class TestCitation:
         assert d["index"] == 1
         assert d["source"] == "foo.md"
 
+    def test_relevance_score_default_documented_as_unscored(self):
+        # A web-search-derived citation has no reranker score, so it keeps
+        # this dataclass default; the docstring must say what 0.0 means here
+        # (unscored, not "scored zero relevance") so a caller doesn't misread it.
+        assert Citation(index=1, source="https://example.com").relevance_score == 0.0
+        doc = Citation.__doc__
+        assert "unscored" in doc
+
 
 class TestCitationTracker:
     def test_add_and_sources(self):
@@ -941,17 +971,17 @@ class TestRagPreset:
         assert retrieval is not None
         assert retrieval.num_documents > 0
 
-    def test_create_rag_agent_without_knowledge_base(self):
+    def test_create_rag_agent_without_knowledge_base_fails_loud(self):
+        # Omitting knowledge_base= entirely must fail the same way an
+        # explicit empty one does — never build a retrieval agent with zero
+        # documents indexed (see TestRagKnowledgeBase for the mirrored case).
+        import pytest
+
         from effgen.presets import create_agent
         from tests.fixtures.mock_models import MockModel
 
-        agent = create_agent("rag", MockModel(responses=["ok"]))
-        # Tool should still exist, just empty
-        retrieval = next(
-            (t for t in agent.tools.values() if t.metadata.name == "retrieval"),
-            None,
-        )
-        assert retrieval is not None
+        with pytest.raises(ValueError, match="knowledge_base"):
+            create_agent("rag", MockModel(responses=["ok"]))
 
     def test_create_rag_agent_missing_kb_dir_fails_loud(self, tmp_path: Path):
         # A knowledge_base path that doesn't exist is a typo, not an empty
