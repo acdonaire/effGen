@@ -373,11 +373,19 @@ class LoadGenerator:
     # Run
     # ------------------------------------------------------------------
 
-    def run(self) -> LoadReport:
-        """Execute the load test synchronously (blocks until done)."""
-        return asyncio.run(self._arun())
+    def run(self, *, on_finish: Callable[[], Any] | None = None) -> LoadReport:
+        """Execute the load test synchronously (blocks until done).
 
-    async def _arun(self) -> LoadReport:
+        ``on_finish``, if given, is an async callable awaited inside the same
+        event loop the run itself used, right before ``run()`` returns -- so a
+        target that opened loop-bound resources (e.g. an ``httpx.AsyncClient``
+        connection pool) can close them on the loop that created them, instead
+        of a separate ``asyncio.run()`` call after this one returns, which
+        would hand the resources to an event loop that never opened them.
+        """
+        return asyncio.run(self._arun(on_finish=on_finish))
+
+    async def _arun(self, *, on_finish: Callable[[], Any] | None = None) -> LoadReport:
         cfg = self.config
         results_queue: asyncio.Queue[RequestResult] = asyncio.Queue()
 
@@ -430,6 +438,9 @@ class LoadGenerator:
                 json.dumps(report.to_dict(include_raw=False), indent=2)
             )
             log.event("loadgen.report_written", path=str(cfg.output_path))
+
+        if on_finish is not None:
+            await on_finish()
 
         return report
 

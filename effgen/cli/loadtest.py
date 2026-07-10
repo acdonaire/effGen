@@ -9,8 +9,14 @@ Examples
     # 30-second mock run, concurrency=10, report printed to stdout
     effgen loadtest --duration 30 --concurrency 10
 
-    # Live run against Cerebras
+    # Live run against Cerebras (calls the provider adapter directly)
     effgen loadtest --provider cerebras --model gpt-oss-120b \\
+        --concurrency 5 --duration 60
+
+    # Drive a running `effgen serve` instance instead — auth, rate limiting
+    # and the rest of the middleware stack are exercised, not just the
+    # provider adapter
+    effgen loadtest --url http://127.0.0.1:8000 --model openai:gpt-5-nano \\
         --concurrency 5 --duration 60
 
     # Synthetic scenario, also save the report to a file
@@ -20,10 +26,15 @@ Examples
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from ..tools.loadgen import LoadConfig, LoadGenerator, LoadScenario
+
+if TYPE_CHECKING:
+    import asyncio
 
 
 def add_loadtest_subparser(subparsers: argparse._SubParsersAction) -> None:
@@ -85,7 +96,34 @@ def add_loadtest_subparser(subparsers: argparse._SubParsersAction) -> None:
         "--model",
         default=None,
         metavar="MODEL_ID",
-        help="Model id for live runs (e.g. gpt-oss-120b). Default: mock",
+        help=(
+            "Model id for live runs. With --provider, a bare id (e.g. "
+            "gpt-oss-120b); with --url, the full id the server expects "
+            "(e.g. openai:gpt-5-nano). Default: mock"
+        ),
+    )
+    p.add_argument(
+        "--url", "--target-url",
+        dest="url",
+        default=None,
+        metavar="URL",
+        help=(
+            "Base URL of a running `effgen serve` instance (e.g. "
+            "http://127.0.0.1:8000). When set, the load test drives "
+            "POST {URL}/v1/chat/completions over HTTP -- exercising auth, "
+            "rate limiting, and the rest of the middleware stack -- instead "
+            "of calling a provider adapter directly. Requires --model. "
+            "Mutually exclusive with --provider."
+        ),
+    )
+    p.add_argument(
+        "--api-key",
+        default=None,
+        metavar="KEY",
+        help=(
+            "Bearer token for --url mode. Defaults to $EFFGEN_API_KEY "
+            "if unset."
+        ),
     )
     p.add_argument(
         "--output", "-o",
@@ -100,15 +138,34 @@ def add_loadtest_subparser(subparsers: argparse._SubParsersAction) -> None:
     p.set_defaults(func=run_loadtest_command)
 
 
+def _set_future_result(fut: "asyncio.Future[str]", value: str) -> None:
+    if not fut.done():
+        fut.set_result(value)
+
+
+def _set_future_exception(fut: "asyncio.Future[str]", exc: Exception) -> None:
+    if not fut.done():
+        fut.set_exception(exc)
+
+
 def _build_live_target(provider: str, model: str):
     """Return an async callable that queries a real provider model.
 
     The adapter is loaded **once** here (not per request) so a load test does
     not pay model-load cost on every call.  Each virtual-user request runs the
-    sync adapter in a worker thread so it never blocks the event loop.  The
-    per-request timeout is enforced by the load generator, not here.
+    sync adapter call in its own daemon thread rather than
+    ``asyncio.to_thread`` (which schedules onto the loop's default
+    ``ThreadPoolExecutor``): ``asyncio.run()`` waits for every pending
+    default-executor thread to finish before the process can exit, so a call
+    still in flight past ``--request-timeout`` (including a provider SDK's own
+    internal retries) would keep the process alive well past ``--duration``.
+    A daemon thread is abandoned instead of joined when the load generator
+    cancels the wait on timeout, so the process can exit as soon as the
+    virtual-user loop finishes, regardless of how long a straggling call
+    keeps running in the background.
     """
     import asyncio
+    import threading
 
     from effgen import load_model  # noqa: PLC0415
 
@@ -128,10 +185,98 @@ def _build_live_target(provider: str, model: str):
         # Adapters return a GenerationResult; fall back to str() for plain text.
         return getattr(result, "text", None) or str(result)
 
+    def _resolve(loop: asyncio.AbstractEventLoop, fut: "asyncio.Future[str]", prompt: str) -> None:
+        try:
+            value = _generate(prompt)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the caller via the future
+            try:
+                loop.call_soon_threadsafe(_set_future_exception, fut, exc)
+            except RuntimeError:
+                pass  # loop already closed; the future's outcome no longer matters
+            return
+        try:
+            loop.call_soon_threadsafe(_set_future_result, fut, value)
+        except RuntimeError:
+            pass
+
     async def _live_target(prompt: str) -> str:
-        return await asyncio.to_thread(_generate, prompt)
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[str] = loop.create_future()
+        threading.Thread(
+            target=_resolve, args=(loop, fut, prompt), daemon=True,
+            name="effgen-loadtest-call",
+        ).start()
+        return await fut
 
     return _live_target
+
+
+class _ServerTarget:
+    """Async callable that drives a running ``effgen serve`` instance over HTTP.
+
+    Unlike :func:`_build_live_target` (which calls a provider adapter
+    in-process), this POSTs to ``{base_url}/v1/chat/completions`` so a load
+    test exercises the deployed server surface -- auth, rate limiting, and
+    the rest of the middleware stack -- not only the bare provider call.
+    Uses ``httpx.AsyncClient`` (already a core dependency), which integrates
+    with the event loop natively: a timed-out request is cancelled by
+    ``asyncio.wait_for`` the same way any other coroutine is, with no
+    background-thread lifetime to manage.
+    """
+
+    def __init__(
+        self, base_url: str, model: str, api_key: str | None, *, transport: Any = None
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._headers = {"Content-Type": "application/json"}
+        if api_key:
+            self._headers["Authorization"] = f"Bearer {api_key}"
+        # `transport` is a test-only injection point (an ASGI transport
+        # driving an in-process app) -- production/CLI use always leaves it
+        # None, which gets httpx's real network transport.
+        self._transport = transport
+        self._client: Any = None
+
+    def _ensure_client(self) -> Any:
+        import httpx  # noqa: PLC0415
+
+        if self._client is None:
+            # No client-side timeout: the load generator's own
+            # asyncio.wait_for(request_timeout) is the single source of
+            # truth for how long a request is allowed to run.
+            self._client = httpx.AsyncClient(timeout=None, transport=self._transport)
+        return self._client
+
+    async def __call__(self, prompt: str) -> str:
+        import httpx  # noqa: PLC0415
+
+        client = self._ensure_client()
+        resp = await client.post(
+            f"{self._base_url}/v1/chat/completions",
+            headers=self._headers,
+            json={"model": self._model, "messages": [{"role": "user", "content": prompt}]},
+        )
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Surface the server's own error envelope in the message so a
+            # failed run's error_breakdown/raw error text is actionable.
+            raise RuntimeError(f"{exc} -- {resp.text[:300]}") from exc
+        data = resp.json()
+        choices = data.get("choices") or [{}]
+        message = choices[0].get("message") or {}
+        return message.get("content") or ""
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+
+def _build_server_target(url: str, model: str, api_key: str | None) -> _ServerTarget:
+    """Return a :class:`_ServerTarget` driving *url* with *model*."""
+    return _ServerTarget(url, model, api_key)
 
 
 def run_loadtest_command(args: argparse.Namespace) -> int:
@@ -143,8 +288,25 @@ def run_loadtest_command(args: argparse.Namespace) -> int:
 
     scenario = LoadScenario(args.scenario)
 
+    if args.url and args.provider:
+        print(
+            "[loadtest] Error: --url and --provider are mutually exclusive "
+            "(--url drives the server's HTTP surface; --provider calls the "
+            "adapter directly).",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.url and not args.model:
+        print(
+            "[loadtest] Error: --url requires --model (the model id the "
+            "server should route the request to, e.g. openai:gpt-5-nano).",
+            file=sys.stderr,
+        )
+        return 2
+
     # --provider and --model must be given together for a live run.
-    if bool(args.provider) != bool(args.model):
+    if not args.url and bool(args.provider) != bool(args.model):
         print(
             "[loadtest] Error: --provider and --model must be supplied "
             "together for a live run. Omit both to use the local mock.",
@@ -154,7 +316,16 @@ def run_loadtest_command(args: argparse.Namespace) -> int:
 
     # Build target callable
     target = None
-    if args.provider and args.model:
+    server_target: _ServerTarget | None = None
+    if args.url:
+        api_key = args.api_key or os.environ.get("EFFGEN_API_KEY")
+        server_target = _build_server_target(args.url, args.model, api_key)
+        target = server_target
+        print(
+            f"Server mode: url={args.url}  model={args.model}",
+            flush=True,
+        )
+    elif args.provider and args.model:
         try:
             target = _build_live_target(args.provider, args.model)
             print(
@@ -185,7 +356,8 @@ def run_loadtest_command(args: argparse.Namespace) -> int:
     )
 
     gen = LoadGenerator(cfg, target=target)
-    report = gen.run()
+    on_finish = server_target.aclose if server_target is not None else None
+    report = gen.run(on_finish=on_finish)
 
     # Pretty-print report to stdout
     _print_report(report)

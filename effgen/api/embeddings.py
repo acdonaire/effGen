@@ -369,7 +369,10 @@ def create_embeddings_router(engine: EmbeddingEngine | None = None) -> Any:
     Requires ``fastapi`` and ``pydantic`` to be installed. Otherwise import
     of this function will raise.
     """
-    from fastapi import APIRouter, Body, HTTPException  # type: ignore
+    from fastapi import APIRouter, Body  # type: ignore
+    from fastapi.responses import JSONResponse  # type: ignore
+
+    from effgen.api.openai_compat import error_envelope
 
     eng = engine or EmbeddingEngine()
 
@@ -378,10 +381,18 @@ def create_embeddings_router(engine: EmbeddingEngine | None = None) -> Any:
     @router.post("/v1/embeddings", response_model=EmbeddingResponse)
     def create_embeddings(
         response: Response, req: EmbeddingRequest = Body(...)
-    ) -> EmbeddingResponse:
+    ) -> Any:
+        # A JSONResponse built from the shared `{"error": {message, type, param,
+        # code}}` envelope (the same one every other /v1 route uses) bypasses
+        # the declared `response_model` and is returned as-is, matching every
+        # other error path on this server instead of FastAPI's default
+        # `{"detail": ...}` shape.
         texts = [req.input] if isinstance(req.input, str) else list(req.input)
         if not texts:
-            raise HTTPException(status_code=400, detail="input must not be empty")
+            return JSONResponse(
+                status_code=400,
+                content=error_envelope(400, "input must not be empty", code="empty_input"),
+            )
         try:
             # Resolve the backend first so the fallback status is known even when
             # every vector comes from the cache (a cache hit skips backend
@@ -390,9 +401,15 @@ def create_embeddings_router(engine: EmbeddingEngine | None = None) -> Any:
             vecs = eng.embed(texts, model=req.model)
         except EmbeddingBackendUnavailable as e:
             # Strict mode: refuse to serve degraded vectors under a neural id.
-            raise HTTPException(status_code=503, detail=str(e))
+            return JSONResponse(
+                status_code=503,
+                content=error_envelope(503, str(e), code="embedding_backend_unavailable"),
+            )
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"embedding failed: {e}")
+            return JSONResponse(
+                status_code=500,
+                content=error_envelope(500, f"embedding failed: {e}"),
+            )
         total_tokens = sum(len(t.split()) for t in texts)
         resolved = eng._resolve_model(req.model)
         degraded = eng.is_fallback(req.model)

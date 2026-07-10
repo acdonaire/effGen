@@ -455,6 +455,25 @@ class TestValidateAlertRulesYaml:
         ok, errors = validate_alert_rules_yaml(p)
         assert ok, errors
 
+    def test_str_path_accepted_like_a_path_object(self, tmp_path):
+        p = tmp_path / "rules.yaml"
+        p.write_text("groups: []\n")
+        ok, errors = validate_alert_rules_yaml(str(p))
+        assert ok, errors
+
+    def test_yaml_text_passed_directly_names_the_mistake(self):
+        # Passing the document's text instead of a path to it is a natural
+        # first try; it must report a clear, actionable error instead of a
+        # bare AttributeError from stat()'ing a multi-line string.
+        yaml_text = "groups:\n- name: g\n  rules: []\n"
+        ok, errors = validate_alert_rules_yaml(yaml_text)
+        assert not ok
+        assert any("YAML text" in e or "yaml text" in e.lower() for e in errors)
+
+    def test_wrong_type_raises_typeerror_naming_expected_type(self):
+        with pytest.raises(TypeError, match="str or pathlib.Path"):
+            validate_alert_rules_yaml(123)  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # Payload construction helpers (private but tested for correctness)

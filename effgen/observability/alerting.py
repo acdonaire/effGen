@@ -413,12 +413,13 @@ def check_slo_and_alert(
 _REQUIRED_RULE_FIELDS = {"alert", "expr", "for", "labels", "annotations"}
 
 
-def validate_alert_rules_yaml(path: Path) -> tuple[bool, list[str]]:
+def validate_alert_rules_yaml(path: str | Path) -> tuple[bool, list[str]]:
     """
     Validate *path* against the Alertmanager rule file schema.
 
-    Returns ``(ok, errors)`` where *errors* is a list of human-readable
-    problem descriptions (empty on success).
+    *path* is a filesystem path to a YAML file, given as a ``str`` or a
+    ``pathlib.Path``. Returns ``(ok, errors)`` where *errors* is a list of
+    human-readable problem descriptions (empty on success).
 
     If ``promtool`` is on PATH, it is invoked first and its output used.
     Otherwise a pure-Python structural check is performed.
@@ -426,6 +427,24 @@ def validate_alert_rules_yaml(path: Path) -> tuple[bool, list[str]]:
     import subprocess  # noqa: PLC0415
 
     errors: list[str] = []
+
+    if isinstance(path, str):
+        if "\n" in path:
+            # The single most likely reason a *string* argument contains a
+            # newline is that the caller passed YAML text directly instead
+            # of a path to it -- name that mistake instead of stat()'ing a
+            # multi-line string and reporting a confusing "file not found".
+            return False, [
+                "validate_alert_rules_yaml expects a path to a YAML file, "
+                "not YAML text. Write the document to a file and pass its "
+                "path, e.g. Path('/tmp/rules.yaml')."
+            ]
+        path = Path(path)
+    elif not isinstance(path, Path):
+        raise TypeError(
+            "validate_alert_rules_yaml expects a str or pathlib.Path "
+            f"file path, got {type(path).__name__}"
+        )
 
     if not path.exists():
         return False, [f"File not found: {path}"]

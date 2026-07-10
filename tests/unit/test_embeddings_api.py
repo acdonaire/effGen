@@ -90,6 +90,61 @@ def test_strict_mode_fails_closed(monkeypatch):
 
     r = c.post("/v1/embeddings", json={"model": "text-embedding-3-small", "input": "hi"})
     assert r.status_code == 503  # refuse to serve degraded vectors under a neural id
+    # Same {"error": {message, type, param, code}} envelope every other /v1
+    # route uses, not FastAPI's default {"detail": ...}.
+    body = r.json()
+    assert "detail" not in body
+    err = body["error"]
+    assert err["message"]
+    assert err["type"] == "upstream_unavailable"
+    assert err["code"] == "embedding_backend_unavailable"
+
+
+def test_empty_input_error_envelope():
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    from effgen.api.embeddings import EmbeddingEngine, create_embeddings_router
+
+    app = FastAPI()
+    app.include_router(
+        create_embeddings_router(engine=EmbeddingEngine(persistent_cache=False))
+    )
+    c = TestClient(app)
+
+    r = c.post("/v1/embeddings", json={"model": "tfidf", "input": []})
+    assert r.status_code == 400
+    body = r.json()
+    assert "detail" not in body
+    err = body["error"]
+    assert err["type"] == "invalid_request_error"
+    assert err["code"] == "empty_input"
+    assert "empty" in err["message"]
+
+
+def test_unexpected_embedding_failure_error_envelope(monkeypatch):
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    import effgen.api.embeddings as emb
+
+    eng = emb.EmbeddingEngine(persistent_cache=False)
+    monkeypatch.setattr(
+        eng,
+        "embed",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    app = FastAPI()
+    app.include_router(emb.create_embeddings_router(engine=eng))
+    c = TestClient(app)
+
+    r = c.post("/v1/embeddings", json={"model": "tfidf", "input": "hi"})
+    assert r.status_code == 500
+    body = r.json()
+    assert "detail" not in body
+    err = body["error"]
+    assert err["type"] == "server_error"
+    assert "boom" in err["message"]
 
 
 def test_explicit_tfidf_not_marked_degraded():

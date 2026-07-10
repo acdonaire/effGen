@@ -386,6 +386,33 @@ class TestCustomTarget:
         report = gen.run()
         assert report.error_breakdown == {"timeout": report.failed_requests}
 
+    def test_on_finish_awaited_inside_the_same_event_loop(self):
+        # A target that opens loop-bound resources (e.g. an httpx.AsyncClient
+        # connection pool) needs its cleanup awaited on the same loop the run
+        # used, not a second asyncio.run() after this one returns.
+        seen_loop: list[object] = []
+
+        async def echo_target(prompt: str) -> str:
+            return prompt
+
+        async def on_finish() -> None:
+            seen_loop.append(asyncio.get_running_loop())
+
+        cfg = LoadConfig(concurrency=1, duration=0.2)
+        gen = LoadGenerator(cfg, target=echo_target)
+        report = gen.run(on_finish=on_finish)
+        assert report.total_requests > 0
+        assert len(seen_loop) == 1
+
+    def test_run_without_on_finish_still_works(self):
+        async def echo_target(prompt: str) -> str:
+            return prompt
+
+        cfg = LoadConfig(concurrency=1, duration=0.2)
+        gen = LoadGenerator(cfg, target=echo_target)
+        report = gen.run()
+        assert report.total_requests > 0
+
     def test_failing_target_error_breakdown_populated(self):
         from effgen.models.errors import ModelAuthError
 
