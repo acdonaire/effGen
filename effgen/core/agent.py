@@ -13,9 +13,12 @@ The main Agent class with:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import difflib
 import functools
 import logging
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -73,6 +76,39 @@ from .agent_runtime import (  # noqa: E402
     _safe_float_or_none,
     _safe_int_or_none,
     sanitize_final_answer,
+)
+
+
+@dataclass
+class _AgentCallState:
+    """One ``Agent.run()`` call's sub-agent depth, citations, and cost/token
+    accumulator — held in a context variable (see ``_call_state_var`` below)
+    so concurrent or repeated calls that reuse one ``Agent`` instance (e.g.
+    ``BatchRunner`` running many rows through a single agent) never read or
+    write each other's data.
+    """
+
+    current_depth: int = 0
+    collected_citations: list[dict[str, Any]] = field(default_factory=list)
+    run_cost_accum: dict[str, Any] = field(default_factory=dict)
+
+
+# Per-call state for the three attributes above. Set for the duration of one
+# run() call by Agent._agent_call_scope(); falls back to a private
+# per-instance default (Agent._fallback_call_state) for any access outside
+# an active run (e.g. immediately after construction).
+_call_state_var: contextvars.ContextVar[_AgentCallState | None] = contextvars.ContextVar(
+    "effgen_agent_call_state", default=None
+)
+
+# Overrides Agent.execution_tracker for the duration of one run() call, but
+# only when a sibling run is already in flight on the same Agent instance
+# (see Agent._agent_call_scope()). Otherwise a run reuses and clears the
+# instance's own tracker, so a caller that grabs `agent.execution_tracker`
+# before starting a single run (e.g. a live status display) keeps watching
+# the object that run actually writes to.
+_tracker_override_var: contextvars.ContextVar[ExecutionTracker | None] = contextvars.ContextVar(
+    "effgen_agent_tracker_override", default=None
 )
 
 
@@ -691,13 +727,9 @@ Question: {task}
         # State management
         self.state = AgentState(agent_id=self.name)
 
-        # Per-run accumulator of retrieved evidence (RAG/search). Populated by
-        # _execute_tool_once when a retrieval/search tool returns ranked passages,
-        # then surfaced on AgentResponse.sources / .citations at the end of run().
-        self._collected_citations: list[dict[str, Any]] = []
-
-        # Sub-agent components
-        self._current_depth = 0
+        # Sub-agent components. Per-call depth/citation/cost state (see
+        # _agent_call_scope) lives in a context variable, not on the
+        # instance, so it isn't declared here.
         self.router = None
         self.sub_agent_manager = None
         if config.enable_sub_agents:
@@ -710,8 +742,12 @@ Question: {task}
                 config=config.sub_agent_config
             )
 
-        # Execution tracker
-        self.execution_tracker = ExecutionTracker()
+        # Execution tracker. `execution_tracker` (defined below as a
+        # property) reads/clears this instance unless a concurrent sibling
+        # run is in flight on this Agent, in which case it gets its own.
+        self._default_execution_tracker = ExecutionTracker()
+        self._active_run_lock = threading.Lock()
+        self._active_run_count = 0
 
         # Memory system
         mem_cfg = config.memory_config or {}
@@ -756,6 +792,86 @@ Question: {task}
                     self.short_term_memory.add_user_message(content)
                 elif role == "assistant":
                     self.short_term_memory.add_assistant_message(content)
+
+    def _get_call_state(self) -> _AgentCallState:
+        """Return the active per-call state, or a private per-instance
+        fallback for access outside an active run() (e.g. right after
+        construction)."""
+        state = _call_state_var.get()
+        if state is not None:
+            return state
+        fallback = getattr(self, "_fallback_call_state", None)
+        if fallback is None:
+            fallback = _AgentCallState()
+            self._fallback_call_state = fallback
+        return fallback
+
+    @property
+    def _current_depth(self) -> int:
+        return self._get_call_state().current_depth
+
+    @_current_depth.setter
+    def _current_depth(self, value: int) -> None:
+        self._get_call_state().current_depth = value
+
+    @property
+    def _collected_citations(self) -> list[dict[str, Any]]:
+        return self._get_call_state().collected_citations
+
+    @_collected_citations.setter
+    def _collected_citations(self, value: list[dict[str, Any]]) -> None:
+        self._get_call_state().collected_citations = value
+
+    @property
+    def _run_cost_accum(self) -> dict[str, Any]:
+        return self._get_call_state().run_cost_accum
+
+    @_run_cost_accum.setter
+    def _run_cost_accum(self, value: dict[str, Any]) -> None:
+        self._get_call_state().run_cost_accum = value
+
+    @property
+    def execution_tracker(self) -> ExecutionTracker:
+        override = _tracker_override_var.get()
+        return override if override is not None else self._default_execution_tracker
+
+    @execution_tracker.setter
+    def execution_tracker(self, value: ExecutionTracker) -> None:
+        if _tracker_override_var.get() is not None:
+            _tracker_override_var.set(value)
+        else:
+            self._default_execution_tracker = value
+
+    @contextlib.contextmanager
+    def _agent_call_scope(self) -> Iterator[None]:
+        """Give one run() call its own depth/citations/cost-accumulator state
+        and, when a sibling run is already in flight on this Agent, its own
+        execution tracker.
+
+        A single active run reuses and clears the instance's own tracker, so
+        a caller that grabbed ``agent.execution_tracker`` before starting it
+        (e.g. a live status display) keeps watching the object the run
+        writes to. A run that starts while another is still in flight on the
+        same Agent gets an isolated tracker instead, so the two never
+        interleave events, sub-agent depth, citations, or cost/token totals.
+        """
+        state_token = _call_state_var.set(_AgentCallState())
+        with self._active_run_lock:
+            concurrent = self._active_run_count > 0
+            self._active_run_count += 1
+        tracker_token = None
+        if concurrent:
+            tracker_token = _tracker_override_var.set(ExecutionTracker())
+        else:
+            self._default_execution_tracker.clear()
+        try:
+            yield
+        finally:
+            with self._active_run_lock:
+                self._active_run_count -= 1
+            if tracker_token is not None:
+                _tracker_override_var.reset(tracker_token)
+            _call_state_var.reset(state_token)
 
     def _validate_native_tool_compatibility(self, tools: list) -> None:
         """Raise ToolIncompatibleError for provider-specific tools used with the wrong model."""
@@ -1009,11 +1125,6 @@ Question: {task}
                 },
             )
 
-        self._current_depth = 0  # Reset depth at the start of each top-level run()
-        self._collected_citations = []  # Reset retrieved-evidence accumulator
-        # Per-run cost/token accumulator — folded onto the response metadata so
-        # every run reports its own cost_usd + token counts (see _finalize_cost).
-        self._run_cost_accum = {}
         debug = kwargs.pop("debug", False)
         # A max_tokens set on the config is the default output budget for every
         # run(); an explicit run(max_tokens=...) still overrides it per call.
@@ -1073,18 +1184,20 @@ Question: {task}
 
         self._warn_reasoning_budget(kwargs.get("max_tokens"), effective_schema is not None)
 
-        # Track task start
-        self.execution_tracker.track_event(ExecutionEvent(
-            type=EventType.TASK_START,
-            agent_id=self.name,
-            message=f"Starting task: {self._extract_task_preview(task, 100)}...",
-            data={"task": task, "mode": mode.value}
-        ))
-
-        # Wrap entire run in tracing span + structured log context
+        # Wrap entire run in tracing span + structured log context, and give
+        # this call its own depth/citations/cost/trace state so it can't
+        # collide with a concurrent or prior call on this Agent instance.
         _task_preview = self._extract_task_preview(task, 200)
-        with start_agent_run(preset=self.name, task=task, run_id=run_id) as _span, \
+        with self._agent_call_scope(), \
+             start_agent_run(preset=self.name, task=task, run_id=run_id) as _span, \
              LogRunContext(run_id=run_id, agent_name=self.name):
+            # Track task start
+            self.execution_tracker.track_event(ExecutionEvent(
+                type=EventType.TASK_START,
+                agent_id=self.name,
+                message=f"Starting task: {self._extract_task_preview(task, 100)}...",
+                data={"task": task, "mode": mode.value}
+            ))
             _slog.agent_event(self.name, "task_start", task=_task_preview, mode=mode.value, run_id=run_id)
             _obs_log.agent_event("run.started", agent=self.name, task=_task_preview, mode=mode.value, run_id=run_id)
 

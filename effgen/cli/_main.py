@@ -1018,6 +1018,15 @@ class CLIInterface:
             if getattr(args, 'verbose', False):
                 import traceback
                 traceback.print_exc()
+            # A failure here happens before any AgentResponse exists (e.g. an
+            # unknown model id) — --json still gets one clean JSON object on
+            # stdout, matching the envelope a successful/runtime-failure run
+            # would have emitted, instead of empty stdout with a nonzero exit.
+            if json_mode:
+                print(json.dumps({
+                    "success": False,
+                    "error": {"type": type(e).__name__, "message": str(e)},
+                }, indent=2, ensure_ascii=False))
             return 1
         finally:
             # Release the agent explicitly so the CLI never emits the
@@ -2914,7 +2923,15 @@ Model id formats:
     # Batch command
     batch_parser = subparsers.add_parser('batch', help='Run batch queries from a file')
     batch_parser.add_argument('-i', '--input', required=True, help='Input file (JSONL, CSV, JSON, or plain text)')
-    batch_parser.add_argument('-o', '--output', help='Output file (JSONL, CSV, or JSON)')
+    batch_parser.add_argument('-o', '--output',
+                              help='Output file (JSONL, CSV, or JSON). .jsonl rows are '
+                                   'written as each query finishes, so their file order '
+                                   'is completion order, not input order, at any '
+                                   '--concurrency above 1; .csv/.json rows are written '
+                                   'once at the end in input order. Every row carries an '
+                                   '"index" field back to its input position — sort on '
+                                   'it if your consumer assumes line N corresponds to '
+                                   'input row N.')
     batch_parser.add_argument('--concurrency', type=int, default=5, help='Max concurrent queries (default: 5)')
     batch_parser.add_argument('--batch-size', type=int, default=0, help='Batch size (0 = all at once)')
     batch_parser.add_argument('--timeout', type=float, default=120.0, help='Timeout per query in seconds')
@@ -2952,6 +2969,11 @@ Model id formats:
                               help='Quiet output (suppress the progress bar)')
     batch_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
                               help='Disable the live progress bar (plain output)')
+    batch_parser.add_argument('--json', dest='output_json', action='store_true',
+                              help='Emit the job summary and every row as a JSON '
+                                   'document to stdout (for piping to jq), in addition '
+                                   'to any -o file. Human output goes to stderr; '
+                                   'combine with -q for clean stdout.')
 
     # Eval command
     eval_parser = subparsers.add_parser('eval', help='Evaluate an agent against a test suite')
@@ -3850,6 +3872,22 @@ def _handle_batch_command(args, cli) -> int:
     strict = getattr(args, 'strict', False)
     resume = getattr(args, 'resume', False)
 
+    # Headless JSON contract, same as `run --json`: keep stdout pure (only the
+    # JSON result document) by routing human chatter to stderr, and emit a
+    # typed error object to stdout on EVERY failure path — early argument/read
+    # failures included — so a `| jq` consumer never gets empty input.
+    json_mode = getattr(args, 'output_json', False)
+    if json_mode:
+        cli._human_to_stderr = True
+
+    def _json_error(exc: Exception) -> int:
+        if json_mode:
+            print(json.dumps({
+                "success": False,
+                "error": {"type": type(exc).__name__, "message": str(exc)},
+            }, indent=2, ensure_ascii=False))
+        return 1
+
     # Extra kwargs forwarded to each agent.run() call.
     run_kwargs: dict = {}
     if max_tokens is not None:
@@ -3860,15 +3898,23 @@ def _handle_batch_command(args, cli) -> int:
         run_kwargs.update(_batch_structured_kwargs(args))
     except ValueError as e:
         cli.print_error(str(e))
-        return 1
+        return _json_error(e)
 
     out_suffix = Path(output_path).suffix.lower() if output_path else None
     # A .jsonl output streams each finished row as it completes, so a crash
     # mid-job keeps the rows already done; --resume then skips those on rerun.
     stream_jsonl = bool(output_path) and out_suffix == ".jsonl"
     if resume and not stream_jsonl:
-        cli.print_error("--resume requires a .jsonl --output file.")
-        return 1
+        msg = "--resume requires a .jsonl --output file."
+        cli.print_error(msg)
+        return _json_error(ValueError(msg))
+
+    if not output_path and not json_mode:
+        cli.print(
+            "Warning: no -o/--output and no --json — each row's answer, cost, "
+            "tokens, and any error detail will be discarded; only the summary "
+            "line at the end of this run is kept."
+        )
 
     agent = None
     out_fh = None
@@ -3909,7 +3955,7 @@ def _handle_batch_command(args, cli) -> int:
             )
         except Exception as e:  # noqa: BLE001 - one clear message, no traceback
             cli.print_error(f"Could not read {input_path}: {e}")
-            return 1
+            return _json_error(e)
         if skipped:
             cli.print(
                 f"Skipped {len(skipped)} malformed line(s); "
@@ -3981,9 +4027,19 @@ def _handle_batch_command(args, cli) -> int:
             r.get("total_tokens", 0) for r in done_rows.values()
             if isinstance(r.get("total_tokens"), int)
         )
+        done_prompt_tokens = sum(
+            r.get("prompt_tokens", 0) for r in done_rows.values()
+            if isinstance(r.get("prompt_tokens"), int)
+        )
+        done_completion_tokens = sum(
+            r.get("completion_tokens", 0) for r in done_rows.values()
+            if isinstance(r.get("completion_tokens"), int)
+        )
         cost_present = result.total_cost_usd is not None or done_cost > 0
         total_cost = (result.total_cost_usd or 0.0) + done_cost if cost_present else None
         total_tokens = result.total_tokens + done_tokens
+        total_prompt_tokens = result.total_prompt_tokens + done_prompt_tokens
+        total_completion_tokens = result.total_completion_tokens + done_completion_tokens
 
         summary = (
             f"\nBatch complete: {succeeded}/{total} succeeded "
@@ -4007,11 +4063,29 @@ def _handle_batch_command(args, cli) -> int:
         elif output_path:
             cli.print(f"Results written to {output_path}")
 
+        if json_mode:
+            rows = list(done_rows.values())
+            for pos, resp in enumerate(result.results):
+                rows.append(BatchRunner._result_row(run_positions[pos], resp, run_queries[pos]))
+            rows.sort(key=lambda r: r.get("index", 0))
+            print(json.dumps({
+                "total": total,
+                "succeeded": succeeded,
+                "failed": failed,
+                "success_rate": round(succeeded / total, 4) if total else 0.0,
+                "total_time": round(result.total_time, 2),
+                "total_cost_usd": round(total_cost, 8) if total_cost is not None else None,
+                "total_tokens": total_tokens,
+                "total_prompt_tokens": total_prompt_tokens,
+                "total_completion_tokens": total_completion_tokens,
+                "rows": rows,
+            }, indent=2, ensure_ascii=False))
+
         return 0 if failed == 0 else 1
 
     except Exception as e:
         cli.print(f"Batch execution failed: {e}")
-        return 1
+        return _json_error(e)
     finally:
         if out_fh is not None:
             try:

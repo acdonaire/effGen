@@ -632,3 +632,22 @@ def test_workflow_validate_json(capsys, tmp_path):
     assert data["valid"] is True
     assert data["nodes"] == 2
     assert data["execution_order"] == ["a", "b"]
+
+
+# --------------------------------------------------------------------------- #
+# `run --json` still emits a JSON envelope when the agent never gets built
+# --------------------------------------------------------------------------- #
+def test_run_json_on_construction_failure_emits_json_envelope(capsys):
+    # An unknown provider prefix fails before any AgentResponse exists (no
+    # network call happens), so this needs no live key. --json must still put
+    # one parseable object on stdout, not leave it empty on a nonzero exit.
+    parser = _main.create_parser()
+    args = parser.parse_args([
+        "run", "hi", "-m", "bogus-provider:not-a-real-model", "--json", "-q",
+    ])
+    code = _cli().run_agent(args)
+    out = capsys.readouterr().out
+    assert code == 1
+    data = json.loads(out)
+    assert data["success"] is False
+    assert "bogus-provider" in data["error"]["message"]
