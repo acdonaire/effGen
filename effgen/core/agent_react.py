@@ -1171,6 +1171,16 @@ class AgentReActMixin:
         ``web_search_call`` action sources). Those widen ``response.sources``
         so a search that ran is never left unsourced, but they never
         manufacture a ``Citation`` entry the model did not actually make.
+
+        Locally-mined URL sources (``_collect_citations``, e.g. a plain
+        ``web_search`` tool) carry no such explicit marker; a search can
+        return results the model never draws on. For those, "cited" is
+        determined by whether the model's final answer text actually
+        contains the URL — mirroring the native-provider distinction above.
+        Non-URL sources (e.g. a RAG file path) use inline ``[N]`` bracket
+        markers this generic mining path can't reliably map back to one
+        item across multiple tool calls, so they keep the previous default
+        (cited=True) rather than risk dropping a real citation.
         """
         raw = list(getattr(self, "_collected_citations", None) or [])
         # Fold provider-native grounding chunks ({url, title}) into the same
@@ -1196,12 +1206,20 @@ class AgentReActMixin:
 
         from ..rag.attribution import Citation
 
+        answer_text = response.output or ""
         seen: set[tuple[str, str, str]] = set()
         citations: list[Citation] = []
         sources: list[str] = []
         seen_sources: set[str] = set()
         for entry in raw:
-            if entry.get("cited", True):
+            is_cited = entry.get("cited")
+            if is_cited is None:
+                source = entry["source"]
+                if source.startswith(("http://", "https://")):
+                    is_cited = source in answer_text
+                else:
+                    is_cited = True
+            if is_cited:
                 key = (entry["source"], entry["chunk_id"], entry["quote"][:80])
                 if key not in seen:
                     seen.add(key)

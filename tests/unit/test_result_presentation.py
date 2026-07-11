@@ -93,6 +93,22 @@ def test_repr_html_failed_run():
     assert "failed" in html.lower()
 
 
+def test_repr_html_is_theme_aware():
+    # The card must follow the notebook's own light/dark theme (a
+    # `prefers-color-scheme: dark` variant) rather than hardcoding
+    # light-theme colors that are illegible in a dark JupyterLab/VS Code
+    # theme, and it must not clobber a previous card's palette when several
+    # cards render in the same notebook — the CSS is scoped to a class, not
+    # inlined as fixed colors.
+    r = _sample(output="hi")
+    html = r._repr_html_()
+    assert "prefers-color-scheme: dark" in html
+    assert 'class="effgen-card"' in html
+    assert "color:#1a1a1a" not in html
+    assert "color:#666" not in html
+    assert "color:#888" not in html
+
+
 # --- show() / trace() -------------------------------------------------
 
 

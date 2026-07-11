@@ -29,6 +29,7 @@ from .errors import (
     RETRY_RATE_LIMITED,
     RETRY_WILL_RETRY,
     classify_provider_error,
+    context_overflow_hint,
     error_context_dict,
 )
 
@@ -256,6 +257,15 @@ def provider_runtime_error(
                 remediation = remediation + hint
         except Exception:  # pragma: no cover - suggestion is best-effort
             pass
+    # On a rejected-as-invalid request that reads like a context-window or
+    # token-rate overflow (a large preset's tool-schema payload alone can
+    # push a small-context/low-rate-limit model over the line before any
+    # real content is added), point toward a smaller preset or a
+    # bigger-context/higher-rate-limit model instead of a bare rejection.
+    elif ctx["category"] == "invalid_request":
+        hint = context_overflow_hint(str(exc))
+        if hint:
+            remediation = remediation + hint
 
     err = RuntimeError(
         f"{head} [{ctx['retry_status']}]: {cause}. {remediation}"

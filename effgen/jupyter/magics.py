@@ -228,15 +228,20 @@ def _run_agent(
 
 
 def _context_overflow_hint(text: str, preset: str | None) -> str | None:
-    """Return a friendly, actionable message when *text* indicates the model's
-    context window was exceeded (common with large presets on small models).
+    """Return a friendly, actionable message when *text* indicates the
+    request (the prompt, or a large preset's tool-schema payload) exceeded
+    a model's context window or a provider's token-rate limit.
 
-    Returns ``None`` when *text* is not a context-overflow signal, so callers
-    can fall through to the normal output.
+    Shares its trigger detection with
+    :func:`effgen.models.errors.context_overflow_hint` (the same signal set
+    the CLI/``Agent.run`` error path uses), so a Groq per-minute rate
+    message ("reduce your message size") is recognised here exactly as it
+    is everywhere else. Returns ``None`` when *text* is not such a signal,
+    so callers can fall through to the normal output.
     """
-    lowered = (text or "").lower()
-    signals = ("context_length_exceeded", "reduce the length", "maximum context length")
-    if not any(s in lowered for s in signals):
+    from effgen.models.errors import context_overflow_hint
+
+    if context_overflow_hint(text) is None:
         return None
     suggestion = (
         "a smaller preset (e.g. `math` for arithmetic) or a model with a larger "
@@ -244,8 +249,8 @@ def _context_overflow_hint(text: str, preset: str | None) -> str | None:
     )
     label = f"`{preset}`" if preset else "this"
     return (
-        f"⚠️ The {label} preset's tools don't fit this model's context window. "
-        f"Try {suggestion}."
+        f"⚠️ The {label} preset's tools don't fit this model's context window "
+        f"or rate limit. Try {suggestion}."
     )
 
 

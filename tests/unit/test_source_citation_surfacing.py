@@ -29,6 +29,10 @@ def _agent():
 
 class TestCollectFromToolResults:
     def test_web_search_list_output_collects_sources(self):
+        # A search can return URLs the model never references in its final
+        # answer; those still widen `.sources` (a search that ran is never
+        # silently unsourced) but only the one actually referenced in the
+        # answer text becomes a `.citations` entry.
         agent = _agent()
         agent._collected_citations = []
         tool = WebSearch()
@@ -40,10 +44,10 @@ class TestCollectFromToolResults:
             ],
         )
         agent._collect_citations(tool, "web_search", result)
-        resp = AgentResponse(output="answer")
+        resp = AgentResponse(output="The answer draws on https://example.com/a.")
         agent._attach_citations(resp)
         assert resp.sources == ["https://example.com/a", "https://example.com/b"]
-        assert len(resp.citations) == 2
+        assert len(resp.citations) == 1
         assert resp.citations[0].source == "https://example.com/a"
 
     def test_url_fetch_single_dict_collects_one_source(self):
@@ -60,12 +64,31 @@ class TestCollectFromToolResults:
             },
         )
         agent._collect_citations(tool, "url_fetch", result)
-        resp = AgentResponse(output="answer")
+        resp = AgentResponse(output="Per https://en.wikipedia.org/wiki/CrowdStrike, it is a cybersecurity firm.")
         agent._attach_citations(resp)
         assert resp.sources == ["https://en.wikipedia.org/wiki/CrowdStrike"]
         assert len(resp.citations) == 1
         # Long body is truncated into a short quote, not dumped whole.
         assert len(resp.citations[0].quote) <= 200
+
+    def test_web_search_url_not_referenced_in_answer_stays_source_only(self):
+        # The direct regression case: a search result the model never draws
+        # on must widen `.sources` but never manufacture a `.citations`
+        # entry, exactly like the native-provider `cited: False` path.
+        agent = _agent()
+        agent._collected_citations = []
+        tool = WebSearch()
+        result = ToolResult(
+            success=True,
+            output=[
+                {"title": "A", "url": "https://example.com/a", "snippet": "snip a", "position": 1},
+            ],
+        )
+        agent._collect_citations(tool, "web_search", result)
+        resp = AgentResponse(output="The answer never mentions that particular result.")
+        agent._attach_citations(resp)
+        assert resp.sources == ["https://example.com/a"]
+        assert resp.citations == []
 
     def test_failed_tool_result_is_skipped(self):
         agent = _agent()

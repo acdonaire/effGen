@@ -178,12 +178,25 @@ class AgentConfig:
         temperature: Generation temperature
         top_p: Nucleus-sampling threshold; overridden per call by run(top_p=...)
         top_k: Top-k sampling cutoff (providers that don't support it ignore it)
-        seed: Sampling seed; a fixed seed plus temperature=0 reproduces a
-            generation exactly, on providers that support it
+        seed: Sampling seed. A fixed seed plus temperature=0 reproduces a
+            generation exactly on Gemini, Groq, and local engines
+            (transformers/vllm/gguf/mlx). OpenAI's chat models accept
+            ``seed`` and typically reproduce output, but the same
+            seed+temperature=0 request can still return a different
+            completion — OpenAI documents this as best-effort determinism,
+            not a guarantee, especially for reasoning-tier models. Treat an
+            OpenAI ``seed`` as "usually reproducible," not "always."
         presence_penalty: Penalizes tokens already present anywhere in the text
         frequency_penalty: Penalizes tokens proportionally to how often they
             already appeared (the standard anti-repetition knob for long text)
         repetition_penalty: Multiplicative repeat penalty used by local/HF engines
+        mode: Default execution mode for run()/run_async() when the call
+            site doesn't pass its own ``mode=``. Defaults to
+            ``AgentMode.SINGLE`` so a plain ``Agent(config).run(task)`` never
+            switches to sub-agent decomposition on its own; set to
+            ``AgentMode.AUTO`` to have the router decide per call, or pass
+            ``mode=`` on an individual ``run()`` call to override this
+            default just for that call.
         enable_sub_agents: Enable sub-agent spawning
         enable_memory: Enable memory systems
         enable_streaming: Enable response streaming
@@ -223,6 +236,7 @@ class AgentConfig:
     presence_penalty: float = 0.0
     frequency_penalty: float = 0.0
     repetition_penalty: float = 1.0
+    mode: AgentMode = AgentMode.SINGLE
     enable_sub_agents: bool = True
     enable_memory: bool = True
     enable_streaming: bool = False
@@ -470,6 +484,19 @@ class AgentResponse:
 
 from .agent_generation import AgentGenerationMixin  # noqa: E402
 from .agent_react import AgentReActMixin  # noqa: E402
+
+
+class _AgentDecompositionClient:
+    """Adapts an :class:`Agent` to the ``generate(prompt, **kwargs) -> str``
+    interface :class:`~effgen.core.decomposition_engine.DecompositionEngine`
+    expects for LLM-assisted task decomposition, by routing through the
+    agent's own model-generation path (:meth:`Agent._generate`)."""
+
+    def __init__(self, agent: "Agent") -> None:
+        self._agent = agent
+
+    def generate(self, prompt: str, **kwargs: Any) -> str:
+        return self._agent._generate(prompt, **kwargs).get("text", "")
 
 
 class Agent(AgentGenerationMixin, AgentReActMixin, AgentRuntimeMixin):
@@ -749,7 +776,7 @@ Question: {task}
         if config.enable_sub_agents:
             self.router = SubAgentRouter(
                 config=config.router_config,
-                llm_client=self  # Pass self as LLM client
+                llm_client=_AgentDecompositionClient(self)
             )
             self.sub_agent_manager = SubAgentManager(
                 parent_agent=self,
@@ -1057,7 +1084,7 @@ Question: {task}
 
     def run(self,
             task: "str | Message | list[Any]",
-            mode: AgentMode = AgentMode.AUTO,
+            mode: AgentMode | None = None,
             context: dict[str, Any] | None = None,
             output_schema: dict[str, Any] | None = None,
             output_model: Any = None,
@@ -1071,7 +1098,11 @@ Question: {task}
                 ``Message``, or a ``list[ContentPart]``; text is extracted and
                 any image/audio/video parts are routed through the multimodal
                 path.
-            mode: Execution mode (single, sub_agents, auto)
+            mode: Execution mode (single, sub_agents, auto). Defaults to
+                ``self.config.mode`` (``AgentMode.SINGLE`` unless the config
+                sets otherwise) when omitted — pass ``mode=AgentMode.AUTO``
+                to let the router decide based on task complexity for this
+                call only.
             context: Optional context
             output_schema: A JSON-Schema ``dict`` **or** a Pydantic
                 ``BaseModel`` subclass — when provided, the final output is
@@ -1095,6 +1126,8 @@ Question: {task}
         Returns:
             AgentResponse with results
         """
+        if mode is None:
+            mode = self.config.mode
         unrecognized = {k for k in kwargs if k not in _RUN_KWARGS and not k.startswith("_")}
         if unrecognized:
             bad = sorted(unrecognized)[0]
@@ -1748,7 +1781,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
 
     async def run_async(self,
                        task: "str | Message | list[Any]",
-                       mode: AgentMode = AgentMode.AUTO,
+                       mode: AgentMode | None = None,
                        context: dict[str, Any] | None = None,
                        output_schema: dict[str, Any] | None = None,
                        output_model: Any = None,
@@ -1763,7 +1796,8 @@ Provide a well-structured, comprehensive response that integrates all findings."
 
         Args:
             task: Task description (str, Message, or list[ContentPart])
-            mode: Execution mode
+            mode: Execution mode. Defaults to ``self.config.mode`` when
+                omitted (see ``run()``).
             context: Optional context
             output_schema: A JSON-Schema ``dict`` or a Pydantic ``BaseModel``
                 subclass (see ``run``).
@@ -1911,7 +1945,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
 
     def stream(self,
                task: "str | Message | list[Any]",
-               mode: AgentMode = AgentMode.AUTO,
+               mode: AgentMode | None = None,
                context: dict[str, Any] | None = None,
                on_thought: Callable[[str], None] | None = None,
                on_tool_call: Callable[[str, str], None] | None = None,

@@ -168,11 +168,19 @@ class SubAgentRouter:
             strategy = RoutingStrategy.SINGLE_AGENT
 
         # Generate reasoning
-        reasoning = (
-            f"Complexity score: {complexity_score.overall:.2f}. "
-            f"{'Sub-agents recommended' if use_sub_agents else 'Single agent sufficient'} "
-            f"based on complexity threshold of {self.config['complexity_threshold']}."
-        )
+        num_requirements = complexity_score.breakdown.get("num_requirements", 1)
+        if use_sub_agents:
+            reasoning = (
+                f"Complexity score: {complexity_score.overall:.2f}. Sub-agents "
+                f"recommended: an explicit request, a multi-step keyword phrase, "
+                f"or {num_requirements} distinct requirements indicate a compound task."
+            )
+        else:
+            reasoning = (
+                f"Complexity score: {complexity_score.overall:.2f}. Single agent "
+                f"sufficient: no explicit request, multi-step keyword phrase, or "
+                f"multiple distinct requirements — the task is a single unit of work."
+            )
 
         return RoutingDecision(
             use_sub_agents=use_sub_agents,
@@ -288,12 +296,19 @@ class SubAgentRouter:
         """
         Decision criteria for using sub-agents.
 
-        Factors considered:
+        Factors considered, in order:
         1. User-explicit request (always honored)
-        2. Complexity score vs threshold
-        3. Presence of keyword triggers
-        4. Task length and structure
-        5. Number of requirements
+        2. Presence of keyword triggers (an explicit multi-step phrase)
+        3. Number of distinct requirements (structural compoundness)
+
+        The raw complexity ``overall`` score is not used as an independent
+        trigger: it is weighted by task length and domain/tool vocabulary
+        breadth as much as by actual task structure, so a single dense
+        instruction — or a short instruction plus a long pasted reference
+        document (a paper abstract, a log excerpt) — can score as "complex"
+        without describing more than one thing to do. Decomposition is
+        warranted by evidence the task is genuinely *compound*, not merely
+        long or information-dense.
 
         Args:
             complexity_score: Calculated complexity score
@@ -307,29 +322,17 @@ class SubAgentRouter:
             logger.debug("User explicitly requested sub-agents — honoring request.")
             return True
 
-        # Complexity threshold check
-        threshold = self.config["complexity_threshold"]
-        if complexity_score.overall < threshold:
-            # Check if triggers present that override threshold
-            if not self._check_keyword_triggers(task):
-                return False
-
-        # Keyword trigger check
+        # Keyword trigger check — an explicit multi-step phrase ("research
+        # and analyze", "compare multiple", "comprehensive", ...) is a
+        # reliable compound-task signal regardless of the raw score.
         if self._check_keyword_triggers(task):
             return True
 
-        # Multiple requirements check
+        # Multiple requirements check — several questions, numbered/bulleted
+        # items, semicolon-separated asks, or "and"-joined requests are a
+        # structural signal the task actually has multiple parts.
         num_requirements = complexity_score.breakdown.get("num_requirements", 1)
         if num_requirements >= self.config["min_subtasks"]:
-            return True
-
-        # Task length check (very long tasks benefit from decomposition)
-        word_count = complexity_score.breakdown.get("word_count", 0)
-        if word_count > 100:
-            return True
-
-        # High complexity check (override threshold with margin)
-        if complexity_score.overall >= threshold * 0.9:
             return True
 
         return False

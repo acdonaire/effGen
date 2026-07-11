@@ -12,6 +12,7 @@ Manages the lifecycle of specialized sub-agents including:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import traceback
 from collections.abc import Callable
@@ -22,6 +23,8 @@ from typing import Any
 from .execution_tracker import EventType, ExecutionEvent, ExecutionTracker
 from .router import RoutingStrategy
 from .task import SubTask, TaskStatus
+
+logger = logging.getLogger(__name__)
 
 
 class SubAgentSpecialization(Enum):
@@ -60,7 +63,14 @@ class SubAgentConfig:
     @classmethod
     def get_default_config(cls, specialization: str) -> "SubAgentConfig":
         """Get default configuration for a specialization."""
-        specialization_enum = SubAgentSpecialization(specialization)
+        try:
+            specialization_enum = SubAgentSpecialization(specialization)
+        except ValueError:
+            logger.warning(
+                "Unrecognized sub-agent specialization %r; using 'general'.",
+                specialization,
+            )
+            specialization_enum = SubAgentSpecialization.GENERAL
 
         configs = {
             SubAgentSpecialization.RESEARCH: SubAgentConfig(

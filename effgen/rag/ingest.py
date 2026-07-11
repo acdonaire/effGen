@@ -232,50 +232,59 @@ def _load_pdf_pymupdf(path: Path) -> list[dict[str, Any]]:
     import fitz  # type: ignore  # pymupdf
 
     doc = fitz.open(str(path))
-    pages: list[str] = []
-    metadata: dict[str, Any] = {"type": "pdf", "pages": doc.page_count}
+    doc_metadata: dict[str, Any] = {"type": "pdf", "pages": doc.page_count}
     try:
         info = doc.metadata or {}
         for k in ("title", "author", "subject", "creationDate"):
             v = info.get(k)
             if v:
                 dest = "date" if k == "creationDate" else k.lower()
-                metadata[dest] = _normalize_pdf_date(v) if dest == "date" else v
+                doc_metadata[dest] = _normalize_pdf_date(v) if dest == "date" else v
     except Exception:  # best-effort metadata; the document still ingests without it
         pass
-    for page in doc:
-        pages.append(page.get_text())
+    # One row per page (not one row for the whole document) so each
+    # resulting chunk's metadata carries the page it came from — a
+    # Citation for a PDF-sourced chunk can then point at a page number
+    # instead of always leaving it None.
+    results = [
+        {"content": page.get_text(), "metadata": {**doc_metadata, "page": page_num}}
+        for page_num, page in enumerate(doc, start=1)
+    ]
     doc.close()
-    return [{"content": "\n\n".join(pages), "metadata": metadata}]
+    return results
 
 
 def _load_pdf_pypdf(path: Path) -> list[dict[str, Any]]:
     import pypdf  # type: ignore
 
     reader = pypdf.PdfReader(str(path))
-    pages = [(p.extract_text() or "") for p in reader.pages]
-    metadata: dict[str, Any] = {"type": "pdf", "pages": len(reader.pages)}
+    doc_metadata: dict[str, Any] = {"type": "pdf", "pages": len(reader.pages)}
     try:
         info = reader.metadata or {}
         for raw_key, dest in (("/Title", "title"), ("/Author", "author"),
                               ("/Subject", "subject"), ("/CreationDate", "date")):
             v = info.get(raw_key)
             if v:
-                metadata[dest] = _normalize_pdf_date(str(v)) if dest == "date" else str(v)
+                doc_metadata[dest] = _normalize_pdf_date(str(v)) if dest == "date" else str(v)
     except Exception:  # best-effort metadata; the document still ingests without it
         pass
-    return [{"content": "\n\n".join(pages), "metadata": metadata}]
+    # One row per page — see _load_pdf_pymupdf for why.
+    return [
+        {"content": p.extract_text() or "", "metadata": {**doc_metadata, "page": page_num}}
+        for page_num, p in enumerate(reader.pages, start=1)
+    ]
 
 
 def _load_pdf_pdfplumber(path: Path) -> list[dict[str, Any]]:
     import pdfplumber  # type: ignore
 
-    pages: list[str] = []
     with pdfplumber.open(str(path)) as pdf:
-        for page in pdf.pages:
-            pages.append(page.extract_text() or "")
-        metadata: dict[str, Any] = {"type": "pdf", "pages": len(pdf.pages)}
-    return [{"content": "\n\n".join(pages), "metadata": metadata}]
+        doc_metadata: dict[str, Any] = {"type": "pdf", "pages": len(pdf.pages)}
+        # One row per page — see _load_pdf_pymupdf for why.
+        return [
+            {"content": page.extract_text() or "", "metadata": {**doc_metadata, "page": page_num}}
+            for page_num, page in enumerate(pdf.pages, start=1)
+        ]
 
 
 def _load_pdf(path: Path) -> list[dict[str, Any]]:

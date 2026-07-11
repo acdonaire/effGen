@@ -52,6 +52,42 @@ REMEDIATION_BY_CATEGORY: dict[str, str] = {
     "unknown": "Unexpected provider error — check the provider status and effGen logs (set EFFGEN_LOG_LEVEL=DEBUG).",
 }
 
+# Phrases providers use to report that a request — the prompt, or often just
+# a large preset's tool-schema payload — exceeded a model's context window or
+# a per-request/per-minute token limit. Providers word this differently:
+# OpenAI/Anthropic-style context errors, Groq/OpenAI-compatible per-minute
+# rate errors, and generic "too large" request rejections.
+_CONTEXT_OVERFLOW_SIGNALS = (
+    "context_length_exceeded",
+    "maximum context length",
+    "reduce the length",
+    "reduce your message size",
+    "reduce the request",
+    "reduce the size",
+    "tokens per minute",
+    "request too large",
+    "too large for model",
+    "context window",
+)
+
+
+def context_overflow_hint(message: str) -> str | None:
+    """Return an actionable suffix when *message* signals the request (the
+    prompt, or a large preset's tool-schema payload) exceeded a model's
+    context window or a provider's token-rate limit.
+
+    Returns ``None`` when *message* is not such a signal, so callers can
+    leave their base remediation text untouched.
+    """
+    lowered = (message or "").lower()
+    if not any(s in lowered for s in _CONTEXT_OVERFLOW_SIGNALS):
+        return None
+    return (
+        " The request may be too large for this model — try a smaller preset "
+        "(e.g. `general` or `math` instead of `research`) or a model with a "
+        "larger context window / higher rate limit."
+    )
+
 
 def error_context_dict(
     provider: str,

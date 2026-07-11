@@ -881,13 +881,18 @@ class CLIInterface:
 
                 agent = Agent(agent_config, session_id=getattr(args, 'session_id', None))
 
-            # Determine execution mode
-            mode = AgentMode.AUTO
-            if args.mode:
-                if args.mode == "single":
-                    mode = AgentMode.SINGLE
-                elif args.mode == "sub_agents":
-                    mode = AgentMode.SUB_AGENTS
+            # Determine execution mode. Default to the agent's own
+            # config.mode (SINGLE unless set otherwise) instead of forcing
+            # AUTO, so a plain `effgen run "<task>"` doesn't switch to
+            # sub-agent decomposition on its own — pass --mode auto to
+            # opt in explicitly for a call.
+            mode = None
+            if args.mode == "single":
+                mode = AgentMode.SINGLE
+            elif args.mode == "sub_agents":
+                mode = AgentMode.SUB_AGENTS
+            elif args.mode == "auto":
+                mode = AgentMode.AUTO
 
             # Run task
             self.print(f"\n[bold]Task:[/bold] {args.task}" if self.console else f"\nTask: {args.task}")

@@ -438,6 +438,38 @@ def _markdown_to_html(text: str) -> str:
     return "\n".join(html_parts)
 
 
+# Shared, theme-aware card chrome for the Jupyter `_repr_html_` cards below.
+# JupyterLab/VS Code/classic Jupyter render this HTML directly in the page
+# (not a sandboxed iframe), so a `prefers-color-scheme` media query follows
+# the notebook's own OS/browser theme. The class name is repeated verbatim
+# across every card instance in a notebook, which is safe — CSS rules are
+# idempotent, not additive state.
+_CARD_STYLE = """<style>
+.effgen-card {
+  --effgen-bg: transparent;
+  --effgen-border: #ddd;
+  --effgen-text: #1a1a1a;
+  --effgen-muted: #666;
+  --effgen-muted-2: #888;
+  --effgen-divider: #eee;
+  --effgen-success: #2e7d32;
+  --effgen-fail: #c62828;
+}
+@media (prefers-color-scheme: dark) {
+  .effgen-card {
+    --effgen-bg: #1e1e1e;
+    --effgen-border: #444;
+    --effgen-text: #e8e8e8;
+    --effgen-muted: #aaa;
+    --effgen-muted-2: #999;
+    --effgen-divider: #3a3a3a;
+    --effgen-success: #66bb6a;
+    --effgen-fail: #ef5350;
+  }
+}
+</style>"""
+
+
 def response_html(response: Any) -> str:
     """Build a self-contained HTML card for a result (Jupyter ``_repr_html_``).
 
@@ -449,7 +481,7 @@ def response_html(response: Any) -> str:
     success = bool(getattr(response, "success", False))
     answer_html = _markdown_to_html(output)
 
-    accent = "#2e7d32" if success else "#c62828"
+    accent = "var(--effgen-success)" if success else "var(--effgen-fail)"
     badge = "✓ success" if success else "✗ failed"
     metrics = " &nbsp;·&nbsp; ".join(_summary_parts(response))
     tool_names = _tool_names(response)
@@ -471,7 +503,10 @@ def response_html(response: Any) -> str:
             if msg:
                 line += f" — {msg}"
             if detail:
-                line += f"<br><span style='color:#888;font-size:0.85em'>&nbsp;&nbsp;{detail}</span>"
+                line += (
+                    "<br><span style='color:var(--effgen-muted-2);font-size:0.85em'>"
+                    f"&nbsp;&nbsp;{detail}</span>"
+                )
             rows.append(f"<li style='margin:3px 0'>{line}</li>")
         trace_html = (
             "<details style='margin-top:8px'>"
@@ -483,15 +518,17 @@ def response_html(response: Any) -> str:
         )
 
     return f"""
-<div style="border:1px solid #ddd;border-left:4px solid {accent};border-radius:8px;
+{_CARD_STYLE}
+<div class="effgen-card" style="background:var(--effgen-bg);border:1px solid var(--effgen-border);
+            border-left:4px solid {accent};border-radius:8px;
             padding:12px 16px;margin:6px 0;font-family:-apple-system,Segoe UI,sans-serif;
             max-width:920px">
   <div style="font-size:0.8em;color:{accent};font-weight:600;margin-bottom:6px">
     effGen result &nbsp;·&nbsp; {badge}
   </div>
-  <div style="color:#1a1a1a;line-height:1.5">{answer_html}</div>
-  <div style="font-size:0.8em;color:#666;margin-top:10px;border-top:1px solid #eee;
-              padding-top:6px">
+  <div style="color:var(--effgen-text);line-height:1.5">{answer_html}</div>
+  <div style="font-size:0.8em;color:var(--effgen-muted);margin-top:10px;
+              border-top:1px solid var(--effgen-divider);padding-top:6px">
     {metrics}{tools_html}
   </div>
   {trace_html}
@@ -533,22 +570,24 @@ def generation_result_html(result: Any) -> str:
     text = getattr(result, "text", "") or ""
     finish = str(getattr(result, "finish_reason", "") or "")
     ok = finish != "error"
-    accent = "#2e7d32" if ok else "#c62828"
+    accent = "var(--effgen-success)" if ok else "var(--effgen-fail)"
     answer_html = _markdown_to_html(text)
     metrics = " &nbsp;·&nbsp; ".join(_generation_metric_parts(result))
     finish_html = (
         f" &nbsp;·&nbsp; finish: {_html.escape(finish)}" if finish and finish not in ("stop", "") else ""
     )
     return f"""
-<div style="border:1px solid #ddd;border-left:4px solid {accent};border-radius:8px;
+{_CARD_STYLE}
+<div class="effgen-card" style="background:var(--effgen-bg);border:1px solid var(--effgen-border);
+            border-left:4px solid {accent};border-radius:8px;
             padding:12px 16px;margin:6px 0;font-family:-apple-system,Segoe UI,sans-serif;
             max-width:920px">
   <div style="font-size:0.8em;color:{accent};font-weight:600;margin-bottom:6px">
     effGen model output
   </div>
-  <div style="color:#1a1a1a;line-height:1.5">{answer_html}</div>
-  <div style="font-size:0.8em;color:#666;margin-top:10px;border-top:1px solid #eee;
-              padding-top:6px">
+  <div style="color:var(--effgen-text);line-height:1.5">{answer_html}</div>
+  <div style="font-size:0.8em;color:var(--effgen-muted);margin-top:10px;
+              border-top:1px solid var(--effgen-divider);padding-top:6px">
     {metrics}{finish_html}
   </div>
 </div>

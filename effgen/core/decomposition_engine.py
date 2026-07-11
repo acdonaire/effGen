@@ -79,6 +79,7 @@ Requirements:
 3. Subtasks should not depend on each other
 4. Cover all aspects of the original task
 5. Be specific about what each subtask should accomplish
+6. required_specialization must be exactly one of: general, research, coding, analysis, synthesis, data, creative
 
 Format your response as JSON:
 {{
@@ -88,7 +89,7 @@ Format your response as JSON:
             "description": "Detailed description of what to do",
             "expected_output": "What this subtask should produce",
             "estimated_complexity": 5.0,
-            "required_specialization": "research|coding|analysis|synthesis",
+            "required_specialization": "research",
             "priority": "high|medium|low"
         }}
     ],
@@ -107,6 +108,7 @@ Requirements:
 3. Show dependencies clearly
 4. Cover all aspects of the original task
 5. Be specific about inputs and outputs
+6. required_specialization must be exactly one of: general, research, coding, analysis, synthesis, data, creative
 
 Format your response as JSON:
 {{
@@ -117,7 +119,7 @@ Format your response as JSON:
             "depends_on": [],
             "expected_output": "What this subtask should produce",
             "estimated_complexity": 5.0,
-            "required_specialization": "research|coding|analysis|synthesis",
+            "required_specialization": "research",
             "priority": "high|medium|low"
         }}
     ],
@@ -136,6 +138,7 @@ Requirements:
 3. Optimize for both speed and dependencies
 4. Cover all aspects of the original task
 5. Be specific about what each subtask should accomplish
+6. required_specialization must be exactly one of: general, research, coding, analysis, synthesis, data, creative
 
 Format your response as JSON:
 {{
@@ -146,7 +149,7 @@ Format your response as JSON:
             "depends_on": ["st_0"],
             "expected_output": "What this subtask should produce",
             "estimated_complexity": 5.0,
-            "required_specialization": "research|coding|analysis|synthesis",
+            "required_specialization": "research",
             "priority": "high|medium|low"
         }}
     ],
@@ -332,13 +335,28 @@ Respond with ONLY the JSON, no additional text."""
             }
             priority = priority_map.get(priority_str, TaskPriority.MEDIUM)
 
+            # Normalize the model's free-text specialization to one of the
+            # known values (see SubAgentSpecialization) before it reaches
+            # sub-agent dispatch. A model does not always reproduce the
+            # prompt's example format exactly (e.g. echoing the pipe-joined
+            # placeholder list itself, or inventing a value like
+            # "data_processing"); default to "general" instead of letting an
+            # unrecognized value fail the whole run downstream.
+            valid_specializations = {
+                "general", "research", "coding", "analysis", "synthesis", "data", "creative",
+            }
+            raw_specialization = subtask_data.get("required_specialization")
+            specialization = (raw_specialization or "").strip().lower()
+            if specialization not in valid_specializations:
+                specialization = "general"
+
             # Create SubTask
             subtask = SubTask(
                 id=subtask_data.get("id", f"st_{i+1}"),
                 description=subtask_data["description"],
                 expected_output=subtask_data["expected_output"],
                 estimated_complexity=subtask_data.get("estimated_complexity", 5.0),
-                required_specialization=subtask_data.get("required_specialization"),
+                required_specialization=specialization,
                 depends_on=subtask_data.get("depends_on", []),
                 metadata={
                     "reasoning": data.get("reasoning", ""),

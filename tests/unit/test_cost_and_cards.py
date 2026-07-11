@@ -60,3 +60,13 @@ def test_generation_result_card_handles_missing_metadata():
     # Must not raise even with no cost/latency present.
     assert "effGen model output" in r._repr_html_()
     assert r._repr_markdown_().startswith("hi")
+
+
+def test_generation_result_card_is_theme_aware():
+    # The card must follow the notebook's own light/dark theme instead of
+    # hardcoding light-theme colors that are illegible on a dark background.
+    r = GenerationResult(text="hi", tokens_used=1, finish_reason="stop", model_name="m")
+    html = r._repr_html_()
+    assert "prefers-color-scheme: dark" in html
+    assert "color:#1a1a1a" not in html
+    assert "color:#666" not in html

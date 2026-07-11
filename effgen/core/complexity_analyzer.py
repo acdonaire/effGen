@@ -212,8 +212,17 @@ class ComplexityAnalyzer:
         # Count questions
         num_questions = task.count("?")
 
-        # Count "and" clauses (heuristic for multiple requirements)
-        num_and_clauses = task.lower().count(" and ")
+        # Count "and" clauses (heuristic for multiple requirements), scaled
+        # by task length. A short task with several "and"s describes several
+        # sequential asks ("fetch the data and convert it and email me the
+        # result"); a long passage — e.g. one instruction plus a pasted
+        # reference document such as a paper abstract — accumulates "and"s in
+        # ordinary prose without describing separate requirements. Density,
+        # not the raw count, is the signal, so the contribution tapers off
+        # for longer text instead of scaling unbounded with length.
+        words = task.split()
+        raw_and_clauses = task.lower().count(" and ")
+        num_and_clauses = round(raw_and_clauses * min(1.0, 30 / max(len(words), 1)))
 
         # Count numbered items
         num_numbered = len(re.findall(r'\d+[\.)]\s', task))
