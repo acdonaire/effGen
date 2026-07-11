@@ -134,6 +134,33 @@ def test_classify_by_status_code():
     assert classify_provider_error(_E(503)).should_retry is True
 
 
+def test_classify_trusts_wrapped_error_context_over_reclassification():
+    # provider_runtime_error() wraps an SDK exception in a generic RuntimeError
+    # and attaches the already-correct classification as .error_context. A
+    # wrapped 400 whose *text* doesn't independently trip any of
+    # classify_provider_error's own keyword heuristics must still classify as
+    # invalid_request/non-retryable — not silently downgrade to
+    # unknown/retryable because the status code was lost in wrapping.
+    from effgen.models._adapter_utils import provider_runtime_error
+
+    class _FakeBadRequest(Exception):
+        status_code = 400
+
+    raw = _FakeBadRequest(
+        "This model's maximum context length is 131072 tokens. However, you "
+        "requested 133000 tokens. Please reduce the length of the messages "
+        "or completion."
+    )
+    raw_class = classify_provider_error(raw)
+    assert raw_class.category == "invalid_request"
+    assert raw_class.should_retry is False
+
+    wrapped = provider_runtime_error("groq", "llama-3.1-8b-instant", "generate", raw)
+    wrapped_class = classify_provider_error(wrapped)
+    assert wrapped_class.category == raw_class.category
+    assert wrapped_class.should_retry == raw_class.should_retry
+
+
 def test_simplify_embedded_provider_error_extracts_inner_message():
     raw = (
         "request too large for llama-3.1-8b-instant: Error code: 413 - "
@@ -314,6 +341,27 @@ def test_error_message_is_redacted():
     assert "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in r.metadata["error"]["message"]
 
 
+def test_response_metadata_error_trusts_wrapped_classification():
+    # End-to-end: an AgentResponse built from a provider_runtime_error()-wrapped
+    # exception must report the same category/retryable the original SDK error
+    # classified as, not a re-derived "unknown"/retryable=True.
+    from effgen.models._adapter_utils import provider_runtime_error
+
+    class _FakeBadRequest(Exception):
+        status_code = 400
+
+    raw = _FakeBadRequest(
+        "This model's maximum context length is 131072 tokens. However, you "
+        "requested 133000 tokens. Please reduce the length of the messages "
+        "or completion."
+    )
+    wrapped = provider_runtime_error("groq", "fake-model", "generate", raw)
+    r = _agent(_FakeModel(exc=wrapped)).run("hi")
+    assert not r.success
+    assert r.metadata["error"]["category"] == "invalid_request"
+    assert r.metadata["error"]["retryable"] is False
+
+
 def test_embedded_sdk_error_body_collapsed_in_response_output():
     """An adapter's message that embeds a raw SDK error body
     ('Error code: 413 - {...}') must surface as prose in response.output,
@@ -361,6 +409,25 @@ def test_agentconfig_name_defaults_from_model():
 
     cfg3 = AgentConfig(name="explicit", model=m)
     assert cfg3.name == "explicit"
+
+
+def test_bare_tool_name_string_gets_typed_actionable_error():
+    # tools= expects Tool instances; a bare name string (the idiom used
+    # elsewhere — get_tool_sync(), CLI --allowed-tools) is a natural mistake
+    # and must not crash with a raw AttributeError deep in construction.
+    with pytest.raises(TypeError, match="not names"):
+        _agent(_FakeModel(text="x"), tools=["calculator"])
+
+
+def test_non_tool_non_string_in_tools_also_gets_typed_error():
+    with pytest.raises(TypeError, match="expects Tool instances"):
+        _agent(_FakeModel(text="x"), tools=[123])
+
+
+def test_real_tool_instance_in_tools_still_works():
+    from effgen.tools.builtin.calculator import Calculator
+    a = _agent(_FakeModel(text="x"), tools=[Calculator()])
+    assert "calculator" in a.tools
 
 
 def test_require_model_true_fails_fast_on_bad_string_model():

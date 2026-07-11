@@ -16,6 +16,7 @@ per-tool ticks and an accurate token/cost footer can be shown.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from datetime import datetime
@@ -626,6 +627,14 @@ class ChatREPL:
         new_provider, resolved_id = self._resolve_swap_target(new_id)
         self.model_id = resolved_id
         self.provider = new_provider
+        # A failed swap is fully handled below (a styled ✗ message + the
+        # restore rebuild) — suppress the library's own ERROR-level log line
+        # for it so the transcript shows one failure presentation, not two.
+        # --verbose still surfaces it.
+        _effgen_logger = logging.getLogger("effgen")
+        _prev_level = _effgen_logger.level
+        if not self.verbose:
+            _effgen_logger.setLevel(logging.CRITICAL)
         try:
             self._rebuild()
         except Exception as e:  # noqa: BLE001
@@ -639,6 +648,8 @@ class ChatREPL:
             except Exception:  # noqa: BLE001
                 pass
             return
+        finally:
+            _effgen_logger.setLevel(_prev_level)
         self.cli.print_success(
             f"Switched model: {_progress.short_model_label(new_id)} "
             f"(conversation kept)"

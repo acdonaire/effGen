@@ -515,7 +515,6 @@ class _MCPOfficialToolBridge(BaseTool):
         self._client = client
 
     async def _execute(self, **kwargs) -> Any:
-        coro = self._client.call_tool(self._mcp_name, kwargs)
         session_loop = self._client._loop
         try:
             current_loop = asyncio.get_running_loop()
@@ -523,11 +522,30 @@ class _MCPOfficialToolBridge(BaseTool):
             current_loop = None
         if session_loop is not None and current_loop is not session_loop:
             # Called from a different loop/thread (e.g. an Agent's worker loop):
-            # marshal the call back to the loop that owns the MCP session.
-            future = asyncio.run_coroutine_threadsafe(coro, session_loop)
+            # marshal the call back to the loop that owns the MCP session. If
+            # that loop's own thread is the one synchronously blocked waiting
+            # on this call (Agent.run() invoked from inside an `async with
+            # EffGenMCPClient(...)` block), the marshal can never be serviced —
+            # fail immediately with an actionable message instead of waiting
+            # out the bridge's timeout (and without creating a coroutine that
+            # would then go unawaited).
+            from effgen.utils.async_bridge import is_loop_blocked
+
+            if is_loop_blocked(session_loop):
+                raise TimeoutError(
+                    f"Cannot call MCP tool '{self._mcp_name}': its session is "
+                    "bound to an event loop that is synchronously blocked by "
+                    "this same call (Agent.run() was invoked from inside the "
+                    "event loop holding the MCP client session). Use "
+                    "`await agent.run_async(...)` instead so the tool call "
+                    "runs on the loop that owns the MCP session."
+                )
+            future = asyncio.run_coroutine_threadsafe(
+                self._client.call_tool(self._mcp_name, kwargs), session_loop
+            )
             result = await asyncio.wrap_future(future)
         else:
-            result = await coro
+            result = await self._client.call_tool(self._mcp_name, kwargs)
         texts = [c.text for c in result.content if getattr(c, "text", None)]
         text = "\n".join(texts)
         if result.isError:

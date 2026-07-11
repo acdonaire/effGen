@@ -29,9 +29,36 @@ import threading
 from collections.abc import Awaitable
 from typing import TypeVar
 
-__all__ = ["run_coroutine_sync"]
+__all__ = ["run_coroutine_sync", "is_loop_blocked"]
 
 T = TypeVar("T")
+
+# Event loops whose owning thread is currently inside the worker-thread branch
+# of run_coroutine_sync() below — i.e. synchronously blocked on done.wait() and
+# unable to service any callback scheduled on it (run_coroutine_threadsafe,
+# call_soon_threadsafe, ...) until that call returns. A loop-bound async
+# resource (an MCP stdio session is the known case) that tries to marshal work
+# back onto one of these loops can detect the guaranteed deadlock immediately
+# via is_loop_blocked() instead of waiting out a timeout that can never
+# resolve in its favor.
+_blocked_loops: set[int] = set()
+_blocked_loops_lock = threading.Lock()
+
+
+def is_loop_blocked(loop: asyncio.AbstractEventLoop | None) -> bool:
+    """True when *loop*'s owning thread is synchronously blocked inside a
+    :func:`run_coroutine_sync` bridge and cannot service scheduled callbacks.
+
+    A caller about to marshal work onto *loop* via
+    ``asyncio.run_coroutine_threadsafe`` should check this first: if it is
+    ``True``, that marshal can never complete (the thread that would run it is
+    the same thread waiting on this bridge) and the caller should fail fast
+    instead of waiting out a timeout.
+    """
+    if loop is None:
+        return False
+    with _blocked_loops_lock:
+        return id(loop) in _blocked_loops
 
 
 def run_coroutine_sync(coro: Awaitable[T], timeout: float = 120.0) -> T:
@@ -94,20 +121,27 @@ def run_coroutine_sync(coro: Awaitable[T], timeout: float = 120.0) -> T:
         finally:
             done.set()
 
-    threading.Thread(
-        target=_worker, name="effgen-async-bridge", daemon=True
-    ).start()
+    outer_loop = asyncio.get_running_loop()
+    with _blocked_loops_lock:
+        _blocked_loops.add(id(outer_loop))
+    try:
+        threading.Thread(
+            target=_worker, name="effgen-async-bridge", daemon=True
+        ).start()
 
-    if not done.wait(timeout):
-        raise TimeoutError(
-            f"Async work did not complete within {timeout:.0f}s while bridging "
-            "from synchronous code under a running event loop. This usually "
-            "means a loop-bound async resource (e.g. an MCP stdio tool session) "
-            "is being driven from a synchronous call such as Agent.run(); the "
-            "resource is bound to the calling loop, which is blocked waiting on "
-            "this bridge. Use the async entry point instead — e.g. "
-            "`await agent.run_async(...)` — so the tool runs on the calling loop."
-        )
+        if not done.wait(timeout):
+            raise TimeoutError(
+                f"Async work did not complete within {timeout:.0f}s while bridging "
+                "from synchronous code under a running event loop. This usually "
+                "means a loop-bound async resource (e.g. an MCP stdio tool session) "
+                "is being driven from a synchronous call such as Agent.run(); the "
+                "resource is bound to the calling loop, which is blocked waiting on "
+                "this bridge. Use the async entry point instead — e.g. "
+                "`await agent.run_async(...)` — so the tool runs on the calling loop."
+            )
+    finally:
+        with _blocked_loops_lock:
+            _blocked_loops.discard(id(outer_loop))
     if "error" in box:
         raise box["error"]  # type: ignore[misc]
     return box["value"]  # type: ignore[return-value]

@@ -572,6 +572,11 @@ class WorkflowDAG:
             agent_factory: Optional callable that receives a node dict and
                            returns an Agent instance. If None, nodes are
                            created without agents (must be assigned later).
+                           The CLI's ``effgen workflow run`` supplies a
+                           factory that reads a node's ``model:`` key first,
+                           then falls back to treating ``agent:`` as a model
+                           id (e.g. ``agent: gpt-5-nano``); pass ``-m`` to
+                           override every node's model at once.
 
         Returns:
             A validated WorkflowDAG

@@ -274,6 +274,9 @@ def test_sequential_does_not_echo_input_on_failure():
     assert res.success is False
     assert res.output != task
     assert res.output.startswith("Error:")
+    # the structured error dict's message is rendered, not its Python repr.
+    assert "{'type':" not in res.output
+    assert "model 'x' not found" in res.output
 
 
 # --------------------------------------------------------------------------- #
@@ -296,6 +299,9 @@ def test_collaborative_failure_is_honest():
     assert "error" in failed
     # the team-level surfaced error/metadata never leaks raw secrets
     assert "sk-secret-key-12345" not in str(res.metadata)
+    # the structured error dict's message is rendered, not its Python repr.
+    assert "{'type':" not in res.output
+    assert "model 'x' not found" in res.output
 
 
 def test_collaborative_all_ok_succeeds():
@@ -359,6 +365,24 @@ def test_hierarchical_worker_failure_fails_team():
     res = orch.assign_task("both", "support")
     assert res.success is False
     assert "sk-secret-key-12345" not in str(res.metadata)
+    # the structured error dict's message is rendered, not its Python repr.
+    assert "{'type':" not in res.output
+    assert "model 'x' not found" in res.output
+
+
+def test_hierarchical_cost_includes_manager_decomposition():
+    # The manager runs twice (decomposition + synthesis); both calls must be
+    # counted in the team total, not just the worker(s).
+    from effgen.core.orchestrator import MultiAgentOrchestrator, OrchestrationPattern
+    manager = FakeAgent("manager", reply="1. billing: refund", cost=0.01)
+    billing = FakeAgent("billing", cost=0.001)
+    orch = MultiAgentOrchestrator()
+    orch.create_team("support", [billing], pattern=OrchestrationPattern.HIERARCHICAL,
+                      manager_agent=manager)
+    res = orch.assign_task("refund", "support")
+    assert res.success is True
+    assert manager.runs == 2  # decomposition + synthesis
+    assert res.metadata["cost_usd"] == pytest.approx(0.01 + 0.01 + 0.001)
 
 
 def test_hierarchical_unlabeled_falls_back_round_robin():

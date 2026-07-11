@@ -413,5 +413,48 @@ def test_cmd_model_failed_swap_restores_old_model_and_provider():
     assert any("Could not switch" in m for m in cli.messages)
 
 
+def test_cmd_model_failed_swap_suppresses_library_error_log_by_default(caplog):
+    import logging
+
+    repl, cli = _make_repl(provider="openai", _provider="openai")
+
+    def _fake_rebuild_fails():
+        logging.getLogger("effgen.core.agent").error(
+            "Failed to load model 'grok:llama-3.1-8b-instant': boom"
+        )
+        raise RuntimeError("Unknown provider or engine prefix 'grok'")
+
+    repl._rebuild = _fake_rebuild_fails
+    repl._teach_model_error = lambda e: None
+    with caplog.at_level(logging.ERROR, logger="effgen"):
+        repl._cmd_model("grok:llama-3.1-8b-instant")
+
+    # The REPL's own styled failure message is shown ...
+    assert any("Could not switch" in m for m in cli.messages)
+    # ... but the library's raw ERROR log line does not leak into the
+    # transcript alongside it.
+    assert not any(r.levelno == logging.ERROR for r in caplog.records)
+
+
+def test_cmd_model_failed_swap_verbose_still_shows_library_error_log(caplog):
+    import logging
+
+    repl, cli = _make_repl(provider="openai", _provider="openai", verbose=True)
+
+    def _fake_rebuild_fails():
+        logging.getLogger("effgen.core.agent").error(
+            "Failed to load model 'grok:llama-3.1-8b-instant': boom"
+        )
+        raise RuntimeError("Unknown provider or engine prefix 'grok'")
+
+    repl._rebuild = _fake_rebuild_fails
+    repl._teach_model_error = lambda e: None
+    with caplog.at_level(logging.ERROR, logger="effgen"):
+        repl._cmd_model("grok:llama-3.1-8b-instant")
+
+    assert any("Could not switch" in m for m in cli.messages)
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

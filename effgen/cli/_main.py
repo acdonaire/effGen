@@ -3703,8 +3703,28 @@ def _handle_workflow_command(args, cli) -> int:
             def _agent_factory(nd):
                 from effgen.core.agent import Agent, AgentConfig
                 from effgen.models import load_model
-                m = model_name or nd.get('model', 'Qwen/Qwen2.5-1.5B-Instruct')
-                model = load_model(m)
+                agent_field = nd.get('agent')
+                explicit = model_name or nd.get('model')
+                if explicit:
+                    model = load_model(explicit)
+                elif agent_field:
+                    # No top-level -m/--model and no per-node 'model:' key: the
+                    # node's 'agent:' value is the natural place a user sets a
+                    # model id (e.g. `agent: gpt-5-nano`). Try it as one before
+                    # falling back to the local default; a value that does not
+                    # resolve to a real model fails loudly instead of silently
+                    # running a different (free, local) model with no warning.
+                    try:
+                        model = load_model(agent_field)
+                    except Exception as exc:
+                        raise ValueError(
+                            f"Workflow node '{nd['id']}' has agent: {agent_field!r}, "
+                            f"which does not resolve to a model ({exc}). Set a "
+                            "'model:' key on the node, or pass -m/--model, to "
+                            "choose its model explicitly."
+                        ) from exc
+                else:
+                    model = load_model('Qwen/Qwen2.5-1.5B-Instruct')
                 # A node may name a preset (research/coding/general/...) to get a
                 # ready-made tool-equipped agent; otherwise build a plain agent.
                 preset = nd.get('preset')
@@ -3712,7 +3732,7 @@ def _handle_workflow_command(args, cli) -> int:
                     from effgen.presets import create_agent
                     return create_agent(preset, model=model)
                 config = AgentConfig(
-                    name=nd.get('agent', nd['id']),
+                    name=agent_field or nd['id'],
                     model=model,
                     max_iterations=nd.get('max_iterations', 5),
                 )

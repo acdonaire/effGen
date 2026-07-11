@@ -53,3 +53,68 @@ def test_server_config_drives_real_tool_exposure():
         assert server._exposed_tools == ["calculator"]
     finally:
         asyncio.run(server.cleanup())
+
+
+def _register_probe_tool(name: str):
+    from effgen.tools.base_tool import (
+        BaseTool,
+        ParameterSpec,
+        ParameterType,
+        ToolCategory,
+        ToolMetadata,
+    )
+
+    class _Probe(BaseTool):
+        def __init__(self):
+            super().__init__(metadata=ToolMetadata(
+                name=name,
+                description="probe tool for registry-default tests",
+                category=ToolCategory.COMPUTATION,
+                parameters=[ParameterSpec(name="x", type=ParameterType.STRING,
+                                          description="x", required=False)],
+            ))
+
+        async def _execute(self, **kwargs):  # pragma: no cover - not called
+            return {}
+
+    return _Probe()
+
+
+def test_server_with_no_registry_arg_defaults_to_shared_registry():
+    """EffGenMCPServer() with no tools_registry= exposes a tool registered on
+    the shared get_registry() singleton elsewhere in the same process — the
+    sequence the report calls out (register_tool() then EffGenMCPServer())."""
+    from effgen.tools.registry import get_registry
+
+    name = "shared_registry_default_tool"
+    get_registry().register_tool(_register_probe_tool(name))
+    try:
+        server = EffGenMCPServer()  # no tools_registry= given
+        assert server.tools_registry is get_registry()
+        asyncio.run(server.initialize())
+        try:
+            assert name in server._exposed_tools
+        finally:
+            asyncio.run(server.cleanup())
+    finally:
+        get_registry().unregister_tool(name)
+
+
+def test_explicit_isolated_registry_still_supported():
+    """Passing tools_registry=ToolRegistry() explicitly (an isolated registry,
+    not the shared one) is still honored — the fix only changes the *default*
+    used when no registry is given."""
+    from effgen.tools.registry import get_registry
+
+    name = "only_on_shared_registry"
+    get_registry().register_tool(_register_probe_tool(name))
+    try:
+        isolated = ToolRegistry()
+        server = EffGenMCPServer(tools_registry=isolated)
+        asyncio.run(server.initialize())
+        try:
+            assert name not in server._exposed_tools
+        finally:
+            asyncio.run(server.cleanup())
+    finally:
+        get_registry().unregister_tool(name)

@@ -13,6 +13,7 @@ import time
 import pytest
 
 from effgen.utils import run_coroutine_sync
+from effgen.utils.async_bridge import is_loop_blocked
 from effgen.utils.async_bridge import run_coroutine_sync as direct_import
 
 
@@ -160,3 +161,38 @@ def test_timeout_worker_is_daemon_so_it_never_blocks_exit():
         if th.name == "effgen-async-bridge" and not th.daemon
     ]
     assert not lingering, "bridge worker must be a daemon thread"
+
+
+def test_is_loop_blocked_true_only_during_the_bridge_window():
+    """A loop-bound async resource (an MCP session is the known case) can ask
+    is_loop_blocked() to detect a guaranteed deadlock immediately instead of
+    waiting out a timeout."""
+
+    async def outer():
+        this_loop = asyncio.get_running_loop()
+        assert is_loop_blocked(this_loop) is False
+
+        seen_blocked = {}
+
+        async def probe():
+            # Runs on the worker thread while `this_loop` is stuck in
+            # done.wait() back on the outer thread.
+            seen_blocked["value"] = is_loop_blocked(this_loop)
+            return "ok"
+
+        assert run_coroutine_sync(probe()) == "ok"
+        assert seen_blocked["value"] is True
+        # Cleared once the bridge returns.
+        assert is_loop_blocked(this_loop) is False
+
+    asyncio.run(outer())
+
+
+def test_is_loop_blocked_false_for_none_and_unrelated_loop():
+    assert is_loop_blocked(None) is False
+
+    unrelated_loop = asyncio.new_event_loop()
+    try:
+        assert is_loop_blocked(unrelated_loop) is False
+    finally:
+        unrelated_loop.close()

@@ -36,6 +36,19 @@ def _redact(text: str) -> str:
         return text
 
 
+def _error_text(err: Any) -> str:
+    """Render a team/workflow ``metadata["error"]`` value as display text.
+
+    That value is either a plain string (an already-redacted message) or the
+    structured ``{type, category, provider, model, message, retryable}`` dict
+    an ``AgentResponse`` attaches on failure — pull its ``message`` field
+    instead of falling back to the dict's ``repr()``.
+    """
+    if isinstance(err, dict):
+        return str(err.get("message") or err)
+    return str(err)
+
+
 def _response_cost(response: Any) -> float:
     """Pull the per-run cost (USD) off an ``AgentResponse``'s metadata.
 
@@ -474,7 +487,10 @@ class MultiAgentOrchestrator:
         # a caller who reads .output without checking .success must not mistake
         # the input (or a stale partial) for a real result. Successful partials
         # remain discoverable in agent_responses.
-        output = current_task if success else f"Error: {meta.get('error', 'team run did not succeed.')}"
+        output = (
+            current_task if success
+            else f"Error: {_error_text(meta.get('error', 'team run did not succeed.'))}"
+        )
         return TeamResponse(
             output=output,
             success=success,
@@ -646,7 +662,9 @@ Provide a comprehensive final answer."""
         worker_ok = all(r["success"] for r in responses) if responses else True
         success = final_response.success and worker_ok
         meta: dict[str, Any] = dict(_aggregate_usage(
-            [*responses,
+            [{"tokens_used": manager_response.tokens_used,
+              "cost_usd": _response_cost(manager_response)},
+             *responses,
              {"tokens_used": final_response.tokens_used,
               "cost_usd": _response_cost(final_response)}]
         ))
@@ -659,7 +677,10 @@ Provide a comprehensive final answer."""
                 meta["error"] = detail or _redact(str(final_response.output))
             elif failed is not None:
                 meta["error"] = failed.get("error", "A worker agent failed.")
-        output = final_response.output if success else f"Error: {meta.get('error', 'team run did not succeed.')}"
+        output = (
+            final_response.output if success
+            else f"Error: {_error_text(meta.get('error', 'team run did not succeed.'))}"
+        )
         return TeamResponse(
             output=output,
             success=success,
@@ -739,7 +760,7 @@ Consider the above viewpoints and provide your perspective or refined answer."""
         if success:
             final_output = self._synthesize_collaborative_results(task, current_responses)
         else:
-            final_output = f"Error: {meta['error']}"
+            final_output = f"Error: {_error_text(meta['error'])}"
 
         return TeamResponse(
             output=final_output,

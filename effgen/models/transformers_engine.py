@@ -28,6 +28,9 @@ from transformers import (
 from transformers import (
     GenerationConfig as HFGenerationConfig,
 )
+from transformers import (
+    set_seed as _hf_set_seed,
+)
 
 from effgen.models._adapter_utils import normalize_finish_reason
 from effgen.models.base import (
@@ -616,6 +619,15 @@ class TransformersEngine(BatchModel):
             # Move inputs to device
             if self.device != "cpu":
                 inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+
+            # Seed the sampling RNGs from config.seed so run(seed=...) is
+            # reproducible on-device: identical prompt + temperature + seed
+            # returns identical text. set_seed() covers torch (CPU + CUDA),
+            # numpy and random; it only affects sampling, so greedy decoding
+            # (temperature<=0) is unchanged either way.
+            _seed = getattr(config, "seed", None)
+            if _seed is not None:
+                _hf_set_seed(_seed)
 
             # Generate with sanitized kwargs
             with torch.no_grad():

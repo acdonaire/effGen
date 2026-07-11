@@ -18,7 +18,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 
-from ...registry import ToolRegistry
+from ...registry import ToolRegistry, get_registry
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,12 @@ class EffGenMCPServer:
             name: Server name
             version: Server version
             instructions: Server instructions for clients
-            tools_registry: Tool registry to expose (creates new if None)
+            tools_registry: Tool registry to expose. Defaults to the shared
+                process-wide registry (``effgen.tools.registry.get_registry()``)
+                so a tool registered elsewhere in the same process — via
+                ``register_tool()``, an ``Agent``, or ``effgen tools list`` —
+                is visible here too. Pass ``ToolRegistry()`` explicitly for an
+                isolated registry.
             expose_unsafe_tools: Expose code-execution / shell / filesystem
                 tools over MCP. Off by default (fail-closed).
             allowed_tools: If set, expose ONLY these tools (an explicit opt-in
@@ -148,7 +153,7 @@ class EffGenMCPServer:
             "Provides access to various tools for "
             "web search, data processing, and more."
         )
-        self.tools_registry = tools_registry or ToolRegistry()
+        self.tools_registry = tools_registry or get_registry()
         self.expose_unsafe_tools = expose_unsafe_tools
         self.allowed_tools = allowed_tools
         self.blocked_tools = list(blocked_tools or [])

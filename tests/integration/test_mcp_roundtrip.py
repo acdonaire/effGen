@@ -138,3 +138,46 @@ def test_disconnect_from_different_loop_warns_instead_of_raising(caplog):
     assert any("different event loop" in msg for msg in warnings)
     errors = [r.message for r in caplog.records if r.levelname == "ERROR"]
     assert not any("Error during disconnect" in msg for msg in errors)
+
+
+def test_mcp_tool_sync_bridge_fails_fast_not_hang():
+    """A synchronous bridge (``run_coroutine_sync``, what ``Agent.run()`` uses
+    internally) driving an MCP tool whose session is bound to the *same,
+    now-blocked* loop must fail immediately and cheaply — not hang for the
+    bridge's full timeout. This is the classic ``Agent.run()``-called-from-
+    inside-``async with EffGenMCPClient(...)`` trap; the documented escape
+    hatch (awaiting the tool directly on the owning loop) must still
+    round-trip correctly.
+    """
+    import time
+
+    from effgen.utils.async_bridge import run_coroutine_sync
+
+    code = _SERVER_TEMPLATE.format(kwargs="")
+    cfg = MCPServerConfig(
+        name="sync-bridge", transport="stdio", command=sys.executable, args=["-c", code]
+    )
+
+    async def outer():
+        async with EffGenMCPClient(cfg) as client:
+            tools = client.get_effgen_tools()
+            calc = next(t for t in tools if "calculator" in t.name)
+
+            # Tool.execute() wraps every failure (including this one) into a
+            # ToolResult rather than raising, so the bridge itself returns
+            # normally — but fast, and naming the async escape hatch.
+            t0 = time.monotonic()
+            result = run_coroutine_sync(calc.execute(expression="2+2"), timeout=30.0)
+            elapsed = time.monotonic() - t0
+            assert elapsed < 5.0, f"should fail fast, took {elapsed:.1f}s"
+            assert result.success is False
+            assert "run_async" in result.error
+
+            # The documented escape hatch (await it on the owning loop) still
+            # completes a real tool round-trip.
+            result = await calc.execute(expression="2+2")
+            assert result.success is True
+            payload = json.loads(result.output)
+            assert payload["output"]["result"] == 4
+
+    asyncio.run(outer())

@@ -461,6 +461,21 @@ _INVALID = ErrorClass("invalid_request", fatal=True)
 _FATAL = ErrorClass("fatal", fatal=True)
 _UNKNOWN = ErrorClass("unknown", retryable=True)
 
+# category -> the matching reusable ErrorClass, so an already-classified
+# ``.error_context`` (attached by provider_runtime_error()/attach_error_context())
+# can be turned back into an ErrorClass without re-deriving it.
+_ERROR_CLASS_BY_CATEGORY: dict[str, ErrorClass] = {
+    "auth": _AUTH,
+    "not_found": _NOT_FOUND,
+    "rate_limited": _RATE_LIMITED,
+    "transient": _TRANSIENT,
+    "timeout": _TIMEOUT,
+    "refusal": _REFUSAL,
+    "invalid_request": _INVALID,
+    "fatal": _FATAL,
+    "unknown": _UNKNOWN,
+}
+
 
 def _status_code_of(exc: Exception) -> int | None:
     """Best-effort HTTP status extraction across SDK exception shapes."""
@@ -515,6 +530,19 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         | AmbiguousModelError,
     ):
         return _FATAL
+
+    # 1.5. An already-classified ``.error_context`` (attached by
+    # provider_runtime_error()/attach_error_context() when the original SDK
+    # exception was wrapped) is authoritative — it was computed from the
+    # *original* exception, before wrapping lost the status code/class name
+    # the heuristics below rely on. Re-deriving from the wrapped text alone
+    # can silently downgrade a non-retryable error (e.g. a 400) to "unknown"
+    # (retryable) if the wrapped message doesn't happen to repeat a keyword.
+    ctx = getattr(exc, "error_context", None)
+    if isinstance(ctx, dict):
+        cached = _ERROR_CLASS_BY_CATEGORY.get(ctx.get("category", ""))
+        if cached is not None:
+            return cached
 
     # 2. HTTP status code (raw SDK errors carry one).
     status = _status_code_of(exc)

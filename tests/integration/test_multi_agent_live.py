@@ -91,6 +91,12 @@ def test_hierarchical_team_live():
         res = orch.assign_task("List two benefits of sleep.", "hier")
         assert res.success is True
         assert res.output.strip()
+        # The manager's initial decomposition call is billed too (3 manager/
+        # worker calls total: decomposition + 2 workers, then synthesis) — the
+        # team total must exceed the sum of just the two worker responses.
+        worker_cost = sum(r["cost_usd"] for r in res.agent_responses)
+        assert res.metadata["cost_usd"] > worker_cost
+        assert res.metadata["tokens_used"] > sum(r["tokens_used"] for r in res.agent_responses)
     except Exception as e:
         _skip_if_rate_limited(e)
     finally:

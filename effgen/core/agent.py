@@ -660,7 +660,21 @@ Question: {task}
 
         self._speculative_execution = config.speculative_execution
 
-        # Tools
+        # Tools — config.tools must be Tool instances. A bare name string is a
+        # natural mistake (tool names are the idiom elsewhere: get_tool_sync(),
+        # the CLI's --allowed-tools) but is not accepted here; look it up first.
+        for t in config.tools:
+            if isinstance(t, str):
+                raise TypeError(
+                    f"AgentConfig(tools=...) expects Tool instances, not names — "
+                    f"got a str {t!r}. Look it up first: "
+                    f"get_registry().get_tool_sync({t!r})."
+                )
+            if not isinstance(t, BaseTool):
+                raise TypeError(
+                    f"AgentConfig(tools=...) expects Tool instances — got "
+                    f"{type(t).__name__} {t!r}."
+                )
         self.tools = {tool.name: tool for tool in config.tools}
 
         # Validate OpenAI native tool compatibility at init time

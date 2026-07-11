@@ -267,6 +267,14 @@ class MLXVLMEngine(MLXEngine):
                 "verbose": False,
             }
 
+            # Seed MLX's sampling RNG from config.seed so run(seed=...) is
+            # reproducible on-device (mlx-vlm's generate() takes no seed
+            # argument, so seed the backend directly, as the text MLX engine
+            # does via its own seed handling).
+            if config.seed is not None:
+                import mlx.core as mx
+                mx.random.seed(config.seed)
+
             output = vlm_generate(
                 self.model,
                 self.processor,
