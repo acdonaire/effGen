@@ -147,6 +147,73 @@ def test_tool_rejects_lambda_without_name():
         Tool.from_function(lambda x: x)
 
 
+def test_tool_decorator_requires_approval_reaches_metadata():
+    """@tool(requires_approval=True) is reachable through ToolMetadata."""
+    from effgen import tool
+
+    @tool
+    def order_lookup(order_id: str) -> str:
+        """Look up an order."""
+        return order_id
+
+    @tool(requires_approval=True)
+    def issue_refund(order_id: str) -> str:
+        """Refund an order."""
+        return order_id
+
+    assert order_lookup.metadata.requires_approval is False
+    assert issue_refund.metadata.requires_approval is True
+
+
+def test_from_function_requires_approval_and_cost_timeout_overrides():
+    from effgen import Tool
+
+    def cancel_subscription(account_id: str) -> str:
+        """Cancel a subscription."""
+        return account_id
+
+    t = Tool.from_function(
+        cancel_subscription,
+        requires_approval=True,
+        cost_estimate="high",
+        timeout_seconds=5,
+    )
+    assert t.metadata.requires_approval is True
+    assert t.metadata.cost_estimate == "high"
+    assert t.metadata.timeout_seconds == 5
+
+
+def test_dangerous_tool_requires_approval_gates_dangerous_only_mode():
+    """A tool marked requires_approval is reachable by ApprovalManager
+    (approval_mode="dangerous_only"), the mechanism `issue_refund` needs."""
+    from effgen import tool
+    from effgen.core.human_loop import ApprovalManager, ApprovalMode
+
+    @tool(requires_approval=True)
+    def issue_refund(order_id: str) -> str:
+        """Refund an order."""
+        return order_id
+
+    mgr = ApprovalManager(mode=ApprovalMode.DANGEROUS_ONLY)
+    assert mgr.should_request_approval(
+        issue_refund.name, issue_refund.metadata.requires_approval
+    )
+
+
+def test_dangerous_tool_keywords_cover_common_mutating_verbs():
+    """Money-moving/mutating tool names are gated under dangerous_only even
+    without an explicit requires_approval=True, as defense in depth."""
+    from effgen.core.human_loop import is_tool_dangerous
+
+    for name in (
+        "issue_refund", "refund_order", "charge_card",
+        "cancel_subscription", "delete_account", "transfer_funds",
+    ):
+        assert is_tool_dangerous(name), f"{name} should be flagged dangerous"
+    for name in ("order_lookup", "calculator", "web_search"):
+        assert not is_tool_dangerous(name), f"{name} should not be flagged dangerous"
+
+
 def test_tool_usable_in_agent_config():
     """A decorated tool drops straight into AgentConfig(tools=[...])."""
     from effgen import tool

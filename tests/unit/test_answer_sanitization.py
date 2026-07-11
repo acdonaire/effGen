@@ -94,6 +94,41 @@ def test_strips_tool_call_syntax(leaked, expected):
     assert sanitize(leaked) == expected
 
 
+# --- Leaked bare tool-call echo (no wrapping tag) ----------------------------
+
+@pytest.mark.parametrize(
+    "leaked, expected",
+    [
+        # Groq llama-3.1-8b-instant: a bare "tool_name {json}" prefix, no
+        # <function=.../<tool_call> wrapper, before the real prose answer.
+        (
+            'order_lookup {"order_id": "ORD-1001"} \n'
+            'The order status is "shipped" and will arrive in 3-5 days.',
+            'The order status is "shipped" and will arrive in 3-5 days.',
+        ),
+        ('calculator {"expression": "6*7"} 42', "42"),
+        # Same-line, no newline separator.
+        ('issue_refund {"order_id": "ORD-1001"} Refund not issued.', "Refund not issued."),
+    ],
+)
+def test_strips_leading_untagged_tool_call_echo(leaked, expected):
+    assert sanitize(leaked) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Mid-sentence — must never be touched (only a *leading* echo is scaffolding).
+        "The status is order_lookup {\"x\": 1} weird",
+        # Capitalized "word {...}" is not a tool-name shape (tool names are
+        # lowercase snake_case) and must be left alone.
+        'Config {"debug": true} is enabled',
+    ],
+)
+def test_leading_json_like_prose_not_corrupted(text):
+    assert sanitize(text) == text
+
+
 # --- Idempotency --------------------------------------------------------------
 
 @pytest.mark.parametrize(

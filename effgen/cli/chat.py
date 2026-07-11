@@ -80,11 +80,27 @@ class ChatREPL:
         # Provider was validated by the caller; keep the canonical name.
         self.provider = getattr(args, "_provider", None) or getattr(args, "provider", None)
 
-        # Plain chat starts tool-free for the cleanest streaming; users opt into
-        # tools with ``/tools <name>``. (This also means ``effgen chat -m <any
-        # non-Claude model>`` never trips the native-tool incompatibility that
-        # used to crash the command on startup.)
+        # A tool-bearing preset attaches its tools by default, mirroring
+        # `effgen run --preset` (a preset chosen for its tools must actually
+        # route to them, not just label the session). Plain chat with no
+        # --preset still starts tool-free for the cleanest streaming; users opt
+        # into tools with ``/tools <name>``. Incompatible-tool filtering below
+        # (`_load_tools` -> `filter_incompatible_tools`) still applies, so this
+        # never trips the native-tool incompatibility for a non-Claude model.
         self.tool_names: list[str] = []
+        self._preset_system_prompt: str | None = None
+        self._preset_temperature: float | None = None
+        if self.preset:
+            try:
+                from effgen.presets import get_preset
+
+                _preset_cfg = get_preset(self.preset)
+            except Exception:  # noqa: BLE001 - fall back to label-only on lookup failure
+                pass
+            else:
+                self.tool_names = list(_preset_cfg.tool_names)
+                self._preset_system_prompt = _preset_cfg.system_prompt
+                self._preset_temperature = _preset_cfg.temperature
 
         self.agent: Any = None
         self.session_tokens = 0
@@ -127,13 +143,24 @@ class ChatREPL:
             "model": self.model_id,
             "provider": self.provider,
             "tools": tools,
-            "temperature": self.temperature if self.temperature is not None else 0.7,
+            "temperature": (
+                self.temperature
+                if self.temperature is not None
+                else (
+                    self._preset_temperature if self._preset_temperature is not None else 0.7
+                )
+            ),
             "max_tokens": self.max_tokens,
             "enable_sub_agents": not getattr(self.args, "no_sub_agents", False),
             "enable_streaming": True,
         }
+        # An explicit --system-prompt/--persona always wins; otherwise a
+        # tool-bearing preset's own system prompt applies (it tells the model
+        # when to use the preset's tools, the same as `effgen run --preset`).
         if self.system_prompt:
             config_kwargs["system_prompt"] = self.system_prompt
+        elif self._preset_system_prompt:
+            config_kwargs["system_prompt"] = self._preset_system_prompt
         config = AgentConfig(**config_kwargs)
         # Attach the persistent session only on the FIRST build, so its saved
         # turns are loaded into memory exactly once. On a /model or /tools rebuild
@@ -211,6 +238,8 @@ class ChatREPL:
         if self.preset:
             meta = f"Preset: {self.preset}  ·  " + meta
         self.cli.print(meta)
+        if self.tool_names:
+            self.cli.print(f"Tools: {', '.join(self.tool_names)}")
         # Show that we're continuing a named session (and how many turns it has).
         if self.session_id:
             try:

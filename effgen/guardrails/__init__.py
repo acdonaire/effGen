@@ -9,7 +9,7 @@ All guardrails work offline with no external APIs or ML models.
 
 from .base import Guardrail, GuardrailChain, GuardrailPosition, GuardrailResult
 from .content import LengthGuardrail, PIIGuardrail, TopicGuardrail, ToxicityGuardrail
-from .injection import PromptInjectionGuardrail
+from .injection import PromptInjectionGuardrail, SystemPromptLeakGuardrail
 from .presets import (
     MINIMAL,
     NONE,
@@ -38,6 +38,7 @@ __all__ = [
     "TopicGuardrail",
     # Injection
     "PromptInjectionGuardrail",
+    "SystemPromptLeakGuardrail",
     # Tool Safety
     "ToolInputGuardrail",
     "ToolOutputGuardrail",

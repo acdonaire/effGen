@@ -233,6 +233,98 @@ def test_default_tools_empty_for_clean_streaming():
 
 
 # ---------------------------------------------------------------------------
+# --preset attaches the preset's tools (mirrors `effgen run --preset`)
+# ---------------------------------------------------------------------------
+
+
+def test_preset_attaches_its_tools():
+    repl, _ = _make_repl(preset="math")
+    assert repl.tool_names == ["calculator", "python_repl"]
+    assert repl._preset_temperature == 0.3
+    assert "calculator" in repl._preset_system_prompt
+
+
+def test_preset_minimal_stays_tool_free():
+    repl, _ = _make_repl(preset="minimal")
+    assert repl.tool_names == []
+
+
+def test_unknown_preset_falls_back_to_label_only():
+    repl, _ = _make_repl(preset="not-a-real-preset")
+    assert repl.tool_names == []
+    assert repl._preset_system_prompt is None
+
+
+def test_build_agent_uses_preset_system_prompt_and_temperature(monkeypatch):
+    import effgen as _effgen
+
+    captured: dict[str, Any] = {}
+
+    class _FakeConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class _FakeAgent:
+        def __init__(self, config, session_id=None):
+            self.config = config
+
+    monkeypatch.setattr(_effgen, "AgentConfig", _FakeConfig)
+    monkeypatch.setattr(_effgen, "Agent", _FakeAgent)
+
+    repl, _ = _make_repl(preset="math")
+    repl._build_agent()
+
+    assert captured["system_prompt"] == repl._preset_system_prompt
+    assert captured["temperature"] == 0.3
+    assert [t.name for t in captured["tools"]] == ["calculator"]
+
+
+def test_build_agent_explicit_system_prompt_overrides_preset(monkeypatch):
+    import effgen as _effgen
+
+    captured: dict[str, Any] = {}
+
+    class _FakeConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class _FakeAgent:
+        def __init__(self, config, session_id=None):
+            self.config = config
+
+    monkeypatch.setattr(_effgen, "AgentConfig", _FakeConfig)
+    monkeypatch.setattr(_effgen, "Agent", _FakeAgent)
+
+    repl, _ = _make_repl(preset="math", system_prompt="You are a pirate.")
+    repl._build_agent()
+
+    assert captured["system_prompt"] == "You are a pirate."
+    assert captured["temperature"] == 0.3
+
+
+def test_build_agent_explicit_temperature_overrides_preset(monkeypatch):
+    import effgen as _effgen
+
+    captured: dict[str, Any] = {}
+
+    class _FakeConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class _FakeAgent:
+        def __init__(self, config, session_id=None):
+            self.config = config
+
+    monkeypatch.setattr(_effgen, "AgentConfig", _FakeConfig)
+    monkeypatch.setattr(_effgen, "Agent", _FakeAgent)
+
+    repl, _ = _make_repl(preset="math", temperature=0.9)
+    repl._build_agent()
+
+    assert captured["temperature"] == 0.9
+
+
+# ---------------------------------------------------------------------------
 # save / load file mechanics
 # ---------------------------------------------------------------------------
 

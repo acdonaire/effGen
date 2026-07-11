@@ -298,6 +298,75 @@ class TestGroqAdapterGenerate:
             "expression": "(17 * 23) + sqrt(144)"
         }
 
+    def test_generate_with_tools_recovers_failed_generation_missing_closing_tag(self):
+        """A denied/retried tool call sometimes comes back with no closing
+        `</function>` tag at all, or two calls run together with no
+        separator — the first call is still recovered rather than the
+        whole turn failing with a raw provider error."""
+        adapter = self._loaded_adapter("llama-3.1-8b-instant")
+        adapter._client.chat.completions.create.side_effect = Exception(
+            "Error code: 400 - {'error': {'message': \"Failed to call a function. "
+            "Please adjust your prompt.\", 'type': 'invalid_request_error', "
+            "'code': 'tool_use_failed', 'failed_generation': "
+            '\'<function=issue_refund>{"order_id": "ORD-1001"} \\n\\n'
+            "<function=order_lookup>{\"order_id\": \"ORD-1001\"}'}}"
+        )
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "issue_refund",
+                    "description": "Refund an order.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"order_id": {"type": "string"}},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "order_lookup",
+                    "description": "Look up an order.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"order_id": {"type": "string"}},
+                    },
+                },
+            },
+        ]
+        result = adapter.generate_with_tools("Refund ORD-1001", tools)
+        tool_call = result.metadata["tool_calls"][0]
+        assert tool_call["function"]["name"] == "issue_refund"
+        assert tool_call["function"]["arguments"] == {"order_id": "ORD-1001"}
+        # Only the first call is recovered; a second concatenated call is not
+        # silently executed too.
+        assert len(result.metadata["tool_calls"]) == 1
+
+    def test_generate_with_tools_recovers_failed_generation_no_tag_no_trailer(self):
+        """No closing tag and nothing trailing (end of string) also recovers."""
+        adapter = self._loaded_adapter("llama-3.1-8b-instant")
+        adapter._client.chat.completions.create.side_effect = Exception(
+            "Error code: 400 - {'error': {'message': 'Failed to call a function.', "
+            "'type': 'invalid_request_error', 'code': 'tool_use_failed', "
+            "'failed_generation': '<function=calculator>{\"expression\": \"2+2\"}'}}"
+        )
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "calculator",
+                "description": "calc",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"expression": {"type": "string"}},
+                },
+            },
+        }]
+        result = adapter.generate_with_tools("What is 2+2?", tools)
+        tool_call = result.metadata["tool_calls"][0]
+        assert tool_call["function"]["name"] == "calculator"
+        assert tool_call["function"]["arguments"] == {"expression": "2+2"}
+
     def test_count_tokens_returns_positive(self):
         adapter = self._loaded_adapter()
         tc = adapter.count_tokens("Hello world")

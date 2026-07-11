@@ -245,9 +245,9 @@ class TestRedactionCountsAndChain:
 
 class TestPhiPreset:
     def test_phi_and_hipaa_resolve(self):
-        assert len(get_guardrail_preset("phi").guardrails) == 5
-        assert len(get_guardrail_preset("hipaa").guardrails) == 5
-        assert len(get_guardrail_preset("deidentify").guardrails) == 5
+        assert len(get_guardrail_preset("phi").guardrails) == 6
+        assert len(get_guardrail_preset("hipaa").guardrails) == 6
+        assert len(get_guardrail_preset("deidentify").guardrails) == 6
 
     def test_phi_preset_redacts_not_blocks_by_default(self):
         r = get_guardrail_preset("phi").check("MRN: 00847213")

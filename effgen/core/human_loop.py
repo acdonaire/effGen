@@ -204,6 +204,11 @@ class HumanChoice:
 DANGEROUS_TOOL_KEYWORDS: set[str] = {
     "bash", "shell", "exec", "execute", "code_executor",
     "file_write", "file_delete", "system",
+    # Stateful side effects with real-world consequences (money movement,
+    # cancellation) — a tool author can still mark any tool `requires_approval`
+    # explicitly (see `@tool(requires_approval=True)`), but a name in this list
+    # is gated under `approval_mode="dangerous_only"` even without that.
+    "refund", "charge", "payment", "purchase", "transfer", "cancel", "delete",
 }
 
 

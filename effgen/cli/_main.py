@@ -2722,7 +2722,11 @@ Model id formats:
         help='Provider for a bare model id (e.g. openai, groq, cerebras, gemini). '
              'Equivalent to the "provider:model" prefix.',
     )
-    chat_parser.add_argument('--preset', help='Agent preset to label the session (e.g. math, research)')
+    chat_parser.add_argument(
+        '--preset', choices=_preset_choices,
+        help='Agent preset for the session (e.g. math, research) — attaches the '
+             "preset's tools and system prompt, same as `effgen run --preset`",
+    )
     chat_parser.add_argument(
         '--system-prompt', '--persona', dest='system_prompt', metavar='TEXT',
         help='Custom persona / system prompt for the session, e.g. '

@@ -125,6 +125,10 @@ class AgentReActMixin:
         previous_actions: list[tuple[str, str]] = []  # Track (action, input) pairs for loop detection
         previous_results: list[tuple[str, str]] = []  # Track (action, result) pairs to stop on a confident, repeated answer
         _batch_tool_runs = 0  # Count of batch native-tool runs; cap at 2 to prevent infinite loops
+        # Set once a repeated action loops with no usable partial answer (every
+        # attempt failed/was denied) — stops re-offering tools so the model
+        # must synthesize a prose answer instead of retrying forever.
+        _force_text_answer = False
         # Optional periodic checkpointing
         _ckpt_interval = _ckpt_interval_arg
         _ckpt_dir = _ckpt_dir_arg
@@ -167,8 +171,9 @@ class AgentReActMixin:
 
             # Build prompt
             gen_kwargs = dict(kwargs)
-            # After 2 multi-tool batches, stop passing tools to force synthesis.
-            if _batch_tool_runs >= 2:
+            # After 2 multi-tool batches, or once a loop with no usable partial
+            # answer was detected, stop passing tools to force synthesis.
+            if _batch_tool_runs >= 2 or _force_text_answer:
                 use_native_prompt = False
             if use_native_prompt and not self.config.system_prompt_template:
                 # Native/hybrid mode: use a simple user message and pass
@@ -460,7 +465,13 @@ class AgentReActMixin:
                     partial = self._extract_partial_answer(scratchpad)
                     if partial:
                         return _build_response(partial, answer_source="loop_detected", repeated_action=action)
-                    # If no partial answer, add a hint to the scratchpad and continue
+                    # No partial answer to fall back on — every attempt of this
+                    # action failed or was denied, so simply nudging and
+                    # re-offering the same tool just repeats the loop until
+                    # max_iterations (the model keeps retrying the tool it was
+                    # just told is already computed). Stop offering tools for
+                    # the rest of this run so the model must respond in prose.
+                    _force_text_answer = True
                     scratchpad += (
                         f"\nAction: {action}"
                         f"\nAction Input: {action_input}"

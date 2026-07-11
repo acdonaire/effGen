@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from .base import GuardrailChain, GuardrailPosition
 from .content import LengthGuardrail, PIIGuardrail, ToxicityGuardrail
-from .injection import PromptInjectionGuardrail
+from .injection import PromptInjectionGuardrail, SystemPromptLeakGuardrail
 from .tool_safety import ToolInputGuardrail, ToolOutputGuardrail, ToolPermissionGuardrail
 
 # Positions the injection guardrail runs at in the "strict"/"phi" presets: the
@@ -29,15 +29,17 @@ def strict_guardrails(
     """All guardrails enabled, high sensitivity.
 
     Includes: length, injection (high, checked on the first user turn and on
-    every tool's return value), toxicity, PII (block), topic (none by
-    default), tool input validation, tool output sanitization with PII
-    stripping, and tool permissions.
+    every tool's return value), a system-prompt-leak check on the agent's own
+    answer, toxicity, PII (block), topic (none by default), tool input
+    validation, tool output sanitization with PII stripping, and tool
+    permissions.
     """
     chain = GuardrailChain([
         LengthGuardrail(max_length=max_length),
         PromptInjectionGuardrail(
             sensitivity="high", positions=_INJECTION_POSITIONS_WITH_TOOL_OUTPUT
         ),
+        SystemPromptLeakGuardrail(),
         ToxicityGuardrail(),
         PIIGuardrail(action="block"),
         ToolInputGuardrail(),
@@ -53,14 +55,20 @@ def standard_guardrails(
 ) -> GuardrailChain:
     """PII + injection + tool safety, medium sensitivity.
 
-    A balanced preset. The injection guardrail here checks only the first
-    user turn (``GuardrailPosition.INPUT``), not a tool's return value; use
-    the "strict" or "phi" preset for injection screening on tool output too.
+    A balanced preset. PII is redacted, not blocked: a conversational agent
+    routinely receives a user's own identifying details (an email for
+    verification, a phone number for a callback), and refusing the whole turn
+    over that is worse than stripping it before it reaches the model. Use the
+    "strict" preset when any PII in the input should refuse the turn outright.
+
+    The injection guardrail here checks only the first user turn
+    (``GuardrailPosition.INPUT``), not a tool's return value; use the "strict"
+    or "phi" preset for injection screening on tool output too.
     """
     return GuardrailChain([
         LengthGuardrail(max_length=max_length),
         PromptInjectionGuardrail(sensitivity="medium"),
-        PIIGuardrail(action="block"),
+        PIIGuardrail(action="redact"),
         ToolInputGuardrail(),
         ToolOutputGuardrail(max_output_length=max_length),
     ])
@@ -82,13 +90,15 @@ def phi_guardrails(
     ``PIIGuardrail`` with ``custom_patterns``/``custom_terms`` and use it
     directly. Pass ``strict=True`` to fail closed — any detection then reports
     ``passed=False`` instead of forwarding redacted text. Injection screening
-    runs on the first user turn and on every tool's return value.
+    runs on the first user turn and on every tool's return value; a
+    system-prompt-leak check also screens the agent's own answer.
     """
     return GuardrailChain([
         LengthGuardrail(max_length=max_length),
         PromptInjectionGuardrail(
             sensitivity="medium", positions=_INJECTION_POSITIONS_WITH_TOOL_OUTPUT
         ),
+        SystemPromptLeakGuardrail(),
         PIIGuardrail(action="redact", detect_labeled=True, strict=strict),
         ToolInputGuardrail(),
         ToolOutputGuardrail(strip_pii=True, max_output_length=max_length),

@@ -224,6 +224,9 @@ class FunctionTool(BaseTool):
         name: str | None = None,
         description: str | None = None,
         category: ToolCategory | str | None = None,
+        requires_approval: bool = False,
+        cost_estimate: str | None = None,
+        timeout_seconds: int | None = None,
     ) -> "FunctionTool":
         """Build a ``FunctionTool`` from *func*'s signature, hints and docstring.
 
@@ -233,6 +236,23 @@ class FunctionTool(BaseTool):
             description: Override the description (defaults to the docstring
                 summary).
             category: Optional :class:`ToolCategory` (or its string value).
+            requires_approval: Mark this tool as needing human approval before
+                each call. Reaches ``AgentConfig(approval_mode="dangerous_only",
+                approval_callback=...)``, which gates any tool with
+                ``requires_approval=True`` (independent of name) alongside the
+                tools matched by :data:`effgen.core.human_loop.
+                DANGEROUS_TOOL_KEYWORDS`. Set this on any tool with a real-world
+                side effect a user did not explicitly ask for on this call — a
+                refund, a delete, a send, a purchase::
+
+                    @tool(requires_approval=True)
+                    def issue_refund(order_id: str, amount: float) -> str:
+                        \"\"\"Refund an order. Requires approval before running.\"\"\"
+                        ...
+            cost_estimate: Optional cost hint surfaced in the tool's metadata
+                (``"low"``/``"medium"``/``"high"``); defaults to ``"low"``.
+            timeout_seconds: Optional per-call timeout hint surfaced in the
+                tool's metadata; defaults to 30.
 
         Returns:
             A ready-to-use ``FunctionTool``.
@@ -305,13 +325,19 @@ class FunctionTool(BaseTool):
                 category = None
         tool_category = category or ToolCategory.SYSTEM
 
-        metadata = ToolMetadata(
-            name=tool_name,
-            description=tool_desc,
-            category=tool_category,
-            parameters=parameters,
-            author=getattr(func, "__module__", None),
-        )
+        metadata_kwargs: dict[str, Any] = {
+            "name": tool_name,
+            "description": tool_desc,
+            "category": tool_category,
+            "parameters": parameters,
+            "author": getattr(func, "__module__", None),
+            "requires_approval": requires_approval,
+        }
+        if cost_estimate is not None:
+            metadata_kwargs["cost_estimate"] = cost_estimate
+        if timeout_seconds is not None:
+            metadata_kwargs["timeout_seconds"] = timeout_seconds
+        metadata = ToolMetadata(**metadata_kwargs)
         return cls(func, metadata)
 
 
@@ -326,6 +352,9 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     category: ToolCategory | str | None = None,
+    requires_approval: bool = False,
+    cost_estimate: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> Any:
     """Decorator turning a plain function into a ready-to-use effGen tool.
 
@@ -341,13 +370,28 @@ def tool(
             \"\"\"Multiply two integers.\"\"\"
             return a * b
 
+        @tool(requires_approval=True)
+        def issue_refund(order_id: str, amount: float) -> str:
+            \"\"\"Refund an order. Requires approval before running.\"\"\"
+            ...
+
     The decorated name becomes a :class:`FunctionTool` instance you can drop
     into ``AgentConfig(tools=[...])`` or register with ``get_registry()``.
+    Mark a tool with a real-world side effect (a refund, a delete, a send)
+    ``requires_approval=True`` so it is gated when the agent runs with
+    ``AgentConfig(approval_mode="dangerous_only", approval_callback=...)`` —
+    see :func:`FunctionTool.from_function` for the full explanation.
     """
 
     def wrap(f: Callable[..., Any]) -> FunctionTool:
         return FunctionTool.from_function(
-            f, name=name, description=description, category=category
+            f,
+            name=name,
+            description=description,
+            category=category,
+            requires_approval=requires_approval,
+            cost_estimate=cost_estimate,
+            timeout_seconds=timeout_seconds,
         )
 
     if func is not None:

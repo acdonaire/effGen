@@ -69,9 +69,19 @@ def _is_request_too_large(message: str, message_lower: str) -> bool:
 
 
 def _parse_failed_generation_tool_call(message: str) -> dict[str, Any] | None:
-    """Extract a tool call from Groq's ``tool_use_failed`` failed_generation text."""
+    """Extract a tool call from Groq's ``tool_use_failed`` failed_generation text.
+
+    The model's own function-call syntax is sometimes malformed enough that
+    Groq's server-side parser rejects it outright — most commonly a missing
+    ``</function>`` closing tag, or two calls run together with no separator
+    (e.g. a model retrying a just-denied tool call, then trailing off into a
+    second one). The closing tag, the start of a subsequent ``<function=``,
+    or end of string all terminate the first call's arguments, so only the
+    first call is ever recovered here — the same shape a well-formed single
+    call would have produced.
+    """
     match = re.search(
-        r"<function=([A-Za-z_]\w*)\s*>?\s*(.*?)</function>",
+        r"<function=([A-Za-z_]\w*)\s*>?\s*(.*?)(?:</function>|(?=<function=)|$)",
         message,
         re.DOTALL,
     )
@@ -86,7 +96,19 @@ def _parse_failed_generation_tool_call(message: str) -> dict[str, Any] | None:
     try:
         arguments = json.loads(raw_args) if raw_args else {}
     except (json.JSONDecodeError, TypeError):
-        arguments = {"__raw_input__": raw_args}
+        # A missing closing tag can leave trailing junk after the JSON object
+        # (stray escape sequences, a second concatenated call) that a plain
+        # `json.loads` rejects even though the object itself is well-formed.
+        # Fall back to the same bracket-balanced, string-aware extractor used
+        # for structured-output parsing, which stops at the matching closing
+        # brace regardless of what follows.
+        from effgen.core.structured_output import _extract_balanced
+
+        balanced = _extract_balanced(raw_args) if raw_args else None
+        try:
+            arguments = json.loads(balanced) if balanced is not None else {"__raw_input__": raw_args}
+        except (json.JSONDecodeError, TypeError):
+            arguments = {"__raw_input__": raw_args}
 
     if not isinstance(arguments, dict):
         arguments = {"__raw_input__": raw_args}

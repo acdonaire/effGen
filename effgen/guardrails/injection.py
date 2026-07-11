@@ -118,7 +118,8 @@ class PromptInjectionGuardrail(Guardrail):
     # System prompt extraction / prompt-leak attempts
     _SYSTEM_PROMPT_EXTRACTION: list[re.Pattern[str]] = [
         re.compile(
-            r"\b(?:(?:show|reveal|print|display|output|repeat|echo|tell|give|what\s+(?:is|are))"
+            r"\b(?:(?:show|reveal|print|display|output|repeat|echo|tell|give|what\s+(?:is|are)|"
+            r"translate|paraphrase|summarize|summarise|rephrase|explain|convert)"
             r"(?:\s+me)?\s+(?:your|the)\s+(?:system\s+(?:prompt|message|instructions?)|"
             r"initial\s+(?:prompt|instructions?)|hidden\s+(?:prompt|instructions?)|"
             r"(?:original|full|complete|entire)\s+(?:prompt|instructions?)))",
@@ -249,4 +250,85 @@ class PromptInjectionGuardrail(Guardrail):
                     },
                 )
 
+        return GuardrailResult(passed=True)
+
+
+class SystemPromptLeakGuardrail(Guardrail):
+    """Flags an agent's OUTPUT that echoes a distinctive token from its own
+    system prompt verbatim — the shape a leaked secret or internal code takes
+    even when the surrounding prose is paraphrased or translated (an
+    identifier like ``ACME-ESC-7734`` is rarely translated; only the words
+    around it are).
+
+    :class:`PromptInjectionGuardrail` only screens the *request* for known
+    exfiltration phrasings ("show me your system prompt") and, by default,
+    only at ``GuardrailPosition.INPUT``; it does not look at what the model
+    actually said back. This guardrail is a companion check on the answer
+    itself, matching the guidance in ``PromptInjectionGuardrail``'s own
+    docstring to pair it with an output-side check rather than relying on
+    input screening alone.
+
+    Runs at ``GuardrailPosition.OUTPUT`` by default. Needs the agent's system
+    prompt at check time — pass it as ``system_prompt=`` to
+    :meth:`GuardrailChain.check` (e.g.
+    ``chain.check(answer, position=GuardrailPosition.OUTPUT,
+    system_prompt=agent.config.system_prompt)``); with no system prompt this
+    is a no-op pass, so it is safe to include in a chain unconditionally.
+
+    Detection is a distinctive-token match, not full-phrase similarity: any
+    system-prompt token at least ``min_token_length`` characters long that
+    contains a digit (an identifier/code shape — ``ACME-ESC-7734``,
+    ``sk_live_abc123``) is flagged if it reappears verbatim in the output.
+    Plain English words are never flagged, so ordinary vocabulary shared
+    between the system prompt and a normal answer does not trip this.
+    """
+
+    _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{3,}")
+
+    def __init__(
+        self,
+        min_token_length: int = 6,
+        positions: list[GuardrailPosition] | None = None,
+        enabled: bool = True,
+    ):
+        super().__init__(
+            name="SystemPromptLeakGuardrail",
+            positions=positions or [GuardrailPosition.OUTPUT],
+            enabled=enabled,
+        )
+        self.min_token_length = min_token_length
+
+    def _distinctive_tokens(self, system_prompt: str) -> set[str]:
+        tokens: set[str] = set()
+        for match in self._TOKEN_RE.finditer(system_prompt):
+            token = match.group(0)
+            if len(token) < self.min_token_length:
+                continue
+            if not any(c.isdigit() for c in token):
+                continue
+            tokens.add(token)
+        return tokens
+
+    def check(
+        self, content: str, system_prompt: str | None = None, **kwargs: Any
+    ) -> GuardrailResult:
+        if not system_prompt or not content:
+            return GuardrailResult(passed=True)
+        tokens = self._distinctive_tokens(system_prompt)
+        if not tokens:
+            return GuardrailResult(passed=True)
+        content_lower = content.lower()
+        leaked = sorted(t for t in tokens if t.lower() in content_lower)
+        if leaked:
+            return GuardrailResult(
+                passed=False,
+                # The leaked token itself is not repeated here — a guardrail
+                # message that echoes the secret it just caught would defeat
+                # the point.
+                reason=(
+                    "Output contains a distinctive identifier from the system "
+                    "prompt verbatim — a likely leaked secret or internal code."
+                ),
+                metadata={"leaked_token_count": len(leaked)},
+            )
         return GuardrailResult(passed=True)

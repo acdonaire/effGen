@@ -179,6 +179,15 @@ _TOOLCALL_TAG_RE = re.compile(
     r"|<\|[^>|]*\|>",
     re.IGNORECASE,
 )
+# A leaked tool call with no wrapping tag at all — just the bare tool name
+# immediately followed by its JSON arguments, e.g.
+# 'order_lookup {"order_id": "ORD-1001"} \nThe order status is "shipped"'.
+# Anchored to the very start of the text (never mid-sentence) so an ordinary
+# answer that happens to contain "word {...}" is never touched; a tool name
+# is always a lowercase snake_case identifier by effGen convention.
+_LEADING_TOOLCALL_ECHO_RE = re.compile(
+    r"^[a-z_][a-z0-9_]{1,63}[ \t]+" + _JSON_OBJ + r"[ \t\n]*"
+)
 
 
 def sanitize_final_answer(text: str | None) -> str | None:
@@ -188,9 +197,12 @@ def sanitize_final_answer(text: str | None) -> str | None:
     injects, leading ``Final Answer:``/``Answer:`` labels (returning the text
     after the *last* such label, so ``"Canberra\\nFinal Answer: Canberra"`` →
     ``"Canberra"``), trailing ``Observation:``/``Thought:``/``Question:`` bleed,
-    and ``[tool(args)] →`` echo prefixes — without reflowing markdown tables,
-    code blocks, or legitimate pipe-separated content. ``None``/non-``str`` input
-    is returned unchanged.
+    ``[tool(args)] →`` echo prefixes, tagged tool-call syntax
+    (``<function=x>{...}</function>``, ``<tool_call>{...}</tool_call>``), and a
+    leading untagged tool-call echo (``tool_name {"arg": "val"}`` at the very
+    start of the text, before the real answer) — without reflowing markdown
+    tables, code blocks, or legitimate pipe-separated content. ``None``/non-``str``
+    input is returned unchanged.
     """
     if not text or not isinstance(text, str):
         return text
@@ -203,6 +215,8 @@ def sanitize_final_answer(text: str | None) -> str | None:
     # 2b. Remove leaked model tool-call syntax (whole constructs, then stray tags).
     s = _TOOLCALL_CONSTRUCT_RE.sub("", s)
     s = _TOOLCALL_TAG_RE.sub("", s)
+    # 2c. Remove a leading bare "tool_name {json}" echo with no wrapping tag.
+    s = _LEADING_TOOLCALL_ECHO_RE.sub("", s)
     # 3. Drop trailing Observation/Thought/Question/Action bleed.
     s = _TRAILING_BLEED_RE.sub("", s)
     # 4. If a line-anchored answer label is present, the real answer is what

@@ -1289,10 +1289,15 @@ Question: {task}
                         response, effective_schema, output_model, task,
                     )
 
-                # Post-run output guardrail check
+                # Post-run output guardrail check. system_prompt= is only
+                # consumed by SystemPromptLeakGuardrail (a no-op without it);
+                # every other output guardrail ignores the extra kwarg.
                 if self._guardrail_chain is not None and response.success and response.output:
                     from ..guardrails.base import GuardrailPosition as _GP
-                    gr = self._guardrail_chain.check(response.output, position=_GP.OUTPUT)
+                    gr = self._guardrail_chain.check(
+                        response.output, position=_GP.OUTPUT,
+                        system_prompt=self.config.system_prompt,
+                    )
                     if not gr.passed:
                         response.output = f"Output blocked by guardrail: {gr.reason}"
                         response.success = False

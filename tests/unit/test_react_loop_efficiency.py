@@ -12,6 +12,9 @@ on a question they have already answered:
   (``answer_source="repeated_tool_result"``).
 - A clean ``Final Answer:`` after one tool call stops immediately.
 - The guardrails never change a correct answer.
+- A repeated action with no usable partial answer (every attempt failed or was
+  denied) stops re-offering tools so the model must respond in prose, instead
+  of retrying the same call until ``max_iterations`` is exhausted.
 
 These use an in-process scripted model (no network) to drive the loop
 deterministically — not a mock of live API behavior, which the project forbids.
@@ -154,3 +157,104 @@ def test_guardrails_preserve_correct_answer():
     assert resp.success is True
     assert "144" in (resp.output or "")
     assert resp.tool_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Repeated action with no usable partial answer (e.g. every attempt of a
+# tool call was denied) — the loop must stop re-offering tools rather than
+# retrying the same denied call until max_iterations is exhausted.
+# ---------------------------------------------------------------------------
+
+
+class _ScriptedNativeToolModel(BaseModel):
+    """A native/hybrid-tool-calling model whose response depends on whether
+    ``tools`` were still offered on this call — records that per call so a
+    test can assert tools stopped being offered after a dead-end loop."""
+
+    def __init__(self):
+        super().__init__(model_name="scripted-native", model_type=ModelType.OPENAI)
+        self.calls = 0
+        self.saw_tools_on_call: list[bool] = []
+
+    def load(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    def unload(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    def count_tokens(self, text: str) -> TokenCount:  # pragma: no cover
+        return TokenCount(count=len(text.split()), model_name=self.model_name)
+
+    def get_context_length(self) -> int:  # pragma: no cover
+        return 4096
+
+    def generate_batch(self, prompts, config=None, **kwargs):  # pragma: no cover
+        return [self.generate(p, config=config, **kwargs) for p in prompts]
+
+    def generate_with_tools(self, prompt, tools, config=None, **kwargs):  # pragma: no cover
+        return self.generate(prompt, config=config, tools=tools, **kwargs)
+
+    def generate_stream(self, prompt, config=None, **kwargs):  # pragma: no cover
+        yield self.generate(prompt, config=config, **kwargs).text
+
+    def supports_function_calling(self) -> bool:
+        return True
+
+    def supports_tool_calling(self) -> bool:
+        return True
+
+    def generate(self, prompt, config=None, **kwargs):
+        self.calls += 1
+        offered = bool(kwargs.get("tools"))
+        self.saw_tools_on_call.append(offered)
+        if offered:
+            return GenerationResult(
+                text="", tokens_used=5, finish_reason="tool_calls",
+                model_name=self.model_name,
+                metadata={"tool_calls": [{
+                    "id": "", "type": "function",
+                    "function": {
+                        "name": "issue_refund",
+                        "arguments": '{"order_id": "ORD-1001"}',
+                    },
+                }]},
+            )
+        return GenerationResult(
+            text="Final Answer: The refund for ORD-1001 was denied.",
+            tokens_used=5, finish_reason="stop",
+            model_name=self.model_name, metadata={},
+        )
+
+
+def test_repeated_denied_tool_call_stops_offering_tools_and_answers():
+    """A tool call that always fails/is denied leaves no partial answer to
+    extract; the second identical attempt trips loop detection, which must
+    stop re-offering the tool so the model answers in prose on the very next
+    call instead of retrying until max_iterations."""
+    from effgen import tool
+
+    @tool
+    def issue_refund(order_id: str) -> str:
+        """Refund an order."""
+        return "Error executing tool 'issue_refund': execution denied by human approval (denied)"
+
+    model = _ScriptedNativeToolModel()
+    cfg = AgentConfig(
+        name="denied-loop-test",
+        model=model,
+        tools=[issue_refund],
+        max_iterations=10,
+    )
+    agent = Agent(config=cfg)
+    resp = agent.run("Refund ORD-1001")
+
+    assert resp.success is True
+    assert "denied" in (resp.output or "").lower()
+    # Tool executed exactly once — the second identical attempt is caught by
+    # loop detection before a second execution.
+    assert resp.tool_calls == 1
+    # Tools were offered on the first two calls, then withheld once the loop
+    # was detected with no partial answer to fall back on — the run finishes
+    # well short of max_iterations instead of exhausting the budget.
+    assert model.saw_tools_on_call == [True, True, False]
+    assert model.calls == 3
