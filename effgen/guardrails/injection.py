@@ -32,7 +32,10 @@ class PromptInjectionGuardrail(Guardrail):
         - ``high``: Adds the most aggressive markdown/divider patterns.
 
     Tuned to avoid false positives on normal questions like
-    "What is a system prompt?" or "Ignore the noise and focus on the data."
+    "What is a system prompt?", "Ignore the noise and focus on the data.", or
+    "Pretend you are a friendly teacher and explain rainbows" (a benign
+    roleplay request only counts as a hijack once it co-occurs with an
+    explicit restriction-lifting cue, e.g. "... with no restrictions").
     """
 
     # ---- HIGH-CONFIDENCE patterns (all levels) ----
@@ -70,17 +73,40 @@ class PromptInjectionGuardrail(Guardrail):
         ),
     ]
 
-    # Explicit new identity assignment: "You are now ...", "Act as ...",
-    # "Pretend you have no restrictions".
+    # A restriction-lifting cue: the part of a hijack attempt that asks for
+    # guidelines/safety limits to be dropped, as opposed to ordinary benign
+    # roleplay framing ("pretend you are a teacher").
+    _RESTRICTION_LIFT_CUE = (
+        r"(?:no\s+(?:restrictions?|filters?|rules?|limits?|limitations?|censorship|"
+        r"ethics|morals?)|"
+        r"without\s+(?:any\s+)?(?:restrictions?|filters?|rules?|limits?|limitations?)|"
+        r"ignore\s+(?:your\s+|all\s+|any\s+)?(?:guidelines?|rules?|restrictions?|"
+        r"programming|training|ethics|safety)|"
+        r"unrestricted|unfiltered|uncensored|"
+        r"bypass\s+(?:your\s+|all\s+)?(?:guidelines?|rules?|restrictions?|safety)|"
+        r"jailbreak|do\s+anything\s+now|"
+        r"no\s+longer\s+(?:bound|restricted|limited))"
+    )
+
+    # Explicit new identity assignment: "You are now ...", "Act as ...".
+    # "Pretend you are/have ..." is common, benign roleplay framing ("pretend
+    # you are a teacher") on its own, so it only counts as a hijack when it
+    # co-occurs with an explicit restriction-lifting cue nearby (either order).
     _IDENTITY_OVERRIDE: list[re.Pattern[str]] = [
         re.compile(
             r"(?:^|\n)\s*(?:you\s+are\s+now|from\s+now\s+on\s+you\s+are|"
             r"you\s+(?:must|should|will)\s+now\s+(?:act|behave|respond)\s+as)\b",
             re.I,
         ),
-        # "pretend (to be | you are/have/can/...)" anywhere — a hijack regardless
-        # of position.
+        # "pretend (to be | you are/have/can/...) ... <restriction-lift cue>"
         re.compile(
+            r"\bpretend\s+(?:that\s+)?(?:to\s+be|you(?:'?re|\s+(?:are|have|can|"
+            r"do|don'?t|no\s+longer)))\b(?:(?![.!?]).){0,100}?" + _RESTRICTION_LIFT_CUE,
+            re.I,
+        ),
+        # "<restriction-lift cue> ... pretend (to be | you are/have/can/...)"
+        re.compile(
+            _RESTRICTION_LIFT_CUE + r"(?:(?![.!?]).){0,100}?"
             r"\bpretend\s+(?:that\s+)?(?:to\s+be|you(?:'?re|\s+(?:are|have|can|"
             r"do|don'?t|no\s+longer)))\b",
             re.I,
@@ -215,7 +241,7 @@ class PromptInjectionGuardrail(Guardrail):
             if match:
                 return GuardrailResult(
                     passed=False,
-                    reason=f"Prompt injection guardrail: {label} detected",
+                    reason="Content matches a known prompt-injection pattern.",
                     metadata={
                         "pattern_type": label,
                         "matched_text": match.group()[:100],

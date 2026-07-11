@@ -6,10 +6,20 @@ Provides pre-configured guardrail chains for common use cases.
 
 from __future__ import annotations
 
-from .base import GuardrailChain
+from .base import GuardrailChain, GuardrailPosition
 from .content import LengthGuardrail, PIIGuardrail, ToxicityGuardrail
 from .injection import PromptInjectionGuardrail
 from .tool_safety import ToolInputGuardrail, ToolOutputGuardrail, ToolPermissionGuardrail
+
+# Positions the injection guardrail runs at in the "strict"/"phi" presets: the
+# first user turn AND a tool's return value, since an indirect prompt
+# injection carried in a scraped page, a ticket body, or a RAG passage reaches
+# the model through TOOL_OUTPUT, not INPUT. "standard"/"minimal" stay
+# input-only (a deliberate, lighter-weight tradeoff for those presets).
+_INJECTION_POSITIONS_WITH_TOOL_OUTPUT = [
+    GuardrailPosition.INPUT,
+    GuardrailPosition.TOOL_OUTPUT,
+]
 
 
 def strict_guardrails(
@@ -18,13 +28,16 @@ def strict_guardrails(
 ) -> GuardrailChain:
     """All guardrails enabled, high sensitivity.
 
-    Includes: length, injection (high), toxicity, PII (block),
-    topic (none by default), tool input validation, tool output
-    sanitization with PII stripping, and tool permissions.
+    Includes: length, injection (high, checked on the first user turn and on
+    every tool's return value), toxicity, PII (block), topic (none by
+    default), tool input validation, tool output sanitization with PII
+    stripping, and tool permissions.
     """
     chain = GuardrailChain([
         LengthGuardrail(max_length=max_length),
-        PromptInjectionGuardrail(sensitivity="high"),
+        PromptInjectionGuardrail(
+            sensitivity="high", positions=_INJECTION_POSITIONS_WITH_TOOL_OUTPUT
+        ),
         ToxicityGuardrail(),
         PIIGuardrail(action="block"),
         ToolInputGuardrail(),
@@ -40,7 +53,9 @@ def standard_guardrails(
 ) -> GuardrailChain:
     """PII + injection + tool safety, medium sensitivity.
 
-    A balanced preset suitable for most production deployments.
+    A balanced preset. The injection guardrail here checks only the first
+    user turn (``GuardrailPosition.INPUT``), not a tool's return value; use
+    the "strict" or "phi" preset for injection screening on tool output too.
     """
     return GuardrailChain([
         LengthGuardrail(max_length=max_length),
@@ -66,11 +81,14 @@ def phi_guardrails(
     every free-text personal name. For site-specific identifiers, build a
     ``PIIGuardrail`` with ``custom_patterns``/``custom_terms`` and use it
     directly. Pass ``strict=True`` to fail closed — any detection then reports
-    ``passed=False`` instead of forwarding redacted text.
+    ``passed=False`` instead of forwarding redacted text. Injection screening
+    runs on the first user turn and on every tool's return value.
     """
     return GuardrailChain([
         LengthGuardrail(max_length=max_length),
-        PromptInjectionGuardrail(sensitivity="medium"),
+        PromptInjectionGuardrail(
+            sensitivity="medium", positions=_INJECTION_POSITIONS_WITH_TOOL_OUTPUT
+        ),
         PIIGuardrail(action="redact", detect_labeled=True, strict=strict),
         ToolInputGuardrail(),
         ToolOutputGuardrail(strip_pii=True, max_output_length=max_length),
@@ -80,7 +98,7 @@ def phi_guardrails(
 def minimal_guardrails(
     max_length: int = 200_000,
 ) -> GuardrailChain:
-    """Basic length + injection only.
+    """Basic length + injection only, first user turn only.
 
     Lightweight preset for low-risk applications.
     """

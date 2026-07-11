@@ -112,6 +112,50 @@ class TestLabeledFieldRedaction:
         assert not r.metadata.get("pii_types"), f"false positive on {text!r}"
         assert r.modified_content in (None, text)
 
+    @pytest.mark.parametrize("text", [
+        # A shared trailing \b after the whole alternation cannot match right
+        # after "#" (a non-word char can't satisfy \b next to another
+        # non-word char), so these silently failed to redact.
+        "Record #: 12345",
+        "Record # 12345",
+        "Record #:12345",
+    ])
+    def test_bare_record_hash_variants_redacted(self, text):
+        out = PIIGuardrail(action="redact").check(text).modified_content or text
+        assert "12345" not in out, f"leaked MRN value: {out}"
+        assert "[MRN REDACTED]" in out
+
+    @pytest.mark.parametrize("text", [
+        "Record No 12345",
+        "Record Number: 12345",
+    ])
+    def test_bare_record_no_number_variants_still_redacted(self, text):
+        # The word-ending alternatives ("no"/"number") must keep their own
+        # trailing \b after the split from the "#" alternative.
+        out = PIIGuardrail(action="redact").check(text).modified_content or text
+        assert "12345" not in out, f"leaked MRN value: {out}"
+        assert "[MRN REDACTED]" in out
+
+
+class TestInternationalPhoneNumbers:
+    @pytest.mark.parametrize("phone", [
+        "+44 20 7946 0958",   # UK, space-grouped
+        "+91 98765 43210",    # India, space-grouped
+        "+33 1 42 68 53 00",  # France, multi-group
+        "+442079460958",      # ungrouped — must keep working
+        "+1-800-555-0199",    # dash-grouped
+    ])
+    def test_grouped_and_ungrouped_international_numbers_redacted(self, phone):
+        r = PIIGuardrail(action="redact").check(f"Call me at {phone} tomorrow.")
+        assert phone not in (r.modified_content or ""), f"leaked {phone!r}"
+        assert "[PHONE REDACTED]" in r.modified_content
+
+    def test_short_digit_run_not_flagged_as_phone(self):
+        # A country-code-shaped prefix with too few trailing digits (e.g. a
+        # version-like token) should not be swept up.
+        r = PIIGuardrail(action="redact").check("see spec +1 2")
+        assert r.modified_content in (None, "see spec +1 2")
+
 
 class TestSSNFormats:
     @pytest.mark.parametrize("text", [

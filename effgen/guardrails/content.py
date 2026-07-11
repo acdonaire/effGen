@@ -123,6 +123,9 @@ class PIIGuardrail(Guardrail):
     # Common credential / API-key shapes. High-precision prefixes keep these from
     # firing on ordinary prose. Each pattern matches the whole token so redaction
     # removes the full secret.
+    # Provider-specific prefixes below mirror the same provider coverage as
+    # `.gitleaks.toml` / `docs/security/secrets.md` — keep the three in sync
+    # when a provider changes its key format.
     _SECRET_PATTERNS: list[re.Pattern[str]] = [
         re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA)[0-9A-Z]{16}\b"),  # AWS access key id
         # AWS secret access key: exactly 40 base64-alphabet chars, no context
@@ -134,9 +137,14 @@ class PIIGuardrail(Guardrail):
             r"(?=[A-Za-z0-9/+]*[A-Z])(?=[A-Za-z0-9/+]*[a-z])(?=[A-Za-z0-9/+]*[0-9])"
             r"[A-Za-z0-9/+]{40}"
         ),
+        re.compile(r"\bsk-proj-[A-Za-z0-9_\-]{20,}\b"),                        # OpenAI project key
+        re.compile(r"\bsk-ant-api\d{2}-[A-Za-z0-9_\-]{20,}\b"),                # Anthropic key
         re.compile(r"\b(?:sk|gsk|rk|pk)-[A-Za-z0-9]{20,}\b"),                   # OpenAI/Groq-style API keys
         re.compile(r"\b(?:gsk|sk)_[A-Za-z0-9]{20,}\b"),                         # underscore-style keys
         re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),                              # Google API key
+        re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),                                 # HuggingFace token
+        re.compile(r"\br8_[A-Za-z0-9]{20,}\b"),                                 # Replicate token
+        re.compile(r"\bcsk-[A-Za-z0-9]{20,}\b"),                                # Cerebras key
         re.compile(r"\bghp_[A-Za-z0-9]{36,}\b"),                                # GitHub personal token
         re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}\b"),                        # GitHub fine-grained token
         re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),                        # Slack token
@@ -204,8 +212,13 @@ class PIIGuardrail(Guardrail):
         (
             "MRN", "[MRN REDACTED]",
             re.compile(
-                r"(?P<label>(?i:\b(?:MRN|medical\s+record(?:\s+(?:no|number|#))?|"
-                r"record\s+(?:no|number|#))\b)" + _LSEP + r")"
+                # Each alternative supplies its own trailing boundary rather
+                # than sharing one after the whole group: "no"/"number" end in
+                # a word character and need \b, but "#" does not — \b can
+                # never match between two non-word characters, so a shared
+                # trailing \b silently rejects "Record #:"/"Record # 123".
+                r"(?P<label>(?i:\b(?:MRN\b|medical\s+record(?:\s+(?:no|number|#))?\b|"
+                r"record\s+(?:(?:no|number)\b|#)))" + _LSEP + r")"
                 r"(?P<value>[A-Za-z0-9][A-Za-z0-9\-]{3,})"
             ),
         ),
@@ -250,9 +263,10 @@ class PIIGuardrail(Guardrail):
         r"(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b"
     )
 
-    # International phone: +XX XXXXXXXXXX (at least 7 digits after country code)
+    # International phone: +XX XXXXXXXXXX or +XX XX XXXX XXXX (at least 7
+    # digits after the country code, space/dot/dash-grouped or ungrouped).
     _PHONE_INTL_PATTERN = re.compile(
-        r"\+\d{1,3}[\s.-]?\d{4,14}\b"
+        r"\+\d{1,3}(?=(?:[\s.-]?\d){7,})(?:[\s.-]?\d{1,4}){2,5}\b"
     )
 
     # Credit card: 13-19 digits, possibly separated by spaces or dashes
