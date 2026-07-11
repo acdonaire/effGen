@@ -24,6 +24,7 @@ from effgen.models.base import (
     GenerationConfig,
     GenerationResult,
     TokenCount,
+    accumulate_stream_cost,
 )
 from effgen.models.cerebras_models import (
     CEREBRAS_DEFAULT_MODEL,
@@ -542,6 +543,16 @@ class CerebrasAdapter(BaseModel):
                 tool_calls_buf: dict[int, dict[str, Any]] = {}
 
                 for chunk in stream:
+                    # Capture usage from the terminal chunk (some SDKs attach
+                    # it here as a trailing chunk with an empty `choices`
+                    # list) before the no-choices skip below, or its token
+                    # counts are silently dropped and cost/tokens never
+                    # get recorded.
+                    if hasattr(chunk, "usage") and chunk.usage is not None:
+                        usage = chunk.usage
+                        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+
                     if not chunk.choices:
                         continue
                     choice = chunk.choices[0]
@@ -573,12 +584,6 @@ class CerebrasAdapter(BaseModel):
                     if choice.finish_reason:
                         self._last_stream_finish_reason = choice.finish_reason
 
-                    # Capture usage from the terminal chunk (some SDKs attach it here)
-                    if hasattr(chunk, "usage") and chunk.usage is not None:
-                        usage = chunk.usage
-                        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-                        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-
                 # Finalize assembled tool_calls (parse arguments JSON).
                 finalized: list[dict[str, Any]] = []
                 for _idx, buf in sorted(tool_calls_buf.items()):
@@ -599,12 +604,13 @@ class CerebrasAdapter(BaseModel):
 
             # Cost tracking after stream completes
             if self._enable_cost_tracking and (prompt_tokens or completion_tokens):
-                CostTracker.get().record(
+                cost = CostTracker.get().record(
                     provider="cerebras",
                     model=self.model_name,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
+                accumulate_stream_cost(self, cost, prompt_tokens + completion_tokens)
 
             if self._rate_limiter is not None:
                 self._rate_limiter.record(prompt_tokens + completion_tokens)

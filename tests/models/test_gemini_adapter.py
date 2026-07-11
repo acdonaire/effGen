@@ -284,3 +284,61 @@ def test_registry_recommended_models_filters_by_tier():
 def test_registry_unknown_model_raises():
     with pytest.raises(KeyError):
         gemini_models.model_info("gemini-does-not-exist")
+
+
+# ---------------------------------------------------------------------------
+# generate_stream — cost/token accounting: generate_stream() must read
+# usage_metadata from the terminal chunk and fold it into the running totals
+# the same way generate() does, so streamed turns are costed and counted too.
+# ---------------------------------------------------------------------------
+
+class _FakeStreamChunk:
+    def __init__(self, text=None, usage_metadata=None):
+        self.text = text
+        self.usage_metadata = usage_metadata
+
+
+class TestGeminiAdapterStream:
+    def _loaded_adapter(self, model="gemini-3.1-flash-lite"):
+        from unittest.mock import MagicMock, patch
+
+        from effgen.models.base import TokenCount
+
+        with patch("google.genai.Client"):
+            adapter = GeminiAdapter(model_name=model, api_key="fake")
+        adapter._is_loaded = True
+        adapter.client = MagicMock()
+        adapter.count_tokens = MagicMock(
+            return_value=TokenCount(count=5, model_name=model)
+        )
+        return adapter
+
+    def test_stream_yields_text_and_accumulates_total_cost(self):
+        from unittest.mock import MagicMock, patch
+
+        usage = MagicMock()
+        usage.prompt_token_count = 10
+        usage.candidates_token_count = 20
+        usage.total_token_count = 30
+        chunks = [
+            _FakeStreamChunk(text="Hel"),
+            _FakeStreamChunk(text="lo"),
+            # The terminal chunk carries the cumulative usage.
+            _FakeStreamChunk(text=None, usage_metadata=usage),
+        ]
+        adapter = self._loaded_adapter()
+        assert getattr(adapter, "total_cost", 0.0) == 0.0
+        with patch.object(adapter, "_generate_with_retry", return_value=iter(chunks)):
+            out = "".join(adapter.generate_stream("hi"))
+        assert out == "Hello"
+        assert adapter.total_cost > 0.0
+        assert adapter.total_tokens == 30
+
+    def test_stream_with_no_usage_metadata_leaves_total_cost_unset(self):
+        from unittest.mock import patch
+
+        chunks = [_FakeStreamChunk(text="Hi")]
+        adapter = self._loaded_adapter()
+        with patch.object(adapter, "_generate_with_retry", return_value=iter(chunks)):
+            list(adapter.generate_stream("hi"))
+        assert getattr(adapter, "total_cost", 0.0) == 0.0

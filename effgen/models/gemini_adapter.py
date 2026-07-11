@@ -915,6 +915,7 @@ class GeminiAdapter(FunctionCallingModel):
         if kwargs.get("tools"):
             raw_tools = self._convert_tools_to_genai(kwargs.pop("tools"))
 
+        _usage_metadata = None
         try:
             with timed_call("gemini", self.model_name) as _stream_timer:
                 response = self._generate_with_retry(
@@ -925,6 +926,8 @@ class GeminiAdapter(FunctionCallingModel):
                 )
                 _first_token = True
                 for chunk in response:
+                    if getattr(chunk, "usage_metadata", None) is not None:
+                        _usage_metadata = chunk.usage_metadata
                     try:
                         if chunk.text:
                             if _first_token:
@@ -936,6 +939,23 @@ class GeminiAdapter(FunctionCallingModel):
         except Exception as exc:
             logger.error("Gemini streaming failed: %s", exc)
             raise provider_runtime_error("gemini", self.model_name, "stream", exc, message="Gemini streaming failed") from exc
+
+        # Record real usage from the streamed usage_metadata (the last chunk
+        # carries the cumulative totals) so cost/token tracking and the CLI's
+        # per-turn footer reflect streamed Gemini turns the same way a
+        # non-streamed `generate()` call already does.
+        if _usage_metadata is not None:
+            try:
+                prompt_tokens = _usage_metadata.prompt_token_count or 0
+                completion_tokens = _usage_metadata.candidates_token_count or 0
+                total_tokens = _usage_metadata.total_token_count or (prompt_tokens + completion_tokens)
+                cost = self._record_to_cost_tracker(prompt_tokens, completion_tokens)
+                if cost is None:
+                    cost = self._calculate_cost(prompt_tokens, completion_tokens)
+                self.total_cost += cost
+                self.total_tokens += total_tokens
+            except Exception:
+                logger.debug("Failed to record streaming usage for Gemini", exc_info=True)
 
     def generate_with_tools(
         self,

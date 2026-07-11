@@ -1113,7 +1113,8 @@ class CLIInterface:
         Delegates to :class:`effgen.cli.chat.ChatREPL`, which provides streaming
         answers with a thinking spinner, a model/tool-aware prompt, slash
         commands (``/model``, ``/tools``, ``/cost``, ``/trace``, …), persistent
-        ↑/↓ history, multiline input, and graceful per-turn Ctrl-C cancel.
+        ↑/↓ history, multiline input, and a per-turn Ctrl-C that cancels the
+        current turn without exiting the session.
         """
         # Validate an explicit --provider up front (a typo like "grok" should
         # fail fast with a suggestion, exactly as ``run`` does).
@@ -2981,6 +2982,12 @@ Model id formats:
                               help='Built-in suite name (math, tool_use, reasoning, safety, '
                                    'conversation) OR a path to your own .jsonl/.json test cases')
     eval_parser.add_argument('-m', '--model', help='Model to use')
+    eval_parser.add_argument(
+        '--provider',
+        help='Provider for a bare model id (e.g. openai, groq, cerebras, gemini, '
+             'together, fireworks, replicate, anthropic, hf). '
+             'Equivalent to the "provider:model" prefix.',
+    )
     eval_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
     eval_parser.add_argument('--scoring', choices=['exact_match', 'contains', 'regex', 'semantic_similarity', 'llm_judge'],
@@ -3042,6 +3049,12 @@ Model id formats:
                                  help='Sampling temperature for every compared model (0 for '
                                       'deterministic, reproducible scoring where the provider '
                                       'supports it; default: the model/preset default)')
+    compare_parser.add_argument(
+        '--provider',
+        help='Provider applied to any bare model id in --models that has no '
+             '"provider:" prefix of its own (e.g. openai, groq, cerebras, gemini, '
+             'together, fireworks, replicate, anthropic, hf).',
+    )
     compare_parser.add_argument('--max-cases', type=int, default=None,
                                  help='Only run the first N cases (quick bake-off '
                                       'on a big suite)')
@@ -3106,7 +3119,7 @@ Model id formats:
     prompts_eval = prompts_subparsers.add_parser('eval', help='Evaluate prompts')
     prompts_eval.add_argument('--domain', help='Evaluate only this domain')
     prompts_eval.add_argument('--live', action='store_true', help='Run live model evaluation')
-    prompts_eval.add_argument('--model', help='Model to use for live evaluation')
+    prompts_eval.add_argument('-m', '--model', help='Model to use for live evaluation')
     prompts_eval.add_argument('--delay', type=float, default=35.0,
                               help='Seconds to wait between live model calls (default: 35)')
     prompts_eval.add_argument('--output', help='Write eval table to this file')
@@ -3125,7 +3138,7 @@ Model id formats:
     prompts_run.add_argument('--input', dest='input_file', metavar='FILE',
                              help="JSON file with input variables, validated against the prompt's "
                                   "input_schema (see 'prompts show <name>'); omit to render the fixture")
-    prompts_run.add_argument('--model', required=True, help='Model identifier to run against')
+    prompts_run.add_argument('-m', '--model', required=True, help='Model identifier to run against')
 
     # Load test command
     from effgen.cli.loadtest import add_loadtest_subparser  # noqa: PLC0415
@@ -4173,6 +4186,11 @@ def _handle_eval_command(args, cli) -> int:
     if json_mode:
         cli._human_to_stderr = True
 
+    provider, prov_err = resolve_provider_name(getattr(args, 'provider', None))
+    if prov_err:
+        cli.print_error(prov_err)
+        return 2
+
     suite_name = args.suite
     model_name = getattr(args, 'model', None) or 'Qwen/Qwen2.5-1.5B-Instruct'
     preset_name = getattr(args, 'preset', None)
@@ -4225,12 +4243,12 @@ def _handle_eval_command(args, cli) -> int:
         if preset_name:
             from effgen.models import load_model
             from effgen.presets import create_agent
-            model = load_model(model_name)
+            model = load_model(model_name, provider=provider)
             agent = create_agent(preset_name, model, temperature=temperature)
         else:
             from effgen.core.agent import Agent, AgentConfig
             from effgen.models import load_model
-            model = load_model(model_name)
+            model = load_model(model_name, provider=provider)
             config_kwargs: dict = {"name": "eval-agent", "model": model, "max_iterations": 10}
             if temperature is not None:
                 config_kwargs["temperature"] = temperature
@@ -4343,6 +4361,11 @@ def _handle_compare_command(args, cli) -> int:
     from effgen.eval import ModelComparison
     from effgen.eval.evaluator import ScoringMode
 
+    provider, prov_err = resolve_provider_name(getattr(args, 'provider', None))
+    if prov_err:
+        cli.print_error(prov_err)
+        return 2
+
     model_names = [m.strip() for m in args.models.split(',')]
     suite_name = args.suite
     scoring = ScoringMode(args.scoring)
@@ -4377,8 +4400,11 @@ def _handle_compare_command(args, cli) -> int:
 
         for model_name in model_names:
             cli.print(f"Loading model {model_name}...")
+            # --provider is a fallback for a bare id; a model_name that
+            # already carries its own "provider:"/"engine:" prefix keeps it.
+            model_provider = provider if (provider and ":" not in model_name) else None
             try:
-                model = load_model(model_name)
+                model = load_model(model_name, provider=model_provider)
                 if preset_name:
                     from effgen.presets import create_agent
                     agent = create_agent(preset_name, model, temperature=temperature)

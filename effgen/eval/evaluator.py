@@ -164,7 +164,15 @@ class SuiteResults:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def summary(self) -> dict[str, Any]:
-        """Return a JSON-serialisable summary."""
+        """Return a JSON-serialisable summary.
+
+        ``results`` carries one entry per test case (query, expected/actual
+        output, pass/fail, score, and any extra ``details`` such as
+        ``scoring_fallback``/``judge_reasoning``) so a consumer that only
+        captures this JSON — the documented way to gate a build in CI — can
+        see exactly which case failed and why, not just the suite-level
+        totals above it.
+        """
         by_difficulty: dict[str, dict[str, Any]] = {}
         for r in self.results:
             d = r.test_case.difficulty.value
@@ -188,6 +196,23 @@ class SuiteResults:
             "avg_tool_accuracy": round(self.avg_tool_accuracy, 4),
             "by_difficulty": by_difficulty,
             "metadata": self.metadata,
+            "results": [
+                {
+                    "query": r.test_case.query,
+                    "expected_output": r.test_case.expected_output,
+                    "agent_output": r.agent_output,
+                    "score": round(r.score, 4),
+                    "passed": r.passed,
+                    "latency": round(r.latency, 4),
+                    "tokens_used": r.tokens_used,
+                    "cost_usd": round(r.cost_usd, 8) if r.cost_usd is not None else None,
+                    "tool_accuracy": round(r.tool_accuracy, 4),
+                    "tools_called": r.tools_called,
+                    "difficulty": r.test_case.difficulty.value,
+                    "details": r.details,
+                }
+                for r in self.results
+            ],
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -214,6 +239,23 @@ def _score_regex(pattern: str, actual: str) -> float:
         return 0.0
 
 
+#: One loaded ``SentenceTransformer`` per model name, reused across every
+#: case in every suite run in this process instead of reloading the weights
+#: from disk on each call — a multi-hundred-case suite otherwise pays that
+#: load cost (and prints a progress bar) once per case.
+_SEMANTIC_MODEL_CACHE: dict[str, Any] = {}
+
+
+def _get_semantic_model(model_name: str = "all-MiniLM-L6-v2") -> Any:
+    """Return a cached ``SentenceTransformer``, loading it once per process."""
+    model = _SEMANTIC_MODEL_CACHE.get(model_name)
+    if model is None:
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer(model_name)
+        _SEMANTIC_MODEL_CACHE[model_name] = model
+    return model
+
+
 def _score_semantic_similarity(expected: str, actual: str) -> tuple[float, bool]:
     """Score via sentence-transformers cosine similarity (optional dep).
 
@@ -223,14 +265,14 @@ def _score_semantic_similarity(expected: str, actual: str) -> tuple[float, bool]
     scored this way is distinguishable from a real similarity score.
     """
     try:
-        from sentence_transformers import SentenceTransformer
         from sentence_transformers import util as st_util
+
+        model = _get_semantic_model()
     except ImportError:
         logger.warning(
             "sentence-transformers not installed — falling back to contains scoring"
         )
         return _score_contains(expected, actual), True
-    model = SentenceTransformer("all-MiniLM-L6-v2")
     emb = model.encode([expected, actual], convert_to_tensor=True)
     sim = float(st_util.cos_sim(emb[0], emb[1])[0][0])
     return max(0.0, min(1.0, sim)), False

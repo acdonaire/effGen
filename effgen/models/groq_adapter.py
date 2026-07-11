@@ -29,6 +29,7 @@ from effgen.models.base import (
     GenerationConfig,
     GenerationResult,
     TokenCount,
+    accumulate_stream_cost,
 )
 from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.groq_models import (
@@ -706,6 +707,15 @@ class GroqAdapter(BaseModel):
                 tool_calls_buf: dict[int, dict[str, Any]] = {}
 
                 for chunk in stream:
+                    # The terminal usage chunk (some providers send it as a
+                    # trailing chunk with an empty `choices` list) must be read
+                    # before the no-choices skip below, or its token counts are
+                    # silently dropped and cost/tokens never get recorded.
+                    if hasattr(chunk, "usage") and chunk.usage is not None:
+                        usage = chunk.usage
+                        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+
                     if not chunk.choices:
                         continue
                     choice = chunk.choices[0]
@@ -735,11 +745,6 @@ class GroqAdapter(BaseModel):
                     if choice.finish_reason:
                         self._last_stream_finish_reason = choice.finish_reason
 
-                    if hasattr(chunk, "usage") and chunk.usage is not None:
-                        usage = chunk.usage
-                        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-                        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-
                 finalized: list[dict[str, Any]] = []
                 for _idx, buf in sorted(tool_calls_buf.items()):
                     raw_args = buf["function"]["arguments"]
@@ -758,12 +763,13 @@ class GroqAdapter(BaseModel):
                 self._last_stream_tool_calls = finalized
 
             if self._enable_cost_tracking and (prompt_tokens or completion_tokens):
-                CostTracker.get().record(
+                cost = CostTracker.get().record(
                     provider="groq",
                     model=self.model_name,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
+                accumulate_stream_cost(self, cost, prompt_tokens + completion_tokens)
 
         except Exception as exc:
             msg = str(exc)

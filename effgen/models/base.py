@@ -159,6 +159,34 @@ def _stamp_cost(model: "BaseModel", result: Any) -> None:
     meta["total_cost"] = model.total_cost
 
 
+def accumulate_stream_cost(
+    model: "BaseModel", cost: float | None, tokens: int | None = None
+) -> None:
+    """Fold a completed streaming call's cost and token count onto the model's
+    cumulative totals.
+
+    ``generate()``/``generate_batch()`` get their cumulative cost for free from
+    ``_stamp_cost`` because they return a ``GenerationResult`` the wrapper can
+    inspect. ``generate_stream()`` has no equivalent return value — it yields
+    text chunks and the final usage is only known once the stream is exhausted
+    — so every adapter that streams must call this once, after pricing the
+    completed call, instead of writing ``self.total_cost += cost`` by hand.
+    A ``None`` cost (no usage data — the caller never priced the call) leaves
+    ``total_cost`` untouched. A real ``0.0`` (a genuine free-tier call that was
+    priced and came back free) still folds in, matching what a non-streaming
+    ``generate()`` call on the same free-tier adapter already reports via
+    ``_stamp_cost``, so ``get_total_cost()`` reads ``0.0`` instead of leaving
+    the attribute unset after a real, tracked call. ``tokens`` (the call's
+    total prompt+completion tokens) folds onto ``total_tokens`` the same way a
+    non-streaming call updates it, so a streamed turn's token count reaches the
+    per-turn footer instead of reading zero.
+    """
+    if cost is not None:
+        model.total_cost = getattr(model, "total_cost", 0.0) + cost
+    if tokens:
+        model.total_tokens = getattr(model, "total_tokens", 0) + tokens
+
+
 def _warn_if_silently_empty(model: "BaseModel", result: Any) -> None:
     """Log a warning when a reasoning model's raw ``generate()`` call returns
     empty text because its output budget was spent on hidden reasoning before

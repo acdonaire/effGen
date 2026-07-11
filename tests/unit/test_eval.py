@@ -123,6 +123,40 @@ class TestScoring:
         assert used_fallback is True
         assert score == 1.0  # contains scoring on an exact substring match
 
+    def test_semantic_similarity_loads_embedding_model_once_per_process(self, monkeypatch):
+        """A multi-case suite must reuse one loaded model instead of paying the
+        disk-load cost (and printing a progress bar) on every single case."""
+        from effgen.eval import evaluator as evaluator_mod
+        from effgen.eval.evaluator import _score_semantic_similarity
+
+        monkeypatch.setattr(evaluator_mod, "_SEMANTIC_MODEL_CACHE", {})
+        construct_calls = []
+
+        class _FakeModel:
+            def __init__(self, name):
+                construct_calls.append(name)
+
+            def encode(self, texts, convert_to_tensor=True):
+                return [[1.0], [1.0]]
+
+        class _FakeUtil:
+            @staticmethod
+            def cos_sim(a, b):
+                return [[1.0]]
+
+        import sys
+        fake_st = type(sys)("sentence_transformers")
+        fake_st.SentenceTransformer = _FakeModel
+        fake_st.util = _FakeUtil
+        monkeypatch.setitem(sys.modules, "sentence_transformers", fake_st)
+        monkeypatch.setitem(sys.modules, "sentence_transformers.util", _FakeUtil)
+
+        for _ in range(5):
+            score, used_fallback = _score_semantic_similarity("a", "a")
+            assert used_fallback is False
+            assert score == 1.0
+        assert construct_calls == ["all-MiniLM-L6-v2"]  # constructed exactly once
+
     def test_tool_accuracy_all_match(self):
         assert _compute_tool_accuracy(["calc", "json"], ["calc", "json"]) == 1.0
 
@@ -203,6 +237,46 @@ class TestSuiteResults:
         results = SuiteResults(suite_name="json_test", accuracy=0.75)
         j = json.loads(results.to_json())
         assert j["suite"] == "json_test"
+
+    def test_summary_results_array_carries_per_case_detail(self):
+        # A CI job that only captures `--json`/`-o` must be able to see which
+        # case failed and why without also scraping the human-readable
+        # terminal render.
+        tc1 = TestCase(query="what is 2+2", expected_output="4", difficulty=Difficulty.EASY)
+        tc2 = TestCase(query="what is 3+3", expected_output="6", difficulty=Difficulty.HARD)
+        results = SuiteResults(
+            suite_name="test",
+            results=[
+                EvalResult(
+                    test_case=tc1, agent_output="4", score=1.0, passed=True,
+                    latency=0.1, tokens_used=10, cost_usd=0.0001,
+                    tools_called=["calculator"],
+                ),
+                EvalResult(
+                    test_case=tc2, agent_output="7", score=0.0, passed=False,
+                    latency=0.2, tokens_used=20,
+                    details={"scoring_fallback": "contains"},
+                ),
+            ],
+        )
+        s = results.summary()
+        assert "results" in s
+        assert len(s["results"]) == 2
+        first, second = s["results"]
+        assert first["query"] == "what is 2+2"
+        assert first["expected_output"] == "4"
+        assert first["agent_output"] == "4"
+        assert first["passed"] is True
+        assert first["cost_usd"] == 0.0001
+        assert first["tools_called"] == ["calculator"]
+        assert second["query"] == "what is 3+3"
+        assert second["agent_output"] == "7"
+        assert second["passed"] is False
+        assert second["cost_usd"] is None
+        assert second["details"]["scoring_fallback"] == "contains"
+        # Round-trips through real JSON (what a CI job actually captures).
+        parsed = json.loads(results.to_json())
+        assert parsed["results"][1]["agent_output"] == "7"
 
     def test_to_json_emits_raw_utf8_not_escaped(self):
         # Non-Latin metadata (e.g. a localized suite label) stays readable

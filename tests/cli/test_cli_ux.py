@@ -619,6 +619,93 @@ def test_compare_accepts_no_animation_and_temperature_flags():
     assert args.temperature == 0.0
 
 
+# --------------------------------------------------------------------------- #
+# `eval`/`compare --provider` and `prompts run/eval -m` shorthand
+# --------------------------------------------------------------------------- #
+
+def test_eval_accepts_model_and_provider_flags_together():
+    """The natural `-m X --provider Y` pattern (as on `run`/`chat`) must parse
+    on `eval` instead of failing with a bare argparse error."""
+    parser = _main.create_parser()
+    args = parser.parse_args([
+        "eval", "--suite", "math", "-m", "gpt-5-nano", "--provider", "openai",
+    ])
+    assert args.model == "gpt-5-nano"
+    assert args.provider == "openai"
+
+
+def test_compare_accepts_provider_flag():
+    parser = _main.create_parser()
+    args = parser.parse_args([
+        "compare", "--models", "x,y", "--suite", "math", "--provider", "openai",
+    ])
+    assert args.provider == "openai"
+
+
+def test_prompts_run_and_eval_accept_m_shorthand():
+    parser = _main.create_parser()
+    run_args = parser.parse_args(["prompts", "run", "some.prompt", "-m", "gpt-5-nano"])
+    assert run_args.model == "gpt-5-nano"
+    eval_args = parser.parse_args(["prompts", "eval", "-m", "gpt-5-nano"])
+    assert eval_args.model == "gpt-5-nano"
+
+
+def test_eval_provider_flag_is_forwarded_to_load_model(monkeypatch, tmp_path, capsys):
+    """A typo'd --provider must fail fast (mirrors `run`); a valid one must
+    reach `load_model` so a bare id resolves against the intended provider."""
+    from tests.fixtures.mock_models import MockModel
+
+    seen: dict = {}
+
+    def _fake_load_model(model_name, *a, **k):
+        seen["model_name"] = model_name
+        seen["provider"] = k.get("provider")
+        return MockModel(responses=["Thought: done\nFinal Answer: right answer"])
+
+    monkeypatch.setattr("effgen.models.load_model", _fake_load_model)
+    suite_file = _write_suite(tmp_path, expected="right answer")
+    args = _eval_args(suite_file, model="gpt-5-nano", provider="openai")
+    code = _main._handle_eval_command(args, _cli())
+    capsys.readouterr()
+    assert code == 0
+    assert seen["provider"] == "openai"
+
+    # An unknown provider fails fast with a suggestion, before any model load.
+    seen.clear()
+    args = _eval_args(suite_file, model="gpt-5-nano", provider="not-a-real-provider")
+    code = _main._handle_eval_command(args, _cli())
+    err = capsys.readouterr()
+    assert code == 2
+    assert seen == {}  # load_model never called
+    assert "not-a-real-provider" in (err.out + err.err) or "Unknown provider" in (err.out + err.err)
+
+
+def test_compare_provider_flag_applies_only_to_bare_ids(monkeypatch, tmp_path, capsys):
+    """--provider is a fallback for ids with no explicit `provider:` prefix of
+    their own; an id that already carries a prefix keeps it."""
+    from tests.fixtures.mock_models import MockModel
+
+    seen: list = []
+
+    def _fake_load_model(model_name, *a, **k):
+        seen.append((model_name, k.get("provider")))
+        return MockModel(responses=["Thought: done\nFinal Answer: right answer"])
+
+    monkeypatch.setattr("effgen.models.load_model", _fake_load_model)
+    suite_file = _write_suite(tmp_path, expected="right answer")
+    args = SimpleNamespace(
+        models="groq:llama-3.1-8b-instant,gpt-5-nano", suite=str(suite_file),
+        scoring="contains", threshold=0.5, temperature=None, preset=None,
+        difficulty=None, max_cases=None, optimize="accuracy", output_json=False,
+        output=None, provider="openai", quiet=True, no_animation=True,
+    )
+    code = _main._handle_compare_command(args, _cli())
+    capsys.readouterr()
+    assert code == 0
+    assert ("groq:llama-3.1-8b-instant", None) in seen
+    assert ("gpt-5-nano", "openai") in seen
+
+
 def test_workflow_validate_json(capsys, tmp_path):
     wf = tmp_path / "wf.yaml"
     wf.write_text(

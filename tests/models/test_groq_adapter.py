@@ -374,3 +374,76 @@ def test_redact_groq_org_helper():
     out = _redact_groq_org(msg)
     assert "org_01abcXYZ" not in out
     assert "organization `***`" in out
+
+
+# ---------------------------------------------------------------------------
+# GroqAdapter.generate_stream — cost/token accounting
+# ---------------------------------------------------------------------------
+
+class _StreamChunk:
+    """Mimics a Groq/OpenAI-compatible SSE chunk."""
+    def __init__(self, content=None, finish_reason=None, usage=None):
+        choice = MagicMock()
+        choice.delta.content = content
+        choice.delta.tool_calls = None
+        choice.finish_reason = finish_reason
+        self.choices = [choice] if content is not None or finish_reason else []
+        self.usage = usage
+
+
+class TestGroqAdapterStream:
+    def _loaded_adapter(self, model="llama-3.1-8b-instant", enable_cost_tracking=True):
+        adapter = GroqAdapter(
+            model, api_key="fake-key", enable_rate_limiting=False,
+            enable_cost_tracking=enable_cost_tracking,
+        )
+        adapter._client = MagicMock()
+        adapter._is_loaded = True
+        return adapter
+
+    def _usage_chunk(self, prompt_tokens=10, completion_tokens=5):
+        usage = MagicMock()
+        usage.prompt_tokens = prompt_tokens
+        usage.completion_tokens = completion_tokens
+        return usage
+
+    def test_stream_yields_text_and_accumulates_total_cost(self):
+        """A terminal usage-only chunk with empty `choices` must still be read,
+        and its cost must fold into `total_cost` so `effgen chat`'s per-turn
+        footer and `/cost` reflect the real spend."""
+        adapter = self._loaded_adapter()
+        chunks = [
+            _StreamChunk(content="Hel"),
+            _StreamChunk(content="lo"),
+            _StreamChunk(finish_reason="stop"),
+            # Terminal usage chunk with NO choices at all.
+            _StreamChunk(usage=self._usage_chunk(10, 5)),
+        ]
+        adapter._client.chat.completions.create.return_value = iter(chunks)
+        assert getattr(adapter, "total_cost", 0.0) == 0.0
+        out = "".join(adapter.generate_stream("hi"))
+        assert out == "Hello"
+        assert adapter.total_cost > 0.0
+        # The streamed turn's token count must also reach total_tokens so the
+        # per-turn footer shows tokens, not just cost.
+        assert adapter.total_tokens == 15
+
+    def test_stream_with_disabled_cost_tracking_leaves_total_cost_unset(self):
+        adapter = self._loaded_adapter(enable_cost_tracking=False)
+        chunks = [
+            _StreamChunk(content="Hi"),
+            _StreamChunk(finish_reason="stop"),
+            _StreamChunk(usage=self._usage_chunk(10, 5)),
+        ]
+        adapter._client.chat.completions.create.return_value = iter(chunks)
+        list(adapter.generate_stream("hi"))
+        assert getattr(adapter, "total_cost", 0.0) == 0.0
+
+    def test_stream_with_no_usage_data_leaves_total_cost_unset(self):
+        """A stream that never carries usage (e.g. no final usage chunk at
+        all) must not fabricate a cost — total_cost stays unset."""
+        adapter = self._loaded_adapter()
+        chunks = [_StreamChunk(content="Hi"), _StreamChunk(finish_reason="stop")]
+        adapter._client.chat.completions.create.return_value = iter(chunks)
+        list(adapter.generate_stream("hi"))
+        assert getattr(adapter, "total_cost", 0.0) == 0.0

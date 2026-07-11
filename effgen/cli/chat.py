@@ -3,8 +3,8 @@
 This is the most "alive" surface in the CLI, so it aims to feel like a real
 chat: streaming tokens with a thinking spinner, a model/tool-aware prompt,
 slash commands (``/model``, ``/tools``, ``/cost``, ``/trace``, …), persistent
-↑/↓ history, multiline input, and a graceful per-turn Ctrl-C that cancels the
-current answer without dropping you out of the session.
+↑/↓ history, multiline input, and a per-turn Ctrl-C that cancels the current
+answer without dropping you out of the session.
 
 Everything here is presentation/coordination over the existing :class:`Agent`
 machinery — it adds no model, provider, or tool behavior. Plain chat (no tools)
