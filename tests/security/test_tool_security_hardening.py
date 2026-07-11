@@ -116,6 +116,238 @@ class TestPythonREPLSandbox:
 
 
 # --------------------------------------------------------------------------- #
+# PythonREPL — dynamically-constructed dunder attribute names                  #
+# --------------------------------------------------------------------------- #
+class TestPythonREPLDynamicAttributeEscape:
+    """restricted_mode must block a dunder attribute name built at run time,
+    not only the literal spelling caught by the parent-side text/AST scan."""
+
+    async def test_dynamic_getattr_subclasses_walk_blocked(self):
+        repl = PythonREPL(timeout=10)
+        await repl.initialize()
+        try:
+            code = (
+                "u = chr(95) * 2\n"
+                "attr = u + 'subclasses' + u\n"
+                "getattr(object, attr)()"
+            )
+            res = await repl.execute(code=code)
+            assert res.success is False
+            assert "blocked" in str(res.output["error"]).lower()
+        finally:
+            await repl.cleanup()
+
+    async def test_dynamic_getattr_globals_chain_cannot_reach_os(self):
+        """Walk every loaded subclass hunting for
+        one whose __init__.__globals__ exposes a live `os` module, then call
+        os.popen. Must never reach a real os.popen result."""
+        repl = PythonREPL(timeout=10)
+        await repl.initialize()
+        try:
+            code = """
+u = chr(95) * 2
+subs = getattr(object, u + 'subclasses' + u)()
+osmod = None
+for c in subs:
+    try:
+        g = getattr(c, u + 'init' + u, None)
+        gl = getattr(g, u + 'globals' + u, None) if g else None
+        if gl and 'os' in gl:
+            osmod = gl['os']
+            break
+    except Exception:
+        pass
+osmod.popen('id').read() if osmod else 'NO OS MODULE FOUND'
+"""
+            res = await repl.execute(code=code)
+            assert res.success is False
+            assert "blocked" in str(res.output["error"]).lower()
+        finally:
+            await repl.cleanup()
+
+    async def test_operator_attrgetter_chain_cannot_reach_os(self):
+        """operator.attrgetter reaches attributes via the C attribute
+        protocol directly, bypassing a namespace-local getattr override --
+        must be blocked independently."""
+        repl = PythonREPL(timeout=10)
+        await repl.initialize()
+        try:
+            code = """
+import operator
+u = chr(95) * 2
+subs = operator.attrgetter(u + 'subclasses' + u)(object)()
+osmod = None
+for c in subs:
+    try:
+        init = operator.attrgetter(u + 'init' + u)(c)
+        gl = operator.attrgetter(u + 'globals' + u)(init)
+        if gl and 'os' in gl:
+            osmod = gl['os']
+            break
+    except Exception:
+        pass
+osmod.popen('id').read() if osmod else 'NO OS MODULE FOUND'
+"""
+            res = await repl.execute(code=code)
+            # Either the call is rejected outright, or every attempt to reach
+            # __globals__ raises internally and the loop's own except clause
+            # swallows it, leaving no os module found.
+            if res.success:
+                assert res.output["result"] == "NO OS MODULE FOUND"
+            else:
+                assert "blocked" in str(res.output["error"]).lower()
+        finally:
+            await repl.cleanup()
+
+    async def test_functools_update_wrapper_cannot_stash_globals(self):
+        """A dunder value copied onto a plain object via functools.
+        update_wrapper (which calls the real setattr internally) must not be
+        readable back out as a live os module reference."""
+        repl = PythonREPL(timeout=10)
+        await repl.initialize()
+        try:
+            code = """
+import functools
+u = chr(95) * 2
+subkey, initkey, globkey = u + 'subclasses' + u, u + 'init' + u, u + 'globals' + u
+subs = type.__dict__[subkey](object)
+
+
+class Box:
+    pass
+
+
+found = None
+for c in subs:
+    init = c.__dict__.get(initkey)
+    if init is None:
+        continue
+    try:
+        box = Box()
+        functools.update_wrapper(box, init, assigned=(globkey,), updated=())
+        gl = box.__dict__.get(globkey)
+        if gl and 'os' in gl:
+            found = gl['os']
+            break
+    except Exception:
+        pass
+found.popen('id').read() if found else 'NO OS MODULE FOUND'
+"""
+            res = await repl.execute(code=code)
+            # Either the ``__dict__`` route to the subclass graph is refused
+            # outright, or the walk completes but never recovers a live os
+            # module (and the audit hook would refuse the popen regardless).
+            if res.success:
+                assert res.output["result"] == "NO OS MODULE FOUND"
+            else:
+                assert "blocked" in str(res.output["error"]).lower()
+        finally:
+            await repl.cleanup()
+
+    async def test_descriptor_route_to_globals_cannot_execute_os(self):
+        """A subclass-graph walk can recover a live ``os`` reference through a
+        getset descriptor (``type(f).__dict__['__globals__'].__get__(f)``)
+        without ever calling ``getattr`` or spelling a blocked dunder — the
+        audit hook must still refuse the process/shell execution it leads to."""
+        repl = PythonREPL(timeout=10)
+        await repl.initialize()
+        try:
+            code = """
+u = chr(95) * 2
+subs = type.__dict__[u + 'subclasses' + u](object)
+ftype = type(lambda: 0)
+gdesc = ftype.__dict__[u + 'globals' + u]
+initkey = u + 'init' + u
+osmod = None
+for c in subs:
+    init = c.__dict__.get(initkey)
+    if not isinstance(init, ftype):
+        continue
+    try:
+        g = gdesc.__get__(init)
+        if isinstance(g, dict) and 'os' in g:
+            osmod = g['os']
+            break
+    except Exception:
+        pass
+osmod.popen('id').read() if osmod else 'NO OS MODULE FOUND'
+"""
+            res = await repl.execute(code=code)
+            assert res.success is False
+            assert "blocked in restricted mode" in str(res.output["error"]).lower()
+        finally:
+            await repl.cleanup()
+
+    @pytest.mark.parametrize("call", [
+        "osmod.system('id')",
+        "osmod.execv('/bin/true', ['/bin/true'])",
+    ])
+    async def test_os_process_primitives_blocked_by_audit_hook(self, call):
+        """Even with a live ``os`` reference in hand, the audit hook refuses the
+        actual process/shell-execution primitives."""
+        repl = PythonREPL(timeout=10)
+        await repl.initialize()
+        try:
+            code = f"""
+u = chr(95) * 2
+subs = type.__dict__[u + 'subclasses' + u](object)
+ftype = type(lambda: 0)
+gdesc = ftype.__dict__[u + 'globals' + u]
+initkey = u + 'init' + u
+osmod = None
+for c in subs:
+    init = c.__dict__.get(initkey)
+    if not isinstance(init, ftype):
+        continue
+    try:
+        g = gdesc.__get__(init)
+        if isinstance(g, dict) and 'os' in g:
+            osmod = g['os']
+            break
+    except Exception:
+        pass
+{call} if osmod else 'NO OS MODULE FOUND'
+"""
+            res = await repl.execute(code=code)
+            assert res.success is False
+            assert "blocked in restricted mode" in str(res.output["error"]).lower()
+        finally:
+            await repl.cleanup()
+
+    async def test_ordinary_getattr_and_operator_use_still_work(self):
+        """The guard only rejects the specific dangerous dunder names, not
+        every dunder or every getattr/operator call."""
+        repl = PythonREPL(timeout=10)
+        await repl.initialize()
+        try:
+            res = await repl.execute(
+                code="class P:\n    x = 1\np = P()\nr = getattr(p, 'x')\nr"
+            )
+            assert res.success and res.output["result"] == 1
+
+            res = await repl.execute(
+                code="import operator\nr = operator.add(2, 3)\nr"
+            )
+            assert res.success and res.output["result"] == 5
+
+            res = await repl.execute(code="import math\nr = math.sqrt(16)\nr")
+            assert res.success and res.output["result"] == 4.0
+
+            res = await repl.execute(
+                code=(
+                    "class Foo:\n"
+                    "    def __init__(self, v):\n"
+                    "        self.v = v\n"
+                    "f = Foo(5)\n"
+                    "f.v"
+                )
+            )
+            assert res.success and res.output["result"] == 5
+        finally:
+            await repl.cleanup()
+
+
+# --------------------------------------------------------------------------- #
 # URLFetch / SSRF                                                              #
 # --------------------------------------------------------------------------- #
 class TestURLFetchSSRF:
@@ -537,6 +769,66 @@ class TestFilePathConfinement:
             confine_path("/etc/passwd", roots)
         with pytest.raises(PathNotAllowedError):
             confine_path(str(link), roots)
+
+
+# --------------------------------------------------------------------------- #
+# Filesystem confinement — filename- and content-based secrets-file heuristic #
+# --------------------------------------------------------------------------- #
+class TestFilesystemSecretsFileHeuristic:
+    """A tool built on ``_fs.py`` must refuse a credentials file even when its
+    name doesn't match a known sensitive path, and even when it has been
+    renamed to an innocuous extension."""
+
+    def test_filename_pattern_blocks_dotenv_and_credentials_files(self, tmp_path):
+        from effgen.tools.builtin._fs import PathNotAllowedError, confine_path
+
+        for name in (".env", ".env.production", "credentials", "id_rsa", ".netrc"):
+            f = tmp_path / name
+            f.write_text("a,b\n1,2\n")
+            with pytest.raises(PathNotAllowedError):
+                confine_path(str(f), None)
+
+    def test_content_sniff_blocks_renamed_dotenv(self, tmp_path):
+        from effgen.tools.builtin._fs import check_content_not_credentials
+
+        decoy = (
+            "OPENAI_API_KEY=sk-decoyFAKEKEY1234567890abcdEFGH\n"
+            "DATABASE_URL=postgres://user:pass@localhost:5432/db\n"
+            "AWS_SECRET_ACCESS_KEY=decoyFAKEsecretvalueNOTREAL1234567890\n"
+            "DEBUG=true\n"
+        )
+        with pytest.raises(ValueError, match="credentials file"):
+            check_content_not_credentials(decoy, source="decoy.csv")
+
+    def test_content_sniff_leaves_ordinary_data_alone(self):
+        from effgen.tools.builtin._fs import check_content_not_credentials
+
+        # Must not be tripped by ordinary tabular/text content, including a
+        # stray line or two that happens to look "KEY=VALUE"-shaped.
+        check_content_not_credentials("name,age,city\nAlice,30,NYC\nBob,25,LA\n")
+        check_content_not_credentials("TOTAL=42\nsome other prose line here\n")
+
+    async def test_data_analysis_refuses_dotenv_renamed_to_csv(self, tmp_path):
+        """A decoy .env-shaped file renamed to .csv must not be read in full
+        by DataFrameTool."""
+        from effgen.tools.builtin.data_analysis import DataFrameTool
+
+        decoy = tmp_path / "export.csv"
+        decoy.write_text(
+            "OPENAI_API_KEY=sk-decoyFAKEKEY1234567890abcdEFGH\n"
+            "DATABASE_URL=postgres://user:pass@localhost:5432/db\n"
+            "AWS_SECRET_ACCESS_KEY=decoyFAKEsecretvalueNOTREAL1234567890\n"
+            "DEBUG=true\n"
+        )
+        res = await DataFrameTool().execute(file_path=str(decoy), operation="head")
+        assert res.success is False
+        assert "credentials file" in str(res.error).lower()
+
+        # An ordinary CSV in the same directory still loads normally.
+        good = tmp_path / "real_data.csv"
+        good.write_text("name,age,city\nAlice,30,NYC\nBob,25,LA\n")
+        res = await DataFrameTool().execute(file_path=str(good), operation="head")
+        assert res.success is True
 
 
 # --------------------------------------------------------------------------- #

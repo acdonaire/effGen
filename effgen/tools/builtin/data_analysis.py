@@ -21,7 +21,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
-from ._fs import confine_path, normalize_allowed_dirs
+from ._fs import check_content_not_credentials, confine_path, normalize_allowed_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +132,17 @@ class DataFrameTool(BaseTool):
     def _load(self, file_path: str):
         pd = _require_pandas()
         safe_path = str(confine_path(file_path, self._allowed_dirs))
+        # A credentials file renamed to .csv/.json still parses as a
+        # (mostly nonsensical) one-column table under a naive reader, so the
+        # extension alone does not prove this is safe to load — sniff the raw
+        # text first, regardless of what a plain-text CSV/JSON reader can
+        # technically get through.
+        try:
+            with open(safe_path, encoding="utf-8", errors="replace") as fh:
+                head = fh.read(65536)
+        except OSError as e:
+            raise ValueError(f"Could not read '{file_path}': {e}")
+        check_content_not_credentials(head, source=file_path)
         lower = safe_path.lower()
         if lower.endswith(".csv"):
             return pd.read_csv(safe_path)

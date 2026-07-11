@@ -12,20 +12,31 @@ Two layers, both built on ``FileOperations``' resolve-then-check model:
   locations an attacker actually wants — ``/etc`` (``/etc/passwd``,
   ``/etc/shadow``), ``/proc``/``/sys``/``/dev``, ``/root``, kernel/boot, mounted
   secrets, and per-user credential stores (``~/.ssh``, ``~/.aws``, ``~/.gnupg``,
-  ``~/.kube``, ``~/.config/gcloud``, ``~/.docker``, ``~/.netrc``, …). Ordinary
-  files (a report under the project, a scan in a temp dir) still work, so the
-  tools stay usable for their intended purpose.
+  ``~/.kube``, ``~/.config/gcloud``, ``~/.docker``, ``~/.netrc``, …). It also
+  refuses a path whose *filename* matches a common credentials-file shape
+  (``.env``, ``id_rsa``, ``credentials``, …), the same names ``bash_tool``
+  already refuses to ``cat``. Ordinary files (a report under the project, a
+  scan in a temp dir) still work, so the tools stay usable for their intended
+  purpose.
 * **Confined (``allowed_directories=[...]``):** the documented opt-in tightens to
   a strict allow-list — only those roots are readable (and the deny-list still
   applies). This is the ``FileOperations`` posture for callers that want it.
 
 Resolution follows symlinks (``Path.resolve``), so a symlink pointing at a denied
 location (or outside the allow-list) is rejected too.
+
+The filename check does not catch a credentials file renamed to an innocuous
+extension (``.env`` saved as ``.csv``). :func:`check_content_not_credentials`
+covers that case: a caller reads the file's text and passes it through before
+returning parsed data or extracted text to the model, so a dotenv-shaped
+``KEY=VALUE`` block or a private-key header is refused regardless of the
+extension that got it past the filename check.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -36,6 +47,68 @@ class PathNotAllowedError(ValueError):
 
     Subclasses ValueError so existing tool error handling catches it.
     """
+
+
+# Filenames that commonly hold credentials, checked against the path itself
+# (mirrors ``bash_tool.SECRET_FILE_PATTERNS``' filename coverage). A path
+# match is refused regardless of which directory it resolves under.
+_DENY_FILENAME_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^\.env(?:\.[\w.-]+)?$", re.I),
+    re.compile(r"^\.netrc$", re.I),
+    re.compile(r"^\.pgpass$", re.I),
+    re.compile(r"^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?$", re.I),
+    re.compile(r"^credentials$", re.I),
+    re.compile(r"^\.git-credentials$", re.I),
+)
+
+# A file whose *content* looks like a credentials store is refused regardless
+# of its extension — a decoy secrets file renamed to ``.csv``/``.txt`` keeps
+# its filename-based check from firing, but not this one. dotenv-shaped
+# ``KEY=VALUE`` lines and a PEM private-key header are checked directly.
+_DOTENV_LINE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*\S+[ \t]*$")
+_CREDENTIAL_KEY_HINT = re.compile(
+    r"(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|CREDENTIAL|PRIVATE)", re.I
+)
+_PRIVATE_KEY_HEADER = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+
+
+def looks_like_credentials_content(text: str) -> bool:
+    """True if *text* reads like a credentials/secrets file, any extension.
+
+    Two shapes are treated as a credentials store: a PEM private-key header,
+    or a block of dotenv-style ``KEY=VALUE`` lines where most non-blank,
+    non-comment lines fit that shape and at least one key name hints at a
+    credential (``*_KEY``, ``*_SECRET``, ``*_TOKEN``, ...). The ratio/hint
+    combination keeps an ordinary data file with a stray ``A=1``-looking cell
+    from being mistaken for a secrets file.
+    """
+    if _PRIVATE_KEY_HEADER.search(text):
+        return True
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    if not lines:
+        return False
+    dotenv_lines = [ln for ln in lines if _DOTENV_LINE.match(ln)]
+    if len(dotenv_lines) < 2:
+        return False
+    ratio = len(dotenv_lines) / len(lines)
+    has_hint = any(_CREDENTIAL_KEY_HINT.search(ln.split("=", 1)[0]) for ln in dotenv_lines)
+    return ratio >= 0.6 and (has_hint or len(dotenv_lines) >= 3)
+
+
+def check_content_not_credentials(text: str, *, source: str = "") -> None:
+    """Raise :class:`PathNotAllowedError` if *text* looks like a credentials file.
+
+    Call after reading a file's text content and before returning it (or data
+    derived from it) to the caller, so a secrets file cannot slip through a
+    filename-only check by being renamed to an innocuous extension.
+    """
+    if looks_like_credentials_content(text):
+        where = f" '{source}'" if source else ""
+        raise PathNotAllowedError(
+            f"Refusing to return the content of{where}: it reads like a "
+            "credentials file (dotenv-style KEY=VALUE lines or a private-key "
+            "header), regardless of its extension."
+        )
 
 
 # Absolute directory trees that never hold legitimate tool input and commonly
@@ -90,6 +163,8 @@ def _denied_roots() -> list[Path]:
 
 
 def _is_denied(resolved: Path) -> bool:
+    if any(pattern.match(resolved.name) for pattern in _DENY_FILENAME_PATTERNS):
+        return True
     for root in _denied_roots():
         try:
             rroot = root.resolve()

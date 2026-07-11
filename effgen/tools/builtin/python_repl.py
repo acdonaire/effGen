@@ -11,6 +11,25 @@ parent with a wall-clock deadline and a hard ``SIGKILL`` of the worker's
 process group, so a runaway such as ``while True: pass`` is killed on time
 instead of pinning a CPU. Memory and output caps are likewise enforced from
 outside the executed code.
+
+``restricted_mode`` (the default, and the only mode a model can reach — see
+below) withholds ``eval``/``exec``/``compile``/``open``/``input``/
+``__import__``/``breakpoint`` and imports outside a fixed allow-list. It
+refuses process, shell, and native-code execution (``os.system``,
+``subprocess``, ``os.exec``/``spawn``/``fork``, ``ctypes``) via an interpreter
+audit hook, so the dangerous operation is rejected no matter how the code
+reached the callable — including a subclass-graph walk that recovers a live
+module reference through a getset descriptor or a generator frame. As a
+first, cheaper layer it also rejects the common dunder-reflection routes to
+such a reference (``__globals__``/``__subclasses__``/... spelled literally or
+built at run time, whether via ``getattr`` or ``operator.attrgetter``).
+
+This is not equivalent to OS-level process isolation (no filesystem/network
+namespace, no seccomp); code that runs inside it still runs as the host user,
+and the audit hook targets execution primitives, not every possible read of
+process state. Untrusted or adversarial code should go through the sandboxed
+:mod:`effgen.execution` code-executor tool instead, which adds process/
+namespace isolation on top.
 """
 
 from __future__ import annotations
@@ -103,7 +122,17 @@ class PythonREPL(BaseTool):
     - Address-space (memory) limit applied to the worker via RLIMIT_AS
     - stdout/stderr output capped outside the executed code
     - Restricted builtins (no file operations, eval, exec by default)
+    - Process/shell/native-code execution (``os.system``/``subprocess``/
+      ``os.exec``/``spawn``/``fork``/``ctypes``) is refused by an interpreter
+      audit hook while restricted code runs, regardless of how the code reached
+      the callable
+    - Dunder-attribute reflection (``getattr``/``setattr``/``delattr``/
+      ``operator.attrgetter``/``operator.methodcaller``) is checked by value at
+      the point of use, not by scanning the code text, so a dynamically built
+      attribute name is treated the same as a literal one
     - Configurable allowed imports
+    - Not a substitute for OS-level process isolation: see the code-executor
+      tool for sandboxed execution of untrusted code
     """
 
     # Standardized resource limits
@@ -122,6 +151,7 @@ class PythonREPL(BaseTool):
         "open",
         "input",
         "breakpoint",
+        "vars",
     }
 
     # Default allowed imports
@@ -269,6 +299,12 @@ class PythonREPL(BaseTool):
         env["EFFGEN_REPL_RESP_FD"] = str(resp_w)
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        # A worker that may run developer-opted unrestricted code must be able
+        # to spawn processes; every other worker runs only restricted code and
+        # gets an always-on audit hook that refuses process/native execution.
+        env["EFFGEN_REPL_ALLOW_UNRESTRICTED_WORKER"] = (
+            "1" if self._allow_unrestricted else "0"
+        )
 
         max_mem = self._max_memory_bytes
 
@@ -462,6 +498,11 @@ class PythonREPL(BaseTool):
             "__mro__",
             "__globals__",
             "__code__",
+            # ``__dict__`` is the mappingproxy that exposes the getset
+            # descriptors above; blocking the literal spelling here (and the
+            # ``vars`` builtin in the worker) closes the descriptor route to
+            # them that never names them to ``getattr``.
+            "__dict__",
         ]
         for pattern in blocked_strings:
             if pattern in code:
@@ -491,7 +532,7 @@ class PythonREPL(BaseTool):
             # Block attribute access to __builtins__, __globals__ etc.
             if isinstance(node, ast.Attribute):
                 if node.attr in ("__builtins__", "__globals__", "__subclasses__",
-                                 "__bases__", "__mro__", "__code__"):
+                                 "__bases__", "__mro__", "__code__", "__dict__"):
                     return f"Access to '{node.attr}' is blocked in restricted mode"
 
         return None
