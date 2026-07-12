@@ -39,6 +39,7 @@ class _StreamModel(BaseModel):
         self._raise_after = raise_after
         self._exc = exc or RuntimeError("provider stream blew up")
         self.stream_calls = 0
+        self.last_prompt: str | None = None
 
     def load(self) -> None:
         pass
@@ -51,6 +52,7 @@ class _StreamModel(BaseModel):
 
     def generate_stream(self, prompt, config=None, **kwargs) -> Iterator[str]:
         self.stream_calls += 1
+        self.last_prompt = prompt
         for i, tok in enumerate(self._tokens):
             if self._raise_after is not None and i == self._raise_after:
                 raise self._exc
@@ -162,6 +164,7 @@ class _ScriptedReActModel(BaseModel):
         super().__init__(model_name="fake-react", model_type=ModelType.OPENAI)
         self._turns = turns
         self._call = 0
+        self.last_prompt: str | None = None
 
     def load(self) -> None:
         pass
@@ -176,6 +179,7 @@ class _ScriptedReActModel(BaseModel):
     def generate_stream(self, prompt, config=None, **kwargs) -> Iterator[str]:
         turn = self._turns[min(self._call, len(self._turns) - 1)]
         self._call += 1
+        self.last_prompt = prompt
         yield from turn
 
     def count_tokens(self, text: str) -> TokenCount:
@@ -295,6 +299,55 @@ def _usage_chunks(body: str) -> list[dict]:
             if "usage" in payload:
                 out.append(payload)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Guardrails apply on the streaming path too (not just Agent.run())
+# --------------------------------------------------------------------------- #
+def test_stream_redacts_input_before_model_call_no_tools():
+    """A guardrail-configured no-tool agent never lets the model see raw PII."""
+    model = _StreamModel(["ok"])
+    agent = Agent(config=AgentConfig(
+        name="stream-guardrail", model=model, guardrails="phi",
+    ))
+    list(agent.stream("My SSN is 219-09-9999"))
+    # The model only ever saw the redacted prompt, not the raw SSN.
+    assert "219-09-9999" not in model.last_prompt
+    assert "SSN" in model.last_prompt
+
+
+def test_stream_blocks_before_any_model_call():
+    """A strict-preset block raises before generate_stream() is ever called."""
+    model = _StreamModel(["should never run"])
+    agent = Agent(config=AgentConfig(
+        name="stream-guardrail-block", model=model, guardrails="strict",
+    ))
+    with pytest.raises(RuntimeError, match="Blocked by guardrail"):
+        list(agent.stream("My SSN is 219-09-9999"))
+    assert model.stream_calls == 0
+
+
+def test_stream_no_guardrails_is_unaffected():
+    """No guardrails configured: stream() behaves exactly as before."""
+    model = _StreamModel(["1", " 2", " 3"])
+    agent = Agent(config=AgentConfig(name="stream-no-guardrail", model=model))
+    text = "".join(agent.stream("count"))
+    assert text == "1 2 3"
+
+
+def test_tool_stream_redacts_input_before_model_call():
+    """The ReAct/tool streaming branch also applies the input guardrail."""
+    from effgen.core.agent import AgentConfig
+    from effgen.tools.builtin.calculator import Calculator
+
+    model = _ScriptedReActModel([["Final Answer: done\n"]])
+    agent = Agent(config=AgentConfig(
+        name="tool-stream-guardrail", model=model, tools=[Calculator()],
+        guardrails="phi",
+    ))
+    list(agent.stream("My SSN is 219-09-9999", include_events=False))
+    assert model.last_prompt is not None
+    assert "219-09-9999" not in model.last_prompt
 
 
 def test_compat_stream_emits_usage_when_requested():

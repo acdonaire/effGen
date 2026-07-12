@@ -325,6 +325,67 @@ def test_build_agent_explicit_temperature_overrides_preset(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# --guardrails reaches AgentConfig and shows in the banner
+# ---------------------------------------------------------------------------
+
+
+def test_build_agent_forwards_guardrails(monkeypatch):
+    import effgen as _effgen
+
+    captured: dict[str, Any] = {}
+
+    class _FakeConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class _FakeAgent:
+        def __init__(self, config, session_id=None):
+            self.config = config
+
+    monkeypatch.setattr(_effgen, "AgentConfig", _FakeConfig)
+    monkeypatch.setattr(_effgen, "Agent", _FakeAgent)
+
+    repl, _ = _make_repl(guardrails="phi")
+    repl._build_agent()
+
+    assert captured["guardrails"] == "phi"
+
+
+def test_build_agent_no_guardrails_flag_defaults_to_none(monkeypatch):
+    import effgen as _effgen
+
+    captured: dict[str, Any] = {}
+
+    class _FakeConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class _FakeAgent:
+        def __init__(self, config, session_id=None):
+            self.config = config
+
+    monkeypatch.setattr(_effgen, "AgentConfig", _FakeConfig)
+    monkeypatch.setattr(_effgen, "Agent", _FakeAgent)
+
+    repl, _ = _make_repl()
+    repl._build_agent()
+
+    assert captured["guardrails"] is None
+
+
+def test_banner_shows_guardrails_when_set():
+    repl, cli = _make_repl(guardrails="strict")
+    repl._banner()
+    assert "Guardrails: strict" in " ".join(cli.messages)
+
+
+def test_banner_omits_guardrails_line_when_unset():
+    repl, cli = _make_repl()
+    repl._banner()
+    assert "Guardrails:" not in " ".join(cli.messages)
+
+
+# ---------------------------------------------------------------------------
 # save / load file mechanics
 # ---------------------------------------------------------------------------
 

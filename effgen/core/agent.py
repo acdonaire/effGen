@@ -823,6 +823,7 @@ Question: {task}
 
         # Guardrails
         self._guardrail_chain = self._resolve_guardrails(config.guardrails)
+        self._warn_tool_output_injection_gap(self._guardrail_chain, bool(config.tools))
 
         # Hydrate short-term memory from persistent session if loaded
         if self.session and self.session.messages:
@@ -2018,6 +2019,21 @@ Provide a well-structured, comprehensive response that integrates all findings."
                 f"Agent '{self.name}' has no model loaded. "
                 "Provide a model in AgentConfig or use a mock for testing."
             )
+
+        # Pre-stream input guardrail check, mirroring run()'s pre-run check —
+        # a guardrail-configured agent must never let the model see a raw
+        # input on the streaming path either. A block raises (stream() has no
+        # success=False return to fall back on); a redaction replaces `task`
+        # before it reaches either the direct or the tool-loop branch below,
+        # so the model prompt and short-term memory only ever see the
+        # modified content.
+        if self._guardrail_chain is not None:
+            from ..guardrails.base import GuardrailPosition
+            gr = self._guardrail_chain.check(task, position=GuardrailPosition.INPUT)
+            if not gr.passed:
+                raise RuntimeError(f"Blocked by guardrail: {gr.reason}")
+            if gr.modified_content is not None:
+                task = gr.modified_content
 
         context = context or {}
 

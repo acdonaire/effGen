@@ -13,7 +13,10 @@ chain = get_guardrail_preset("strict")
 # Standard: moderate protection (recommended for most use cases)
 chain = get_guardrail_preset("standard")
 
-# Minimal: only prompt injection detection
+# Minimal: length + low-sensitivity prompt injection detection only, on the
+# first user turn. Does not catch plaintext role-label spoofing (that pattern
+# loads at "medium" sensitivity and above) — use "standard" or "phi" for
+# adversarial or regulated input.
 chain = get_guardrail_preset("minimal")
 
 # None: no guardrails

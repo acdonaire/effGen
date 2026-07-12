@@ -110,7 +110,12 @@ def minimal_guardrails(
 ) -> GuardrailChain:
     """Basic length + injection only, first user turn only.
 
-    Lightweight preset for low-risk applications.
+    Lightweight preset for low-risk applications. Injection screening runs at
+    ``sensitivity="low"``, which does not detect plaintext role-label spoofing
+    (e.g. a message that opens with "system:" or "assistant:" to impersonate
+    another turn) — that pattern only loads at ``"medium"`` and above. Do not
+    pick this preset by name alone for adversarial or regulated input; use
+    "standard" or "phi" for a role-label-spoof check.
     """
     return GuardrailChain([
         LengthGuardrail(max_length=max_length),

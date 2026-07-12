@@ -77,6 +77,9 @@ class ChatREPL:
         self.session_id = getattr(args, "session_id", None)
         self.temperature = getattr(args, "temperature", None)
         self.max_tokens = getattr(args, "max_tokens", None)
+        # Optional guardrail preset name (e.g. "phi", "strict") applied to
+        # every turn; None matches the previous no-guardrails default.
+        self.guardrails = getattr(args, "guardrails", None)
         # Provider was validated by the caller; keep the canonical name.
         self.provider = getattr(args, "_provider", None) or getattr(args, "provider", None)
 
@@ -153,6 +156,7 @@ class ChatREPL:
             "max_tokens": self.max_tokens,
             "enable_sub_agents": not getattr(self.args, "no_sub_agents", False),
             "enable_streaming": True,
+            "guardrails": self.guardrails,
         }
         # An explicit --system-prompt/--persona always wins; otherwise a
         # tool-bearing preset's own system prompt applies (it tells the model
@@ -240,6 +244,8 @@ class ChatREPL:
         self.cli.print(meta)
         if self.tool_names:
             self.cli.print(f"Tools: {', '.join(self.tool_names)}")
+        if self.guardrails:
+            self.cli.print(f"Guardrails: {self.guardrails}")
         # Show that we're continuing a named session (and how many turns it has).
         if self.session_id:
             try:

@@ -302,6 +302,41 @@ def resolve_provider_name(provider: str | None) -> tuple[str | None, str | None]
     )
 
 
+# Config-file keys that `run` reads and applies to the AgentConfig it builds
+# (directly or via the CLI arg of the same name winning first). Keep this in
+# sync with every `config.get(...)` call in `run_agent`.
+_RUN_CONFIG_APPLIED_KEYS = frozenset({
+    "system_prompt", "temperature", "max_iterations", "max_tokens", "guardrails",
+})
+
+
+def _warn_unapplied_config_keys(config: dict, cli: "CLIInterface") -> None:
+    """Warn about a config-file key that names a real AgentConfig field but
+    isn't one `run` currently applies from a config file.
+
+    A `-c/--config` value the loader doesn't wire through should never be a
+    silent no-op — that's a fail-open surprise for a security-relevant field
+    (such as ``guardrails``) and a source of confusion for everything else.
+    Anything not in :data:`_RUN_CONFIG_APPLIED_KEYS` gets a one-line heads-up
+    naming the field and pointing at the matching CLI flag.
+    """
+    from dataclasses import fields as _dataclass_fields
+
+    from effgen.core.agent import AgentConfig
+
+    valid_fields = {f.name for f in _dataclass_fields(AgentConfig)}
+    unapplied = sorted(
+        k for k in config if k in valid_fields and k not in _RUN_CONFIG_APPLIED_KEYS
+    )
+    if not unapplied:
+        return
+    cli.print_warning(
+        f"Configuration file sets {', '.join(unapplied)}, which `effgen run` "
+        "does not read from a config file — pass the matching CLI flag "
+        "instead, or build the agent through the Python API."
+    )
+
+
 class CLIInterface:
     """Main CLI interface for effGen."""
 
@@ -804,9 +839,12 @@ class CLIInterface:
                     loaded_config = self.config_loader.load_config(config_path)
                     config = loaded_config.to_dict()
                     self.print_success(f"Loaded configuration from {config_path}")
+                    _warn_unapplied_config_keys(config, self)
                 else:
                     self.print_error(f"Configuration file not found: {config_path}")
                     return 1
+
+            guardrails = getattr(args, 'guardrails', None) or config.get("guardrails")
 
             # Use preset if specified
             if getattr(args, 'preset', None):
@@ -824,6 +862,7 @@ class CLIInterface:
                     max_tokens=args.max_tokens,
                     enable_streaming=args.stream,
                     session_id=getattr(args, 'session_id', None),
+                    guardrails=guardrails,
                     **_preset_overrides,
                 )
                 self.print_success(f"Created {args.preset} preset agent")
@@ -870,7 +909,8 @@ class CLIInterface:
                     max_iterations=args.max_iterations or config.get("max_iterations", 10),
                     max_tokens=args.max_tokens or config.get("max_tokens"),
                     enable_sub_agents=not args.no_sub_agents,
-                    enable_streaming=args.stream
+                    enable_streaming=args.stream,
+                    guardrails=guardrails,
                 )
 
                 # Create agent
@@ -878,6 +918,8 @@ class CLIInterface:
                 self.print(f"Model: {agent_config.model}")
                 self.print(f"Tools: {len(tools)} available")
                 self.print(f"Sub-agents: {'enabled' if agent_config.enable_sub_agents else 'disabled'}")
+                if guardrails:
+                    self.print(f"Guardrails: {guardrails}")
 
                 agent = Agent(agent_config, session_id=getattr(args, 'session_id', None))
 
@@ -2670,6 +2712,14 @@ Model id formats:
                                  'combine with -q for clean stdout.')
     run_parser.add_argument('--preset', choices=_preset_choices,
                             help='Use a preset agent configuration')
+    run_parser.add_argument(
+        '--guardrails', metavar='NAME',
+        help='Apply a guardrail preset to redact/block PII and screen for '
+             'prompt injection before the task reaches the model: '
+             '"strict", "standard" (alias "default"/"balanced"), "phi" '
+             '(alias "hipaa"/"deidentify"), "minimal", or "none". Also '
+             'honored from a `-c/--config` file\'s "guardrails" key.',
+    )
     run_parser.add_argument('--explain', action='store_true',
                             help='Show why the agent chose each tool')
     run_parser.add_argument('--checkpoint-dir', help='Directory to write agent checkpoints')
@@ -2732,6 +2782,13 @@ Model id formats:
         help='Custom persona / system prompt for the session, e.g. '
              '"You are a patient Socratic tutor who never gives the answer." '
              'Steers every reply (unlike --preset, which only labels the session).',
+    )
+    chat_parser.add_argument(
+        '--guardrails', metavar='NAME',
+        help='Apply a guardrail preset to redact/block PII and screen for '
+             'prompt injection on every turn: "strict", "standard" (alias '
+             '"default"/"balanced"), "phi" (alias "hipaa"/"deidentify"), '
+             '"minimal", or "none". Carries across a /model or /tools rebuild.',
     )
     chat_parser.add_argument('--temperature', type=float, help='Temperature')
     chat_parser.add_argument('--max-tokens', type=int,
@@ -2949,6 +3006,13 @@ Model id formats:
     batch_parser.add_argument('-m', '--model', help='Model to use')
     batch_parser.add_argument('--preset', choices=_preset_choices,
                               help='Use a preset agent configuration')
+    batch_parser.add_argument(
+        '--guardrails', metavar='NAME',
+        help='Apply a guardrail preset to redact/block PII and screen for '
+             'prompt injection on every row: "strict", "standard" (alias '
+             '"default"/"balanced"), "phi" (alias "hipaa"/"deidentify"), '
+             '"minimal", or "none".',
+    )
     batch_parser.add_argument(
         '--system-prompt', '--persona', dest='system_prompt', metavar='TEXT',
         help='System prompt applied to every row, e.g. a target language, '
@@ -3907,6 +3971,7 @@ def _handle_batch_command(args, cli) -> int:
     output_path = getattr(args, 'output', None)
     model_name = getattr(args, 'model', None) or 'Qwen/Qwen2.5-1.5B-Instruct'
     preset_name = getattr(args, 'preset', None)
+    guardrails = getattr(args, 'guardrails', None)
     query_field = getattr(args, 'query_field', 'query')
     max_tokens = getattr(args, 'max_tokens', None)
     temperature = getattr(args, 'temperature', None)
@@ -3966,7 +4031,9 @@ def _handle_batch_command(args, cli) -> int:
             from effgen.models import load_model
             from effgen.presets import create_agent
             model = load_model(model_name)
-            agent = create_agent(preset_name, model, system_prompt=system_prompt)
+            agent = create_agent(
+                preset_name, model, system_prompt=system_prompt, guardrails=guardrails,
+            )
         else:
             from effgen.core.agent import Agent, AgentConfig
             from effgen.models import load_model
@@ -3975,7 +4042,8 @@ def _handle_batch_command(args, cli) -> int:
             if system_prompt is not None:
                 config_kwargs['system_prompt'] = system_prompt
             config = AgentConfig(
-                name="batch-agent", model=model, max_iterations=5, **config_kwargs,
+                name="batch-agent", model=model, max_iterations=5,
+                guardrails=guardrails, **config_kwargs,
             )
             agent = Agent(config)
 

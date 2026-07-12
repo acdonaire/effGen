@@ -73,3 +73,48 @@ def test_read_done_indices(tmp_path):
 
 def test_read_done_indices_missing_file(tmp_path):
     assert _read_done_indices(tmp_path / "nope.jsonl") == {}
+
+
+# --------------------------------------------------------------------------- #
+# `batch --guardrails NAME` reaches the AgentConfig it builds
+# --------------------------------------------------------------------------- #
+def test_batch_forwards_guardrails_to_agent_config(monkeypatch, tmp_path):
+    import effgen.core.agent as agent_mod
+    import effgen.models as models_mod
+    from effgen.cli._main import _handle_batch_command
+
+    captured = {}
+
+    class _FakeConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.guardrails = kwargs.get("guardrails")
+
+    class _StopBatch(Exception):
+        pass
+
+    class _FakeAgent:
+        def __init__(self, config):
+            captured["guardrails"] = config.guardrails
+            raise _StopBatch("stop before running any query")
+
+    monkeypatch.setattr(agent_mod, "AgentConfig", _FakeConfig)
+    monkeypatch.setattr(agent_mod, "Agent", _FakeAgent)
+    monkeypatch.setattr(models_mod, "load_model", lambda name: object())
+
+    input_path = tmp_path / "in.jsonl"
+    input_path.write_text(json.dumps({"query": "hi"}) + "\n")
+
+    class _Cli:
+        def print(self, *a, **k):
+            pass
+
+    args = _args(
+        input=str(input_path), output=None, model=None, preset=None,
+        guardrails="phi", query_field="query", max_tokens=None,
+        temperature=None, system_prompt=None, strict=False, resume=False,
+        output_json=False,
+    )
+    code = _handle_batch_command(args, _Cli())
+    assert code == 1
+    assert captured["guardrails"] == "phi"

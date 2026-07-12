@@ -371,6 +371,17 @@ def test_batch_accepts_system_prompt_and_persona_alias():
     assert parser.parse_args(["batch", "-i", "in.jsonl"]).system_prompt is None
 
 
+def test_run_chat_batch_accept_guardrails_flag():
+    parser = _main.create_parser()
+    assert parser.parse_args(["run", "hi", "--guardrails", "phi"]).guardrails == "phi"
+    assert parser.parse_args(["run", "hi"]).guardrails is None
+    assert parser.parse_args(["chat", "--guardrails", "strict"]).guardrails == "strict"
+    assert parser.parse_args(["chat"]).guardrails is None
+    args = parser.parse_args(["batch", "-i", "in.jsonl", "--guardrails", "standard"])
+    assert args.guardrails == "standard"
+    assert parser.parse_args(["batch", "-i", "in.jsonl"]).guardrails is None
+
+
 def test_batch_accepts_short_input_output_flags():
     parser = _main.create_parser()
     args = parser.parse_args(["batch", "-i", "in.jsonl", "-o", "out.jsonl"])
@@ -738,3 +749,67 @@ def test_run_json_on_construction_failure_emits_json_envelope(capsys):
     data = json.loads(out)
     assert data["success"] is False
     assert "bogus-provider" in data["error"]["message"]
+
+
+# --------------------------------------------------------------------------- #
+# `run -c config.json` forwards a "guardrails" key to AgentConfig, and warns
+# (rather than silently dropping) any other recognized-but-unwired key.
+# --------------------------------------------------------------------------- #
+def test_run_config_file_guardrails_key_reaches_agent_config(tmp_path, monkeypatch):
+    captured = {}
+
+    class _StubAgent:
+        def __init__(self, config, session_id=None):
+            captured["guardrails"] = config.guardrails
+            raise RuntimeError("stop before any model call")
+
+    monkeypatch.setattr(_main, "Agent", _StubAgent)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"guardrails": "phi"}))
+    parser = _main.create_parser()
+    args = parser.parse_args(["run", "hi", "-c", str(config_path), "-m", "does-not-matter"])
+    code = _cli().run_agent(args)
+    assert code == 1
+    assert captured["guardrails"] == "phi"
+
+
+def test_run_guardrails_flag_overrides_config_file(tmp_path, monkeypatch):
+    captured = {}
+
+    class _StubAgent:
+        def __init__(self, config, session_id=None):
+            captured["guardrails"] = config.guardrails
+            raise RuntimeError("stop before any model call")
+
+    monkeypatch.setattr(_main, "Agent", _StubAgent)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"guardrails": "phi"}))
+    parser = _main.create_parser()
+    args = parser.parse_args([
+        "run", "hi", "-c", str(config_path), "--guardrails", "strict", "-m", "does-not-matter",
+    ])
+    _cli().run_agent(args)
+    assert captured["guardrails"] == "strict"
+
+
+def test_warn_unapplied_config_keys_flags_unwired_but_valid_fields():
+    warnings = []
+    stub_cli = SimpleNamespace(print_warning=lambda msg: warnings.append(msg))
+    # "guardrails" is applied; "top_p" is a real AgentConfig field `run` never
+    # reads from a config file; "unknown_key" isn't a field at all.
+    _main._warn_unapplied_config_keys(
+        {"guardrails": "phi", "top_p": 0.5, "unknown_key": 1}, stub_cli,
+    )
+    assert len(warnings) == 1
+    assert "top_p" in warnings[0]
+    assert "guardrails" not in warnings[0]
+    assert "unknown_key" not in warnings[0]
+
+
+def test_warn_unapplied_config_keys_silent_when_nothing_unwired():
+    warnings = []
+    stub_cli = SimpleNamespace(print_warning=lambda msg: warnings.append(msg))
+    _main._warn_unapplied_config_keys(
+        {"guardrails": "standard", "temperature": 0.2, "not_a_field": True}, stub_cli,
+    )
+    assert warnings == []

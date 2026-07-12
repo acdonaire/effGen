@@ -37,6 +37,11 @@ IMAGE_GROUNDING_GUIDANCE = (
     "explicitly when a requested detail is not shown."
 )
 
+# Guardrail-chain signatures (sorted guardrail names) already warned about for
+# missing TOOL_OUTPUT injection screening — a heads-up fires once per distinct
+# configuration, not on every agent built with the same preset.
+_tool_output_injection_gap_warned: set[tuple[str, ...]] = set()
+
 
 _PROVIDER_BY_CLASS_PREFIX: dict[str, str] = {
     "OpenAI": "openai",
@@ -264,6 +269,47 @@ class AgentRuntimeMixin:
             from ..guardrails.presets import get_guardrail_preset
             return get_guardrail_preset(guardrails)
         return None
+
+    @staticmethod
+    def _warn_tool_output_injection_gap(guardrail_chain: Any, has_tools: bool) -> None:
+        """Warn once when a tool-attached agent's guardrails skip TOOL_OUTPUT
+        injection screening.
+
+        An indirect prompt injection carried in a tool's return value (a
+        scraped page, a ticket body, a retrieved document) reaches the model
+        unscreened unless the chain's ``PromptInjectionGuardrail`` explicitly
+        covers ``GuardrailPosition.TOOL_OUTPUT``. Logged once per distinct
+        guardrail configuration at the point a tool-bearing agent is built, so
+        the gap is visible at the point of choice rather than only in a
+        preset's docstring.
+        """
+        if not has_tools or guardrail_chain is None:
+            return
+        from ..guardrails.base import GuardrailPosition
+        from ..guardrails.injection import PromptInjectionGuardrail
+
+        injection_guardrails = [
+            g for g in guardrail_chain.guardrails
+            if isinstance(g, PromptInjectionGuardrail) and g.enabled
+        ]
+        if not injection_guardrails:
+            return
+        if any(GuardrailPosition.TOOL_OUTPUT in g.positions for g in injection_guardrails):
+            return
+
+        sig = tuple(sorted(g.name for g in guardrail_chain.guardrails))
+        if sig in _tool_output_injection_gap_warned:
+            return
+        _tool_output_injection_gap_warned.add(sig)
+        logger.warning(
+            "This agent has tools attached, but its guardrail configuration "
+            "does not screen a tool's return value for prompt injection — an "
+            "instruction embedded in a scraped page, a ticket body, or a "
+            "retrieved document reaches the model unscreened. The 'strict' "
+            "and 'phi' guardrail presets screen tool output too; pass "
+            "PromptInjectionGuardrail(positions=[GuardrailPosition.INPUT, "
+            "GuardrailPosition.TOOL_OUTPUT]) directly for a custom chain."
+        )
 
     def _humanize_observation(self, obs: str) -> str:
         """
