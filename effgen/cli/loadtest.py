@@ -225,10 +225,17 @@ class _ServerTarget:
     """
 
     def __init__(
-        self, base_url: str, model: str, api_key: str | None, *, transport: Any = None
+        self,
+        base_url: str,
+        model: str,
+        api_key: str | None,
+        *,
+        request_timeout: float = 60.0,
+        transport: Any = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._request_timeout = request_timeout
         self._headers = {"Content-Type": "application/json"}
         if api_key:
             self._headers["Authorization"] = f"Bearer {api_key}"
@@ -242,10 +249,16 @@ class _ServerTarget:
         import httpx  # noqa: PLC0415
 
         if self._client is None:
-            # No client-side timeout: the load generator's own
-            # asyncio.wait_for(request_timeout) is the single source of
-            # truth for how long a request is allowed to run.
-            self._client = httpx.AsyncClient(timeout=None, transport=self._transport)
+            # The load generator's own asyncio.wait_for(request_timeout) is the
+            # authoritative per-request deadline. Give httpx an explicit timeout
+            # set above that deadline so wait_for still fires first (the request
+            # counts as a timeout, not a transport error), while the socket
+            # itself can never hang without bound.
+            from ..reliability.timeouts import make_httpx_timeout  # noqa: PLC0415
+            client_timeout = make_httpx_timeout(self._request_timeout + 30.0)
+            self._client = httpx.AsyncClient(
+                timeout=client_timeout, transport=self._transport
+            )
         return self._client
 
     async def __call__(self, prompt: str) -> str:
@@ -274,9 +287,11 @@ class _ServerTarget:
             self._client = None
 
 
-def _build_server_target(url: str, model: str, api_key: str | None) -> _ServerTarget:
+def _build_server_target(
+    url: str, model: str, api_key: str | None, *, request_timeout: float = 60.0
+) -> _ServerTarget:
     """Return a :class:`_ServerTarget` driving *url* with *model*."""
-    return _ServerTarget(url, model, api_key)
+    return _ServerTarget(url, model, api_key, request_timeout=request_timeout)
 
 
 def run_loadtest_command(args: argparse.Namespace) -> int:
@@ -319,7 +334,9 @@ def run_loadtest_command(args: argparse.Namespace) -> int:
     server_target: _ServerTarget | None = None
     if args.url:
         api_key = args.api_key or os.environ.get("EFFGEN_API_KEY")
-        server_target = _build_server_target(args.url, args.model, api_key)
+        server_target = _build_server_target(
+            args.url, args.model, api_key, request_timeout=args.request_timeout
+        )
         target = server_target
         print(
             f"Server mode: url={args.url}  model={args.model}",
