@@ -222,6 +222,58 @@ class LabeledCounter:
         return "\n".join(lines)
 
 
+@dataclass
+class LabeledGauge:
+    """
+    A Prometheus-style gauge (value can go up or down) with arbitrary label
+    sets. Unlike :class:`LabeledCounter`, ``set()`` replaces the value for a
+    label set rather than accumulating it — suited to point-in-time state
+    like a circuit breaker's current state or a bulkhead's current occupancy.
+
+    Thread-safe via a per-instance lock.
+    """
+
+    name: str
+    help: str
+
+    _data: dict[tuple[tuple[str, str], ...], float] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False
+    )
+
+    def set(self, value: float, labels: dict[str, str] | None = None) -> None:
+        """Set the gauge value for *labels*."""
+        key = tuple(sorted((labels or {}).items()))
+        with self._lock:
+            self._data[key] = value
+
+    def get(self, labels: dict[str, str] | None = None) -> float | None:
+        """Return the current value for *labels*, or ``None`` if unset."""
+        key = tuple(sorted((labels or {}).items()))
+        return self._data.get(key)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+    def export(self) -> str:
+        """Return Prometheus text-format lines for this gauge."""
+        lines: list[str] = [
+            f"# HELP {self.name} {self.help}",
+            f"# TYPE {self.name} gauge",
+        ]
+        with self._lock:
+            for key, value in self._data.items():
+                label_str = ",".join(f'{k}="{v}"' for k, v in key)
+                if label_str:
+                    lines.append(f"{self.name}{{{label_str}}} {value}")
+                else:
+                    lines.append(f"{self.name} {value}")
+        return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Metric instances (module-level singletons)
 # ---------------------------------------------------------------------------
@@ -266,6 +318,65 @@ http_requests_total = LabeledCounter(
     name="effgen_http_requests_total",
     help="Total HTTP requests to the server, by route/method/status",
 )
+
+#: Circuit-breaker state per provider (0=closed, 1=half_open, 2=open).
+#: Labels: provider
+circuit_breaker_state = LabeledGauge(
+    name="effgen_circuit_breaker_state",
+    help="Circuit breaker state per provider (0=closed, 1=half_open, 2=open)",
+)
+
+#: Bulkhead active in-flight calls per provider.
+#: Labels: provider
+bulkhead_active = LabeledGauge(
+    name="effgen_bulkhead_active",
+    help="Active in-flight calls held by the bulkhead, per provider",
+)
+
+#: Bulkhead calls waiting for a permit per provider.
+#: Labels: provider
+bulkhead_queued = LabeledGauge(
+    name="effgen_bulkhead_queued",
+    help="Calls waiting for a bulkhead permit, per provider",
+)
+
+#: Bulkhead utilization (active / max_concurrency, percent) per provider.
+#: Labels: provider
+bulkhead_utilization_pct = LabeledGauge(
+    name="effgen_bulkhead_utilization_pct",
+    help="Bulkhead active/max_concurrency utilization percentage, per provider",
+)
+
+_CIRCUIT_STATE_VALUE = {"closed": 0, "half_open": 1, "open": 2}
+
+
+def _refresh_reliability_gauges() -> None:
+    """Populate the circuit-breaker/bulkhead gauges from live registry state.
+
+    A provider only reports a value once a call has gone through
+    ``ProviderRegistry.get_circuit_breaker``/``get_bulkhead`` — a provider
+    that was never wrapped in reliability middleware has no state to show.
+    """
+    try:
+        from effgen.models.registry import ProviderRegistry
+
+        stats = ProviderRegistry.reliability_stats()
+    except Exception:  # pragma: no cover - registry is optional at scrape time
+        return
+
+    for provider, rec in stats.items():
+        cb = rec.get("circuit_breaker")
+        if cb is not None:
+            circuit_breaker_state.set(
+                _CIRCUIT_STATE_VALUE.get(cb["state"], 0),
+                labels={"provider": provider},
+            )
+        bh = rec.get("bulkhead")
+        if bh is not None:
+            bulkhead_active.set(bh["active"], labels={"provider": provider})
+            bulkhead_queued.set(bh["queued"], labels={"provider": provider})
+            bulkhead_utilization_pct.set(bh["utilization_pct"], labels={"provider": provider})
+
 
 # ---------------------------------------------------------------------------
 # Convenience recording functions
@@ -389,12 +500,17 @@ def export_metrics() -> str:
     ``effgen.utils.prometheus_metrics`` so one scrape endpoint covers
     everything.
     """
+    _refresh_reliability_gauges()
     sections = [
         model_call_latency.export(),
         tool_call_latency.export(),
         agent_iteration_latency.export(),
         tokens_total.export(),
         http_requests_total.export(),
+        circuit_breaker_state.export(),
+        bulkhead_active.export(),
+        bulkhead_queued.export(),
+        bulkhead_utilization_pct.export(),
     ]
     # Append legacy metrics (non-blocking)
     try:
@@ -414,6 +530,10 @@ def reset_all() -> None:
     agent_iteration_latency.reset()
     tokens_total.reset()
     http_requests_total.reset()
+    circuit_breaker_state.reset()
+    bulkhead_active.reset()
+    bulkhead_queued.reset()
+    bulkhead_utilization_pct.reset()
 
 
 __all__ = [
@@ -423,6 +543,10 @@ __all__ = [
     "agent_iteration_latency",
     "tokens_total",
     "http_requests_total",
+    "circuit_breaker_state",
+    "bulkhead_active",
+    "bulkhead_queued",
+    "bulkhead_utilization_pct",
     # Recording helpers
     "record_model_call",
     "record_tool_call",
@@ -435,4 +559,5 @@ __all__ = [
     # Primitives (for external use)
     "LabeledHistogram",
     "LabeledCounter",
+    "LabeledGauge",
 ]

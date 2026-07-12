@@ -48,6 +48,21 @@ warnings.filterwarnings('ignore', message='.*Some parameters are on the meta dev
 logger = logging.getLogger(__name__)
 
 
+def _reraise_if_classified(exc: Exception) -> None:
+    """Re-raise *exc* unwrapped when it already carries retry classification.
+
+    A timeout raised by ``effgen.reliability.timeouts.with_timeout()`` around
+    a local generate call must propagate as-is instead of being flattened
+    into a generic ``RuntimeError`` by the callers' blanket exception
+    handlers below — flattening discards the type information
+    ``is_transient_error()`` relies on to retry it correctly.
+    """
+    from effgen.reliability.timeouts import TimeoutError as EffGenTimeoutError
+
+    if isinstance(exc, EffGenTimeoutError):
+        raise exc
+
+
 # Native tool-call delimiters that the downstream parser (core.tool_calling)
 # needs to see; these must survive the special-token strip on the tool path.
 _TOOL_CALL_DELIMITERS = frozenset({
@@ -716,6 +731,7 @@ class TransformersEngine(BatchModel):
 
         except Exception as e:
             logger.error(f"Generation failed: {e}")
+            _reraise_if_classified(e)
             raise RuntimeError(f"Generation failed: {e}") from e
         finally:
             self._tokenizer_lock.release()
@@ -849,6 +865,7 @@ class TransformersEngine(BatchModel):
 
         except Exception as e:
             logger.error(f"Streaming generation failed: {e}")
+            _reraise_if_classified(e)
             raise RuntimeError(f"Streaming generation failed: {e}") from e
 
     def generate_batch(
@@ -941,6 +958,7 @@ class TransformersEngine(BatchModel):
 
         except Exception as e:
             logger.error(f"Batch generation failed: {e}")
+            _reraise_if_classified(e)
             raise RuntimeError(f"Batch generation failed: {e}") from e
         finally:
             self._tokenizer_lock.release()

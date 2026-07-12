@@ -81,6 +81,103 @@ class TestIsTransientError:
     def test_runtime_error_not_retryable(self):
         assert not is_transient_error(RuntimeError("logic error"))
 
+    # -- adapter-wrapped provider errors (the shape every real adapter
+    # actually raises via effgen.models._adapter_utils.provider_runtime_error) --
+
+    def test_wrapped_429_is_retryable(self):
+        from effgen.models._adapter_utils import provider_runtime_error
+
+        class _FakeSDKError(Exception):
+            status_code = 429
+
+        wrapped = provider_runtime_error("groq", "llama-3.1-8b-instant", "chat", _FakeSDKError("rate limited"))
+        assert is_transient_error(wrapped)
+
+    def test_wrapped_5xx_is_retryable(self):
+        from effgen.models._adapter_utils import provider_runtime_error
+
+        class _FakeSDKError(Exception):
+            status_code = 503
+
+        wrapped = provider_runtime_error("openai", "gpt-5-nano", "chat", _FakeSDKError("service unavailable"))
+        assert is_transient_error(wrapped)
+
+    def test_wrapped_400_is_not_retryable(self):
+        from effgen.models._adapter_utils import provider_runtime_error
+
+        class _FakeSDKError(Exception):
+            status_code = 400
+
+        wrapped = provider_runtime_error("openai", "gpt-5-nano", "chat", _FakeSDKError("bad request"))
+        assert not is_transient_error(wrapped)
+
+    def test_wrapped_auth_error_is_not_retryable(self):
+        from effgen.models._adapter_utils import provider_runtime_error
+
+        class _FakeSDKError(Exception):
+            status_code = 401
+
+        wrapped = provider_runtime_error("openai", "gpt-5-nano", "chat", _FakeSDKError("invalid api key"))
+        assert not is_transient_error(wrapped)
+
+    def test_wrapped_timeout_is_retryable(self):
+        from effgen.models._adapter_utils import provider_runtime_error
+        from effgen.reliability.timeouts import TimeoutError as EffGenTO
+
+        wrapped = provider_runtime_error("openai", "gpt-5-nano", "chat", EffGenTO("model_call", 2.0))
+        assert is_transient_error(wrapped)
+
+    def test_typed_model_auth_error_not_retryable(self):
+        from effgen.models.errors import ModelAuthError
+
+        assert not is_transient_error(ModelAuthError("groq", "llama-3.1-8b-instant", "bad key"))
+
+    def test_typed_provider_transient_error_retryable(self):
+        from effgen.models.errors import ProviderTransientError
+
+        assert is_transient_error(ProviderTransientError("openai", "gpt-5-nano", 503))
+
+    def test_typed_invalid_request_error_not_retryable(self):
+        from effgen.models.errors import InvalidRequestError
+
+        assert not is_transient_error(InvalidRequestError("openai", "gpt-5-nano", "bad schema"))
+
+    def test_rate_limit_exceeded_is_retryable(self):
+        from effgen.models._rate_limit import RateLimitExceeded
+
+        exc = RateLimitExceeded("Daily request budget exhausted for groq/llama-3.1-8b-instant.")
+        assert is_transient_error(exc)
+
+    def test_rate_limit_exceeded_carries_error_context(self):
+        from effgen.models._rate_limit import RateLimitExceeded
+
+        exc = RateLimitExceeded("Daily budget exhausted.")
+        assert exc.error_context["category"] == "rate_limited"
+
+    def test_agrees_with_classify_provider_error_and_router_retry_policy(self):
+        """The three classifiers agree on every *typed* provider error the
+        router itself ever sees (see effgen.models.routing.retry's module
+        docstring for the router's deliberate, documented divergence on
+        BudgetExceededError and on unrecognized exceptions — those aren't
+        covered here since they're intentionally different by design)."""
+        from effgen.models._rate_limit import RateLimitExceeded
+        from effgen.models.errors import (
+            ModelTimeoutError,
+            ProviderTransientError,
+            classify_provider_error,
+        )
+        from effgen.models.routing.retry import RetryPolicy
+
+        cases = [
+            RateLimitExceeded("Daily budget exhausted."),
+            ProviderTransientError("openai", "m", 503),
+            ModelTimeoutError("groq", "m"),
+        ]
+        for exc in cases:
+            assert is_transient_error(exc) is True
+            assert classify_provider_error(exc).should_retry is True
+            assert RetryPolicy().is_retriable(exc) is True
+
 
 # ---------------------------------------------------------------------------
 # Retry.compute_delay

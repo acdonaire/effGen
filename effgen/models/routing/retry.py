@@ -6,11 +6,28 @@ Retry on (transient, recoverable):
   - ``RateLimitExceeded``  — provider rate-limited; back off and try again.
   - ``ProviderTransientError`` — 5xx from provider; may resolve on retry.
   - ``ModelTimeoutError``  — prediction timed out; worth retrying.
+  - ``BudgetExceededError`` — not retried against the *same* provider, but
+    treated as retriable here because the router's meaning of "retriable" is
+    "worth trying the next candidate" (e.g. a free-tier fallback), not "the
+    same call might succeed if repeated."
 
 Do NOT retry on (permanent, operator-action required):
   - ``ModelAuthError``     — bad/missing API key.
   - ``ModelRefusalError``  — model refused; retrying will produce the same result.
   - ``InvalidRequestError`` — malformed request; retrying will always fail.
+
+Relationship to ``effgen.models.errors.classify_provider_error`` /
+``effgen.reliability.retry.is_transient_error``: those answer "is retrying
+*this exact call* worth it", so an unrecognized exception defaults to
+retryable (a genuine transient blip should not become a hard failure) and
+``BudgetExceededError`` defaults to *not* retryable (repeating the same call
+against the same provider/budget will not succeed). ``RetryPolicy`` answers a
+related but distinct question — "should the router try the next candidate" —
+so it deliberately keeps its own explicit allow/deny lists rather than
+delegating: an unrecognized exception here defaults to *not* retriable
+(fail closed on an unknown failure rather than failing over blindly), and
+``BudgetExceededError`` is retriable here specifically because failing over
+to a different, cheaper/free-tier candidate is exactly the useful response.
 
 Usage::
 
@@ -104,7 +121,13 @@ class RetryPolicy:
     # ------------------------------------------------------------------
 
     def is_retriable(self, exc: Exception) -> bool:
-        """Return True if *exc* is safe to retry."""
+        """Return True if *exc* is worth trying the next candidate for.
+
+        Uses this module's own allow/deny lists rather than
+        ``classify_provider_error`` — see the module docstring for why the
+        two intentionally disagree on ``BudgetExceededError`` and on
+        unrecognized exceptions.
+        """
         if isinstance(exc, _NON_RETRIABLE):
             return False
         return isinstance(exc, _RETRIABLE)

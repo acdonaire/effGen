@@ -50,7 +50,19 @@ logger = logging.getLogger(__name__)
 
 
 class RateLimitExceeded(Exception):
-    """Raised when the daily budget for a model is exhausted."""
+    """Raised when the daily budget for a model is exhausted.
+
+    Carries the same structured ``.error_context`` shape as
+    :mod:`effgen.models.errors`'s typed provider errors (category
+    ``"rate_limited"``) so ``is_transient_error()``/``classify_provider_error()``
+    classify it consistently with every other rate-limit signal.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        from effgen.models.errors import error_context_dict
+
+        self.error_context = error_context_dict("", "", "request", "rate_limited")
 
 
 @dataclass

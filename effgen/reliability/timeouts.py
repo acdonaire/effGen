@@ -74,7 +74,18 @@ class _SyncTimeoutContext:
     """
     Synchronous timeout context manager using SIGALRM (Unix) or a daemon
     thread (Windows / environments without SIGALRM).
+
+    Re-arms after the deadline until the wrapped call actually returns —  a
+    single one-shot interrupt can be absorbed by code inside the call that
+    catches a broad exception class and transparently retries (observed with
+    cloud provider SDKs' own internal retry loops), which would otherwise
+    let the call run to its natural completion instead of the requested
+    bound. Re-firing every :attr:`_RETRY_TICK` seconds past the deadline
+    bounds how much longer a swallowed interrupt can let the call run.
     """
+
+    #: Re-fire interval once the deadline has passed.
+    _RETRY_TICK = 0.25
 
     def __init__(self, seconds: float, operation: str) -> None:
         if seconds is None or seconds <= 0:
@@ -87,6 +98,7 @@ class _SyncTimeoutContext:
         self._use_signal = hasattr(signal, "SIGALRM") and threading.current_thread() is threading.main_thread()
         self._timer: threading.Timer | None = None
         self._timed_out = False
+        self._active = False
 
     # -- signal-based (Unix main thread) --
 
@@ -96,36 +108,47 @@ class _SyncTimeoutContext:
 
     # -- thread-based --
 
-    def _thread_raise(self) -> None:
-        """Raise TimeoutError in the calling thread after the delay."""
+    def _thread_raise(self, thread_id: int) -> None:
+        """Raise TimeoutError in the calling thread, then reschedule.
+
+        Re-fires every :attr:`_RETRY_TICK` seconds until ``__exit__`` marks
+        the context inactive, since ``PyThreadState_SetAsyncExc`` delivery is
+        best-effort and a single attempt can land at a point the target
+        thread swallows or is temporarily uninterruptible.
+        """
+        import ctypes
+
         self._timed_out = True
-        raise TimeoutError(self._operation, self._seconds)
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(
+            ctypes.c_ulong(thread_id),
+            ctypes.py_object(TimeoutError(self._operation, self._seconds)),
+        )
+        if self._active:
+            self._timer = threading.Timer(self._RETRY_TICK, self._thread_raise, args=(thread_id,))
+            self._timer.daemon = True
+            self._timer.start()
 
     # -- context protocol --
 
     def __enter__(self) -> "_SyncTimeoutContext":
+        self._active = True
         if self._use_signal:
             self._old_handler = signal.signal(signal.SIGALRM, self._signal_handler)
-            signal.setitimer(signal.ITIMER_REAL, self._seconds)
+            # Fire once at the deadline, then keep re-firing every
+            # _RETRY_TICK seconds past it (see class docstring) until
+            # __exit__ disarms the timer.
+            signal.setitimer(signal.ITIMER_REAL, self._seconds, self._RETRY_TICK)
         else:
-            # Fallback: daemon thread that sends a signal to the main thread
-            # This is best-effort on non-main threads.
-            import ctypes
-
+            # Fallback: daemon thread that sends a signal to the calling
+            # thread. Best-effort on non-main threads.
             thread_id = threading.current_thread().ident
-
-            def _fire():
-                ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                    ctypes.c_ulong(thread_id),
-                    ctypes.py_object(TimeoutError(self._operation, self._seconds)),
-                )
-
-            self._timer = threading.Timer(self._seconds, _fire)
+            self._timer = threading.Timer(self._seconds, self._thread_raise, args=(thread_id,))
             self._timer.daemon = True
             self._timer.start()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self._active = False
         if self._use_signal:
             signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, self._old_handler)

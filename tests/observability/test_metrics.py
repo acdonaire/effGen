@@ -20,8 +20,13 @@ import pytest
 
 from effgen.observability.metrics import (
     LabeledCounter,
+    LabeledGauge,
     LabeledHistogram,
     agent_iteration_latency,
+    bulkhead_active,
+    bulkhead_queued,
+    bulkhead_utilization_pct,
+    circuit_breaker_state,
     export_metrics,
     http_requests_total,
     model_call_latency,
@@ -238,6 +243,109 @@ class TestLabeledCounter:
         c.inc(3.0)
         text = c.export()
         assert "plain_cnt 3.0" in text
+
+
+# ---------------------------------------------------------------------------
+# LabeledGauge unit tests
+# ---------------------------------------------------------------------------
+
+class TestLabeledGauge:
+    def test_set_and_get(self):
+        g = LabeledGauge(name="test_gauge", help="test gauge")
+        g.set(2, labels={"provider": "openai"})
+        assert g.get(labels={"provider": "openai"}) == 2
+        assert g.get(labels={"provider": "groq"}) is None
+
+    def test_set_overwrites_not_accumulates(self):
+        g = LabeledGauge(name="test_gauge2", help="test")
+        g.set(1, labels={"provider": "openai"})
+        g.set(5, labels={"provider": "openai"})
+        assert g.get(labels={"provider": "openai"}) == 5
+
+    def test_export_format(self):
+        g = LabeledGauge(name="effgen_test_state", help="test state")
+        g.set(2, labels={"provider": "openai"})
+        text = g.export()
+        assert "# HELP effgen_test_state test state" in text
+        assert "# TYPE effgen_test_state gauge" in text
+        assert 'provider="openai"' in text
+        assert "2" in text
+
+    def test_reset(self):
+        g = LabeledGauge(name="test_reset_gauge", help="x")
+        g.set(3, labels={"provider": "openai"})
+        g.reset()
+        assert g.get(labels={"provider": "openai"}) is None
+
+    def test_no_labels(self):
+        g = LabeledGauge(name="plain_gauge", help="plain")
+        g.set(7)
+        text = g.export()
+        assert "plain_gauge 7" in text
+
+
+# ---------------------------------------------------------------------------
+# Circuit-breaker / bulkhead reliability gauges
+# ---------------------------------------------------------------------------
+
+class TestReliabilityGauges:
+    def test_export_includes_gauge_help_type_even_when_empty(self):
+        reset_all()
+        text = export_metrics()
+        assert "# HELP effgen_circuit_breaker_state" in text
+        assert "# TYPE effgen_circuit_breaker_state gauge" in text
+        assert "# HELP effgen_bulkhead_active" in text
+        assert "# HELP effgen_bulkhead_queued" in text
+        assert "# HELP effgen_bulkhead_utilization_pct" in text
+
+    def test_circuit_breaker_state_reflects_live_registry(self):
+        from effgen.models.registry import ProviderRegistry
+
+        provider = "_test_reliability_gauge_provider"
+        ProviderRegistry._providers.setdefault(provider, {})
+        try:
+            cb = ProviderRegistry.get_circuit_breaker(
+                provider, failure_threshold=2, recovery_timeout=30.0
+            )
+            cb.on_failure()
+            cb.on_failure()
+            assert cb.state.value == "open"
+
+            text = export_metrics()
+            assert f'effgen_circuit_breaker_state{{provider="{provider}"}} 2' in text
+        finally:
+            ProviderRegistry._providers.pop(provider, None)
+            circuit_breaker_state.reset()
+
+    def test_bulkhead_gauges_reflect_live_registry(self):
+        from effgen.models.registry import ProviderRegistry
+
+        provider = "_test_reliability_bulkhead_provider"
+        ProviderRegistry._providers.setdefault(provider, {})
+        try:
+            bh = ProviderRegistry.get_bulkhead(provider, max_concurrency=2, queue_size=2)
+            with bh.acquire():
+                text = export_metrics()
+                assert f'effgen_bulkhead_active{{provider="{provider}"}} 1' in text
+                assert f'effgen_bulkhead_utilization_pct{{provider="{provider}"}} 50.0' in text
+        finally:
+            ProviderRegistry._providers.pop(provider, None)
+            bulkhead_active.reset()
+            bulkhead_queued.reset()
+            bulkhead_utilization_pct.reset()
+
+    def test_untouched_provider_reports_no_gauge_value(self):
+        from effgen.models.registry import ProviderRegistry
+
+        provider = "_test_reliability_untouched_provider"
+        ProviderRegistry._providers.setdefault(provider, {})
+        try:
+            # No get_circuit_breaker()/get_bulkhead() call for this provider —
+            # it must not appear in the gauge output at all.
+            text = export_metrics()
+            assert f'provider="{provider}"' not in text
+        finally:
+            ProviderRegistry._providers.pop(provider, None)
 
 
 # ---------------------------------------------------------------------------

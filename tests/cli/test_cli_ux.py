@@ -205,6 +205,52 @@ def test_doctor_system_report_has_cuda_and_vllm():
     assert "torch" in report
 
 
+def test_doctor_reliability_report_empty_for_untouched_provider():
+    from effgen.models.registry import ProviderRegistry
+
+    provider = "_test_doctor_reliability_untouched"
+    ProviderRegistry._providers.setdefault(provider, {})
+    try:
+        report = _main._doctor_reliability_report()
+        assert provider not in report
+    finally:
+        ProviderRegistry._providers.pop(provider, None)
+
+
+def test_doctor_reliability_report_shows_open_circuit():
+    from effgen.models.registry import ProviderRegistry
+
+    provider = "_test_doctor_reliability_open_circuit"
+    ProviderRegistry._providers.setdefault(provider, {})
+    try:
+        cb = ProviderRegistry.get_circuit_breaker(provider, failure_threshold=1, recovery_timeout=30.0)
+        cb.on_failure()
+        assert cb.state.value == "open"
+
+        report = _main._doctor_reliability_report()
+        assert provider in report
+        assert report[provider]["circuit_breaker"]["state"] == "open"
+        assert report[provider]["bulkhead"] is None
+    finally:
+        ProviderRegistry._providers.pop(provider, None)
+
+
+def test_doctor_reliability_report_shows_bulkhead_state():
+    from effgen.models.registry import ProviderRegistry
+
+    provider = "_test_doctor_reliability_bulkhead"
+    ProviderRegistry._providers.setdefault(provider, {})
+    try:
+        bh = ProviderRegistry.get_bulkhead(provider, max_concurrency=3, queue_size=3)
+        with bh.acquire():
+            report = _main._doctor_reliability_report()
+        assert provider in report
+        assert report[provider]["bulkhead"]["active"] == 1
+        assert report[provider]["bulkhead"]["max_concurrency"] == 3
+    finally:
+        ProviderRegistry._providers.pop(provider, None)
+
+
 def test_doctor_exit_code_is_format_independent():
     # A keyed provider whose live probe failed must yield exit 1 regardless of
     # whether output is JSON or the human table.

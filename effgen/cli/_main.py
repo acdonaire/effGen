@@ -3526,12 +3526,22 @@ def _handle_doctor_command(args) -> int:
     # System / CUDA / vLLM / pip-check report.
     system_report = _doctor_system_report(include_pip_check=live)
 
+    # Circuit-breaker/bulkhead state for any provider that has been routed
+    # through effgen.reliability middleware this process — surfaces an open
+    # circuit or a saturated bulkhead without the caller instrumenting their
+    # own code.
+    reliability_report = _doctor_reliability_report()
+
     # Exit nonzero if a live probe was requested and a keyed provider failed.
     # Computed once so every output format (JSON and human) agrees.
     exit_code = _doctor_exit_code(results, live)
 
     if getattr(args, 'output_json', False):
-        print(_json.dumps({"providers": results, "system": system_report}, indent=2))
+        print(_json.dumps({
+            "providers": results,
+            "system": system_report,
+            "reliability": reliability_report,
+        }, indent=2))
         return exit_code
 
     # Pretty-print
@@ -3585,6 +3595,32 @@ def _handle_doctor_command(args) -> int:
             sys_table.add_row(k, str(v))
         console.print(sys_table)
 
+        # Reliability section — only shown once a provider has actually been
+        # routed through circuit-breaker/bulkhead middleware this process.
+        if reliability_report:
+            console.print("\n[bold cyan]Reliability[/bold cyan]")
+            rel_table = Table(show_header=True)
+            rel_table.add_column("Provider", style="cyan", no_wrap=True)
+            rel_table.add_column("Circuit", style="white")
+            rel_table.add_column("Bulkhead", style="white")
+            for prov, rec in sorted(reliability_report.items()):
+                cb = rec.get("circuit_breaker")
+                bh = rec.get("bulkhead")
+                if cb is None:
+                    circuit_cell = "[dim]—[/dim]"
+                elif cb["state"] == "closed":
+                    circuit_cell = "[green]closed[/green]"
+                elif cb["state"] == "half_open":
+                    circuit_cell = "[yellow]half_open[/yellow]"
+                else:
+                    circuit_cell = "[red]open[/red]"
+                if bh is None:
+                    bulkhead_cell = "[dim]—[/dim]"
+                else:
+                    bulkhead_cell = f"active={bh['active']}/{bh['max_concurrency']}, queued={bh['queued']}/{bh['queue_size']}"
+                rel_table.add_row(prov, circuit_cell, bulkhead_cell)
+            console.print(rel_table)
+
         # Print hints for missing keys
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
@@ -3609,6 +3645,17 @@ def _handle_doctor_command(args) -> int:
         print("\nSystem:")
         for k, v in system_report.items():
             print(f"  {k}: {v}")
+        if reliability_report:
+            print("\nReliability:")
+            for prov, rec in sorted(reliability_report.items()):
+                cb = rec.get("circuit_breaker")
+                bh = rec.get("bulkhead")
+                circuit_str = cb["state"] if cb else "—"
+                bulkhead_str = (
+                    f"active={bh['active']}/{bh['max_concurrency']}, queued={bh['queued']}/{bh['queue_size']}"
+                    if bh else "—"
+                )
+                print(f"  {prov:12s} circuit={circuit_str:10s} bulkhead={bulkhead_str}")
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
             print("\nMissing keys — set in ~/.effgen/.env or export:")
@@ -3633,6 +3680,27 @@ def _doctor_exit_code(results: dict[str, dict], live: bool) -> int:
     ):
         return 1
     return 0
+
+
+def _doctor_reliability_report() -> dict[str, dict]:
+    """Circuit-breaker/bulkhead state for providers routed through reliability
+    middleware this process, keyed by provider name (empty if none have).
+
+    A provider only appears once ``ProviderRegistry.get_circuit_breaker``/
+    ``get_bulkhead`` has been used for it — no calls yet made means no state
+    to report, which is the common case for a fresh CLI invocation.
+    """
+    try:
+        from effgen.models.registry import ProviderRegistry
+
+        stats = ProviderRegistry.reliability_stats()
+    except Exception:
+        return {}
+    return {
+        prov: rec
+        for prov, rec in stats.items()
+        if rec.get("circuit_breaker") is not None or rec.get("bulkhead") is not None
+    }
 
 
 def _doctor_system_report(*, include_pip_check: bool = False) -> dict[str, Any]:

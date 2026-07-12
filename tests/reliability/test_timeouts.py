@@ -103,6 +103,42 @@ class TestSyncTimeout:
                 _sleep_and_return(10.0)
         assert exc_info.value.operation == "operation"
 
+    def test_survives_one_swallowed_interrupt(self):
+        """A single absorbed interrupt must not let the call run unbounded.
+
+        Simulates what a cloud SDK's own internal retry loop does: catch the
+        first raised TimeoutError (broadly, the way a network-error handler
+        would) and keep going. The periodic re-arm must still bound the
+        total overrun to about one extra tick, not let the call run to its
+        natural (much longer) completion.
+        """
+        swallowed = {"count": 0}
+
+        def _flaky_long_call():
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                try:
+                    time.sleep(0.05)
+                except EffGenTimeout:
+                    # Absorb exactly the first interrupt, like an SDK's own
+                    # broad except-and-retry around a blocking call.
+                    if swallowed["count"] == 0:
+                        swallowed["count"] += 1
+                        continue
+                    raise
+            return "ran to completion"  # pragma: no cover - should not happen
+
+        t0 = time.monotonic()
+        with pytest.raises(EffGenTimeout):
+            with with_timeout(0.3, "flaky_op"):
+                _flaky_long_call()
+        elapsed = time.monotonic() - t0
+
+        assert swallowed["count"] == 1, "the simulated swallow never happened"
+        # Bounded to a small number of retry ticks past the deadline, not
+        # anywhere near the call's natural ~30s completion.
+        assert elapsed < 2.0
+
 
 # ---------------------------------------------------------------------------
 # Async async_timeout

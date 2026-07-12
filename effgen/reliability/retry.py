@@ -56,22 +56,46 @@ __all__ = [
 def is_transient_error(exc: BaseException) -> bool:
     """Return True for errors that are safe to retry.
 
-    effGen's own typed provider errors (``effgen.models.errors``) carry an
-    authoritative classification; we defer to it so this retry predicate can
-    never drift from the core error taxonomy — an ``auth``/``not_found``/
-    ``invalid``/``fatal`` error is *never* retried, even if it happens to carry
-    a status code that the heuristics below might otherwise treat as transient.
+    Network-level errors (``ConnectionError``, ``OSError``, ``TimeoutError``,
+    ``asyncio.TimeoutError``, effGen's own :class:`~effgen.reliability.timeouts.TimeoutError`)
+    are always transient and are checked first.
 
-    For everything else (raw SDK exceptions, stdlib errors) we fall back to:
-    - Network-level errors (ConnectionError, OSError, TimeoutError)
+    Anything carrying a structured ``.error_context`` — effGen's own typed
+    provider errors (``effgen.models.errors``) and the generic ``RuntimeError``
+    every provider adapter wraps a real SDK failure into (see
+    ``effgen.models._adapter_utils.provider_runtime_error``) — was already
+    classified from the *original* SDK exception before wrapping could lose
+    its status code or class name, so we defer to that classification. This
+    is what makes a live 429/5xx that a provider adapter has wrapped retry
+    correctly, not just a raw, never-wrapped SDK exception.
+
+    Everything else (a raw SDK exception effGen never touched, or a plain
+    application exception) falls back to:
     - HTTP 429 / 5xx responses (detected by status code attribute)
-    - asyncio.TimeoutError
-    - effGen's own TimeoutError
+    - httpx network/timeout errors
+    A plain, unclassified exception (e.g. an application bug) is *not*
+    retried — retrying it cannot change the outcome.
     """
     from effgen.reliability.timeouts import TimeoutError as EffGenTimeout
 
-    # effGen typed provider errors → the error taxonomy is the source of truth.
-    if isinstance(exc, Exception) and type(exc).__module__ == "effgen.models.errors":
+    # Network / transient errors — cheapest check, no imports needed.
+    transient_types = (
+        ConnectionError,
+        ConnectionRefusedError,
+        ConnectionResetError,
+        TimeoutError,
+        asyncio.TimeoutError,
+        EffGenTimeout,
+        OSError,
+    )
+    if isinstance(exc, transient_types):
+        return True
+
+    # A structured error_context (attached by provider_runtime_error()/
+    # attach_error_context(), or set directly by effGen's typed provider
+    # errors) is authoritative — the error taxonomy is the single source of
+    # truth for retry-worthiness whenever it is present.
+    if isinstance(exc, Exception) and isinstance(getattr(exc, "error_context", None), dict):
         from effgen.models.errors import classify_provider_error
 
         return classify_provider_error(exc).should_retry
@@ -89,19 +113,6 @@ def is_transient_error(exc: BaseException) -> bool:
         if isinstance(resp_status, int):
             if resp_status == 429 or (500 <= resp_status < 600):
                 return True
-
-    # Network / transient errors
-    transient_types = (
-        ConnectionError,
-        ConnectionRefusedError,
-        ConnectionResetError,
-        TimeoutError,
-        asyncio.TimeoutError,
-        EffGenTimeout,
-        OSError,
-    )
-    if isinstance(exc, transient_types):
-        return True
 
     # httpx-specific errors if available
     try:

@@ -108,8 +108,15 @@ async def call_api_async() -> str:
 `is_transient_error` returns `True` for:
 - `ConnectionError`, `ConnectionResetError`, `OSError`
 - `TimeoutError`, `asyncio.TimeoutError`, `EffGenTimeoutError`
-- HTTP 429 (rate-limited) via `.status_code` or `.response.status_code`
-- HTTP 5xx (server errors)
+- Any error carrying a structured `.error_context` (every provider adapter
+  wraps a real SDK failure this way, so a live 429/5xx from any provider
+  classifies correctly even after wrapping — see `effgen.models.errors`)
+- A raw, never-wrapped SDK exception with HTTP 429 or 5xx via `.status_code`
+  or `.response.status_code`
+- `httpx` network/timeout errors
+
+A plain application exception with none of the above signals is *not*
+retried — retrying a bug in your own code will not fix it.
 
 ### Delay computation
 
