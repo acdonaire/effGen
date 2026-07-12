@@ -61,6 +61,17 @@ _DENY_FILENAME_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^\.git-credentials$", re.I),
 )
 
+
+def is_credential_filename(name: str) -> bool:
+    """True if *name* (a bare filename, not a full path) matches a common
+    credentials-file shape (``.env``, ``id_rsa``, ``credentials``, ...) — the
+    same coverage :data:`_DENY_FILENAME_PATTERNS` gives the deny-list default
+    above, exposed for tools (e.g. ``FileOperations``) that enforce their own
+    allow-/deny-list confinement but want the same filename awareness.
+    """
+    return any(pattern.match(name) for pattern in _DENY_FILENAME_PATTERNS)
+
+
 # A file whose *content* looks like a credentials store is refused regardless
 # of its extension — a decoy secrets file renamed to ``.csv``/``.txt`` keeps
 # its filename-based check from firing, but not this one. dotenv-shaped

@@ -11,11 +11,11 @@ from .content import LengthGuardrail, PIIGuardrail, ToxicityGuardrail
 from .injection import PromptInjectionGuardrail, SystemPromptLeakGuardrail
 from .tool_safety import ToolInputGuardrail, ToolOutputGuardrail, ToolPermissionGuardrail
 
-# Positions the injection guardrail runs at in the "strict"/"phi" presets: the
-# first user turn AND a tool's return value, since an indirect prompt
-# injection carried in a scraped page, a ticket body, or a RAG passage reaches
-# the model through TOOL_OUTPUT, not INPUT. "standard"/"minimal" stay
-# input-only (a deliberate, lighter-weight tradeoff for those presets).
+# Positions the injection guardrail runs at in the "strict"/"standard"/"phi"
+# presets: the first user turn AND a tool's return value, since an indirect
+# prompt injection carried in a scraped page, a ticket body, or a RAG passage
+# reaches the model through TOOL_OUTPUT, not INPUT. "minimal" stays
+# input-only (a deliberate, lighter-weight tradeoff for that preset).
 _INJECTION_POSITIONS_WITH_TOOL_OUTPUT = [
     GuardrailPosition.INPUT,
     GuardrailPosition.TOOL_OUTPUT,
@@ -61,13 +61,20 @@ def standard_guardrails(
     over that is worse than stripping it before it reaches the model. Use the
     "strict" preset when any PII in the input should refuse the turn outright.
 
-    The injection guardrail here checks only the first user turn
-    (``GuardrailPosition.INPUT``), not a tool's return value; use the "strict"
-    or "phi" preset for injection screening on tool output too.
+    The injection guardrail checks both the first user turn
+    (``GuardrailPosition.INPUT``) and every tool's return value
+    (``GuardrailPosition.TOOL_OUTPUT``): content a tool fetches (an email
+    body, a scraped page, a RAG passage) can carry an embedded instruction
+    that steers the agent into calling a second, sensitive tool with
+    attacker-chosen arguments, and this preset is the one most callers use by
+    default. Use "strict" or "phi" for the same screening at higher
+    sensitivity plus PII stripping on tool output.
     """
     return GuardrailChain([
         LengthGuardrail(max_length=max_length),
-        PromptInjectionGuardrail(sensitivity="medium"),
+        PromptInjectionGuardrail(
+            sensitivity="medium", positions=_INJECTION_POSITIONS_WITH_TOOL_OUTPUT
+        ),
         PIIGuardrail(action="redact"),
         ToolInputGuardrail(),
         ToolOutputGuardrail(max_output_length=max_length),

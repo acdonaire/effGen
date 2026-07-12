@@ -23,6 +23,7 @@ from ..base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+from ._fs import check_content_not_credentials, is_credential_filename
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,11 @@ class FileOperations(BaseTool):
     - File size limits
     - Permission checks
     - Extension whitelisting
+    - Filenames matching a common credentials shape (.env, id_rsa,
+      credentials, ...) are refused even inside an allowed directory; a text
+      read is additionally refused if its content reads like a credentials
+      file (dotenv-style KEY=VALUE lines or a private-key header) regardless
+      of extension
     """
 
     # Natural-name aliases for the ``operation`` selector.
@@ -206,15 +212,17 @@ class FileOperations(BaseTool):
         return normalized or [Path.cwd()]
 
     def _is_path_allowed(self, path: Path) -> bool:
-        """Check if path is within allowed directories."""
+        """Check if path is within allowed directories and not a credential file."""
         try:
             resolved_path = path.resolve()
-            return any(
-                resolved_path == allowed_dir or allowed_dir in resolved_path.parents
-                for allowed_dir in self._allowed_directories
-            )
         except (OSError, RuntimeError):
             return False
+        if is_credential_filename(resolved_path.name):
+            return False
+        return any(
+            resolved_path == allowed_dir or allowed_dir in resolved_path.parents
+            for allowed_dir in self._allowed_directories
+        )
 
     def _validate_path(self, path: str, operation: str) -> Path:
         """
@@ -235,6 +243,15 @@ class FileOperations(BaseTool):
             file_path = Path(path).resolve()
         except (OSError, RuntimeError) as e:
             raise ValueError(f"Invalid path: {e}")
+
+        # Refuse a credential-shaped filename before the generic containment
+        # check, so the error names the real reason instead of "outside
+        # allowed directories" (the confinement boundary itself may be fine).
+        if is_credential_filename(file_path.name):
+            raise ValueError(
+                f"Refusing to access '{path}': the filename matches a common "
+                "credentials shape (.env, id_rsa, credentials, ...)."
+            )
 
         # Check if path is allowed
         if not self._is_path_allowed(file_path):
@@ -348,6 +365,11 @@ class FileOperations(BaseTool):
                 return f.read()
 
         content = await asyncio.to_thread(read_sync)
+
+        # A credentials file renamed to an allow-listed extension (.env saved
+        # as .csv) passes the filename check above; catch it by content shape
+        # too, regardless of the requested output format.
+        check_content_not_credentials(content, source=path)
 
         # Parse based on format
         if format == "json":

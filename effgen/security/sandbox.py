@@ -367,8 +367,11 @@ class SubprocessSandbox(SandboxBase):
 
     **Caveats / limitations:**
     - Filesystem isolation only shields ``/tmp`` and namespace-private mounts;
-      the rest of the host FS is still *readable* (not writable as root inside
-      the user namespace, but readable). Use DockerSandbox for full isolation.
+      the rest of the host filesystem is still reachable with the calling
+      user's own permissions — readable everywhere that user can read, and
+      **writable** everywhere that user can write (the user namespace maps
+      "root" inside the sandbox to the real invoking uid, it does not grant
+      extra privilege). Use DockerSandbox for filesystem confinement.
     - Requires unprivileged user namespaces to be enabled
       (``kernel.unprivileged_userns_clone=1`` / ``user.max_user_namespaces>0``).
     - Memory limit is advisory (via ``ulimit -v``), not hard-enforced like cgroups.
@@ -717,6 +720,36 @@ _BACKEND_MAP: dict[str, type[SandboxBase]] = {
 # Cache the resolved backend so availability checks run once per process
 _resolved_backend: SandboxBase | None = None
 
+# Emitted once per process, regardless of whether SubprocessSandbox was reached
+# via "auto" fallback or an explicit EFFGEN_SANDBOX_BACKEND=subprocess.
+_subprocess_fallback_warned: bool = False
+
+
+def _warn_subprocess_fallback() -> None:
+    global _subprocess_fallback_warned
+    if _subprocess_fallback_warned:
+        return
+    _subprocess_fallback_warned = True
+    logger.warning(
+        "\n"
+        "┌─────────────────────────────────────────────────────────────┐\n"
+        "│  effGen SANDBOX WARNING                                      │\n"
+        "│                                                              │\n"
+        "│  Code execution is using SubprocessSandbox, which provides   │\n"
+        "│  PARTIAL isolation only — not a filesystem boundary.         │\n"
+        "│                                                              │\n"
+        "│  Limitations:                                                │\n"
+        "│  • Executed code can READ and WRITE any host file the        │\n"
+        "│    calling process's user can read/write, outside of the     │\n"
+        "│    private /tmp mount (when available)                       │\n"
+        "│  • Network isolation via unshare (may require privileges)    │\n"
+        "│  • Memory limit is advisory, not hard-enforced               │\n"
+        "│                                                              │\n"
+        "│  To confine the filesystem, install Docker and ensure the    │\n"
+        "│  daemon is running and accessible by the current user.       │\n"
+        "└─────────────────────────────────────────────────────────────┘\n"
+    )
+
 
 async def get_sandbox(config: SandboxConfig | None = None) -> SandboxBase:
     """
@@ -726,6 +759,11 @@ async def get_sandbox(config: SandboxConfig | None = None) -> SandboxBase:
 
     1. DockerSandbox — preferred; strong isolation.
     2. SubprocessSandbox — fallback; emits ``WARNING`` on first use.
+
+    A ``WARNING`` is also emitted the first time ``SubprocessSandbox`` is
+    resolved via an explicit ``EFFGEN_SANDBOX_BACKEND=subprocess``, since that
+    path skips Docker probing entirely but carries the same filesystem
+    exposure as the auto-fallback case.
 
     The resolved backend is cached for the lifetime of the process.
     """
@@ -751,6 +789,8 @@ async def get_sandbox(config: SandboxConfig | None = None) -> SandboxBase:
             raise RuntimeError(
                 f"Sandbox backend {backend_name!r} is not available in this environment."
             )
+        if cls is SubprocessSandbox:
+            _warn_subprocess_fallback()
         _resolved_backend = backend
         return backend
 
@@ -762,33 +802,17 @@ async def get_sandbox(config: SandboxConfig | None = None) -> SandboxBase:
         return docker
 
     # Fallback
-    logger.warning(
-        "\n"
-        "┌─────────────────────────────────────────────────────────────┐\n"
-        "│  effGen SANDBOX WARNING                                      │\n"
-        "│                                                              │\n"
-        "│  Docker is not available. Code execution will use            │\n"
-        "│  SubprocessSandbox, which provides PARTIAL isolation only.   │\n"
-        "│                                                              │\n"
-        "│  Limitations:                                                │\n"
-        "│  • No filesystem isolation (code can read host FS)           │\n"
-        "│  • Network isolation via unshare (may require privileges)    │\n"
-        "│  • Memory limit is advisory, not hard-enforced               │\n"
-        "│                                                              │\n"
-        "│  To enable full isolation, install Docker and ensure the     │\n"
-        "│  daemon is running and accessible by the current user.       │\n"
-        "│  Set EFFGEN_SANDBOX_BACKEND=subprocess to silence this.      │\n"
-        "└─────────────────────────────────────────────────────────────┘\n"
-    )
+    _warn_subprocess_fallback()
     sub = SubprocessSandbox()
     _resolved_backend = sub
     return sub
 
 
 def reset_sandbox_cache() -> None:
-    """Reset the cached sandbox backend (useful for testing)."""
-    global _resolved_backend
+    """Reset the cached sandbox backend and warning state (useful for testing)."""
+    global _resolved_backend, _subprocess_fallback_warned
     _resolved_backend = None
+    _subprocess_fallback_warned = False
 
 
 __all__ = [

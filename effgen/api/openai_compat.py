@@ -115,7 +115,7 @@ class ChatCompletionRequest(BaseModel):  # type: ignore[misc]
     top_p: float | None = 1.0
     n: int | None = 1
     stream: bool | None = False
-    max_tokens: int | None = None
+    max_tokens: int | None = Field(default=None, gt=0)
     presence_penalty: float | None = 0.0
     frequency_penalty: float | None = 0.0
     user: str | None = None
@@ -136,7 +136,7 @@ class CompletionRequest(BaseModel):  # type: ignore[misc]
     top_p: float | None = 1.0
     n: int | None = 1
     stream: bool | None = False
-    max_tokens: int | None = 16
+    max_tokens: int | None = Field(default=16, gt=0)
     stop: str | list[str] | None = None
     user: str | None = None
     seed: int | None = None

@@ -98,6 +98,7 @@ def create_app(
     public_dashboard: bool | None = None,
     cors_origins: list[str] | None = None,
     rate_limit_per_minute: int | None = None,
+    trust_proxy: bool | None = None,
     runner: Any = None,
     extra_models: Any = None,
 ) -> Any:
@@ -115,6 +116,12 @@ def create_app(
         Optional callable returning model ids to list in ``GET /v1/models``
         alongside the legacy aliases. When ``None`` this defaults to the ids
         the default runner's model pool has actually loaded.
+    trust_proxy:
+        Whether the per-IP rate limiter should trust the first
+        ``X-Forwarded-For`` hop as the client IP. Defaults to ``False`` (the
+        raw socket peer is used); enable only when the deployment sits behind
+        a reverse proxy that sets/overwrites this header, since any direct
+        caller can otherwise set it to bypass the limit.
     """
     try:
         from fastapi import FastAPI
@@ -182,6 +189,11 @@ def create_app(
     # 1. RBAC + budget enforcement (innermost; reads body for /v1 endpoints)
     app.add_middleware(RBACBudgetMiddleware)  # type: ignore[arg-type]
 
+    # 1b. Body-size cap for body-accepting routes RBAC/budget doesn't cover
+    # (e.g. /v1/embeddings, which needs no RBAC/budget enforcement but must
+    # still bound how much a client can make the server buffer).
+    app.add_middleware(MaxBodySizeMiddleware)  # type: ignore[arg-type]
+
     # 2. Auth middleware (validates JWT, populates request.state.user)
     from effgen.server.auth import AuthMiddleware
 
@@ -216,6 +228,7 @@ def create_app(
             cors_origins=cors_origins,
             dev_mode=_dev,
             rate_limit_per_minute=rate_limit_per_minute,
+            trust_proxy=trust_proxy,
         )
     except ImportError:
         logger.warning("Production middleware not available")
@@ -665,31 +678,9 @@ class RBACBudgetMiddleware:
             return
         primary_role = roles[0] if roles else (policy.roles[0].name if policy.roles else "anonymous")
 
-        # Reject early on an oversized declared Content-Length.
-        headers = dict(scope.get("headers", []))
-        declared = headers.get(b"content-length")
-        if declared is not None:
-            try:
-                if int(declared) > self.max_body_bytes:
-                    await _reject_json(send, 413, "Request body too large")
-                    return
-            except ValueError:  # non-integer Content-Length; downstream limit still applies
-                pass
-
-        # Buffer the request body (bounded), then replay it to the route.
-        chunks: list[bytes] = []
-        total = 0
-        more = True
-        while more:
-            msg = await receive()
-            chunk = msg.get("body", b"")
-            total += len(chunk)
-            if total > self.max_body_bytes:
-                await _reject_json(send, 413, "Request body too large")
-                return
-            chunks.append(chunk)
-            more = msg.get("more_body", False)
-        raw = b"".join(chunks)
+        rejected, raw = await _enforce_max_body_size(scope, receive, send, self.max_body_bytes)
+        if rejected:
+            return
 
         # Replay the buffered body to the route once. A StreamingResponse runs
         # a disconnect-listener concurrently with the body generator, looping on
@@ -787,6 +778,86 @@ async def _reject_json(send: Any, status: int, detail: str) -> None:
         ],
     })
     await send({"type": "http.response.body", "body": payload})
+
+
+async def _enforce_max_body_size(
+    scope: Any, receive: Any, send: Any, max_body_bytes: int
+) -> tuple[bool, bytes]:
+    """Reject an oversized request body; otherwise buffer and return it.
+
+    Checks the declared ``Content-Length`` first (cheap, no buffering), then
+    streams the body while counting bytes so an unbounded/chunked body without
+    a declared length is still capped. Returns ``(rejected, raw_body)`` — when
+    ``rejected`` is ``True`` a 413 has already been sent and the caller must
+    not read further from ``receive`` or write to ``send``.
+    """
+    headers = dict(scope.get("headers", []))
+    declared = headers.get(b"content-length")
+    if declared is not None:
+        try:
+            if int(declared) > max_body_bytes:
+                await _reject_json(send, 413, "Request body too large")
+                return True, b""
+        except ValueError:  # non-integer Content-Length; the streamed check still applies
+            pass
+
+    chunks: list[bytes] = []
+    total = 0
+    more = True
+    while more:
+        msg = await receive()
+        chunk = msg.get("body", b"")
+        total += len(chunk)
+        if total > max_body_bytes:
+            await _reject_json(send, 413, "Request body too large")
+            return True, b""
+        chunks.append(chunk)
+        more = msg.get("more_body", False)
+    return False, b"".join(chunks)
+
+
+class MaxBodySizeMiddleware:
+    """Pure-ASGI middleware enforcing ``EFFGEN_MAX_BODY_BYTES`` on routes that
+    accept a body but are not already covered by :class:`RBACBudgetMiddleware`
+    (which enforces the same cap for ``/v1/chat/completions`` and
+    ``/v1/completions`` as part of its RBAC/budget replay). Add a path here
+    whenever a new body-accepting route is mounted that doesn't need RBAC or
+    budget enforcement, so the cap is never an allowlist of just the model
+    endpoints.
+
+    Buffers the body (bounded) and replays it once to the route, mirroring
+    ``RBACBudgetMiddleware``'s SSE-safe replay-then-park pattern so a
+    streaming response downstream isn't starved by a spinning ``receive()``.
+    """
+
+    _ENFORCED_PATHS = ("/v1/embeddings",)
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+        self.max_body_bytes = int(os.getenv("EFFGEN_MAX_BODY_BYTES", str(10 * 1024 * 1024)))
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or scope.get("path") not in self._ENFORCED_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        rejected, raw = await _enforce_max_body_size(scope, receive, send, self.max_body_bytes)
+        if rejected:
+            return
+
+        import asyncio as _asyncio
+
+        _replay_state = {"sent": False}
+        _parked = _asyncio.Event()
+
+        async def _replay() -> dict[str, Any]:
+            if not _replay_state["sent"]:
+                _replay_state["sent"] = True
+                return {"type": "http.request", "body": raw, "more_body": False}
+            await _parked.wait()  # cancelled when the route's response completes
+            return {"type": "http.disconnect"}
+
+        await self.app(scope, _replay, send)
 
 
 def _mount_existing_routers(

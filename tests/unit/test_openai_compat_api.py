@@ -418,6 +418,56 @@ class TestEmptyMessagesRejected:
         assert r.json()["error"]["code"] == "empty_messages"
 
 
+class TestMaxTokensRejected:
+    """A nonsensical ``max_tokens`` is rejected before any billed call, rather
+    than silently accepted and ignored by the model."""
+
+    def test_negative_max_tokens_rejected(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post(
+            "/v1/chat/completions", headers={"X-API-Key": "k"},
+            json={
+                "model": "x",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": -999999999,
+            },
+        )
+        assert r.status_code == 422
+        assert r.json()["error"]["type"] == "invalid_request_error"
+
+    def test_zero_max_tokens_rejected(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post(
+            "/v1/chat/completions", headers={"X-API-Key": "k"},
+            json={
+                "model": "x",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 0,
+            },
+        )
+        assert r.status_code == 422
+
+    def test_positive_max_tokens_still_accepted(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post(
+            "/v1/chat/completions", headers={"X-API-Key": "k"},
+            json={
+                "model": "x",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 256,
+            },
+        )
+        assert r.status_code == 200
+
+    def test_negative_max_tokens_rejected_on_completions(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post(
+            "/v1/completions", headers={"X-API-Key": "k"},
+            json={"model": "x", "prompt": "hi", "max_tokens": -5},
+        )
+        assert r.status_code == 422
+
+
 class TestUnifiedErrorEnvelope:
     """Auth (401), validation (422), and rate-limit (429) rejections speak the
     same OpenAI ``{"error": {...}}`` envelope as model errors, so a client can

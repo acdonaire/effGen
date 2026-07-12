@@ -24,6 +24,7 @@ import asyncio
 import platform
 import shutil
 import subprocess as sp
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -237,6 +238,94 @@ class TestSubprocessSandbox:
         assert SubprocessSandbox._parse_mem_kb("256m") == 256 * 1024
         assert SubprocessSandbox._parse_mem_kb("1g") == 1024 * 1024
         assert SubprocessSandbox._parse_mem_kb("512k") == 512
+
+    def test_fs_outside_tmp_is_writable_by_calling_user(self):
+        """Documents (and proves) the real guarantee: the mount namespace
+        only shields /tmp. Anything the calling user owns outside /tmp is
+        still readable AND writable by executed code — this is why the
+        fallback carries a loud warning rather than being called "secure".
+
+        Uses a directory under the home tree (NOT pytest's tmp_path, which
+        defaults to a subdirectory of /tmp and would be shielded by the very
+        isolation this test is proving does NOT extend past /tmp)."""
+        SubprocessSandbox._caps_probed = False
+        if not _run(SubprocessSandbox._unshare_succeeds(["--map-root-user", "true"])):
+            pytest.skip("user namespaces not available")
+        probe_dir = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        target = probe_dir / "outside_tmp_probe.txt"
+        try:
+            sb = SubprocessSandbox()
+            cfg = SandboxConfig(backend="subprocess", timeout=10)
+            code = f"""
+with open({str(target)!r}, "w") as f:
+    f.write("written-from-sandbox")
+"""
+            result = _run(sb.run(code, "python", cfg))
+            assert result.exit_code == 0
+            assert target.exists()
+            assert target.read_text() == "written-from-sandbox"
+        finally:
+            shutil.rmtree(probe_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Subprocess fallback warning
+# ---------------------------------------------------------------------------
+
+class TestSubprocessFallbackWarning:
+    """A WARNING naming the real filesystem exposure fires the first time
+    SubprocessSandbox is resolved — whether via auto-fallback (Docker
+    unavailable) or an explicit EFFGEN_SANDBOX_BACKEND=subprocess, which
+    previously skipped the warning entirely."""
+
+    def setup_method(self):
+        reset_sandbox_cache()
+
+    def teardown_method(self):
+        reset_sandbox_cache()
+
+    def test_explicit_subprocess_backend_warns(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="effgen.security.sandbox"):
+            _run(get_sandbox(SandboxConfig(backend="subprocess")))
+        assert any(
+            "READ and WRITE" in rec.message for rec in caplog.records
+        ), "explicit subprocess backend must warn about filesystem exposure"
+
+    def test_auto_fallback_warns_when_docker_unavailable(self, caplog, monkeypatch):
+        import logging
+
+        from effgen.security import sandbox as sandbox_mod
+
+        async def _unavailable(self):
+            return False
+
+        monkeypatch.setattr(sandbox_mod.DockerSandbox, "is_available", _unavailable)
+        with caplog.at_level(logging.WARNING, logger="effgen.security.sandbox"):
+            _run(get_sandbox(SandboxConfig(backend="auto")))
+        assert any(
+            "READ and WRITE" in rec.message for rec in caplog.records
+        )
+
+    def test_warning_fires_once_per_process(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="effgen.security.sandbox"):
+            _run(get_sandbox(SandboxConfig(backend="subprocess")))
+            _run(get_sandbox(SandboxConfig(backend="subprocess")))
+        hits = [rec for rec in caplog.records if "READ and WRITE" in rec.message]
+        assert len(hits) == 1
+
+    def test_docker_backend_does_not_warn(self, caplog):
+        import logging
+
+        docker = DockerSandbox()
+        if not _run(docker.is_available()):
+            pytest.skip("Docker not available in this environment")
+        with caplog.at_level(logging.WARNING, logger="effgen.security.sandbox"):
+            _run(get_sandbox(SandboxConfig(backend="docker")))
+        assert not any("READ and WRITE" in rec.message for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------

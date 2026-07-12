@@ -435,6 +435,143 @@ class TestBodySize:
         )
         assert r.status_code == 413
 
+    def test_oversized_embeddings_body_rejected(self, monkeypatch):
+        # /v1/embeddings carries no RBAC/budget enforcement, but the body-size
+        # cap must still apply — a client should not be able to make the
+        # server buffer/process an unbounded body just because that route
+        # isn't in RBACBudgetMiddleware's enforced-paths list.
+        monkeypatch.setenv("EFFGEN_MAX_BODY_BYTES", "1024")
+        app = create_app(api_key="test-key", dev_mode=False, runner=_dummy_runner)
+        r = _client(app).post(
+            "/v1/embeddings",
+            headers={"Authorization": "Bearer test-key"},
+            json={"model": "text-embedding-3-small", "input": "x" * 5000},
+        )
+        assert r.status_code == 413
+
+    def test_normal_embeddings_body_still_served(self, monkeypatch):
+        monkeypatch.setenv("EFFGEN_MAX_BODY_BYTES", str(10 * 1024 * 1024))
+        app = create_app(api_key="test-key", dev_mode=False, runner=_dummy_runner)
+        r = _client(app).post(
+            "/v1/embeddings",
+            headers={"Authorization": "Bearer test-key"},
+            json={"model": "text-embedding-3-small", "input": "hello world"},
+        )
+        assert r.status_code == 200
+        assert "data" in r.json()
+
+
+# ---------------------------------------------------------------------------
+# 7b. Rate-limit client-IP resolution
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimitProxyTrust:
+    """X-Forwarded-For must only steer the per-IP rate-limit key when the
+    deployment explicitly opts in — otherwise any direct caller can rotate
+    the header to defeat its own limit."""
+
+    def _app(self, *, trust_proxy=None):
+        return create_app(
+            api_key="test-key",
+            dev_mode=False,
+            rate_limit_per_minute=3,
+            trust_proxy=trust_proxy,
+            runner=_dummy_runner,
+        )
+
+    def test_spoofed_xff_does_not_bypass_limit_by_default(self):
+        app = self._app()
+        client = _client(app)
+        statuses = [
+            client.get(
+                "/v1/models",
+                headers={
+                    "Authorization": "Bearer test-key",
+                    "X-Forwarded-For": f"10.0.0.{i}",
+                },
+            ).status_code
+            for i in range(6)
+        ]
+        assert 429 in statuses, f"expected a 429 among {statuses}"
+
+    def test_spoofed_xff_bypasses_limit_when_trust_proxy_enabled(self):
+        app = self._app(trust_proxy=True)
+        client = _client(app)
+        statuses = [
+            client.get(
+                "/v1/models",
+                headers={
+                    "Authorization": "Bearer test-key",
+                    "X-Forwarded-For": f"10.0.0.{i}",
+                },
+            ).status_code
+            for i in range(6)
+        ]
+        assert 429 not in statuses, f"unexpected 429 among {statuses}"
+
+    def test_env_var_opts_in_when_param_not_given(self, monkeypatch):
+        monkeypatch.setenv("EFFGEN_TRUST_PROXY", "1")
+        app = self._app(trust_proxy=None)
+        client = _client(app)
+        statuses = [
+            client.get(
+                "/v1/models",
+                headers={
+                    "Authorization": "Bearer test-key",
+                    "X-Forwarded-For": f"10.0.0.{i}",
+                },
+            ).status_code
+            for i in range(6)
+        ]
+        assert 429 not in statuses, f"unexpected 429 among {statuses}"
+
+
+class TestServeUvicornProxyTrust:
+    """``effgen serve`` must launch uvicorn with proxy-header trust that
+    matches the rate limiter's own decision. uvicorn rewrites the socket peer
+    (``scope["client"]``) from ``X-Forwarded-For`` for any address in
+    ``forwarded_allow_ips`` (default ``127.0.0.1``); left at that default, a
+    loopback/same-host caller could set the rate-limit client IP even though
+    ``trust_proxy`` defaults to off. The command must disable that rewriting
+    unless the deployment opts into trusting a proxy."""
+
+    def _run(self, monkeypatch, *, trust_proxy=None, env=None):
+        from types import SimpleNamespace
+
+        import effgen.cli._main as _main
+
+        for var in ("EFFGEN_API_KEY", "EFFGEN_DEV_MODE", "EFFGEN_TRUST_PROXY"):
+            monkeypatch.delenv(var, raising=False)
+        for k, v in (env or {}).items():
+            monkeypatch.setenv(k, v)
+
+        captured = {}
+        monkeypatch.setattr("uvicorn.run", lambda *a, **k: captured.update(k))
+
+        args = SimpleNamespace(
+            host="127.0.0.1", port=8000, rate_limit=None,
+            verbose=False, trust_proxy=trust_proxy,
+        )
+        rc = _main.CLIInterface().serve_api(args)
+        assert rc == 0
+        return captured
+
+    def test_default_disables_uvicorn_xff_rewrite(self, monkeypatch):
+        pytest.importorskip("fastapi")
+        captured = self._run(monkeypatch)
+        assert captured.get("forwarded_allow_ips") == []
+
+    def test_trust_proxy_flag_leaves_uvicorn_default(self, monkeypatch):
+        pytest.importorskip("fastapi")
+        captured = self._run(monkeypatch, trust_proxy=True)
+        assert "forwarded_allow_ips" not in captured
+
+    def test_env_opts_in_leaves_uvicorn_default(self, monkeypatch):
+        pytest.importorskip("fastapi")
+        captured = self._run(monkeypatch, env={"EFFGEN_TRUST_PROXY": "1"})
+        assert "forwarded_allow_ips" not in captured
+
 
 # ---------------------------------------------------------------------------
 # 8. Version sourced from metadata

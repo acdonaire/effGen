@@ -1254,6 +1254,7 @@ class CLIInterface:
                 cors_origins=cors_origins,
                 dev_mode=dev_mode,
                 rate_limit_per_minute=getattr(args, "rate_limit", None),
+                trust_proxy=getattr(args, "trust_proxy", None),
             )
 
             # Discover tools for the /run + /tools convenience routes and stash
@@ -1289,11 +1290,25 @@ class CLIInterface:
             self.print(dashboard_line)
             self.print()
 
+            # Keep uvicorn's proxy-header handling consistent with the rate
+            # limiter's trust decision. uvicorn rewrites scope["client"] from
+            # X-Forwarded-For for any peer in ``forwarded_allow_ips`` (default
+            # 127.0.0.1), which would let a loopback/same-host caller set the
+            # rate-limit client IP even though trust_proxy defaults to off. When
+            # the proxy is not trusted, disable that rewriting so the limiter
+            # keys on the real socket peer; when it is trusted, effGen reads the
+            # header itself and uvicorn's same-host default is left in place.
+            from effgen.api.middleware import _resolve_trust_proxy
+            uvicorn_kwargs: dict[str, Any] = {}
+            if not _resolve_trust_proxy(getattr(args, "trust_proxy", None)):
+                uvicorn_kwargs["forwarded_allow_ips"] = []
+
             uvicorn.run(
                 app,
                 host=host,
                 port=port,
                 log_level="info" if verbose else "warning",
+                **uvicorn_kwargs,
             )
             return 0
 
@@ -2823,6 +2838,11 @@ Model id formats:
             "  EFFGEN_RATE_LIMIT     requests/minute per client IP (0 disables;\n"
             "                        health probes are always exempt). Or use\n"
             "                        --rate-limit.\n"
+            "  EFFGEN_TRUST_PROXY=1  trust the first X-Forwarded-For hop as the\n"
+            "                        rate-limit client IP (default: off — the raw\n"
+            "                        socket peer is used, since a caller can set\n"
+            "                        that header to anything). Enable only behind\n"
+            "                        a reverse proxy that sets/overwrites it.\n"
             "  EFFGEN_CORS_ORIGINS   comma-separated allowed origins (default: none;\n"
             "                        cross-origin is fail-closed for a backend API).\n"
             "  EFFGEN_OIDC_ISSUER /  enable OIDC/JWT auth instead of a static key.\n"
@@ -2852,6 +2872,13 @@ Model id formats:
         '--rate-limit', type=int, default=None, metavar='N',
         help='Requests/minute per client IP (overrides EFFGEN_RATE_LIMIT; '
              '0 disables). Health probes are always exempt.',
+    )
+    serve_parser.add_argument(
+        '--trust-proxy', action='store_true', default=None,
+        help='Trust the first X-Forwarded-For hop as the rate-limit client IP '
+             '(overrides EFFGEN_TRUST_PROXY). Enable only behind a reverse '
+             'proxy that sets/overwrites this header — otherwise any caller '
+             'can spoof it to bypass the rate limit.',
     )
 
     # Config commands

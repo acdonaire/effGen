@@ -1,14 +1,18 @@
 """
-Secure code execution sandbox tool.
+Code execution sandbox tool.
 
-This module provides a sandboxed code execution environment supporting
-multiple languages (Python, JavaScript, Bash) with Docker isolation,
-resource limits, and comprehensive security measures.
+This module provides an isolated code execution environment supporting
+multiple languages (Python, JavaScript, Bash), resource limits, and security
+measures whose strength depends on the resolved backend.
 
 Sandbox dispatch:
-  - DockerSandbox (default when Docker daemon is available):
+  - DockerSandbox (default when Docker daemon is available): confines both
+      filesystem and network —
       --read-only --network=none --cap-drop=ALL --pids-limit=100 --memory=256m
-  - SubprocessSandbox (fallback): ulimit + unshare --net on Linux
+  - SubprocessSandbox (fallback): ulimit + unshare --net on Linux. Isolates
+      network and /tmp only — the rest of the host filesystem is reachable
+      (read AND write) with the calling process's own permissions. See
+      ``effgen.security.sandbox.SubprocessSandbox``'s docstring.
   - Backend configurable via EFFGEN_SANDBOX_BACKEND=docker|subprocess
   - Timeout configurable via EFFGEN_SANDBOX_TIMEOUT=<seconds>
 """
@@ -41,7 +45,7 @@ class CodeExecutionError(Exception):
 
 class CodeExecutor(BaseTool):
     """
-    Secure sandboxed code execution tool.
+    Sandboxed code execution tool.
 
     Features:
     - Multi-language support (Python, JavaScript, Bash)
@@ -53,7 +57,12 @@ class CodeExecutor(BaseTool):
     - Comprehensive error handling
 
     Security:
-    - Isolated execution via DockerSandbox when Docker is available
+    - Filesystem AND network isolation via DockerSandbox when Docker is
+      available. Without Docker, the SubprocessSandbox fallback isolates
+      network and /tmp only — it does not confine the rest of the host
+      filesystem (readable and writable with the calling user's own
+      permissions). A ``WARNING`` is logged the first time the fallback is
+      used; check ``result["sandbox_backend"]`` to see which one ran.
     - Configurable resource limits
     - Network restricted by default
     - Timeout mechanisms
@@ -87,9 +96,17 @@ class CodeExecutor(BaseTool):
             metadata=ToolMetadata(
                 name="code_executor",
                 description=(
-                    "Execute code in a secure sandboxed environment with support "
-                    "for Python, JavaScript, and Bash. Uses Docker isolation when "
-                    "available; falls back to subprocess with ulimit restrictions."
+                    "Execute code in an isolated environment with support for "
+                    "Python, JavaScript, and Bash. Uses Docker (network-disabled, "
+                    "read-only, capability-dropped) when the Docker daemon is "
+                    "reachable — this confines the filesystem and network. "
+                    "Without Docker, falls back to a subprocess sandbox that "
+                    "isolates network and the /tmp directory but does NOT confine "
+                    "the rest of the filesystem: executed code can read and write "
+                    "any file the calling process's user can, and CPU/process "
+                    "limits are enforced by ulimit, not cgroups. Check the "
+                    "'sandbox_backend' field in the result to see which backend "
+                    "ran a given call."
                 ),
                 category=ToolCategory.CODE_EXECUTION,
                 parameters=[

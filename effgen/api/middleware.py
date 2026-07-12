@@ -43,6 +43,17 @@ def _resolve_rate_limit(rate_limit_per_minute: int | None) -> int:
     return max(0, int(rate_limit_per_minute))
 
 
+def _resolve_trust_proxy(trust_proxy: bool | None) -> bool:
+    """Resolve whether to trust ``X-Forwarded-For`` (param overrides
+    ``EFFGEN_TRUST_PROXY``). Defaults to ``False``: a directly-exposed server
+    must not let a client-supplied header override its own rate-limit key.
+    """
+    if trust_proxy is not None:
+        return bool(trust_proxy)
+    raw = (os.getenv("EFFGEN_TRUST_PROXY", "") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def install_production_middleware(
     app: Any,
     *,
@@ -54,6 +65,7 @@ def install_production_middleware(
     enable_request_id: bool = True,
     shutdown_timeout: float = 10.0,
     rate_limit_per_minute: int | None = None,
+    trust_proxy: bool | None = None,
 ) -> None:
     """Install the standard middleware stack on a FastAPI ``app``.
 
@@ -118,11 +130,20 @@ def install_production_middleware(
     # 4. Per-client request rate limiting (opt-in via EFFGEN_RATE_LIMIT).
     # Added last so it wraps as the outermost layer: a request flood is rejected
     # cheaply (per-IP, before auth/route work). Disabled unless a positive limit
-    # is configured.
+    # is configured. ``X-Forwarded-For`` is trusted only when the deployment
+    # opts in (``trust_proxy=True`` / ``EFFGEN_TRUST_PROXY=1``) — a directly
+    # exposed server must key the limiter on the real socket peer, since any
+    # caller can set that header to a value of their choosing.
     limit = _resolve_rate_limit(rate_limit_per_minute)
+    trust_xff = _resolve_trust_proxy(trust_proxy)
     if limit > 0:
-        app.add_middleware(RateLimitMiddleware, requests_per_minute=limit)  # type: ignore[arg-type]
-        logger.info("Request rate limiting enabled: %d req/min per client", limit)
+        app.add_middleware(  # type: ignore[arg-type]
+            RateLimitMiddleware, requests_per_minute=limit, trust_x_forwarded_for=trust_xff
+        )
+        logger.info(
+            "Request rate limiting enabled: %d req/min per client (trust_proxy=%s)",
+            limit, trust_xff,
+        )
 
     # 5. Graceful shutdown
     _install_graceful_shutdown(app, shutdown_timeout)
@@ -194,23 +215,41 @@ class RateLimitMiddleware:
     responses on the allowed path stay incremental. Every response — allowed
     or throttled — also carries ``RateLimit-Limit``/``RateLimit-Remaining``/
     ``RateLimit-Reset`` headers so a client can pace itself before hitting 429.
+
+    ``trust_x_forwarded_for`` defaults to ``False``: the limiter keys on the raw
+    socket peer (``scope["client"]``), which a caller cannot spoof. A directly
+    exposed server that honoured ``X-Forwarded-For`` unconditionally would let
+    any caller defeat its own rate limit by sending a fresh value on every
+    request. Set it to ``True`` only when the server sits behind a proxy that
+    is trusted to set that header accurately (and strips any client-supplied
+    one first) — the first hop is then used as the client IP.
     """
 
-    def __init__(self, app: Any, *, requests_per_minute: int, window_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        app: Any,
+        *,
+        requests_per_minute: int,
+        window_seconds: int = 60,
+        trust_x_forwarded_for: bool = False,
+    ) -> None:
         self.app = app
         self.limit = max(1, int(requests_per_minute))
         self.window = max(1, int(window_seconds))
+        self.trust_x_forwarded_for = trust_x_forwarded_for
         # client-ip -> [window_start_epoch, count]
         self._buckets: dict[str, list[float]] = {}
 
     def _client_ip(self, scope: dict) -> str:
-        # Honour a single X-Forwarded-For hop when present (reverse-proxy case),
-        # else fall back to the socket peer. Never trust beyond the first hop.
-        for k, v in scope.get("headers", []):
-            if k == b"x-forwarded-for":
-                first = v.decode("latin-1", errors="replace").split(",")[0].strip()
-                if first:
-                    return first
+        # Only consider X-Forwarded-For when the deployment explicitly opted
+        # in to trusting a proxy; otherwise a client-supplied header must never
+        # influence the rate-limit key.
+        if self.trust_x_forwarded_for:
+            for k, v in scope.get("headers", []):
+                if k == b"x-forwarded-for":
+                    first = v.decode("latin-1", errors="replace").split(",")[0].strip()
+                    if first:
+                        return first
         client = scope.get("client")
         return client[0] if client else "unknown"
 

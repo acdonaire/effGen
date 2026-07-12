@@ -88,10 +88,16 @@ DANGEROUS_PATTERNS = [
 
 # Common secret/credential files. Commands that reference these are refused so a
 # shell command cannot read what the environment strip protects (the env-strip
-# would be pointless if `cat .env` still worked). This is defense-in-depth, not a
-# sandbox: a shell tool runs with the user's full privileges by design.
+# would be pointless if `cat .env` still worked). This is a best-effort deterrent
+# against a direct, literal reference to one of these paths — not a guarantee: a
+# shell tool that runs with the calling user's full privileges can be routed
+# around a text match by an attacker willing to obfuscate the filename (quoted
+# string concatenation, `$(printf ...)`-built names, decode-to-file-then-execute).
+# The checks below close the concatenation and decode/execute obfuscations found
+# in practice; a fully general defense would need to actually parse shell
+# semantics, which this tool does not attempt.
 SECRET_FILE_PATTERNS = [
-    re.compile(r"(?:^|[\s/'\"=:])\.env(?:\.[\w.-]+)?(?:$|[\s'\"/:])", re.I),  # .env / .env.local
+    re.compile(r"(?:^|[\s/'\"=:;,])\.env(?:\.[\w.-]+)?(?:$|[\s'\"/:;,])", re.I),  # .env / .env.local
     re.compile(r"\.aws/credentials", re.I),
     re.compile(r"\.ssh/", re.I),
     re.compile(r"\bid_(?:rsa|dsa|ecdsa|ed25519)\b", re.I),
@@ -100,6 +106,21 @@ SECRET_FILE_PATTERNS = [
     re.compile(r"\.kube/config\b", re.I),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 ]
+
+# A dotfile glob (`.e*`, `.en?`, `.ssh*`) sidesteps the literal-name patterns
+# above while still matching credential files a shell would expand to. Refused
+# whenever a wildcard is glued directly onto a dot-prefixed name.
+_SECRET_FILE_GLOB_PATTERN = re.compile(r"(?:^|[\s/])\.[\w.-]*[*?\[]")
+
+# `base64 -d`/`xxd -r`/`openssl ... -d` decodes an opaque payload to a file that
+# is then executed in the same command — the outer command text never contains
+# the decoded content, so the patterns above (which match on literal filenames)
+# cannot see what the payload does. Blocked as a pattern in its own right,
+# independent of what the decoded script turns out to do.
+_DECODE_PATTERN = re.compile(
+    r"\b(?:base64\s+(?:-d\b|--decode\b)|xxd\s+-r\b|openssl\s+(?:base64\s+-d\b|enc\s+.*-d\b))"
+)
+_EXEC_INTERPRETER_PATTERN = re.compile(r"\b(?:bash|sh|zsh|python3?|perl|ruby|node|source)\s+\S")
 
 # Sensitive environment variables to strip. This explicit list is a floor; the
 # generic name-pattern check in ``_is_sensitive_env_name`` strips anything that
@@ -298,13 +319,27 @@ class BashTool(BaseTool):
                 return False, f"Command blocked: '{blocked}' is in the blocked commands list"
 
         # Refuse commands that reference common secret files, so the env-strip
-        # can't be sidestepped by reading credentials off disk instead.
+        # can't be sidestepped by reading credentials off disk instead. Also
+        # check a quote-stripped view of the command: adjacent quoted string
+        # literals (`".e""nv"`) concatenate under the shell into a filename
+        # that never appears as a literal substring of the raw command text.
+        quote_stripped = command.replace('"', "").replace("'", "")
         for pattern in SECRET_FILE_PATTERNS:
-            if pattern.search(command):
+            if pattern.search(command) or pattern.search(quote_stripped):
                 return False, (
                     "Command blocked: references a sensitive credential file "
                     "(.env, ~/.ssh, ~/.aws/credentials, private keys)"
                 )
+        if _SECRET_FILE_GLOB_PATTERN.search(command):
+            return False, (
+                "Command blocked: a wildcard against a dotfile can expand to a "
+                "credential file (.env, .ssh, .netrc, ...)"
+            )
+        if _DECODE_PATTERN.search(cmd_stripped) and _EXEC_INTERPRETER_PATTERN.search(cmd_stripped):
+            return False, (
+                "Command blocked: decodes a payload to a file and executes it "
+                "in the same command — the decoded content cannot be inspected"
+            )
 
         # Check dangerous patterns
         for pattern in DANGEROUS_PATTERNS:

@@ -940,3 +940,118 @@ class TestBashSecretProtection:
         assert "safely" not in desc
         assert "bash" not in PRESETS["general"].tool_names
         assert "bash" in PRESETS["coding"].tool_names
+
+
+# --------------------------------------------------------------------------- #
+# BashTool — obfuscated secret-file reads (quote-concatenation, dotfile globs,#
+# decode-then-execute) are refused, not just the literal `cat .env` case.     #
+# --------------------------------------------------------------------------- #
+class TestBashSecretBypassHardening:
+    def _bt(self):
+        return BashTool()
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            # Adjacent quoted-string concatenation builds ".env" without the
+            # literal substring appearing in the raw command text.
+            'F=".e""nv"; cat "$F"',
+            "F='.e''nv'; cat \"$F\"",
+        ],
+    )
+    def test_quote_concatenation_bypass_blocked(self, cmd):
+        safe, reason = self._bt()._is_command_safe(cmd)
+        assert safe is False, f"{cmd!r} should be refused"
+        assert "credential" in reason.lower()
+
+    @pytest.mark.parametrize(
+        "cmd",
+        ["cat .e*", "cat .en?", "cat .ssh*", "head .netrc*"],
+    )
+    def test_dotfile_glob_bypass_blocked(self, cmd):
+        safe, reason = self._bt()._is_command_safe(cmd)
+        assert safe is False, f"{cmd!r} should be refused"
+
+    def test_decode_then_execute_bypass_blocked(self):
+        cmd = (
+            "echo Y2F0IC5lbnY= | base64 -d > /tmp/_x.sh && bash /tmp/_x.sh; "
+            "rm -f /tmp/_x.sh"
+        )
+        safe, reason = self._bt()._is_command_safe(cmd)
+        assert safe is False, f"{cmd!r} should be refused"
+        assert "decode" in reason.lower()
+
+    def test_ordinary_globs_and_decodes_still_allowed(self):
+        bt = self._bt()
+        for cmd in [
+            "ls -la",
+            "cat *.py",
+            "wc -l *.py",
+            "echo aGVsbG8= | base64 -d",  # decode alone, no execution
+            "ls .git*",  # dotfile glob but no wildcard glued to the leading dot run — still a dotfile
+        ]:
+            safe, reason = bt._is_command_safe(cmd)
+            # "ls .git*" is a dotfile glob and intentionally denied (same
+            # conservative posture as the literal .ssh/.env denials); the
+            # rest must stay allowed.
+            if cmd == "ls .git*":
+                assert safe is False
+            else:
+                assert safe is True, f"{cmd!r} should be allowed: {reason}"
+
+    async def test_quote_concatenation_blocked_at_execute(self):
+        bt = self._bt()
+        res = await bt.execute(command='F=".e""nv"; cat "$F"')
+        assert res.success is False
+
+
+# --------------------------------------------------------------------------- #
+# FileOperations — credential-shaped filenames/content are refused even      #
+# inside an allowed directory (parity with the _fs.py deny-list).             #
+# --------------------------------------------------------------------------- #
+class TestFileOpsCredentialAwareness:
+    async def _tool_dir(self):
+        d = tempfile.mkdtemp(prefix="p12_fo_")
+        return d, FileOperations(allowed_directories=[d])
+
+    async def test_credential_shaped_filename_refused(self):
+        d, tool = await self._tool_dir()
+        path = os.path.join(d, "credentials")
+        with open(path, "w") as f:
+            f.write("plain text, not even secret-shaped content\n")
+        res = await tool.execute(operation="read", path=path)
+        assert res.success is False
+        assert "credential" in res.output["message"].lower()
+
+    async def test_renamed_dotenv_content_refused_despite_allowed_extension(self):
+        d, tool = await self._tool_dir()
+        path = os.path.join(d, "export.csv")
+        with open(path, "w") as f:
+            f.write(
+                "OPENAI_API_KEY=sk-decoyFAKEKEY1234567890abcdEFGH\n"
+                "DATABASE_URL=postgres://user:pass@localhost:5432/db\n"
+                "AWS_SECRET_ACCESS_KEY=decoyFAKEsecretvalueNOTREAL1234567890\n"
+            )
+        res = await tool.execute(operation="read", path=path)
+        assert res.success is False
+        assert "credential" in res.output["message"].lower()
+
+    async def test_credential_file_excluded_from_directory_listing(self):
+        d, tool = await self._tool_dir()
+        with open(os.path.join(d, "credentials"), "w") as f:
+            f.write("secret-shaped\n")
+        with open(os.path.join(d, "notes.txt"), "w") as f:
+            f.write("ordinary\n")
+        res = await tool.execute(operation="list", path=d)
+        names = [e["name"] for e in res.output["data"]]
+        assert "credentials" not in names
+        assert "notes.txt" in names
+
+    async def test_ordinary_file_still_readable(self):
+        d, tool = await self._tool_dir()
+        path = os.path.join(d, "report.txt")
+        with open(path, "w") as f:
+            f.write("just a normal report, nothing sensitive here\n")
+        res = await tool.execute(operation="read", path=path)
+        assert res.success is True
+        assert res.output["data"] == "just a normal report, nothing sensitive here\n"
