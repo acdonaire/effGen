@@ -177,3 +177,38 @@ def test_read_queries_strict_raises_with_file_and_line(tmp_path):
         assert f"{p}:2" in str(e)
     else:
         raise AssertionError("strict mode should have raised on the malformed line")
+
+
+def test_read_queries_resolves_common_field_aliases(tmp_path):
+    # A file keyed on prompt/input/question/text works without --query-field.
+    p = tmp_path / "in.jsonl"
+    p.write_text(
+        '{"prompt": "a"}\n'
+        '{"input": "b"}\n'
+        '{"question": "c"}\n'
+        '{"text": "d"}\n'
+    )
+    assert BatchRunner._read_queries(p, "query") == ["a", "b", "c", "d"]
+
+
+def test_read_queries_explicit_field_wins_over_alias(tmp_path):
+    p = tmp_path / "in.jsonl"
+    p.write_text('{"q": "explicit", "prompt": "alias"}\n')
+    assert BatchRunner._read_queries(p, "q") == ["explicit"]
+
+
+def test_read_queries_reports_empty_row_with_keys(tmp_path):
+    p = tmp_path / "in.jsonl"
+    p.write_text('{"note": "hi", "id": 3}\n')
+    empties: list[tuple[int, list[str]]] = []
+    queries = BatchRunner._read_queries(
+        p, "query", on_empty=lambda ln, keys: empties.append((ln, keys)),
+    )
+    assert queries == [""]
+    assert empties == [(1, ["id", "note"])]
+
+
+def test_read_queries_alias_resolution_in_csv(tmp_path):
+    p = tmp_path / "in.csv"
+    p.write_text("prompt\nhello\nworld\n")
+    assert BatchRunner._read_queries(p, "query") == ["hello", "world"]

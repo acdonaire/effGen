@@ -29,6 +29,26 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Field names accepted for the query text of a JSONL/CSV/JSON row, in priority
+# order — mirrors the eval/compare loaders so a batch file keyed on any of these
+# works without ``--query-field``.
+_QUERY_ALIASES = ("query", "input", "prompt", "question", "text")
+
+
+def _resolve_row_query(obj: dict[str, Any], query_field: str) -> str:
+    """Return a row's query text, trying *query_field* then the common aliases.
+
+    The explicitly-requested field wins; when it is absent or empty the aliases
+    ``input``/``prompt``/``question``/``text`` are tried in order. Returns an
+    empty string when none carry text.
+    """
+    order = [query_field] + [k for k in _QUERY_ALIASES if k != query_field]
+    for key in order:
+        val = obj.get(key)
+        if val not in (None, ""):
+            return str(val)
+    return ""
+
 
 @dataclass
 class BatchConfig:
@@ -496,8 +516,14 @@ class BatchRunner:
         query_field: str,
         strict: bool = False,
         on_skip: Callable[[int, str], None] | None = None,
+        on_empty: Callable[[int, list[str]], None] | None = None,
     ) -> list[str]:
         """Read queries from a JSONL, CSV, JSON, or plain-text file.
+
+        A dict row's query text is read from *query_field*, falling back to the
+        common aliases ``input``/``prompt``/``question``/``text`` when that field
+        is absent — so a file keyed on any of those works without
+        ``--query-field``.
 
         A malformed JSONL/JSON line does not abort the whole job. By default the
         bad line is skipped and reported (through ``on_skip`` if given, else a
@@ -511,6 +537,9 @@ class BatchRunner:
             strict: Hard-fail on the first malformed line instead of skipping.
             on_skip: Called with ``(line_number, message)`` for each skipped
                 line; when ``None``, a warning is logged instead.
+            on_empty: Called with ``(line_number, available_keys)`` for each dict
+                row that carries no recognized query text, so the caller can name
+                the fields it saw.
         """
         suffix = path.suffix.lower()
         queries: list[str] = []
@@ -523,6 +552,12 @@ class BatchRunner:
                 on_skip(lineno, str(exc))
             else:
                 logger.warning("%s: skipping malformed line: %s", location, exc)
+
+        def _resolve(lineno: int, row: dict) -> str:
+            text = _resolve_row_query(row, query_field)
+            if not text and on_empty is not None:
+                on_empty(lineno, sorted(str(k) for k in row.keys()))
+            return text
 
         if suffix == ".jsonl":
             with open(path, encoding="utf-8") as f:
@@ -538,14 +573,14 @@ class BatchRunner:
                     if isinstance(obj, str):
                         queries.append(obj)
                     elif isinstance(obj, dict):
-                        queries.append(str(obj.get(query_field, "")))
+                        queries.append(_resolve(lineno, obj))
                     else:
                         queries.append(str(obj))
         elif suffix == ".csv":
             with open(path, encoding="utf-8") as f:
                 reader = csv.DictReader(f)
-                for row in reader:
-                    queries.append(row.get(query_field, ""))
+                for lineno, row in enumerate(reader, start=1):
+                    queries.append(_resolve(lineno, row))
         elif suffix == ".json":
             with open(path, encoding="utf-8") as f:
                 try:
@@ -557,7 +592,7 @@ class BatchRunner:
                         if isinstance(item, str):
                             queries.append(item)
                         elif isinstance(item, dict):
-                            queries.append(str(item.get(query_field, "")))
+                            queries.append(_resolve(pos, item))
                         else:
                             _report_bad(pos, TypeError(
                                 f"expected string or object, got {type(item).__name__}"

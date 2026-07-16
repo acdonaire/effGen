@@ -114,6 +114,10 @@ class GGUFEngine(BaseModel):
             self.load()
         params = self._to_kwargs(config)
         params.update(kwargs)
+        # Clear residual context/KV state from any prior call so each completion
+        # starts from a clean state. Without this the sampler's RNG continues
+        # from the previous call and a fixed seed does not reproduce.
+        self._llm.reset()
         out = self._llm(prompt, **params)
         choice = out["choices"][0]
         text = choice.get("text", "")
@@ -137,6 +141,7 @@ class GGUFEngine(BaseModel):
         params = self._to_kwargs(config)
         params.update(kwargs)
         params["stream"] = True
+        self._llm.reset()
         for chunk in self._llm(prompt, **params):
             yield chunk["choices"][0].get("text", "")
 

@@ -586,6 +586,12 @@ class AgentGenerationMixin:
             val = result_metadata.get(key)
             if isinstance(val, int | float):
                 accum[key] = accum.get(key, 0) + val
+        # Where the model ran (local engines report 'cuda'/'cpu'/'mixed'), so a
+        # headless caller can detect a CPU fallback. Not summed — the last call
+        # wins, and cloud calls that don't report it leave it untouched.
+        device = result_metadata.get("device")
+        if device:
+            accum["device"] = device
         accum["calls"] = accum.get("calls", 0) + 1
 
     def _finalize_cost_metadata(self, response: AgentResponse) -> None:
@@ -612,6 +618,8 @@ class AgentGenerationMixin:
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
             if key in accum and key not in meta:
                 meta[key] = int(accum[key])
+        if accum.get("device") and "device" not in meta:
+            meta["device"] = accum["device"]
         # response.tokens_used is documented as the run's total token count;
         # the value set along the generation path is completion-tokens-only
         # (each provider adapter's GenerationResult.tokens_used). Correct it

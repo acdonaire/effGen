@@ -2187,14 +2187,59 @@ class CLIInterface:
             return 1
 
         from effgen.models import _catalog, _refresh
+        from effgen.models.model_loader import ModelLoader
+
+        # An engine-prefixed id (e.g. "transformers:Qwen/Qwen2.5-1.5B-Instruct")
+        # names a local engine + a bare repo id. Strip the prefix so the id
+        # matches the local cache and the catalog, and remember the engine so we
+        # can lead with the local view.
+        lookup_name = args.name
+        requested_engine = None
+        if ":" in lookup_name:
+            _prefix, _rest = lookup_name.split(":", 1)
+            if _prefix in ModelLoader._LOCAL_ENGINE_PREFIXES and _rest:
+                requested_engine = _prefix
+                lookup_name = _rest
 
         # Is this id sitting in the local HF cache? If so we can describe it as
         # locally-runnable even when the cloud catalog has no (or a different) row.
         local_entry = next(
-            (m for m in self._local_cached_models() if m["id"] == args.name), None
+            (m for m in self._local_cached_models() if m["id"] == lookup_name), None
         )
 
-        rec = _catalog.lookup(args.name)
+        # An explicit local-engine request is answered from the local cache: show
+        # the cached copy, or report a cache miss naming what is cached (rather
+        # than cloud catalog suggestions the engine can't run).
+        if requested_engine is not None:
+            if local_entry is not None:
+                local_payload = self._local_model_payload(local_entry)
+                if getattr(args, "output_json", False):
+                    print(json.dumps({"id": lookup_name, "provider": None,
+                                       "engine": requested_engine,
+                                       "local": local_payload}, indent=2))
+                    return 0
+                self.print_header(f"Model: {lookup_name} ({requested_engine})")
+                self._render_local_model_info(local_payload)
+                return 0
+            cached = [m["id"] for m in self._local_cached_models()]
+            if getattr(args, "output_json", False):
+                print(json.dumps({"id": lookup_name, "provider": None,
+                                   "engine": requested_engine, "local": None,
+                                   "cached_models": cached}, indent=2))
+                return 1
+            self.print_error(
+                f"Model '{lookup_name}' is not in the local cache, so the "
+                f"'{requested_engine}' engine can't run it yet."
+            )
+            if cached:
+                self.print("Locally cached models:")
+                for cid in cached:
+                    self.print(f"  {cid}")
+                self.print(f"\nDownload it first: effgen run -m {lookup_name} "
+                           f"--engine {requested_engine} \"...\" (with network access).")
+            return 1
+
+        rec = _catalog.lookup(lookup_name)
         if rec is None:
             if local_entry is not None:
                 # Downloaded locally but not in the cloud catalog: describe the local
@@ -2318,6 +2363,9 @@ class CLIInterface:
 
     def _models_status(self, args):
         """Show loaded models and GPU memory status."""
+        if getattr(args, "output_json", False):
+            return self._models_status_json()
+
         self.print_header("Model & GPU Status")
 
         # GPU memory info — physical (driver) view across all processes, so this
@@ -2384,6 +2432,47 @@ class CLIInterface:
         from effgen.models.capabilities import list_registered_models
         registered = list_registered_models()
         self.print(f"\nCapability profiles registered: {len(registered)}")
+
+    def _models_status_json(self) -> int:
+        """Emit the GPU table + loaded models as JSON for ops/edge tooling."""
+        gib = 1024 ** 3
+        gpu_list: list[dict] = []
+        cuda_available = True
+        try:
+            from effgen.gpu.cuda_compat import per_gpu_status
+            for g in per_gpu_status():
+                gpu_list.append({
+                    "index": g.index,
+                    "name": g.name,
+                    "total_gb": round(g.total_bytes / gib, 3),
+                    "used_gb": round(g.used_bytes / gib, 3),
+                    "free_gb": round(g.free_bytes / gib, 3),
+                    "utilization_pct": g.utilization_pct,
+                })
+            if not gpu_list:
+                try:
+                    import torch
+                    cuda_available = torch.cuda.is_available()
+                except ImportError:
+                    cuda_available = False
+        except ImportError:
+            cuda_available = False
+
+        from effgen.models.capabilities import list_registered_models
+        from effgen.models.model_loader import ModelLoader
+        loaded = ModelLoader().get_loaded_models()
+        loaded_list = [
+            {"name": name, "loaded": bool(model.is_loaded())}
+            for name, model in loaded.items()
+        ]
+        payload = {
+            "cuda_available": cuda_available,
+            "gpus": gpu_list,
+            "loaded_models": loaded_list,
+            "capability_profiles": len(list_registered_models()),
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
 
     def _models_refresh(self, args):
         """Refresh the bundled model catalog from each provider's live API.
@@ -2935,7 +3024,8 @@ Model id formats:
     models_unload = models_subparsers.add_parser('unload', help='Unload a model from memory')
     models_unload.add_argument('name', help='Model name')
 
-    models_subparsers.add_parser('status', help='Show loaded models and GPU memory status')
+    models_status = models_subparsers.add_parser('status', help='Show loaded models and GPU memory status')
+    models_status.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
 
     models_refresh = models_subparsers.add_parser(
         'refresh', help="Refresh the model catalog from each provider's live API")
@@ -4060,7 +4150,7 @@ def _read_done_indices(output_path: Path) -> dict:
 
 def _handle_batch_command(args, cli) -> int:
     """Handle the 'batch' CLI subcommand."""
-    from effgen.core.batch import BatchConfig, BatchRunner
+    from effgen.core.batch import _QUERY_ALIASES, BatchConfig, BatchRunner
 
     input_path = args.input
     output_path = getattr(args, 'output', None)
@@ -4149,14 +4239,19 @@ def _handle_batch_command(args, cli) -> int:
         # naming the file and line number (not the parser's byte offset);
         # --strict turns the first bad line into a hard failure instead.
         skipped: list[int] = []
+        empty_rows: list[tuple[int, list[str]]] = []
 
         def _on_skip(lineno: int, msg: str) -> None:
             skipped.append(lineno)
             cli.print(f"Skipping malformed input at {input_path}:{lineno}: {msg}")
 
+        def _on_empty(lineno: int, keys: list[str]) -> None:
+            empty_rows.append((lineno, keys))
+
         try:
             queries = runner._read_queries(
-                Path(input_path), query_field, strict=strict, on_skip=_on_skip,
+                Path(input_path), query_field, strict=strict,
+                on_skip=_on_skip, on_empty=_on_empty,
             )
         except Exception as e:  # noqa: BLE001 - one clear message, no traceback
             cli.print_error(f"Could not read {input_path}: {e}")
@@ -4166,6 +4261,22 @@ def _handle_batch_command(args, cli) -> int:
                 f"Skipped {len(skipped)} malformed line(s); "
                 f"{len(queries)} queries loaded."
             )
+
+        # A row with no recognized query text (neither --query-field nor the
+        # aliases query/input/prompt/question/text) can't run. Name the fields it
+        # did carry and how to point at the right one, rather than letting each
+        # empty row fail with a generic empty-task message.
+        if empty_rows:
+            lineno, keys = empty_rows[0]
+            fields = ", ".join(keys) if keys else "none"
+            more = f" (and {len(empty_rows) - 1} more)" if len(empty_rows) > 1 else ""
+            msg = (
+                f"Row {lineno}{more} has no query text. Fields present: {fields}. "
+                f"Set the query column with --query-field NAME, or key rows on one "
+                f"of: {', '.join(_QUERY_ALIASES)}."
+            )
+            cli.print_error(msg)
+            return _json_error(ValueError(msg))
 
         # --resume: skip input rows already present in the JSONL output.
         done_rows: dict[int, dict] = {}

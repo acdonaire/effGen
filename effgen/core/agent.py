@@ -619,7 +619,14 @@ Question: {task}
                     # Mark closed first so this never-returned, partially-built
                     # agent doesn't tail the error with a GC-without-close warning.
                     self._closed = True
-                    logger.error(f"Failed to load model '{self.model_name}': {e}")
+                    # A typed load error (e.g. an offline cache miss or a
+                    # require_gpu policy failure) already carries a clear,
+                    # user-facing message and is re-raised below — log it at
+                    # debug so it isn't repeated as an ERROR alongside the raise.
+                    if type(e).__name__ in ("ModelNotCachedError", "GPUPlacementError"):
+                        logger.debug(f"Failed to load model '{self.model_name}': {e}")
+                    else:
+                        logger.error(f"Failed to load model '{self.model_name}': {e}")
                     raise RuntimeError(
                         f"Failed to load model '{self.model_name}': {e}"
                     ) from e

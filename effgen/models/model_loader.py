@@ -885,9 +885,29 @@ class ModelLoader:
 
         return TransformersEngine(model_name=model_name, **params)
 
+    @staticmethod
+    def _free_vram_gb() -> float:
+        """Free VRAM (GB) across the visible CUDA devices.
+
+        Uses the currently-free memory (``torch.cuda.mem_get_info``), not the
+        card's total capacity, so quantization/offload decisions reflect what is
+        actually available after any other tenants on the GPU.
+        """
+        import torch
+
+        if not torch.cuda.is_available():
+            return 0.0
+        free_bytes = 0
+        for index in range(torch.cuda.device_count()):
+            try:
+                free_bytes += torch.cuda.mem_get_info(index)[0]
+            except Exception:
+                pass
+        return free_bytes / (1024**3)
+
     def _auto_select_quantization(self, model_name: str) -> str | None:
         """
-        Automatically select quantization based on available VRAM.
+        Automatically select quantization based on free VRAM.
 
         Args:
             model_name: Model identifier
@@ -900,12 +920,12 @@ class ModelLoader:
         if not torch.cuda.is_available():
             return None
 
-        # Get available VRAM (GB)
-        available_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        logger.info(f"Available VRAM: {available_vram:.2f} GB")
+        # Base the decision on free VRAM, not total capacity, so a busy GPU
+        # doesn't silently overcommit and offload to CPU.
+        available_vram = self._free_vram_gb()
+        logger.info(f"Free VRAM: {available_vram:.2f} GB")
 
-        # Estimate model size (rough heuristics)
-        # This is a simplified approach - in production, you'd want a more sophisticated method
+        # Estimate model size (rough heuristics from the id).
         if "70b" in model_name.lower() or "65b" in model_name.lower():
             # Large models need quantization
             if available_vram < 80:
@@ -918,7 +938,7 @@ class ModelLoader:
                 return "awq"
 
         # No quantization needed
-        logger.info("Sufficient VRAM available, no quantization needed")
+        logger.info("Sufficient free VRAM, no quantization needed")
         return None
 
     def _auto_select_quantization_bits(self) -> int | None:
@@ -933,17 +953,17 @@ class ModelLoader:
         if not torch.cuda.is_available():
             return None
 
-        # Get available VRAM
-        available_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        # Base the decision on free VRAM, not total capacity.
+        available_vram = self._free_vram_gb()
 
         if available_vram < 16:
-            logger.info("Low VRAM detected, using 4-bit quantization")
+            logger.info("Low free VRAM detected, using 4-bit quantization")
             return 4
         elif available_vram < 32:
-            logger.info("Medium VRAM detected, using 8-bit quantization")
+            logger.info("Medium free VRAM detected, using 8-bit quantization")
             return 8
 
-        logger.info("Sufficient VRAM available, no quantization")
+        logger.info("Sufficient free VRAM, no quantization")
         return None
 
     def _auto_select_tensor_parallel(self, model_name: str) -> int:
@@ -1146,6 +1166,9 @@ def load_model(
 
         >>> # Disable chat template for raw text generation
         >>> model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="vllm", apply_chat_template=False)
+
+        >>> # Fail instead of falling back to CPU when the GPU can't hold the model
+        >>> model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="transformers", require_gpu=True)
     """
     # Pass tensor_parallel_size to kwargs if specified
     if tensor_parallel_size is not None:

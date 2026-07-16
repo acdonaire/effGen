@@ -13,6 +13,7 @@ with features including:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import warnings
 from collections.abc import Iterator
@@ -46,6 +47,47 @@ warnings.filterwarnings('ignore', category=UserWarning, module='accelerate')
 warnings.filterwarnings('ignore', message='.*Some parameters are on the meta device.*')
 
 logger = logging.getLogger(__name__)
+
+
+class GPUPlacementError(RuntimeError):
+    """Raised when ``require_gpu`` is set but the model can't fit on the GPU."""
+
+
+class ModelNotCachedError(RuntimeError):
+    """Raised when a model isn't in the local cache and offline mode is set."""
+
+
+def _offline_mode_active() -> bool:
+    """True if HuggingFace offline mode is set via the environment."""
+    return any(
+        os.environ.get(var, "").strip().lower() in ("1", "true", "yes", "on")
+        for var in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    )
+
+
+def _list_cached_model_repos(limit: int = 20) -> list[str]:
+    """Return locally-cached HuggingFace model repo ids (best effort, sorted)."""
+    try:
+        from huggingface_hub import scan_cache_dir
+
+        repos = sorted(
+            r.repo_id for r in scan_cache_dir().repos if r.repo_type == "model"
+        )
+        return repos[:limit]
+    except Exception:
+        return []
+
+
+def _is_cache_miss_error(exc: Exception) -> bool:
+    """True if *exc* is a HuggingFace "not found locally" / offline error."""
+    text = str(exc).lower()
+    return (
+        "couldn't find them in the cached files" in text
+        or ("can't load" in text and "offline" in text)
+        or "offlinemodeisenabled" in text
+        or "localentrynotfound" in text
+        or type(exc).__name__ in ("LocalEntryNotFoundError", "OfflineModeIsEnabled")
+    )
 
 
 def _reraise_if_classified(exc: Exception) -> None:
@@ -159,6 +201,7 @@ class TransformersEngine(BatchModel):
         low_cpu_mem_usage: bool = True,
         max_memory: dict[int, str] | None = None,
         offload_folder: str | None = None,
+        require_gpu: bool = False,
         **kwargs
     ):
         """
@@ -174,6 +217,9 @@ class TransformersEngine(BatchModel):
             low_cpu_mem_usage: Use low CPU memory during loading
             max_memory: Maximum memory per device (e.g., {0: "20GB", "cpu": "30GB"})
             offload_folder: Folder for offloading weights
+            require_gpu: Fail with a clear error if the model cannot be placed
+                entirely on the GPU (rather than falling back to CPU offload).
+                Use this on hardware where a silent CPU fallback is unacceptable.
             **kwargs: Additional model loading arguments
         """
         super().__init__(
@@ -189,11 +235,13 @@ class TransformersEngine(BatchModel):
         self.low_cpu_mem_usage = low_cpu_mem_usage
         self.max_memory = max_memory
         self.offload_folder = offload_folder
+        self.require_gpu = require_gpu
 
         # Filter out parameters that shouldn't be passed to model loading
         # These are vLLM-specific or other incompatible parameters
         self.additional_kwargs = {k: v for k, v in kwargs.items()
                                   if k not in ['quantization', 'engine', 'backend', 'device',
+                                               'require_gpu',
                                                'use_tqdm', 'tensor_parallel_size',
                                                'apply_chat_template', 'system_prompt',
                                                'gpu_memory_utilization', 'max_num_seqs',
@@ -330,6 +378,29 @@ class TransformersEngine(BatchModel):
             # Set model to eval mode
             self.model.eval()
 
+            # Reconcile the requested device with where the parameters actually
+            # landed. With device_map="auto", accelerate offloads layers to CPU
+            # (or disk) when the GPU can't hold the model, so an intended "cuda"
+            # load can end up partly or wholly on CPU. Report the real placement
+            # so callers aren't told "cuda" while inference runs on CPU.
+            intended_device = self.device
+            self.device = self._resolve_placement()
+            if intended_device == "cuda" and self.device != "cuda":
+                free_gb = self._free_vram_gb()
+                where = "CPU" if self.device == "cpu" else "CPU/disk (mixed placement)"
+                if self.require_gpu:
+                    raise GPUPlacementError(
+                        f"Model '{self.model_name}' could not be placed entirely on the GPU "
+                        f"(only {free_gb:.2f} GB free) and require_gpu is set. Free GPU memory, "
+                        f"choose a smaller model, or enable quantization (e.g. quantization='4bit')."
+                    )
+                logger.warning(
+                    "Model '%s' did not fit in available GPU memory (%.2f GB free); "
+                    "running on %s. Inference will be slower. Free GPU memory or pass "
+                    "quantization='4bit' to keep it on the GPU.",
+                    self.model_name, free_gb, where,
+                )
+
             # Store metadata
             self._context_length = self._get_max_length()
             self._metadata = {
@@ -345,9 +416,72 @@ class TransformersEngine(BatchModel):
             self._is_loaded = True
             logger.debug(f"Model '{self.model_name}' loaded successfully with Transformers")
 
+        except GPUPlacementError:
+            # An explicit require_gpu policy failure — surface it unchanged
+            # rather than wrapping it as a generic load failure.
+            raise
         except Exception as e:
+            # In offline mode a missing/misspelled repo surfaces as a
+            # connectivity error ("couldn't connect to huggingface.co"). Report
+            # it as a local cache miss and name what is cached instead.
+            offline = _offline_mode_active()
+            if offline or _is_cache_miss_error(e):
+                cached = _list_cached_model_repos()
+                listed = ", ".join(cached) if cached else "none"
+                reason = (
+                    "offline mode is set"
+                    if offline
+                    else "it could not be downloaded (no network)"
+                )
+                raise ModelNotCachedError(
+                    f"Model '{self.model_name}' is not in the local HuggingFace cache "
+                    f"and {reason}. Cached models: {listed}."
+                ) from e
             logger.error(f"Failed to load model with Transformers: {e}")
             raise RuntimeError(f"Transformers model loading failed: {e}") from e
+
+    def _resolve_placement(self) -> str:
+        """Return where the model parameters actually reside after loading.
+
+        Returns 'cuda' if every parameter is on a GPU, 'cpu' if every parameter
+        is on CPU (or disk), or 'mixed' if the model is split across GPU and
+        CPU/disk. accelerate records the per-module placement in
+        ``model.hf_device_map`` when ``device_map`` dispatch is used; otherwise
+        the placement is read from the parameters directly.
+        """
+        device_map = getattr(self.model, "hf_device_map", None)
+        if device_map:
+            on_gpu = on_host = False
+            for dev in device_map.values():
+                if isinstance(dev, int):
+                    on_gpu = True
+                    continue
+                text = str(dev).lower()
+                if text.startswith("cuda") or text.isdigit():
+                    on_gpu = True
+                else:  # "cpu", "disk", "meta"
+                    on_host = True
+            if on_gpu and on_host:
+                return "mixed"
+            return "cuda" if on_gpu else "cpu"
+        try:
+            param = next(self.model.parameters())
+        except StopIteration:
+            return str(self.device)
+        return "cuda" if param.is_cuda else "cpu"
+
+    @staticmethod
+    def _free_vram_gb() -> float:
+        """Total free VRAM (GB) across the visible CUDA devices, or 0.0 if none."""
+        if not torch.cuda.is_available():
+            return 0.0
+        free_bytes = 0
+        for index in range(torch.cuda.device_count()):
+            try:
+                free_bytes += torch.cuda.mem_get_info(index)[0]
+            except Exception:
+                pass
+        return free_bytes / (1024 ** 3)
 
     def _create_quantization_config(self) -> BitsAndBytesConfig:
         """
@@ -725,7 +859,8 @@ class TransformersEngine(BatchModel):
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "total_tokens": prompt_tokens + completion_tokens,
-                    "stop_sequences_applied": stop_sequences if stop_sequences else []
+                    "stop_sequences_applied": stop_sequences if stop_sequences else [],
+                    "device": self.device,
                 }
             )
 
@@ -951,6 +1086,7 @@ class TransformersEngine(BatchModel):
                         "prompt_tokens": prompt_length,
                         "completion_tokens": len(generated_ids),
                         "total_tokens": prompt_length + len(generated_ids),
+                        "device": self.device,
                     }
                 ))
 

@@ -146,6 +146,47 @@ def test_models_info_local_aware_when_not_in_catalog(capsys, monkeypatch):
     assert data["local"]["context_window"] == 131072
 
 
+def test_models_info_engine_prefixed_cached_resolves_local(capsys, monkeypatch):
+    # "transformers:<cached repo>" resolves to the local view, not a catalog miss.
+    cli = _cli()
+    monkeypatch.setattr(cli, "_local_cached_models",
+                        lambda: _fake_local([{"id": "Qwen/Qwen2.5-1.5B-Instruct",
+                                              "size_gb": 2.9}]))
+    monkeypatch.setattr(cli, "_local_model_context_window", lambda path: 32768)
+    args = SimpleNamespace(name="transformers:Qwen/Qwen2.5-1.5B-Instruct", output_json=True)
+    code = cli._models_info(args)
+    data = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert data["engine"] == "transformers"
+    assert data["id"] == "Qwen/Qwen2.5-1.5B-Instruct"
+    assert data["local"]["cached"] is True
+
+
+def test_models_info_engine_prefixed_uncached_reports_cache_miss(capsys, monkeypatch):
+    cli = _cli()
+    monkeypatch.setattr(cli, "_local_cached_models",
+                        lambda: _fake_local([{"id": "Qwen/Qwen2.5-1.5B-Instruct"}]))
+    args = SimpleNamespace(name="transformers:meta-llama/Not-Cached-99B", output_json=True)
+    code = cli._models_info(args)
+    data = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert data["engine"] == "transformers"
+    assert data["local"] is None
+    assert "Qwen/Qwen2.5-1.5B-Instruct" in data["cached_models"]
+
+
+def test_models_status_json_shape(capsys):
+    args = SimpleNamespace(output_json=True)
+    code = _cli()._models_status(args)
+    data = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert set(data) >= {"cuda_available", "gpus", "loaded_models", "capability_profiles"}
+    assert isinstance(data["gpus"], list)
+    assert isinstance(data["loaded_models"], list)
+    for gpu in data["gpus"]:
+        assert {"index", "name", "total_gb", "used_gb", "free_gb"} <= set(gpu)
+
+
 def test_models_info_includes_local_block_alongside_cloud(capsys, monkeypatch):
     # An id present in BOTH the catalog and the local cache shows the cloud row
     # AND a local-copy block (non-JSON path), so the local copy isn't hidden.
