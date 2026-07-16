@@ -178,6 +178,47 @@ class TestGroqAdapterGenerate:
         assert result.metadata["prompt_tokens"] == 10
         assert result.metadata["completion_tokens"] == 5
         assert result.metadata["total_tokens"] == 15
+        assert result.metadata["estimated_usage"] is False
+
+    def test_zero_usage_response_is_estimated_not_zero(self):
+        # Groq returns an all-zero usage object on some tool-call responses
+        # even though the call was billed. The adapter estimates token counts
+        # from the request and output instead of reporting a misleading zero.
+        adapter = self._loaded_adapter("llama-3.3-70b-versatile")
+        tc = MagicMock()
+        tc.id = "tc1"
+        tc.type = "function"
+        tc.function.name = "retrieval"
+        tc.function.arguments = '{"query": "database backup schedule"}'
+        resp = self._make_mock_response("", tool_calls=[tc])
+        resp.usage.prompt_tokens = 0
+        resp.usage.completion_tokens = 0
+        resp.usage.total_tokens = 0
+        adapter._client.chat.completions.create.return_value = resp
+        tools = [{"type": "function", "function": {
+            "name": "retrieval", "description": "search",
+            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}}}}]
+        result = adapter.generate_with_tools(
+            "Find the database backup schedule in the knowledge base.", tools,
+        )
+        assert result.metadata["estimated_usage"] is True
+        assert result.metadata["prompt_tokens"] > 0
+        assert result.metadata["completion_tokens"] > 0
+        assert result.metadata["total_tokens"] == (
+            result.metadata["prompt_tokens"] + result.metadata["completion_tokens"]
+        )
+
+    def test_estimate_prompt_tokens_counts_messages_and_tools(self):
+        adapter = self._loaded_adapter()
+        req = {
+            "messages": [
+                {"role": "system", "content": "You are a retrieval assistant."},
+                {"role": "user", "content": "What is the VPN hostname?"},
+            ],
+            "tools": [{"type": "function", "function": {"name": "retrieval"}}],
+        }
+        n = adapter._estimate_prompt_tokens(req)
+        assert n > 0
 
     def test_generate_forwards_frequency_and_presence_penalty(self):
         """A pinned penalty must reach the Groq request, matching seed/top_p."""

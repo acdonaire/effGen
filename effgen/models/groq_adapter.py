@@ -408,6 +408,53 @@ class GroqAdapter(BaseModel):
             return {"role": role, "content": content_parts[0]["text"]}
         return {"role": role, "content": content_parts}
 
+    def _estimate_prompt_tokens(self, request_params: dict[str, Any]) -> int:
+        """Estimate prompt tokens from a request's messages and tool schemas.
+
+        Used only when the API reports zero/absent usage on a response that
+        clearly consumed input, so the run's token/cost accounting does not
+        under-count by treating a billed call as free.
+        """
+        parts: list[str] = []
+        for m in request_params.get("messages", []) or []:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                parts.append(content)
+            elif isinstance(content, list):
+                parts.extend(
+                    p.get("text", "") for p in content if isinstance(p, dict)
+                )
+        for t in request_params.get("tools", []) or []:
+            try:
+                parts.append(json.dumps(t))
+            except (TypeError, ValueError):
+                pass
+        return self.count_tokens("\n".join(p for p in parts if p)).count
+
+    def _estimate_failed_usage(
+        self,
+        request_params: dict[str, Any],
+        exc: Exception,
+        msg: str,
+    ) -> tuple[int, int]:
+        """Estimate (prompt_tokens, completion_tokens) for a billed call whose
+        error response omitted usage (Groq's ``tool_use_failed`` recovery).
+
+        Prompt tokens are counted from the request messages and any tool
+        schemas; completion tokens from the model's ``failed_generation`` text
+        when the error body exposes it, else from the visible error message.
+        """
+        prompt_tokens = self._estimate_prompt_tokens(request_params)
+
+        failed_generation = ""
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            err = body.get("error")
+            if isinstance(err, dict):
+                failed_generation = err.get("failed_generation") or ""
+        completion_tokens = self.count_tokens(failed_generation or msg).count
+        return prompt_tokens, completion_tokens
+
     def _do_generate(
         self,
         prompt: str,
@@ -543,17 +590,34 @@ class GroqAdapter(BaseModel):
                         "Groq returned tool_use_failed but included a parseable tool call; "
                         "using failed_generation as structured tool call."
                     )
+                    # This turn was still billed, but the error body carries no
+                    # usage object, so estimate token counts from the request
+                    # and the model's failed generation rather than reporting
+                    # zero (which would under-count a run's true cost/tokens).
+                    prompt_tokens, completion_tokens = self._estimate_failed_usage(
+                        request_params, exc, msg,
+                    )
+                    total_tokens = prompt_tokens + completion_tokens
+                    cost = 0.0
+                    if self._enable_cost_tracking:
+                        cost = CostTracker.get().record(
+                            provider="groq",
+                            model=self.model_name,
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                        )
                     return GenerationResult(
                         text="",
-                        tokens_used=0,
+                        tokens_used=completion_tokens,
                         finish_reason="tool_calls",
                         model_name=self.model_name,
                         metadata={
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": total_tokens,
                             "provider": "groq",
-                            "cost_usd": 0.0,
+                            "cost_usd": cost,
+                            "estimated_usage": True,
                             "tool_calls": [failed_tool_call],
                             "provider_error": "tool_use_failed",
                         },
@@ -596,6 +660,21 @@ class GroqAdapter(BaseModel):
                     },
                 })
 
+        # Groq can return an all-zero usage object on some tool-call responses
+        # even though input was consumed and output produced. Reporting that
+        # zero verbatim makes a billed call look free and under-counts a run's
+        # token/cost totals, so estimate from the request and the produced
+        # output instead and flag the numbers as estimated.
+        estimated_usage = False
+        if total_tokens == 0 and (text or tool_calls):
+            prompt_tokens = self._estimate_prompt_tokens(request_params)
+            completion_parts = [text] + [json.dumps(tc) for tc in tool_calls]
+            completion_tokens = self.count_tokens(
+                "\n".join(p for p in completion_parts if p)
+            ).count
+            total_tokens = prompt_tokens + completion_tokens
+            estimated_usage = True
+
         cost = 0.0
         if self._enable_cost_tracking:
             cost = CostTracker.get().record(
@@ -628,6 +707,7 @@ class GroqAdapter(BaseModel):
                 "total_tokens": total_tokens,
                 "provider": "groq",
                 "cost_usd": cost,
+                "estimated_usage": estimated_usage,
                 "tool_calls": tool_calls,
             },
         )

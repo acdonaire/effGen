@@ -52,6 +52,36 @@ class IngestedChunk:
         return Document(id=self.id, content=self.content, metadata=md)
 
 
+@dataclass
+class IngestSummary:
+    """Coverage report for a single :meth:`DocumentIngester.ingest` call.
+
+    Available on :attr:`DocumentIngester.last_summary` after ``ingest()``
+    returns, so a pipeline can log coverage without scraping log lines: how
+    many chunks were indexed, how many files were seen, which files were
+    skipped and why (mirrors :attr:`DocumentIngester.last_skipped`), and the
+    elapsed time / throughput.
+    """
+
+    indexed_chunks: int = 0
+    files_seen: int = 0
+    skipped: list[tuple[str, str]] = field(default_factory=list)
+    elapsed_s: float = 0.0
+
+    @property
+    def skipped_count(self) -> int:
+        return len(self.skipped)
+
+    @property
+    def indexed_files(self) -> int:
+        """Files that contributed at least one indexed chunk."""
+        return self.files_seen - len(self.skipped)
+
+    @property
+    def chunks_per_s(self) -> float:
+        return self.indexed_chunks / self.elapsed_s if self.elapsed_s > 0 else 0.0
+
+
 # ---------------------------------------------------------------------------
 # Loaders — always-available (stdlib only)
 # ---------------------------------------------------------------------------
@@ -470,6 +500,12 @@ class DocumentIngester:
         # Files skipped during the most recent ingest(), as (path, reason). Lets
         # callers report *why* nothing was indexed instead of a bare "0 docs".
         self.last_skipped: list[tuple[str, str]] = []
+        # Coverage report for the most recent ingest() (counts + throughput).
+        self.last_summary: IngestSummary | None = None
+        # Per-file bookkeeping set by _ingest_file so ingest() can tell a
+        # fully-deduplicated file apart from a genuinely empty one.
+        self._last_file_had_content = False
+        self._last_file_dedup_dropped = 0
 
     def _iter_with_progress(self, items: list[Any], desc: str) -> Iterable[Any]:
         if not self.show_progress:
@@ -498,7 +534,16 @@ class DocumentIngester:
 
         Returns:
             A list of `IngestedChunk` objects.
+
+        After the call, two attributes carry the coverage report for the run:
+        :attr:`last_skipped` is a list of ``(path, reason)`` for every file that
+        was not indexed (unsupported extension, corrupt file, no extractable
+        text, or all-duplicate content), and :attr:`last_summary` is an
+        :class:`IngestSummary` with the indexed/skipped counts and throughput.
         """
+        import time as _time
+
+        _start = _time.perf_counter()
         self.last_skipped = []
         paths: list[Path] = []
         if isinstance(source, list | tuple):
@@ -520,6 +565,20 @@ class DocumentIngester:
                 file_chunks = self._ingest_file(path)
                 if file_chunks:
                     chunks.extend(file_chunks)
+                elif (
+                    self.dedupe
+                    and self._last_file_had_content
+                    and self._last_file_dedup_dropped > 0
+                ):
+                    # The file had extractable text, but every chunk it produced
+                    # was an exact duplicate of content already indexed in this
+                    # run — distinct from a genuinely empty file, so a corpus
+                    # audit isn't misled into chasing a phantom empty file.
+                    self.last_skipped.append((
+                        str(path),
+                        "all content duplicates an already-ingested file "
+                        "(dedupe=True)",
+                    ))
                 elif ext == ".pdf":
                     # A PDF loads but yields no text most often because it is
                     # a scanned/image-only PDF: the pages are images with no
@@ -547,14 +606,34 @@ class DocumentIngester:
                 logger.warning("Failed to ingest %s: %s", path, e)
                 self.last_skipped.append((str(path), self._corrupt_file_reason(ext)))
 
+        self.last_summary = IngestSummary(
+            indexed_chunks=len(chunks),
+            files_seen=len(paths),
+            skipped=list(self.last_skipped),
+            elapsed_s=_time.perf_counter() - _start,
+        )
         logger.info(
             "Ingested %d chunks from %d file(s) (%d skipped)",
             len(chunks), len(paths), len(self.last_skipped),
         )
         return chunks
 
+    #: Image extensions that ingestion does not index as text, but which the
+    #: multimodal path can describe/OCR. Named so the skip reason can point a
+    #: user at the right tool instead of a bare "unsupported".
+    _IMAGE_EXTENSIONS: frozenset[str] = frozenset({
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp",
+    })
+
     def _unsupported_reason(self, ext: str) -> str:
         label = ext if ext else "(no extension)"
+        if ext in self._IMAGE_EXTENSIONS:
+            return (
+                f"image file '{label}' is not indexed as text during ingestion; "
+                "read it with a vision model instead — e.g. pass the image to "
+                "agent.run(..., inputs=['picture.png']) or the multimodal preset "
+                "(create_agent('multimodal', model=...))"
+            )
         return (
             f"unsupported extension '{label}'; supported: "
             f"{', '.join(self.supported_extensions())}"
@@ -583,6 +662,10 @@ class DocumentIngester:
         return []
 
     def _ingest_file(self, path: Path) -> list[IngestedChunk]:
+        # Reset per-file bookkeeping so ingest() can classify an empty return
+        # (genuinely empty vs. fully deduplicated).
+        self._last_file_had_content = False
+        self._last_file_dedup_dropped = 0
         ext = path.suffix.lower()
         loader = LOADERS.get(ext)
         if loader is None:
@@ -609,11 +692,13 @@ class DocumentIngester:
             for c in chunk_docs:
                 if not c.content.strip():
                     continue
+                self._last_file_had_content = True
                 content_hash = hashlib.sha256(
                     c.content.encode("utf-8")
                 ).hexdigest()[:16]
 
                 if self.dedupe and content_hash in self._seen_hashes:
+                    self._last_file_dedup_dropped += 1
                     continue
                 self._seen_hashes.add(content_hash)
 

@@ -163,10 +163,13 @@ _RAG_PRESET = PresetConfig(
     tool_names=["retrieval"],
     system_prompt=(
         "You are a retrieval-augmented assistant. When answering, ALWAYS "
-        "consult the knowledge base first using the retrieval tool. Cite "
-        "sources inline using [1], [2], ... markers matching the returned "
-        "citation list. If the knowledge base does not contain the answer, "
-        "say so explicitly rather than guessing."
+        "consult the knowledge base first using the retrieval tool, then write "
+        "the answer in your own words and cite sources inline using [1], [2], "
+        "... markers matching the returned citation list. Do not paste raw "
+        "retrieved passages back as the answer. If the retrieved passages do "
+        "not contain the information the question asks for, reply that the "
+        "knowledge base does not cover it and name what is missing — never "
+        "guess and never answer from unrelated passages."
     ),
     max_iterations=8,
     temperature=0.3,
@@ -555,6 +558,13 @@ def _ingest_rag_knowledge_base(
     if retrieval_tool is None:
         retrieval_tool = Retrieval()
         tools.append(retrieval_tool)
+
+    # Broaden retrieval for the knowledge-base agent: a wider default top_k plus
+    # diversity-aware ranking so a compound, multi-topic question keeps distinct
+    # passages instead of losing a whole topic to near-duplicate chunks. A
+    # caller can still override top_k/diversity per query.
+    if hasattr(retrieval_tool, "configure"):
+        retrieval_tool.configure(default_top_k=8, diversity=0.3)
 
     retrieval_tool.add_documents(docs, chunk=False)
     if skipped:

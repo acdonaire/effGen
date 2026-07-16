@@ -34,6 +34,7 @@ from effgen.rag import (
     SearchResult,
     SemanticChunker,
     TableChunker,
+    TextChunker,
 )
 from effgen.rag.ingest import IngestedChunk
 
@@ -371,6 +372,53 @@ class TestDocumentIngester:
         import re
         assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)?$", date)
 
+    def test_duplicate_file_reported_as_duplicate_not_empty(self, tmp_path: Path):
+        # A file whose content is an exact duplicate of an already-indexed file
+        # is named as a duplicate, distinct from a genuinely empty file, so a
+        # corpus audit is not misled into chasing a phantom empty file.
+        same = "Exactly the same content across two distinct files here."
+        (tmp_path / "a.txt").write_text(same)
+        (tmp_path / "b.txt").write_text(same)
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(tmp_path)
+        assert len(chunks) == 1
+        assert len(ingester.last_skipped) == 1
+        _, reason = ingester.last_skipped[0]
+        assert "duplicate" in reason.lower()
+        assert "empty" not in reason.lower()
+
+    def test_dedup_reason_absent_when_dedupe_disabled(self, tmp_path: Path):
+        same = "Exactly the same content across two distinct files here."
+        (tmp_path / "a.txt").write_text(same)
+        (tmp_path / "b.txt").write_text(same)
+        ingester = DocumentIngester(show_progress=False, dedupe=False)
+        chunks = ingester.ingest(tmp_path)
+        assert len(chunks) == 2
+        assert ingester.last_skipped == []
+
+    def test_ingest_summary_reports_coverage(self, tmp_path: Path):
+        (tmp_path / "keep.txt").write_text("indexable content that is real")
+        (tmp_path / "skip.xyz").write_text("unsupported")
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(tmp_path)
+        summary = ingester.last_summary
+        assert summary is not None
+        assert summary.indexed_chunks == len(chunks)
+        assert summary.files_seen == 2
+        assert summary.skipped_count == 1
+        assert summary.indexed_files == 1
+        assert summary.elapsed_s >= 0.0
+        assert summary.chunks_per_s >= 0.0
+
+    def test_image_skip_reason_points_at_multimodal(self, tmp_path: Path):
+        (tmp_path / "photo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        ingester = DocumentIngester(show_progress=False)
+        chunks = ingester.ingest(tmp_path)
+        assert chunks == []
+        _, reason = ingester.last_skipped[0]
+        assert "image" in reason.lower()
+        assert "vision" in reason.lower() or "multimodal" in reason.lower()
+
 
 class TestNormalizePdfDate:
     def test_normalizes_with_timezone(self):
@@ -489,6 +537,35 @@ class TestSemanticChunker:
     def test_very_short_text(self):
         chunks = SemanticChunker().chunk("One sentence.", "doc")
         assert len(chunks) == 1
+
+
+class TestChunkerUniformApi:
+    """Every chunker takes an optional doc_id and offers split_text()."""
+
+    _TEXT = (
+        "First paragraph with a couple of sentences. It carries content.\n\n"
+        "Second paragraph with more content. Another sentence follows here."
+    )
+
+    @pytest.mark.parametrize(
+        "cls",
+        [TextChunker, SemanticChunker, CodeChunker, TableChunker, HierarchicalChunker],
+    )
+    def test_chunk_without_doc_id(self, cls):
+        # The natural first call a newcomer makes must not raise TypeError.
+        chunks = cls().chunk(self._TEXT)
+        assert len(chunks) >= 1
+        assert all(c.content for c in chunks)
+        assert all(c.id for c in chunks)
+
+    @pytest.mark.parametrize(
+        "cls",
+        [TextChunker, SemanticChunker, CodeChunker, TableChunker, HierarchicalChunker],
+    )
+    def test_split_text_returns_strings(self, cls):
+        pieces = cls().split_text(self._TEXT)
+        assert isinstance(pieces, list)
+        assert pieces and all(isinstance(p, str) for p in pieces)
 
 
 # ---------------------------------------------------------------------------
@@ -970,6 +1047,23 @@ class TestRagPreset:
         )
         assert retrieval is not None
         assert retrieval.num_documents > 0
+
+    def test_rag_preset_broadens_retrieval_defaults(self, tmp_path: Path):
+        # The knowledge-base agent widens retrieval breadth and enables
+        # diversity so a multi-topic question keeps distinct passages instead
+        # of losing a whole topic to near-duplicate chunks.
+        from effgen.presets import create_agent
+        from tests.fixtures.mock_models import MockModel
+
+        (tmp_path / "a.txt").write_text("Some indexable content about systems.")
+        agent = create_agent("rag", MockModel(responses=["ok"]), knowledge_base=str(tmp_path))
+        retrieval = next(
+            t for t in agent.tools.values() if t.metadata.name == "retrieval"
+        )
+        assert retrieval.default_top_k >= 8
+        assert retrieval.diversity > 0.0
+        specs = {p.name: p for p in retrieval.metadata.parameters}
+        assert specs["top_k"].default == retrieval.default_top_k
 
     def test_create_rag_agent_without_knowledge_base_fails_loud(self):
         # Omitting knowledge_base= entirely must fail the same way an

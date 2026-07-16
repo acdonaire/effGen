@@ -464,7 +464,12 @@ class AgentReActMixin:
                     # Extract the last successful observation from scratchpad
                     partial = self._extract_partial_answer(scratchpad)
                     if partial:
-                        return _build_response(partial, answer_source="loop_detected", repeated_action=action)
+                        return _build_response(
+                            partial,
+                            answer_source="loop_detected",
+                            repeated_action=action,
+                            partial=True,
+                        )
                     # No partial answer to fall back on — every attempt of this
                     # action failed or was denied, so simply nudging and
                     # re-offering the same tool just repeats the loop until
@@ -541,10 +546,21 @@ class AgentReActMixin:
                                 "result; returning it as the final answer",
                                 action,
                             )
+                            # A retrieval/search tool's output is context, not a
+                            # synthesized answer: returning it verbatim is an
+                            # unsynthesized passage dump, so flag it partial.
+                            # A compute tool (e.g. calculator) reproducing its
+                            # result is a confident answer and stays unflagged.
+                            extra = (
+                                {"partial": True}
+                                if self._is_context_retrieval_tool(action)
+                                else {}
+                            )
                             return _build_response(
                                 tool_result,
                                 _tool_calls=tool_calls,
                                 answer_source="repeated_tool_result",
+                                **extra,
                             )
                         previous_results.append(result_key)
 
@@ -612,6 +628,19 @@ class AgentReActMixin:
             tokens_used=tokens_used,
             metadata=meta_fail,
         )
+
+    def _is_context_retrieval_tool(self, action: str) -> bool:
+        """True when ``action`` is a knowledge-base/search tool whose output is
+        retrieved context rather than a computed answer.
+
+        Used to flag a fallback that returns such a tool's raw observation as
+        partial, so a passage dump is not presented as a synthesized answer.
+        """
+        tool = self.tools.get(action)
+        category = getattr(getattr(tool, "metadata", None), "category", None)
+        if category is ToolCategory.INFORMATION_RETRIEVAL:
+            return True
+        return action in {"retrieval", "web_search", "search", "knowledge_base"}
 
     def _extract_partial_answer(self, scratchpad: str) -> str | None:
         """

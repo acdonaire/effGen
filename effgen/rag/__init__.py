@@ -26,7 +26,7 @@ from effgen.rag.chunking import (
     TextChunker,
 )
 from effgen.rag.context_builder import ContextBuilder
-from effgen.rag.ingest import DocumentIngester, IngestedChunk
+from effgen.rag.ingest import DocumentIngester, IngestedChunk, IngestSummary
 from effgen.rag.reranker import (
     CrossEncoderReranker,
     LLMReranker,
@@ -37,6 +37,7 @@ from effgen.rag.search import HybridSearchEngine, SearchResult
 __all__ = [
     "DocumentIngester",
     "IngestedChunk",
+    "IngestSummary",
     "TextChunker",
     "SemanticChunker",
     "CodeChunker",

@@ -94,7 +94,7 @@ class SemanticChunker(ChunkingStrategy):
                 self._model = False
         return self._model
 
-    def chunk(self, text: str, doc_id: str) -> list[Document]:
+    def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
         model = self._get_model()
         if not model:
             return self._fallback.chunk(text, doc_id)
@@ -230,7 +230,7 @@ class CodeChunker(ChunkingStrategy):
             ext = "." + filename_or_ext.rsplit(".", 1)[-1]
         return _EXT_LANG.get(ext.lower())
 
-    def chunk(self, text: str, doc_id: str) -> list[Document]:
+    def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
         lang = self.language
         patterns = _LANG_PATTERNS.get(lang) if lang else None
         if not patterns:
@@ -288,7 +288,7 @@ class TableChunker(ChunkingStrategy):
         self.max_chunk_size = max_chunk_size
         self._prose_chunker = FixedSizeChunker(chunk_size=max_chunk_size, overlap=100)
 
-    def chunk(self, text: str, doc_id: str) -> list[Document]:
+    def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
         lines = text.splitlines()
         blocks: list[tuple[str, str]] = []  # (kind, content)
         i = 0
@@ -369,7 +369,7 @@ class HierarchicalChunker(ChunkingStrategy):
         self.max_chunk_size = max_chunk_size
         self._fallback = FixedSizeChunker(chunk_size=max_chunk_size, overlap=100)
 
-    def chunk(self, text: str, doc_id: str) -> list[Document]:
+    def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
         lines = text.splitlines()
         sections: list[tuple[list[str], list[str]]] = []  # (heading_path, body_lines)
         path: list[str] = []

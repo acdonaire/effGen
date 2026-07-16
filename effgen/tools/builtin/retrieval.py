@@ -144,8 +144,17 @@ class SimpleEmbedding(EmbeddingProvider):
 class ChunkingStrategy:
     """Base chunking strategy."""
 
-    def chunk(self, text: str, doc_id: str) -> list[Document]:
+    def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
         raise NotImplementedError("Subclasses must implement chunk()")
+
+    def split_text(self, text: str) -> list[str]:
+        """Return the chunk texts for ``text`` as plain strings.
+
+        A convenience over :meth:`chunk` for callers that only want the pieces
+        and not the :class:`Document` wrappers or an id. Available on every
+        chunking strategy.
+        """
+        return [doc.content for doc in self.chunk(text)]
 
 
 class FixedSizeChunker(ChunkingStrategy):
@@ -155,7 +164,7 @@ class FixedSizeChunker(ChunkingStrategy):
         self.chunk_size = chunk_size
         self.overlap = overlap
 
-    def chunk(self, text: str, doc_id: str) -> list[Document]:
+    def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
         chunks = []
         start = 0
         chunk_num = 0
@@ -203,7 +212,7 @@ class SentenceChunker(ChunkingStrategy):
     def _split_sentences(self, text: str) -> list[str]:
         return re.split(r'(?<=[.!?])\s+', text.strip())
 
-    def chunk(self, text: str, doc_id: str) -> list[Document]:
+    def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
         sentences = self._split_sentences(text)
         if not sentences:
             return [Document(id=f"{doc_id}_chunk_0", content=text, metadata={"parent_doc_id": doc_id, "chunking": "sentence"})]
@@ -250,7 +259,7 @@ class ParagraphChunker(ChunkingStrategy):
     def __init__(self, max_chunk_size: int = 1000):
         self.max_chunk_size = max_chunk_size
 
-    def chunk(self, text: str, doc_id: str) -> list[Document]:
+    def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
         paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
         if not paragraphs:
             return [Document(id=f"{doc_id}_chunk_0", content=text, metadata={"parent_doc_id": doc_id, "chunking": "paragraph"})]
@@ -330,7 +339,7 @@ class RecursiveChunker(ChunkingStrategy):
 
         return result
 
-    def chunk(self, text: str, doc_id: str) -> list[Document]:
+    def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
         pieces = self._split(text, self.separators)
         chunks = []
         for i, piece in enumerate(pieces):
@@ -575,6 +584,8 @@ class Retrieval(BaseTool):
         enable_hybrid_search: bool = True,
         hybrid_alpha: float = 0.7,
         allow_pickle: bool = False,
+        default_top_k: int = 5,
+        diversity: float = 0.0,
     ):
         """
         Initialize the retrieval tool.
@@ -593,6 +604,14 @@ class Retrieval(BaseTool):
                 pickle file is refused (unpickling arbitrary data is remote code
                 execution). Only set ``True`` for index files you created and
                 trust.
+            default_top_k: Number of results a query returns when ``top_k`` is
+                not passed explicitly (default 5).
+            diversity: Diversity weight in [0, 1] for result ranking. ``0.0``
+                (default) ranks purely by relevance. A positive value applies
+                maximal-marginal-relevance re-ranking so near-duplicate chunks
+                do not fill every slot, which broadens coverage for multi-topic
+                queries. Callers can override per query via the ``diversity``
+                argument.
         """
         super().__init__(
             metadata=ToolMetadata(
@@ -617,7 +636,7 @@ class Retrieval(BaseTool):
                         type=ParameterType.INTEGER,
                         description="Number of top results to return",
                         required=False,
-                        default=5,
+                        default=default_top_k,
                         min_value=1,
                         max_value=50,
                     ),
@@ -627,6 +646,20 @@ class Retrieval(BaseTool):
                         description="Minimum similarity score threshold (0-1)",
                         required=False,
                         default=0.0,
+                        min_value=0.0,
+                        max_value=1.0,
+                    ),
+                    ParameterSpec(
+                        name="diversity",
+                        type=ParameterType.FLOAT,
+                        description=(
+                            "Diversity weight in 0-1. 0 ranks purely by "
+                            "relevance; higher values spread results across "
+                            "distinct passages so near-duplicate chunks do not "
+                            "fill every slot (useful for multi-topic queries)."
+                        ),
+                        required=False,
+                        default=diversity,
                         min_value=0.0,
                         max_value=1.0,
                     ),
@@ -681,6 +714,8 @@ class Retrieval(BaseTool):
         self.enable_hybrid_search = enable_hybrid_search
         self.hybrid_alpha = hybrid_alpha
         self.allow_pickle = allow_pickle
+        self.default_top_k = default_top_k
+        self.diversity = max(0.0, min(1.0, diversity))
 
         # Initialize chunker
         if chunking_strategy in self.CHUNKING_STRATEGIES:
@@ -727,6 +762,26 @@ class Retrieval(BaseTool):
         # Auto-load knowledge base directory
         if knowledge_base_path and os.path.isdir(knowledge_base_path):
             self._load_directory(knowledge_base_path)
+
+    def configure(
+        self,
+        default_top_k: int | None = None,
+        diversity: float | None = None,
+    ) -> None:
+        """Update the default ``top_k`` / ``diversity`` after construction.
+
+        Sets both the runtime defaults used when a query omits the argument and
+        the tool-schema defaults a model reads, so the two stay in step.
+        """
+        specs = {p.name: p for p in self.metadata.parameters}
+        if default_top_k is not None:
+            self.default_top_k = int(default_top_k)
+            if "top_k" in specs:
+                specs["top_k"].default = int(default_top_k)
+        if diversity is not None:
+            self.diversity = max(0.0, min(1.0, float(diversity)))
+            if "diversity" in specs:
+                specs["diversity"].default = self.diversity
 
     def _load_directory(self, dir_path: str):
         """Load all supported files from a directory."""
@@ -880,19 +935,76 @@ class Retrieval(BaseTool):
         similarities = np.dot(doc_norms, query_norm)
         return similarities
 
+    def _mmr_order(
+        self,
+        candidate_indices: list[int],
+        relevance: np.ndarray,
+        top_k: int,
+        diversity: float,
+    ) -> list[int]:
+        """Re-order candidates by maximal marginal relevance.
+
+        Each pick maximizes ``(1 - diversity) * relevance - diversity * max
+        similarity to an already-picked chunk``, so near-identical chunks do
+        not consume every slot and a multi-topic query keeps distinct passages.
+        Falls back to the relevance order when embeddings are unavailable.
+        """
+        if self.embeddings_matrix is None or diversity <= 0.0 or not candidate_indices:
+            return candidate_indices[:top_k]
+
+        mat = self.embeddings_matrix
+        norms = mat / (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-8)
+        cand = list(candidate_indices)
+        # Min-max normalize relevance over the candidate pool so the two MMR
+        # terms are on the same 0-1 scale regardless of the score distribution.
+        rel_vals = relevance[cand]
+        rmin, rmax = float(rel_vals.min()), float(rel_vals.max())
+        span = (rmax - rmin) or 1.0
+        rel_norm = {i: (float(relevance[i]) - rmin) / span for i in cand}
+
+        selected: list[int] = []
+        remaining = set(cand)
+        while remaining and len(selected) < top_k:
+            best_idx = None
+            best_score = None
+            for i in cand:
+                if i not in remaining:
+                    continue
+                if selected:
+                    sims = norms[selected] @ norms[i]
+                    redundancy = float(np.max(sims))
+                else:
+                    redundancy = 0.0
+                mmr = (1.0 - diversity) * rel_norm[i] - diversity * redundancy
+                if best_score is None or mmr > best_score:
+                    best_score = mmr
+                    best_idx = i
+            selected.append(best_idx)
+            remaining.discard(best_idx)
+        return selected
+
     async def _execute(
         self,
         query: str,
-        top_k: int = 5,
+        top_k: int | None = None,
         score_threshold: float = 0.0,
         filter_metadata: dict[str, Any] | None = None,
+        diversity: float | None = None,
         **kwargs,
     ) -> dict[str, Any]:
         """
         Execute retrieval query.
 
-        Uses hybrid search (vector + BM25) by default if enabled.
+        Uses hybrid search (vector + BM25) by default if enabled. When
+        ``diversity`` is positive (per call or via the tool's configured
+        default), results are re-ranked with maximal marginal relevance so
+        near-duplicate chunks do not crowd out other relevant passages.
         """
+        if top_k is None:
+            top_k = self.default_top_k
+        if diversity is None:
+            diversity = self.diversity
+        diversity = max(0.0, min(1.0, float(diversity)))
         if not self.documents:
             return {
                 "results": [],
@@ -919,32 +1031,34 @@ class Retrieval(BaseTool):
         else:
             combined_scores = vector_scores
 
-        top_indices = np.argsort(combined_scores)[::-1]
+        ranked = np.argsort(combined_scores)[::-1]
+
+        # Apply score threshold + metadata filter first, then order. Diversity
+        # re-ranking (when on) considers a candidate pool wider than top_k so it
+        # can trade a near-duplicate for a distinct passage further down.
+        candidates: list[int] = []
+        for idx in ranked:
+            i = int(idx)
+            if float(combined_scores[i]) < score_threshold:
+                continue
+            if filter_metadata:
+                doc = self.documents[self.doc_ids[i]]
+                if any(doc.metadata.get(k) != v for k, v in filter_metadata.items()):
+                    continue
+            candidates.append(i)
+
+        if diversity > 0.0:
+            pool = candidates[: max(top_k * 4, top_k)]
+            ordered = self._mmr_order(pool, combined_scores, top_k, diversity)
+        else:
+            ordered = candidates[:top_k]
 
         results = []
-        for idx in top_indices:
-            if len(results) >= top_k:
-                break
-
-            doc_id = self.doc_ids[idx]
-            doc = self.documents[doc_id]
-            score = float(combined_scores[idx])
-
-            if score < score_threshold:
-                continue
-
-            if filter_metadata:
-                match = True
-                for key, value in filter_metadata.items():
-                    if doc.metadata.get(key) != value:
-                        match = False
-                        break
-                if not match:
-                    continue
-
+        for i in ordered:
+            doc = self.documents[self.doc_ids[i]]
             results.append({
                 "content": doc.content,
-                "score": round(score, 4),
+                "score": round(float(combined_scores[i]), 4),
                 "id": doc.id,
                 "metadata": doc.metadata,
                 "rank": len(results) + 1,

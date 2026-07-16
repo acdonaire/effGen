@@ -26,6 +26,13 @@ import pytest
 
 from effgen.core.agent import Agent, AgentConfig
 from effgen.models.base import BaseModel, GenerationResult, ModelType, TokenCount
+from effgen.tools.base_tool import (
+    BaseTool,
+    ParameterSpec,
+    ParameterType,
+    ToolCategory,
+    ToolMetadata,
+)
 from effgen.tools.builtin.calculator import Calculator
 
 
@@ -134,6 +141,64 @@ def test_repeated_result_short_circuits_with_different_input():
     assert resp.tool_calls == 2, f"expected 2 tool calls, got {resp.tool_calls}"
     assert resp.metadata.get("answer_source") == "repeated_tool_result"
     assert "225" in (resp.output or "")
+
+
+class _FixedRetrievalTool(BaseTool):
+    """A retrieval-category tool that returns the same passages every call."""
+
+    def __init__(self) -> None:
+        super().__init__(metadata=ToolMetadata(
+            name="retrieval",
+            description="Search the knowledge base.",
+            category=ToolCategory.INFORMATION_RETRIEVAL,
+            parameters=[ParameterSpec(
+                name="query", type=ParameterType.STRING,
+                description="query", required=True,
+            )],
+        ))
+
+    async def _execute(self, query: str = "", **kwargs):
+        return "Passage: the VPN hostname is vpn.example.com on port 443."
+
+
+def _retrieval_action(query: str) -> str:
+    return (
+        "Thought: I will search the knowledge base.\n"
+        "Action: retrieval\n"
+        f'Action Input: {{"query": "{query}"}}'
+    )
+
+
+def test_repeated_retrieval_dump_is_flagged_partial():
+    """A retrieval tool whose raw passages are returned via the repeated-result
+    fallback is flagged partial — a passage dump is not a synthesized answer."""
+    model = _ScriptedModel([
+        _retrieval_action("vpn hostname"),   # retrieves passages
+        _retrieval_action("vpn address"),     # different input, same result -> dump
+        _retrieval_action("vpn"),
+    ])
+    cfg = AgentConfig(
+        name="rag-loop-test", model=model, tools=[_FixedRetrievalTool()],
+        max_iterations=6, tool_calling_mode="react",
+    )
+    resp = Agent(config=cfg).run("Explain and find the VPN hostname")
+    assert resp.metadata.get("answer_source") == "repeated_tool_result"
+    assert resp.metadata.get("partial") is True
+
+
+def test_loop_detected_fallback_is_flagged_partial():
+    """A repeated action that falls back to the last observation is marked
+    partial, so a caller can tell a synthesized answer apart from a raw
+    context dump even though the run still succeeds."""
+    model = _ScriptedModel([
+        _calc_action("15^2"),   # -> 225, recorded
+        _calc_action("15^2"),   # exact repeat -> loop detected, returns partial
+    ])
+    agent = _make_agent(model)
+    resp = agent.run("Explain step by step and compute 15 squared")
+    assert resp.success is True
+    assert resp.metadata.get("answer_source") == "loop_detected"
+    assert resp.metadata.get("partial") is True
 
 
 def test_clean_final_answer_after_one_call_stops():
