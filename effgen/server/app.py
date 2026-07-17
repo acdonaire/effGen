@@ -115,7 +115,7 @@ def create_app(
     extra_models:
         Optional callable returning model ids to list in ``GET /v1/models``
         alongside the legacy aliases. When ``None`` this defaults to the ids
-        the default runner's model pool has actually loaded.
+        the default runner has actually served a successful response for.
     trust_proxy:
         Whether the per-IP rate limiter should trust the first
         ``X-Forwarded-For`` hop as the client IP. Defaults to ``False`` (the
@@ -355,22 +355,37 @@ _MODEL_POOL: "OrderedDict[str, Any]" = OrderedDict()
 _MODEL_POOL_LOCK = threading.Lock()
 _LOADING_LOCKS: dict[str, Any] = {}
 
+# Ids that produced at least one successful response this run. This drives the
+# ``GET /v1/models`` listing so it advertises only models the server has really
+# served — not every id that merely loaded a cloud adapter (a nonexistent
+# ``provider:model`` can construct an adapter and only 404 on the actual call).
+_SERVED_MODEL_IDS: "OrderedDict[str, None]" = OrderedDict()
+_SERVED_MODEL_LOCK = threading.Lock()
+_SERVED_MODEL_MAX = 64
+
+
+def _record_served_model(resolved_model: str) -> None:
+    """Record that *resolved_model* returned a successful response."""
+    if not resolved_model:
+        return
+    with _SERVED_MODEL_LOCK:
+        _SERVED_MODEL_IDS[resolved_model] = None
+        _SERVED_MODEL_IDS.move_to_end(resolved_model)
+        while len(_SERVED_MODEL_IDS) > _SERVED_MODEL_MAX:
+            _SERVED_MODEL_IDS.popitem(last=False)
+
+
+def _served_model_ids() -> list[str]:
+    """Return the ids that have served a successful response this run."""
+    with _SERVED_MODEL_LOCK:
+        return list(_SERVED_MODEL_IDS.keys())
+
 
 def _model_pool_max() -> int:
     try:
         return max(1, int(os.getenv("EFFGEN_MODEL_POOL_SIZE", "4")))
     except ValueError:
         return 4
-
-
-def _pooled_model_ids() -> list[str]:
-    """Return the resolved model ids currently loaded in the pool.
-
-    Used to make ``GET /v1/models`` list real, currently-servable models (the
-    ones this process has actually loaded) alongside the drop-in aliases.
-    """
-    with _MODEL_POOL_LOCK:
-        return list(_MODEL_POOL.keys())
 
 
 def _get_pooled_model(resolved_model: str) -> Any:
@@ -503,10 +518,15 @@ def _build_default_runner() -> Any:
             # loaded — and it silences the "garbage-collected without close()"
             # warning that would otherwise fire per streamed request.
             def _stream_then_close() -> Any:
+                served = False
                 try:
-                    yield from agent.stream(prompt)
+                    for chunk in agent.stream(prompt):
+                        served = True
+                        yield chunk
                 finally:
                     agent.close()
+                    if served:
+                        _record_served_model(resolved_model)
 
             return _stream_then_close()
 
@@ -514,6 +534,7 @@ def _build_default_runner() -> Any:
             # A failure raises here (raise_on_error=True above), so a response
             # that reaches this point is always a success.
             response = agent.run(prompt)
+            _record_served_model(resolved_model)
             prompt_tokens, completion_tokens = _extract_usage(response)
             return RunnerResult(
                 text=getattr(response, "output", "") or "",
@@ -869,7 +890,7 @@ def _mount_existing_routers(
 
         _runner = runner or _build_default_runner()
         router = create_openai_router(
-            _runner, extra_models=extra_models or _pooled_model_ids
+            _runner, extra_models=extra_models or _served_model_ids
         )
         app.include_router(router)
         logger.info("Mounted OpenAI-compat router at /v1 (RBAC + budget enforced)")

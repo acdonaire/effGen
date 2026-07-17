@@ -110,7 +110,14 @@ class EffGenClient:
             return
         msg = f"HTTP {status}"
         if isinstance(payload, dict):
-            msg = payload.get("error") or payload.get("message") or msg
+            err = payload.get("error")
+            if isinstance(err, dict):
+                # OpenAI-style envelope: {"error": {"message": ..., "type": ...}}.
+                msg = err.get("message") or err.get("code") or msg
+            elif isinstance(err, str):
+                msg = err
+            else:
+                msg = payload.get("message") or msg
         if status in (401, 403):
             raise EffGenAuthError(msg, status_code=status, payload=payload)
         if status == 429:
@@ -218,17 +225,22 @@ class EffGenClient:
     def chat(
         self,
         message: str,
-        tools: list[str] | None = None,
+        tools: list[str | dict] | None = None,
         model: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        """Send a single-turn chat message and return the response."""
+        """Send a single-turn chat message and return the response.
+
+        ``tools`` accepts registered tool names (``["calculator"]``) or full
+        OpenAI tool specs; names are expanded to the server's tool-spec shape.
+        The server runs the tool and returns the final answer.
+        """
         body: dict = {
             "model": model or "effgen-default",
             "messages": [{"role": "user", "content": message}],
         }
         if tools is not None:
-            body["tools"] = tools
+            body["tools"] = _tools_to_payload(tools)
         body.update(kwargs)
         payload = self._request_sync("POST", "/v1/chat/completions", body)
         return self._parse_chat(payload)
@@ -236,7 +248,7 @@ class EffGenClient:
     def embed(
         self,
         texts: list[str],
-        model: str = "text-embedding-small",
+        model: str = "text-embedding-3-small",
     ) -> list[list[float]]:
         """Compute embeddings for a list of input texts."""
         payload = self._request_sync(
@@ -287,7 +299,7 @@ class EffGenClient:
     async def achat(
         self,
         message: str,
-        tools: list[str] | None = None,
+        tools: list[str | dict] | None = None,
         model: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
@@ -296,13 +308,13 @@ class EffGenClient:
             "messages": [{"role": "user", "content": message}],
         }
         if tools is not None:
-            body["tools"] = tools
+            body["tools"] = _tools_to_payload(tools)
         body.update(kwargs)
         payload = await self._request_async("POST", "/v1/chat/completions", body)
         return self._parse_chat(payload)
 
     async def aembed(
-        self, texts: list[str], model: str = "text-embedding-small"
+        self, texts: list[str], model: str = "text-embedding-3-small"
     ) -> list[list[float]]:
         payload = await self._request_async(
             "POST", "/v1/embeddings", {"model": model, "input": texts}
@@ -367,6 +379,27 @@ class EffGenClient:
             usage=payload.get("usage") or {},
             raw=payload,
         )
+
+
+def _tools_to_payload(tools: list[Any]) -> list[dict]:
+    """Normalize tool references into the server's OpenAI tool-spec shape.
+
+    A registered tool may be named by a plain string (``"calculator"``); the
+    server expects each tool as ``{"type": "function", "function": {"name":
+    ...}}``. A dict is passed through unchanged so callers can send a full spec.
+    """
+    payload: list[dict] = []
+    for tool in tools:
+        if isinstance(tool, str):
+            payload.append({"type": "function", "function": {"name": tool}})
+        elif isinstance(tool, dict):
+            payload.append(tool)
+        else:
+            raise EffGenAPIError(
+                f"Unsupported tool reference {tool!r}: pass a registered tool "
+                "name (str) or an OpenAI tool spec (dict)"
+            )
+    return payload
 
 
 def _parse_sse_line(line: str) -> str | None:

@@ -30,6 +30,7 @@ Compatibility level
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import uuid
@@ -59,9 +60,28 @@ MODEL_ALIASES: dict[str, str] = {
     "gpt-3.5-turbo-instruct": "Qwen/Qwen2.5-3B-Instruct",
 }
 
+# Names that route to the server's configured default model. A caller that has
+# no particular model in mind (including the native client's zero-argument
+# ``chat("hi")``) can send ``"effgen-default"`` or ``"default"`` and get an
+# answer without knowing a concrete id. The target is read from
+# ``EFFGEN_DEFAULT_MODEL`` at request time, falling back to a small local model.
+DEFAULT_MODEL_ALIASES: frozenset[str] = frozenset({"effgen-default", "default"})
+_FALLBACK_DEFAULT_MODEL = "Qwen/Qwen2.5-3B-Instruct"
+
+
+def default_model_id() -> str:
+    """Return the model id the ``effgen-default``/``default`` names resolve to.
+
+    Controlled by ``EFFGEN_DEFAULT_MODEL``; defaults to a small local model when
+    the variable is unset or blank.
+    """
+    return os.environ.get("EFFGEN_DEFAULT_MODEL", "").strip() or _FALLBACK_DEFAULT_MODEL
+
 
 def resolve_model_alias(model: str) -> str:
     """Resolve an OpenAI model name to a local effGen model id."""
+    if model in DEFAULT_MODEL_ALIASES:
+        return default_model_id()
     return MODEL_ALIASES.get(model, model)
 
 
@@ -501,9 +521,10 @@ def _effgen_meta(requested: str, resolved: str) -> dict[str, Any]:
     return {
         "requested_model": requested,
         "resolved_model": resolved,
-        # True only when an OpenAI compatibility alias (gpt-4 → local model) was
-        # applied — not for internal provider/model routing normalization.
-        "alias_applied": requested in MODEL_ALIASES,
+        # True when a compatibility alias (gpt-4 → local model) or the
+        # effgen-default/default name was applied — not for internal
+        # provider/model routing normalization.
+        "alias_applied": requested in MODEL_ALIASES or requested in DEFAULT_MODEL_ALIASES,
     }
 
 
@@ -524,6 +545,32 @@ def _messages_to_prompt(messages: list[Any]) -> str:
             )
         parts.append(f"{role}: {content or ''}")
     return "\n".join(parts)
+
+
+def _has_actionable_content(messages: list[Any]) -> bool:
+    """Return True if there is anything for the model to act on.
+
+    A request whose every message has empty/whitespace/``None``/absent text
+    content — and no image parts, no ``tool_calls``, and no tool result — gives
+    the model nothing to answer. Such a request is rejected with a 400 before a
+    billed model call, matching the Agent layer's empty-task guard and OpenAI's
+    own handling. A message counts as actionable when it has non-blank text, a
+    non-empty multimodal content list, ``tool_calls``, or is a ``tool`` result.
+    """
+    for msg in messages:
+        is_dict = isinstance(msg, dict)
+        role = msg.get("role") if is_dict else getattr(msg, "role", None)
+        content = msg.get("content") if is_dict else getattr(msg, "content", None)
+        tool_calls = msg.get("tool_calls") if is_dict else getattr(msg, "tool_calls", None)
+        if isinstance(content, str) and content.strip():
+            return True
+        if isinstance(content, list) and content:
+            return True
+        if tool_calls:
+            return True
+        if role == "tool" and content is not None:
+            return True
+    return False
 
 
 def create_openai_router(
@@ -559,15 +606,32 @@ def create_openai_router(
     def _error_response(exc: Exception) -> Any:
         """Return an OpenAI-style, redacted error JSONResponse for *exc*."""
         status, err_type, code = _classify_http(exc)
+        message = str(exc)
+        # A bare/unknown model id falls through to the local loader and fails
+        # with a Transformers "not a valid model identifier" message. Add a
+        # one-line hint pointing at the id shapes the server accepts.
+        low = message.lower()
+        if code == "model_not_found" and (
+            "not a valid model identifier" in low or "is not a local folder" in low
+        ):
+            message += (
+                " Pass a provider-prefixed model id (e.g. 'openai:gpt-5-nano', "
+                "'groq:llama-3.1-8b-instant'), a valid local model id, or "
+                "'effgen-default'."
+            )
         return JSONResponse(
             status_code=status,
-            content=_error_payload(str(exc), err_type, code),
+            content=_error_payload(message, err_type, code),
         )
 
     router = APIRouter(prefix="/v1", tags=["openai-compat"])
 
     @router.get("/models")
     async def list_models() -> dict[str, Any]:
+        # The list is the drop-in aliases plus the ids this process has actually
+        # served a successful response for this run. It is not exhaustive: any
+        # `provider:model` id the server can reach (e.g. "openai:gpt-5-nano",
+        # "groq:llama-3.1-8b-instant") is callable whether or not it appears here.
         now = _now()
         data = [
             {
@@ -579,10 +643,19 @@ def create_openai_router(
             }
             for alias, target in MODEL_ALIASES.items()
         ]
+        # The names that route to the server's configured default model.
+        for name in sorted(DEFAULT_MODEL_ALIASES):
+            data.append({
+                "id": name,
+                "object": "model",
+                "created": now,
+                "owned_by": "effgen",
+                "root": default_model_id(),
+            })
         # Alongside the drop-in legacy aliases, list the ids the server has
-        # actually loaded and served this run (e.g. "openai:gpt-5-nano"),
-        # so a client discovers real, currently-servable models instead of
-        # only the 6 hardcoded OpenAI-flagship aliases.
+        # actually served this run (e.g. "openai:gpt-5-nano"), so a client
+        # discovers real, currently-servable models instead of only the
+        # hardcoded aliases.
         if extra_models is not None:
             try:
                 served = extra_models()
@@ -609,6 +682,17 @@ def create_openai_router(
                 status_code=400,
                 content=error_envelope(
                     400, "messages must not be empty", code="empty_messages"
+                ),
+            )
+        # A request whose messages carry no text, no image, no tool_calls, and no
+        # tool result gives the model nothing to answer. Reject it with a 400
+        # before any billed model call rather than returning a paid-for
+        # non-answer at 200.
+        if not _has_actionable_content(request.messages):
+            return JSONResponse(
+                status_code=400,
+                content=error_envelope(
+                    400, "message content must not be empty", code="empty_content"
                 ),
             )
         resolved = resolve_model_alias(request.model)

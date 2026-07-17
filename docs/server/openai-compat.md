@@ -34,7 +34,7 @@ curl -H "Authorization: Bearer $EFFGEN_API_KEY" http://127.0.0.1:8000/v1/models
 |---|---|---|
 | POST | `/v1/chat/completions` | Chat completions (streaming + non-streaming) |
 | POST | `/v1/completions` | Legacy text completions |
-| GET | `/v1/models` | List the model aliases |
+| GET | `/v1/models` | List the aliases + ids served this run (not exhaustive) |
 | POST | `/v1/embeddings` | Text embeddings (local SentenceTransformer) |
 
 ## Python (official `openai` client)
@@ -64,6 +64,11 @@ OpenAI names map to concrete effGen models so OpenAI-only clients work:
 |---|---|
 | `gpt-4`, `gpt-4-turbo`, `gpt-4o` | `Qwen/Qwen2.5-7B-Instruct` |
 | `gpt-4o-mini`, `gpt-3.5-turbo` | `Qwen/Qwen2.5-3B-Instruct` |
+| `effgen-default`, `default` | the server's default model (`EFFGEN_DEFAULT_MODEL`, else `Qwen/Qwen2.5-3B-Instruct`) |
+
+`GET /v1/models` lists these aliases plus every id the server has served a
+successful response for this run. The list is **not** exhaustive: any
+`provider:model` id the server can reach is callable whether or not it appears.
 
 Aliasing is never silent. The response `model` field reports the model that
 actually ran, and a non-standard `effgen` object documents the mapping (OpenAI

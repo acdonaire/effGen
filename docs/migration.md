@@ -1,5 +1,92 @@
 # Migration Guide
 
+## Coming from the OpenAI SDK / LangChain
+
+effGen ships an OpenAI-compatible HTTP server, so most code that already talks to
+the OpenAI API works by changing only the `base_url`. See
+[`server/openai-compat.md`](server/openai-compat.md) for the full endpoint,
+alias, streaming, and error-status reference.
+
+### Point the official `openai` client at effGen
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="YOUR_EFFGEN_API_KEY")
+
+resp = client.chat.completions.create(
+    model="openai:gpt-5-nano",                 # route by provider:model
+    messages=[{"role": "user", "content": "Summarize the CAP theorem."}],
+)
+print(resp.choices[0].message.content)
+```
+
+- **Routing.** Send `provider:model` (`groq:llama-3.1-8b-instant`,
+  `gemini:gemini-3.1-flash-lite`) or `provider/model`; a bare local id
+  (`transformers:Qwen/Qwen2.5-1.5B-Instruct`) also loads. `effgen-default`
+  routes to the server's configured default model. OpenAI flagship names
+  (`gpt-4o-mini`, `gpt-3.5-turbo`) resolve to local models; the response's
+  non-standard `effgen` object reports `resolved_model` and `alias_applied`.
+- **Streaming** works unchanged, including `stream_options={"include_usage":
+  True}` for a final usage chunk. `response_format={"type": "json_object"}`,
+  legacy `/v1/completions`, and `/v1/embeddings` are supported.
+- **Errors** map to the OpenAI status/type contract: unknown provider → 400,
+  bad key → 401, unknown model → 404, rate limit → 429, upstream key
+  missing/rejected → 503/502. `except openai.APIStatusError` code carries over.
+- **Cost** rides along on each response as the `effgen` extension
+  (`resp.effgen["cost_usd"]` for priced models); OpenAI-only clients ignore it.
+
+### Tools run server-side
+
+This is the one place the protocol differs. effGen executes its **own**
+registered tools on the server and returns the final answer; it does **not**
+forward client-defined function tools for the caller to run, and it does not
+emit client-side `tool_calls` deltas. Request a registered tool by name:
+
+```python
+resp = client.chat.completions.create(
+    model="groq:llama-3.1-8b-instant",
+    messages=[{"role": "user", "content": "What is 17 * 23?"}],
+    tools=[{"type": "function", "function": {"name": "calculator"}}],
+)
+```
+
+An unregistered tool name is refused with a 400 that points at
+`effgen tools list`.
+
+### Native client
+
+For a lighter dependency than the `openai` SDK, `effgen.client.EffGenClient`
+speaks the same server:
+
+```python
+from effgen.client import EffGenClient
+
+c = EffGenClient(base_url="http://localhost:8000", api_key="YOUR_EFFGEN_API_KEY")
+print(c.chat("Hello").content)                              # default model
+print(c.chat("What is 17*23?", tools=["calculator"]).content)  # tool by name
+```
+
+### Coming from LangChain
+
+Point `ChatOpenAI` at the effGen server the same way:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="YOUR_EFFGEN_API_KEY",
+    model="openai:gpt-5-nano",
+)
+```
+
+Chains and prompt templates that call the model over the OpenAI protocol keep
+working. Move any client-side LangChain tool that must run on the server into an
+effGen registered tool (see `effgen tools list` and the tool authoring guide).
+
+---
+
 ## v0.1.x → v0.2.0
 
 ### Breaking Changes

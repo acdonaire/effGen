@@ -116,6 +116,89 @@ class TestUsageAndAliasMetadata:
         assert r.json()["effgen"]["alias_applied"] is False
 
 
+class TestDefaultModelAlias:
+    """``effgen-default`` / ``default`` route to the server's default model so a
+    caller with no model in mind gets an answer."""
+
+    def test_effgen_default_resolves(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "effgen-default",
+                         "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 200
+        meta = r.json()["effgen"]
+        assert meta["requested_model"] == "effgen-default"
+        assert meta["resolved_model"] == "Qwen/Qwen2.5-3B-Instruct"
+        assert meta["alias_applied"] is True
+
+    def test_default_honors_env(self, monkeypatch):
+        monkeypatch.setenv("EFFGEN_DEFAULT_MODEL", "groq:llama-3.1-8b-instant")
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "default",
+                         "messages": [{"role": "user", "content": "hi"}]})
+        assert r.json()["effgen"]["resolved_model"] == "groq:llama-3.1-8b-instant"
+
+    def test_default_names_listed(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.get("/v1/models", headers={"X-API-Key": "k"})
+        ids = {m["id"] for m in r.json()["data"]}
+        assert {"effgen-default", "default"} <= ids
+
+
+class TestEmptyContentGuard:
+    """A content-free request is rejected with a 400 before any billed model
+    call, rather than returning a paid-for non-answer at 200."""
+
+    def _post(self, c, content_key_value):
+        msg = {"role": "user"}
+        msg.update(content_key_value)
+        return c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                      json={"model": "openai:gpt-5-nano", "messages": [msg]})
+
+    def test_empty_string_rejected(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = self._post(c, {"content": ""})
+        assert r.status_code == 400
+        assert r.json()["error"]["code"] == "empty_content"
+
+    def test_whitespace_rejected(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        assert self._post(c, {"content": "   "}).status_code == 400
+
+    def test_null_content_rejected(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        assert self._post(c, {"content": None}).status_code == 400
+
+    def test_missing_content_rejected(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        assert self._post(c, {}).status_code == 400
+
+    def test_real_content_passes(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        assert self._post(c, {"content": "hello"}).status_code == 200
+
+    def test_multimodal_content_passes(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "openai:gpt-5-nano", "messages": [{
+                       "role": "user",
+                       "content": [{"type": "text", "text": "describe"}],
+                   }]})
+        assert r.status_code == 200
+
+    def test_tool_result_passes(self):
+        # An assistant tool_calls turn + a tool result is actionable even with
+        # a blank final user content.
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "openai:gpt-5-nano", "messages": [
+                       {"role": "user", "content": "compute"},
+                       {"role": "tool", "content": "42", "tool_call_id": "x"},
+                   ]})
+        assert r.status_code == 200
+
+
 class TestModelsListDiscoverability:
     """``GET /v1/models`` must list what the server actually serves, not just
     the 6 legacy OpenAI-flagship aliases."""
@@ -154,6 +237,37 @@ class TestModelsListDiscoverability:
         r = c.get("/v1/models", headers={"X-API-Key": "k"})
         assert r.status_code == 200
         assert {m["id"] for m in r.json()["data"]} >= {"gpt-4"}
+
+
+class TestServedModelTracking:
+    """The default ``/v1/models`` source lists only ids that actually served a
+    successful response — never an id that only constructed an adapter and then
+    failed the real call."""
+
+    def test_records_and_dedups(self):
+        from effgen.server import app as _app
+
+        with _app._SERVED_MODEL_LOCK:
+            _app._SERVED_MODEL_IDS.clear()
+        _app._record_served_model("openai:gpt-5-nano")
+        _app._record_served_model("groq:llama-3.1-8b-instant")
+        _app._record_served_model("openai:gpt-5-nano")  # duplicate
+        _app._record_served_model("")  # ignored
+        served = _app._served_model_ids()
+        assert served.count("openai:gpt-5-nano") == 1
+        assert "groq:llama-3.1-8b-instant" in served
+        assert "" not in served
+
+    def test_bounded(self):
+        from effgen.server import app as _app
+
+        with _app._SERVED_MODEL_LOCK:
+            _app._SERVED_MODEL_IDS.clear()
+        for i in range(_app._SERVED_MODEL_MAX + 20):
+            _app._record_served_model(f"provider:model-{i}")
+        assert len(_app._served_model_ids()) == _app._SERVED_MODEL_MAX
+        # The oldest ids were evicted; the most recent are retained.
+        assert "provider:model-0" not in _app._served_model_ids()
 
 
 class TestStreamingThroughFullStack:
