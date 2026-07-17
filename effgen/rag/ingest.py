@@ -93,6 +93,38 @@ def _load_txt(path: Path) -> list[dict[str, Any]]:
     }]
 
 
+def _load_code(path: Path) -> list[dict[str, Any]]:
+    """Read a source-code or plain-text config file as UTF-8 text.
+
+    Source files carry no separate structure to extract — the text itself is the
+    content — so they are read verbatim, with the extension recorded as the
+    ``language`` so a downstream reader can label the snippet.
+    """
+    return [{
+        "content": path.read_text(encoding="utf-8", errors="replace"),
+        "metadata": {"type": "code", "language": path.suffix.lower().lstrip(".")},
+    }]
+
+
+# Source-code and plain-text config extensions read verbatim as UTF-8 text. The
+# most natural input to a coding assistant is a source file, so these are
+# accepted alongside documents rather than rejected as unknown types.
+_CODE_EXTENSIONS: tuple[str, ...] = (
+    ".py", ".pyw", ".pyi",
+    ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx",
+    ".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh",
+    ".cs", ".go", ".rs", ".java", ".kt", ".kts", ".scala",
+    ".swift", ".m", ".mm", ".rb", ".php", ".pl", ".pm",
+    ".lua", ".r", ".jl", ".dart", ".hs", ".clj", ".cljs",
+    ".ex", ".exs", ".erl", ".vb",
+    ".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd",
+    ".sql", ".graphql", ".gql", ".proto",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties",
+    ".xml", ".css", ".scss", ".sass", ".less",
+    ".rst", ".tex", ".text",
+)
+
+
 def _load_markdown(path: Path) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     # Attempt title extraction from first H1
@@ -463,6 +495,10 @@ LOADERS: dict[str, Callable[[Path], list[dict[str, Any]]]] = {
     ".epub": _load_epub,
     ".xlsx": _load_xlsx,
 }
+
+# Source-code / plain-text config extensions all read verbatim as UTF-8 text.
+for _ext in _CODE_EXTENSIONS:
+    LOADERS.setdefault(_ext, _load_code)
 
 
 # ---------------------------------------------------------------------------

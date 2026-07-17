@@ -340,11 +340,18 @@ def summary_line(response: Any) -> tuple[str, str]:
         parts.append(cost_str)
     body = " · ".join(parts)
 
+    meta = getattr(response, "metadata", None) or {}
     if success:
         plain = f"✓ Done in {body}"
         markup = f"[green]✓[/green] Done in {body}"
+    elif meta.get("partial"):
+        # A run cut off at the iteration cap is not a completed success, but the
+        # recovered text is still shown: mark it distinctly from an outright
+        # failure so the partial result is not read as finished.
+        tail = f" · {body}" if body else ""
+        plain = f"⚠ Stopped at max iterations — partial result{tail}"
+        markup = f"[yellow]⚠[/yellow] Stopped at max iterations — partial result{tail}"
     else:
-        meta = getattr(response, "metadata", None) or {}
         reason = meta.get("reason", "failed")
         tail = f" · {body}" if body else ""
         plain = f"✗ Failed ({reason}){tail}"

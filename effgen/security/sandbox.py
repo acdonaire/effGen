@@ -784,6 +784,10 @@ async def get_sandbox(config: SandboxConfig | None = None) -> SandboxBase:
                 f"Unknown EFFGEN_SANDBOX_BACKEND={backend_name!r}. "
                 f"Valid choices: {sorted(_BACKEND_MAP)}"
             )
+        # An explicitly pinned backend is cached for the process lifetime too:
+        # reuse the resolved instance when it already matches the requested class.
+        if isinstance(_resolved_backend, cls):
+            return _resolved_backend
         backend = cls()
         if not await backend.is_available():
             raise RuntimeError(

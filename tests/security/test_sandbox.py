@@ -525,6 +525,16 @@ class TestGetSandbox:
         sb2 = _run(get_sandbox())
         assert sb1 is sb2
 
+    def test_explicit_backend_is_cached_across_calls(self):
+        # A pinned backend is cached for the process lifetime, the same as the
+        # auto path — repeated resolutions return the one instance regardless of
+        # whether the backend was chosen via config or the environment variable.
+        cfg = SandboxConfig(backend="subprocess")
+        sb1 = _run(get_sandbox(cfg))
+        sb2 = _run(get_sandbox(cfg))
+        assert isinstance(sb1, SubprocessSandbox)
+        assert sb1 is sb2
+
 
 # ---------------------------------------------------------------------------
 # CodeExecutor integration test (routes through sandbox)

@@ -36,10 +36,40 @@ extension that got it past the filename check.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+#: Environment variable naming a directory where file-writing tools operate by
+#: default. When set, ``file_operations`` confines to it and ``bash`` runs there,
+#: so generated files land in a dedicated location instead of the caller's
+#: current directory. Unset (the default), tools use the current directory.
+WORKSPACE_ENV_VAR = "EFFGEN_WORKSPACE"
+
+
+def default_workspace() -> Path | None:
+    """Resolve the configured workspace directory, or ``None`` when unset.
+
+    Reads ``EFFGEN_WORKSPACE``. The directory is created (including parents) if it
+    does not yet exist so tools can write into it immediately. Returns ``None``
+    when the variable is unset, empty, or the directory cannot be created, in
+    which case callers fall back to the current directory.
+    """
+    raw = os.environ.get(WORKSPACE_ENV_VAR, "").strip()
+    if not raw:
+        return None
+    try:
+        path = Path(raw).expanduser().resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except OSError as exc:
+        logger.warning(
+            "%s=%r could not be used as a workspace (%s); using the current "
+            "directory instead.", WORKSPACE_ENV_VAR, raw, exc,
+        )
+        return None
 
 
 class PathNotAllowedError(ValueError):

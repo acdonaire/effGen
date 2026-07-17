@@ -97,8 +97,12 @@ _CODING_PRESET = PresetConfig(
     tool_names=["code_executor", "python_repl", "file_operations", "bash"],
     system_prompt=(
         "You are an expert coding agent. Write, execute, and debug code to "
-        "solve programming tasks. Use file operations to read/write files and "
-        "bash for system commands. Always test your code before presenting results."
+        "solve programming tasks. When a task asks you to run, execute, test, or "
+        "compute something, you must actually run the code with the code "
+        "execution tool and base your answer on the tool's real output — do not "
+        "describe or print code as if it had run without running it. Use file "
+        "operations to read and write files and bash for system commands. Always "
+        "run your code and report the actual result before presenting an answer."
     ),
     max_iterations=12,
     temperature=0.4,

@@ -25,6 +25,7 @@ from typing import Any
 from ...security.sandbox import (
     SandboxBase,
     SandboxConfig,
+    SubprocessSandbox,
     get_sandbox,
 )
 from ..base_tool import (
@@ -81,6 +82,16 @@ class CodeExecutor(BaseTool):
     DEFAULT_TIMEOUT = 30           # seconds (tool-level; sandbox timeout is shorter)
     DEFAULT_MEMORY_LIMIT = "256m"  # 256 MB
     DEFAULT_MAX_OUTPUT = 102400    # 100 KB
+
+    # Minimum memory limit per language. Some runtimes reserve a large virtual
+    # address space at startup regardless of the heap they use — node/V8 reserves
+    # a CodeRange that exceeds the 256 MB default enforced by the subprocess
+    # sandbox's ``ulimit -v``, so the interpreter aborts before user code runs.
+    # A language listed here is given at least this much so it starts under the
+    # default; an explicit higher limit is left untouched.
+    LANGUAGE_MIN_MEMORY = {
+        "javascript": "1g",
+    }
 
     # Docker images for different languages (used by DockerSandbox fallback)
     DOCKER_IMAGES = {
@@ -251,6 +262,10 @@ class CodeExecutor(BaseTool):
         if self._sandbox is None:
             await self.initialize()
 
+        # Raise the memory cap to a language-appropriate floor when the requested
+        # limit is below what the runtime needs to start (see LANGUAGE_MIN_MEMORY).
+        memory_limit = self._resolve_memory_limit(language, memory_limit)
+
         # Build a per-call config (override from call params)
         call_config = SandboxConfig(
             backend=self._sandbox_config.backend,
@@ -282,12 +297,71 @@ class CodeExecutor(BaseTool):
             "timed_out": result.timed_out,
             "sandbox_backend": result.backend_used,
         }
-        # A timed-out run is a failure, not a silent success: reflect it in the
-        # accurate tool envelope so the outer ToolResult.success agrees.
+        # The tool result mirrors the program's own outcome: it succeeds only when
+        # the process exited 0 without timing out. A non-zero exit — an uncaught
+        # exception, sys.exit(n), a syntax error, a non-zero shell command, or a
+        # runtime abort such as an out-of-memory — is reported as a failure so a
+        # caller keyed on the result does not treat a crash as a success. The full
+        # stdout/stderr/exit_code stay in the payload on every path.
+        succeeded = (result.exit_code == 0) and not result.timed_out
+        out["success"] = succeeded
+        if not succeeded:
+            out["error"] = self._failure_message(language, result, timeout)
+        return out
+
+    def _resolve_memory_limit(self, language: str, memory_limit: str) -> str:
+        """Raise ``memory_limit`` to the language floor when it is set too low.
+
+        Returns the requested limit unchanged for languages without a floor or
+        when the request already meets it.
+        """
+        floor = self.LANGUAGE_MIN_MEMORY.get(language)
+        if not floor:
+            return memory_limit
+        try:
+            requested_kb = SubprocessSandbox._parse_mem_kb(memory_limit)
+            floor_kb = SubprocessSandbox._parse_mem_kb(floor)
+        except (ValueError, AttributeError):
+            return memory_limit
+        if requested_kb < floor_kb:
+            logger.info(
+                "Raising memory_limit for %s from %s to %s "
+                "(the runtime needs more address space to start)",
+                language, memory_limit, floor,
+            )
+            return floor
+        return memory_limit
+
+    def _failure_message(self, language: str, result: Any, timeout: int) -> str:
+        """Build an actionable one-line reason for a non-successful execution."""
         if result.timed_out:
-            out["success"] = False
-            out["error"] = (
+            return (
                 f"Execution timed out after {timeout}s "
                 f"(sandbox '{result.backend_used}' killed the process)"
             )
-        return out
+        stderr = (result.stderr or "").strip()
+        if language == "javascript" and "reserve virtual memory" in stderr.lower():
+            return (
+                "JavaScript runtime ran out of address space under the current "
+                "memory_limit; raise memory_limit (node/V8 needs about 1g)"
+            )
+        base = f"Code exited with status {result.exit_code}"
+        detail = self._stderr_summary(stderr)
+        return f"{base}: {detail}" if detail else base
+
+    @staticmethod
+    def _stderr_summary(stderr: str) -> str:
+        """Pick the most informative single line from a traceback/stderr dump."""
+        lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+        # Drop the interpreter version footer node prints after an error.
+        lines = [ln for ln in lines if not ln.startswith("Node.js v")]
+        if not lines:
+            return ""
+        # Prefer an explicit error/exception line over a stack frame ("at ...",
+        # 'File "...", line N'); Python puts it last, node puts it mid-dump.
+        err_lines = [
+            ln for ln in lines
+            if ("error" in ln.lower() or "exception" in ln.lower())
+            and not ln.startswith(("at ", "File "))
+        ]
+        return err_lines[-1] if err_lines else lines[-1]

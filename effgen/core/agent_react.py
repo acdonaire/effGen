@@ -598,15 +598,21 @@ class AgentReActMixin:
         if partial_answer:
             partial_answer = sanitize_final_answer(partial_answer) or partial_answer
             logger.info("Max iterations reached, returning partial answer from scratchpad")
+            # The run was cut off at the iteration cap before the model produced a
+            # final answer. The recovered text is the best progress so far, not a
+            # completed result, so the outcome is not a success: report
+            # success=False with partial=True and keep the recovered text in
+            # output. A caller keyed on success then retries/branches instead of
+            # treating a truncated multi-step run as finished.
             meta: dict[str, Any] = {"reason": "max_iterations_partial", "partial": True}
             if debug_trace is not None:
                 debug_trace.total_tokens = tokens_used
                 debug_trace.final_answer = partial_answer
-                debug_trace.success = True
+                debug_trace.success = False
                 meta["debug_trace"] = debug_trace
             return AgentResponse(
                 output=partial_answer,
-                success=True,
+                success=False,
                 mode=AgentMode.SINGLE,
                 iterations=iterations,
                 tool_calls=tool_calls,

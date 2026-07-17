@@ -103,7 +103,10 @@ class FileOperations(BaseTool):
 
         Args:
             allowed_directories: List of directories where operations are allowed.
-                                If None, uses current working directory.
+                                If None, uses the ``EFFGEN_WORKSPACE`` directory
+                                when that environment variable is set, otherwise
+                                the current working directory. A relative path is
+                                resolved against the first allowed directory.
         """
         super().__init__(
             metadata=ToolMetadata(
@@ -197,9 +200,16 @@ class FileOperations(BaseTool):
     def _normalize_allowed_directories(
         self, directories: list[str] | None
     ) -> list[Path]:
-        """Normalize and validate allowed directories."""
+        """Normalize and validate allowed directories.
+
+        With no explicit directories, operations are confined to the configured
+        workspace (``EFFGEN_WORKSPACE``) when one is set, otherwise the current
+        directory.
+        """
+        from ._fs import default_workspace
+
         if not directories:
-            return [Path.cwd()]
+            return [default_workspace() or Path.cwd()]
 
         normalized = []
         for dir_path in directories:
@@ -209,7 +219,7 @@ class FileOperations(BaseTool):
             else:
                 logger.warning(f"Directory does not exist or is not a directory: {dir_path}")
 
-        return normalized or [Path.cwd()]
+        return normalized or [default_workspace() or Path.cwd()]
 
     def _is_path_allowed(self, path: Path) -> bool:
         """Check if path is within allowed directories and not a credential file."""
@@ -238,9 +248,16 @@ class FileOperations(BaseTool):
         Raises:
             ValueError: If path is invalid or not allowed
         """
-        # Convert to Path and resolve
+        # Convert to Path and resolve. A relative path is resolved against the
+        # confinement root (the first allowed directory) so writes land there —
+        # e.g. in the configured workspace — rather than the process's current
+        # directory. When the root is the current directory (the default) this is
+        # identical to resolving against the current directory.
         try:
-            file_path = Path(path).resolve()
+            candidate = Path(path)
+            if not candidate.is_absolute() and self._allowed_directories:
+                candidate = self._allowed_directories[0] / candidate
+            file_path = candidate.resolve()
         except (OSError, RuntimeError) as e:
             raise ValueError(f"Invalid path: {e}")
 

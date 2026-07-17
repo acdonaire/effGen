@@ -742,6 +742,11 @@ class AgentGenerationMixin:
             reason = metadata.get("reason")
             if reason in ("max_iterations_exhausted", "max_iterations_reached"):
                 return RuntimeError("Maximum iterations reached without a final answer.")
+            if reason == "max_iterations_partial":
+                return RuntimeError(
+                    "Stopped at the iteration cap with a partial result; "
+                    "raise max_iterations to let the run finish."
+                )
             return RuntimeError(str(detail) if detail else "Agent run failed")
         category = detail.get("category")
         provider = detail.get("provider", "") or ""

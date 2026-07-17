@@ -226,7 +226,9 @@ class BashTool(BaseTool):
             allowed_commands: If set, ONLY these commands can be run (whitelist mode).
             blocked_commands: Additional commands to block (added to defaults).
             timeout: Command timeout in seconds (default: 30).
-            working_directory: Working directory for commands (default: current dir).
+            working_directory: Working directory for commands. Default: the
+                ``EFFGEN_WORKSPACE`` directory when that environment variable is
+                set, otherwise the current directory.
             strip_env_vars: Extra env vars to strip (added to defaults).
             allow_command_substitution: Allow $() and `` in commands (default: False).
             max_output_size: Maximum output size in bytes (default: 100 KB).
@@ -474,8 +476,13 @@ class BashTool(BaseTool):
         if not is_safe:
             raise ValueError(f"Security: {reason}")
 
-        # Determine working directory
-        cwd = self.working_directory or os.getcwd()
+        # Determine working directory: an explicit setting wins, otherwise the
+        # configured workspace (EFFGEN_WORKSPACE) when set, else the current
+        # directory. Running in the workspace keeps generated files out of the
+        # caller's project directory.
+        from ._fs import default_workspace
+
+        cwd = self.working_directory or str(default_workspace() or os.getcwd())
         if not os.path.isdir(cwd):
             raise ValueError(f"Working directory does not exist: {cwd}")
 

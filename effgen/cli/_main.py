@@ -780,15 +780,29 @@ class CLIInterface:
                     chunk_overlap=0, dedupe=False,
                 )
                 doc_chunks = ingester.ingest(p)
-                if not doc_chunks:
-                    reason = (
-                        ingester.last_skipped[0][1] if ingester.last_skipped
-                        else "no extractable text"
-                    )
-                    self.print_error(f"--file: could not read {file_path}: {reason}")
-                    return 1
-                doc_text = "\n\n".join(c.content for c in doc_chunks)
-                doc_sections.append(f"--- {p.name} ---\n{doc_text}")
+                if doc_chunks:
+                    doc_text = "\n\n".join(c.content for c in doc_chunks)
+                    doc_sections.append(f"--- {p.name} ---\n{doc_text}")
+                    continue
+                reason = (
+                    ingester.last_skipped[0][1] if ingester.last_skipped
+                    else "no extractable text"
+                )
+                # A type without a dedicated loader may still be plain text the
+                # user wants read as-is (an uncommon source extension, a config
+                # file). Read it as UTF-8 text when it decodes; only a genuinely
+                # binary or unreadable file is refused.
+                if "unsupported extension" in reason:
+                    try:
+                        text = p.read_text(encoding="utf-8")
+                    except (UnicodeDecodeError, OSError):
+                        text = None
+                    if text and text.strip():
+                        self.print(f"Reading {p.name} as plain text.")
+                        doc_sections.append(f"--- {p.name} ---\n{text}")
+                        continue
+                self.print_error(f"--file: could not read {file_path}: {reason}")
+                return 1
             if doc_sections:
                 args.task = "\n\n".join(doc_sections) + "\n\n---\n\n" + args.task
             if extra_inputs and getattr(args, 'stream', False):
@@ -993,11 +1007,21 @@ class CLIInterface:
                     self.print_header("Response")
 
                     if self.console:
+                        # A partial (iteration-cap) run still shows its recovered
+                        # text, framed distinctly from a success or an outright
+                        # failure.
+                        _partial = bool((response.metadata or {}).get("partial"))
+                        if response.success:
+                            _border = "green"
+                        elif _partial:
+                            _border = "yellow"
+                        else:
+                            _border = "red"
                         # Rich markdown formatting
                         self.console.print(Panel(
                             Markdown(response.output),
                             title="Agent Response",
-                            border_style="green" if response.success else "red"
+                            border_style=_border
                         ))
                     else:
                         print(response.output)
@@ -2773,7 +2797,17 @@ Model id formats:
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
 
     # Run command
-    run_parser = subparsers.add_parser('run', help='Run an agent with a task')
+    run_parser = subparsers.add_parser(
+        'run', help='Run an agent with a task',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Environment:\n"
+            "  EFFGEN_WORKSPACE   directory where the file and shell tools read\n"
+            "                     and write by default. Set it to keep files an\n"
+            "                     agent generates out of the current directory\n"
+            "                     (created if missing). Unset: the current dir.\n"
+        ),
+    )
     run_parser.add_argument('task', nargs='?', default=None, help='Task description (launches interactive wizard if not provided)')
     run_parser.add_argument('-m', '--model', help='Model to use')
     run_parser.add_argument(
@@ -2840,8 +2874,9 @@ Model id formats:
         '--file', '--input', dest='input_files', action='append', metavar='PATH',
         help='Attach a file to the task. An image (.png/.jpg/.gif/.webp/...) is '
              'passed as multimodal input; a document (.pdf/.docx/.xlsx/.txt/'
-             '.md/.csv/...) is read and prepended to the task as context, using '
-             'the same loaders RAG ingestion uses. Repeatable.',
+             '.md/.csv/...) or a source file (.py/.js/.ts/.go/.rs/.java/.sql/'
+             '...) is read and prepended to the task as context. Any other file '
+             'that decodes as UTF-8 text is read as plain text. Repeatable.',
     )
 
     # Resume command

@@ -355,8 +355,9 @@ class AgentResponse:
               ``loop_detected``, ``direct_calculator_result``) for heuristically
               recovered answers.
             - ``"max_iterations_partial"`` — the tool loop hit its iteration cap
-              but a usable partial answer was recovered (``success=True``,
-              ``partial=True``).
+              before producing a final answer; the best progress so far is
+              returned in ``output`` (``success=False``, ``partial=True``). The
+              run was truncated, so it is not reported as a completed success.
             - ``"max_iterations_exhausted"`` — the loop gave up with no answer
               (``success=False``).
             - ``"generation_failed"`` — the model/provider call failed
@@ -368,9 +369,11 @@ class AgentResponse:
               is billed. ``metadata["error"]`` has the same shape as above with
               ``provider``/``model`` set to ``None``.
 
-            Success rule: ``success`` is ``True`` only when a real answer was
-            produced (``final_answer`` / ``max_iterations_partial``); it is
-            never ``True`` with empty output.
+            Success rule: ``success`` is ``True`` only when a run finished with a
+            real answer (``final_answer``); a run truncated at the iteration cap
+            (``max_iterations_partial``) reports ``success=False`` with the
+            recovered text in ``output``. ``success`` is never ``True`` with
+            empty output.
     """
     output: str
     success: bool = True
