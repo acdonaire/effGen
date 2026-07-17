@@ -82,9 +82,30 @@ class TestStaticFiles:
         assert "--bg:" in css
         assert "--accent:" in css
 
-    def test_index_loads_chartjs(self):
+    def test_no_external_assets(self):
+        """Every asset must be local — the page renders with no network.
+
+        An on-prem / air-gapped deployment must get a fully working dashboard,
+        so the static files may not reference any external host (CDN scripts,
+        remote stylesheets, fonts, or images).
+        """
+        import re
+
+        offenders: list[str] = []
+        for fname in ("index.html", "app.js", "style.css"):
+            text = (STATIC_DIR / fname).read_text()
+            # Flag absolute URLs and protocol-relative ones. A same-origin
+            # fetch path such as "/dashboard/data.json" is fine.
+            for match in re.findall(r"""https?://[^\s"'()]+|(?<![:\w])//[^\s"'()]+""", text):
+                offenders.append(f"{fname}: {match}")
+        assert not offenders, f"External asset references found: {offenders}"
+
+    def test_latency_chart_drawn_locally(self):
+        """The latency chart is drawn on a canvas, not a CDN chart library."""
+        js = (STATIC_DIR / "app.js").read_text()
+        assert "getContext" in js
         html = (STATIC_DIR / "index.html").read_text()
-        assert "chart.js" in html.lower() or "Chart.js" in html
+        assert "<canvas" in html
 
     def test_index_contains_auth_banner_element(self):
         html = (STATIC_DIR / "index.html").read_text()
@@ -284,6 +305,112 @@ class TestDashboardDataBuilder:
         assert data["metrics"]["total_errors"] >= 1
         assert data["metrics"]["total_tokens"] >= 15
         assert data["metrics"]["avg_latency_s"] == pytest.approx(1.0)
+
+    def test_cost_is_summed_from_real_per_run_cost(self):
+        """The cost figure is the sum of real per-run cost, not a flat rate."""
+        from effgen.observability.metrics import record_model_call, reset_all
+        from effgen.observability.run_log import clear, record_run
+        from effgen.server.app import _build_dashboard_data
+
+        reset_all()
+        clear()
+        # Ten model calls but only two priced runs totalling $0.000336.
+        for _ in range(10):
+            record_model_call(provider="openai", model="gpt-5-nano", outcome="ok", latency=0.9)
+        record_run(model="openai:gpt-5-nano", cost_usd=0.000333, duration_s=0.9)
+        record_run(model="groq:llama", cost_usd=0.000003, duration_s=0.2)
+        record_run(model="gpt-missing", cost_usd=None, error="boom", duration_s=0.1)
+        data = _build_dashboard_data()
+        reset_all()
+        clear()
+
+        m = data["metrics"]
+        assert m["cost_usd"] == pytest.approx(0.000336, abs=1e-6)
+        assert m["daily_cost_usd"] == m["cost_usd"]  # legacy key mirrors the real value
+        assert m["priced_runs"] == 2
+        assert m["unpriced_runs"] == 1
+        # The old fabricated estimate would have been 10 * 0.01 = $0.10.
+        assert m["cost_usd"] < 0.01
+
+    def test_cost_none_when_no_priced_runs(self):
+        from effgen.observability.run_log import clear, record_run
+        from effgen.server.app import _build_dashboard_data
+
+        clear()
+        record_run(model="local:qwen", cost_usd=None, duration_s=0.5)
+        data = _build_dashboard_data()
+        clear()
+        assert data["metrics"]["cost_usd"] is None
+
+    def test_latency_percentiles_from_histogram(self):
+        from effgen.observability.metrics import record_model_call, reset_all
+        from effgen.server.app import _build_dashboard_data
+
+        reset_all()
+        for lat in (0.2, 0.3, 0.4, 0.5, 3.0):
+            record_model_call(provider="openai", model="gpt-5-nano", outcome="ok", latency=lat)
+        data = _build_dashboard_data()
+        reset_all()
+
+        slo = data["slo"]
+        assert slo["p50_latency_s"] is not None
+        assert slo["p95_latency_s"] is not None
+        assert slo["p99_latency_s"] is not None
+        # p99 must be at least as large as p50 (true percentiles, not the mean).
+        assert slo["p99_latency_s"] >= slo["p50_latency_s"]
+
+    def test_histogram_quantile_helper(self):
+        import math
+
+        from effgen.server.app import _histogram_quantile
+
+        bounds = [(0.1, 1.0), (0.5, 3.0), (1.0, 5.0), (math.inf, 5.0)]
+        assert _histogram_quantile(bounds, 0.5) == pytest.approx(0.4, abs=0.05)
+        assert _histogram_quantile([], 0.5) is None
+        assert _histogram_quantile([(1.0, 0.0), (math.inf, 0.0)], 0.9) is None
+
+    def test_by_model_breakdown(self):
+        from effgen.observability.metrics import record_model_call, record_tokens, reset_all
+        from effgen.observability.run_log import clear, record_run
+        from effgen.server.app import _build_dashboard_data
+
+        reset_all()
+        clear()
+        record_model_call(provider="openai", model="gpt-5-nano", outcome="ok", latency=0.5)
+        record_model_call(provider="openai", model="gpt-5-nano", outcome="error", latency=1.5)
+        record_tokens(provider="openai", model="gpt-5-nano", input_tokens=10, output_tokens=5)
+        record_run(model="openai:gpt-5-nano", cost_usd=0.0002, duration_s=0.5)
+        data = _build_dashboard_data()
+        reset_all()
+        clear()
+
+        rows = data["by_model"]
+        assert isinstance(rows, list)
+        row = next(r for r in rows if r["model"] == "gpt-5-nano")
+        assert row["provider"] == "openai"
+        assert row["calls"] == 2
+        assert row["errors"] == 1
+        assert row["error_rate"] == pytest.approx(0.5)
+        assert row["input_tokens"] == 10
+        assert row["output_tokens"] == 5
+        assert row["cost_usd"] == pytest.approx(0.0002)
+        assert row["p95_latency_s"] is not None
+
+    def test_by_status_breakdown_shape(self):
+        from effgen.server.app import _build_dashboard_data
+
+        data = _build_dashboard_data()
+        assert "by_status" in data
+        assert isinstance(data["by_status"], dict)
+        assert "http_client_errors" in data["metrics"]
+        assert "http_server_errors" in data["metrics"]
+
+    def test_version_present(self):
+        from effgen import __version__
+        from effgen.server.app import _build_dashboard_data
+
+        data = _build_dashboard_data()
+        assert data["version"] == __version__
 
     def test_prompt_templates_exposed_for_editor_integrations(self):
         from effgen.server.app import _build_dashboard_data

@@ -21,6 +21,7 @@ EFFGEN_METRICS_AUTH      — "1" to require auth on /metrics
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import threading
@@ -1021,52 +1022,255 @@ def _build_dashboard_data() -> dict[str, Any]:
         latency_count = _sum_samples(samples, "effgen_response_latency_seconds_count")
     avg_latency_s = (latency_sum / latency_count) if latency_count else None
 
-    # Token / cost estimates
+    # Token count
     model_tokens = _sum_samples(samples, "effgen_tokens_total")
     legacy_tokens = _sum_samples(samples, "effgen_tokens_used_total")
     total_tokens = model_tokens or legacy_tokens
-    # $0.01 per request as rough estimate (matches budget middleware default)
-    PER_CALL_COST = 0.01
-    daily_cost_usd = total_requests * PER_CALL_COST
 
-    # --- SLO burn rates (simplified: burn = current_rate / target_rate) ---
+    # --- Recent agent runs (from in-memory ring buffer if available) ---
+    recent_runs = _get_recent_runs()
+
+    # Cost is the sum of the real per-run ``cost_usd`` recorded for each run;
+    # runs on unpriced models (or failed before pricing) contribute nothing and
+    # are counted separately so the figure is never inflated by a flat estimate.
+    priced_cost = 0.0
+    priced_runs = 0
+    unpriced_runs = 0
+    for run in recent_runs:
+        cost = run.get("cost_usd")
+        if isinstance(cost, int | float):
+            priced_cost += float(cost)
+            priced_runs += 1
+        else:
+            unpriced_runs += 1
+    session_cost_usd = round(priced_cost, 6) if priced_runs else None
+
+    # --- Latency percentiles from the model-call histogram buckets ---
+    percentiles = _latency_percentiles(samples)
+
+    # --- SLO burn rates (burn = current / target; p99 burn uses the true p99) ---
     LATENCY_THRESHOLD = 2.0  # seconds — p99 target
     ERROR_RATE_TARGET = 0.01  # 1% errors allowed
     error_rate = (total_errors / total_requests) if total_requests > 0 else 0.0
     availability = 1.0 - error_rate
+    p99_latency_s = percentiles.get("p99")
 
     slo: dict[str, float] = {
-        "p99_latency_burn": (avg_latency_s / LATENCY_THRESHOLD) if avg_latency_s else 0.0,
+        # Burn rate now derives from the true p99 (falls back to the mean only
+        # when no histogram buckets have been recorded yet).
+        "p99_latency_burn": (
+            (p99_latency_s / LATENCY_THRESHOLD)
+            if p99_latency_s is not None
+            else (avg_latency_s / LATENCY_THRESHOLD) if avg_latency_s else 0.0
+        ),
         "error_rate_burn": error_rate / ERROR_RATE_TARGET if ERROR_RATE_TARGET > 0 else 0.0,
         "availability": availability,
+        "latency_threshold_s": LATENCY_THRESHOLD,
+        "p50_latency_s": percentiles.get("p50"),
+        "p95_latency_s": percentiles.get("p95"),
+        "p99_latency_s": p99_latency_s,
     }
 
-    # --- Recent agent runs (from in-memory ring buffer if available) ---
-    recent_runs = _get_recent_runs()
+    # --- HTTP responses by status code (from the request counter) ---
+    by_status, http_client_errors, http_server_errors = _http_status_breakdown(samples)
+
+    # --- Per-model / per-provider breakdown ---
+    by_model = _model_breakdown(samples, recent_runs)
 
     # --- Recent spans ---
     recent_spans = _get_recent_spans()
 
     return {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "version": _effgen_version(),
         "metrics": {
             "total_requests": int(total_requests),
             "total_errors": int(total_errors),
             "avg_latency_s": round(avg_latency_s, 4) if avg_latency_s is not None else None,
             "total_tokens": int(total_tokens),
-            "daily_cost_usd": round(daily_cost_usd, 6),
+            # Real session cost (sum of per-run ``cost_usd``); ``None`` when no
+            # run had a priced model. ``daily_cost_usd`` mirrors it for consumers
+            # of the older key name — both are the true summed cost, not an
+            # estimate.
+            "cost_usd": session_cost_usd,
+            "daily_cost_usd": session_cost_usd,
+            "priced_runs": priced_runs,
+            "unpriced_runs": unpriced_runs,
+            "http_client_errors": http_client_errors,
+            "http_server_errors": http_server_errors,
         },
         # ``slo``/``recent_spans`` are the canonical keys consumed by the SPA;
         # ``slos``/``spans`` are documented aliases so external consumers can use
         # either spelling.
         "slo": slo,
         "slos": slo,
+        "by_model": by_model,
+        "by_status": by_status,
         "recent_runs": recent_runs,
         "recent_spans": recent_spans[:20],
         "spans": recent_spans[:20],
         "prompt_templates": _get_prompt_templates(),
         "raw_metrics": dict(sorted(raw_metrics.items())),
     }
+
+
+def _effgen_version() -> str:
+    """Return the running effGen version string (best-effort)."""
+    try:
+        from effgen import __version__
+
+        return str(__version__)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _histogram_quantile(bounds: list[tuple[float, float]], quantile: float) -> float | None:
+    """Estimate a quantile from cumulative histogram buckets.
+
+    ``bounds`` is a list of ``(upper_bound, cumulative_count)`` pairs sorted by
+    upper bound ascending (the final bound is ``+Inf``). Linear interpolation
+    within the matching bucket mirrors Prometheus' ``histogram_quantile``.
+    Returns ``None`` when there is no observed count.
+    """
+    if not bounds:
+        return None
+    total = bounds[-1][1]
+    if total <= 0:
+        return None
+    rank = quantile * total
+    prev_bound = 0.0
+    prev_count = 0.0
+    for upper, cum in bounds:
+        if cum >= rank:
+            if upper == math.inf:
+                return prev_bound if prev_bound > 0 else None
+            if cum == prev_count:
+                return upper
+            frac = (rank - prev_count) / (cum - prev_count)
+            return prev_bound + frac * (upper - prev_bound)
+        prev_bound, prev_count = upper, cum
+    return prev_bound
+
+
+def _bucket_bounds(
+    samples: list[tuple[str, dict[str, str], float]],
+    predicate: Any = None,
+) -> list[tuple[float, float]]:
+    """Aggregate ``model_call_latency`` histogram buckets into sorted bounds."""
+    acc: dict[float, float] = {}
+    for name, labels, value in samples:
+        if name != "effgen_model_call_latency_seconds_bucket":
+            continue
+        if predicate is not None and not predicate(labels):
+            continue
+        le_raw = labels.get("le", "")
+        try:
+            le = math.inf if le_raw in ("+Inf", "Inf", "inf") else float(le_raw)
+        except (TypeError, ValueError):
+            continue
+        acc[le] = acc.get(le, 0.0) + value
+    return sorted(acc.items(), key=lambda kv: kv[0])
+
+
+def _latency_percentiles(
+    samples: list[tuple[str, dict[str, str], float]],
+) -> dict[str, float | None]:
+    """Compute p50/p95/p99 latency (seconds) across all model-call buckets."""
+    bounds = _bucket_bounds(samples)
+    out: dict[str, float | None] = {}
+    for label, q in (("p50", 0.5), ("p95", 0.95), ("p99", 0.99)):
+        val = _histogram_quantile(bounds, q)
+        out[label] = round(val, 4) if val is not None else None
+    return out
+
+
+def _http_status_breakdown(
+    samples: list[tuple[str, dict[str, str], float]],
+) -> tuple[dict[str, int], int, int]:
+    """Return ({status: count}, 4xx total, 5xx total) from the request counter."""
+    by_status: dict[str, int] = {}
+    client_errors = 0
+    server_errors = 0
+    for name, labels, value in samples:
+        if name != "effgen_http_requests_total":
+            continue
+        status = str(labels.get("status", "")).strip()
+        if not status:
+            continue
+        by_status[status] = by_status.get(status, 0) + int(value)
+        if status.startswith("4"):
+            client_errors += int(value)
+        elif status.startswith("5"):
+            server_errors += int(value)
+    return dict(sorted(by_status.items())), client_errors, server_errors
+
+
+def _model_breakdown(
+    samples: list[tuple[str, dict[str, str], float]],
+    recent_runs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Aggregate calls, error rate, p95 latency, tokens and cost per model."""
+    # Cost per model comes from the real per-run cost ledger.
+    cost_by_model: dict[str, float] = {}
+    for run in recent_runs:
+        cost = run.get("cost_usd")
+        if isinstance(cost, int | float):
+            model = str(run.get("model", "")).split(":")[-1]
+            cost_by_model[model] = cost_by_model.get(model, 0.0) + float(cost)
+
+    agg: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _row(model: str, provider: str) -> dict[str, Any]:
+        key = (model, provider)
+        if key not in agg:
+            agg[key] = {
+                "model": model,
+                "provider": provider,
+                "calls": 0,
+                "errors": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+            }
+        return agg[key]
+
+    for name, labels, value in samples:
+        if name != "effgen_model_call_latency_seconds_count":
+            continue
+        model = labels.get("model", "unknown")
+        provider = labels.get("provider", "")
+        row = _row(model, provider)
+        row["calls"] += int(value)
+        if labels.get("outcome") not in (None, "", "ok"):
+            row["errors"] += int(value)
+
+    for name, labels, value in samples:
+        if name != "effgen_tokens_total":
+            continue
+        model = labels.get("model", "unknown")
+        provider = labels.get("provider", "")
+        row = _row(model, provider)
+        if labels.get("kind") == "input":
+            row["input_tokens"] += int(value)
+        elif labels.get("kind") == "output":
+            row["output_tokens"] += int(value)
+
+    rows: list[dict[str, Any]] = []
+    for (model, _provider), row in agg.items():
+        p95 = _histogram_quantile(
+            _bucket_bounds(samples, lambda lb, _m=model: lb.get("model") == _m),
+            0.95,
+        )
+        calls = row["calls"]
+        rows.append(
+            {
+                **row,
+                "error_rate": round(row["errors"] / calls, 4) if calls else 0.0,
+                "p95_latency_s": round(p95, 4) if p95 is not None else None,
+                "cost_usd": round(cost_by_model[model], 6) if model in cost_by_model else None,
+            }
+        )
+    rows.sort(key=lambda r: r["calls"], reverse=True)
+    return rows
 
 
 _PROM_LINE_RE = re.compile(

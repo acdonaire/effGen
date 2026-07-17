@@ -7,8 +7,9 @@ Served at ``/dashboard`` by the API server.  Provides real-time panels:
 - SLO burn-rate indicators
 
 The dashboard is a single-page application (HTML + JS + CSS) served from
-``effgen/dashboard/static/``.  No build step is required — the JS uses
-Chart.js loaded from a CDN.
+``effgen/dashboard/static/``.  No build step is required, and every asset is
+served locally — the page renders with no external network dependency (the
+latency chart is drawn on a canvas, not loaded from a CDN).
 
 Usage
 -----
