@@ -379,6 +379,60 @@ def test_load_env_files_skips_filesystem_when_disabled(monkeypatch, tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# The library exposes the CLI's zero-config .env discovery: effgen.load_env()
+# --------------------------------------------------------------------------- #
+def test_toplevel_load_env_is_exported_and_callable():
+    import effgen
+
+    assert "load_env" in effgen.__all__
+    assert callable(effgen.load_env)
+
+
+def test_toplevel_load_env_loads_a_nearby_dotenv(monkeypatch, tmp_path):
+    """A script/notebook user gets the CLI's key discovery from load_env()."""
+    import effgen
+
+    (tmp_path / ".env").write_text("EFFGEN_TEST_LOADENV_PROBE=from_dotenv\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("EFFGEN_TEST_LOADENV_PROBE", raising=False)
+    monkeypatch.delenv("EFFGEN_NO_DOTENV", raising=False)
+    monkeypatch.delenv("EFFGEN_DOTENV", raising=False)
+    try:
+        loaded = effgen.load_env()
+        assert any(p.endswith(".env") for p in loaded)
+        assert os.environ.get("EFFGEN_TEST_LOADENV_PROBE") == "from_dotenv"
+    finally:
+        os.environ.pop("EFFGEN_TEST_LOADENV_PROBE", None)
+
+
+def test_toplevel_load_env_never_overrides_real_env(monkeypatch, tmp_path):
+    """A value already in the environment wins over the file."""
+    import effgen
+
+    (tmp_path / ".env").write_text("EFFGEN_TEST_LOADENV_PROBE=from_dotenv\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EFFGEN_TEST_LOADENV_PROBE", "from_real_env")
+    monkeypatch.delenv("EFFGEN_NO_DOTENV", raising=False)
+    monkeypatch.delenv("EFFGEN_DOTENV", raising=False)
+    effgen.load_env()
+    assert os.environ["EFFGEN_TEST_LOADENV_PROBE"] == "from_real_env"
+
+
+def test_toplevel_load_env_respects_no_dotenv(monkeypatch, tmp_path):
+    import effgen
+
+    (tmp_path / ".env").write_text("EFFGEN_TEST_LOADENV_PROBE=leaked\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("EFFGEN_TEST_LOADENV_PROBE", raising=False)
+    monkeypatch.setenv("EFFGEN_NO_DOTENV", "1")
+    try:
+        assert effgen.load_env() == []
+        assert "EFFGEN_TEST_LOADENV_PROBE" not in os.environ
+    finally:
+        os.environ.pop("EFFGEN_TEST_LOADENV_PROBE", None)
+
+
+# --------------------------------------------------------------------------- #
 # "Did you mean?" on mistyped subcommands and choice-based options
 # --------------------------------------------------------------------------- #
 def test_unknown_subcommand_suggests_and_exits_2(capsys):

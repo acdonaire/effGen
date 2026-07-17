@@ -633,6 +633,10 @@ def create_openai_router(
         # `provider:model` id the server can reach (e.g. "openai:gpt-5-nano",
         # "groq:llama-3.1-8b-instant") is callable whether or not it appears here.
         now = _now()
+        # The legacy OpenAI-flagship names (gpt-4, gpt-3.5-turbo, ...) are
+        # drop-in compatibility aliases, each mapped to a concrete local model
+        # (see ``root``). Mark them so a client does not read the list as a claim
+        # that the server serves GPT-4 itself.
         data = [
             {
                 "id": alias,
@@ -640,6 +644,7 @@ def create_openai_router(
                 "created": now,
                 "owned_by": "effgen",
                 "root": target,
+                "effgen": {"compatibility_alias": True, "mapped_to": target},
             }
             for alias, target in MODEL_ALIASES.items()
         ]
@@ -651,6 +656,7 @@ def create_openai_router(
                 "created": now,
                 "owned_by": "effgen",
                 "root": default_model_id(),
+                "effgen": {"compatibility_alias": True, "mapped_to": default_model_id()},
             })
         # Alongside the drop-in legacy aliases, list the ids the server has
         # actually served this run (e.g. "openai:gpt-5-nano"), so a client
@@ -671,7 +677,23 @@ def create_openai_router(
                     "owned_by": "effgen",
                     "root": model_id,
                 })
-        return {"object": "list", "data": data}
+        # OpenAI's schema is ``{object, data}``; the extra ``effgen`` key is an
+        # additive hint (standard clients read ``data`` and ignore it) telling a
+        # caller the list is not exhaustive — any reachable ``provider:model`` id
+        # is callable whether or not it is listed here.
+        return {
+            "object": "list",
+            "data": data,
+            "effgen": {
+                "note": (
+                    "Listed ids are drop-in compatibility aliases plus models "
+                    "this server has served this run. Any reachable "
+                    "'provider:model' id (e.g. 'openai:gpt-5-nano', "
+                    "'groq:llama-3.1-8b-instant') is also accepted as the "
+                    "request 'model', whether or not it appears in this list."
+                ),
+            },
+        }
 
     @router.post("/chat/completions")
     async def chat_completions(request: ChatCompletionRequest) -> Any:

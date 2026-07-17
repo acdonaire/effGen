@@ -3,11 +3,13 @@
 
 import pytest
 
+from effgen.presets import registry as _preset_registry
 from effgen.presets.registry import (
     PresetConfig,
     create_agent,
     get_preset,
     list_presets,
+    preset_tool_overhead,
 )
 from tests.fixtures.mock_models import MockModel
 
@@ -114,6 +116,48 @@ class TestCreateAgent:
     def test_no_preset_and_no_domain_raises(self):
         with pytest.raises(TypeError, match="preset name"):
             create_agent(model=self._mock_model())
+
+
+class TestToolSchemaOverhead:
+    """A tool-heavy preset carries a fixed per-call schema cost; it is
+    discoverable and flagged so a user does not hit it by surprise on a
+    small-context or rate-limited model."""
+
+    def test_overhead_reports_count_and_tokens(self):
+        n_tools, approx = preset_tool_overhead("general")
+        assert n_tools >= 20  # the broad "kitchen sink" preset
+        assert approx > 4000  # its schemas dominate a small model's budget
+
+    def test_minimal_has_no_overhead(self):
+        n_tools, approx = preset_tool_overhead("minimal")
+        assert n_tools == 0
+        assert approx == 0
+
+    def test_lean_preset_reports_modest_overhead(self):
+        n_tools, approx = preset_tool_overhead("math")
+        assert 0 < n_tools < 5
+        assert approx < 4000
+
+    def test_heads_up_fires_once_for_heavy_preset(self, monkeypatch, caplog):
+        import logging
+
+        monkeypatch.setattr(_preset_registry, "_tool_overhead_warned", set())
+        tools = _preset_registry._instantiate_tools(get_preset("general").tool_names)
+        with caplog.at_level(logging.WARNING, logger=_preset_registry.logger.name):
+            _preset_registry._warn_tool_schema_overhead("general", tools)
+            _preset_registry._warn_tool_schema_overhead("general", tools)
+        hits = [r for r in caplog.records if "tool schema" in r.getMessage()]
+        assert len(hits) == 1
+        assert "31" in hits[0].getMessage() or "tools" in hits[0].getMessage()
+
+    def test_heads_up_silent_for_lean_preset(self, monkeypatch, caplog):
+        import logging
+
+        monkeypatch.setattr(_preset_registry, "_tool_overhead_warned", set())
+        tools = _preset_registry._instantiate_tools(get_preset("math").tool_names)
+        with caplog.at_level(logging.WARNING, logger=_preset_registry.logger.name):
+            _preset_registry._warn_tool_schema_overhead("math", tools)
+        assert not [r for r in caplog.records if "tool schema" in r.getMessage()]
 
 
 class TestDomainAgentBridge:
@@ -332,6 +376,12 @@ class TestRagKnowledgeBase:
         passing an empty one, and must fail the same way — never build a
         retrieval agent with zero documents indexed."""
         with pytest.raises(ValueError, match="knowledge_base"):
+            create_agent("rag", self._mock_model())
+
+    def test_missing_knowledge_base_error_points_at_cli_file_flag(self):
+        """A CLI user must be pointed at the working `--file` path, not only the
+        Python `knowledge_base=` argument."""
+        with pytest.raises(ValueError, match="--preset rag --file"):
             create_agent("rag", self._mock_model())
 
     def test_typod_path_fails_loud_not_indexed_literally(self):

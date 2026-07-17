@@ -85,6 +85,13 @@ except ImportError:
     print("Error: effGen package not found. Please install it first.")
     sys.exit(1)
 
+# .env discovery + loading is shared with the library-facing ``effgen.load_env()``
+# so the CLI and a script/notebook resolve keys the same way. These aliases keep
+# the historical CLI-internal names (used by tests and callers) working.
+from effgen._env import dotenv_disabled as _dotenv_disabled  # noqa: F401 - re-export
+from effgen._env import env_search_paths as _env_search_paths  # noqa: F401 - re-export
+from effgen._env import load_env as load_env_files
+
 # Tips, first-run welcome, "did you mean?" and teaching-error helpers.
 from effgen.cli import onboarding as _onboarding
 
@@ -760,8 +767,14 @@ class CLIInterface:
 
         # Attach --file/--input content: an image becomes multimodal `inputs=`;
         # a document is read with the same loaders RAG ingestion uses and
-        # prepended to the task as text context.
+        # prepended to the task as text context. With ``--preset rag`` the
+        # documents are instead indexed into the agent's retrieval tool, so a
+        # CLI user can point the rag preset at a knowledge base without dropping
+        # into Python — the agent retrieves and cites instead of seeing the raw
+        # text as context.
         extra_inputs: list[Any] = []
+        rag_docs: list[str] = []
+        _preset_is_rag = getattr(args, 'preset', None) == 'rag'
         if input_files:
             from effgen.core.multimodal import _media_kind_from_name, image_from
             from effgen.rag.ingest import DocumentIngester
@@ -774,6 +787,9 @@ class CLIInterface:
                     return 1
                 if _media_kind_from_name(str(p)) == "image":
                     extra_inputs.append(image_from(p))
+                    continue
+                if _preset_is_rag:
+                    rag_docs.append(str(p))
                     continue
                 ingester = DocumentIngester(
                     show_progress=False, chunk_size=10_000_000,
@@ -866,6 +882,8 @@ class CLIInterface:
                 model_id = run_model
                 self.print(f"Using preset: {args.preset}")
                 _preset_overrides = {"provider": provider} if provider else {}
+                if rag_docs:
+                    _preset_overrides["knowledge_base"] = rag_docs
                 agent = _create_preset_agent(
                     args.preset,
                     model_id,
@@ -5349,73 +5367,6 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
     return 1
 
 
-def _dotenv_disabled() -> bool:
-    """True when the .env filesystem walk should be skipped entirely.
-
-    Set ``EFFGEN_NO_DOTENV=1`` (or ``EFFGEN_DOTENV=none``) so a production
-    process uses only the environment its orchestrator injected — a stray
-    ``.env`` left in a deploy image or the server's cwd can otherwise supply
-    provider keys nobody intended to expose to that process.
-    """
-    if os.environ.get("EFFGEN_NO_DOTENV", "0").strip().lower() in ("1", "true", "yes", "on"):
-        return True
-    return (os.environ.get("EFFGEN_DOTENV") or "").strip().lower() == "none"
-
-
-def _env_search_paths() -> list[Path]:
-    """The ordered list of ``.env`` locations the CLI loads (earliest wins).
-
-    Search order (documented so pip-installed users aren't surprised):
-      0. Skipped entirely when ``EFFGEN_NO_DOTENV=1`` or ``EFFGEN_DOTENV=none``.
-      1. ``$EFFGEN_DOTENV`` — explicit override, if set (and not ``"none"``).
-      2. ``~/.effgen/.env`` — per-user effGen config.
-      3. ``./.env`` and each parent directory up to the filesystem root — the
-         nearest project ``.env`` to the current working directory.
-    Values are loaded non-overriding, so a real environment variable always
-    wins over a file, and earlier files win over later ones.
-    """
-    if _dotenv_disabled():
-        return []
-    paths: list[Path] = []
-    override = os.environ.get("EFFGEN_DOTENV")
-    if override:
-        paths.append(Path(override))
-    paths.append(Path.home() / ".effgen" / ".env")
-    # Walk up from the cwd to find the nearest project .env (a checkout's repo
-    # root, for example) instead of a confusing package-relative path.
-    cwd = Path.cwd()
-    for d in [cwd, *cwd.parents]:
-        paths.append(d / ".env")
-    return paths
-
-
-def load_env_files() -> list[str]:
-    """Load ``.env`` files from the documented search paths (non-overriding).
-
-    Returns the list of paths actually loaded (for diagnostics). Returns
-    immediately with an empty list when the walk is disabled (see
-    :func:`_dotenv_disabled`) — no filesystem access happens in that case.
-    """
-    loaded: list[str] = []
-    if _dotenv_disabled():
-        return loaded
-    try:
-        from dotenv import load_dotenv as _load_dotenv
-    except ImportError:
-        return loaded
-    seen: set[Path] = set()
-    for ep in _env_search_paths():
-        try:
-            rp = ep.resolve()
-        except Exception:
-            rp = ep
-        if rp in seen:
-            continue
-        seen.add(rp)
-        if ep.exists():
-            _load_dotenv(ep, override=False)
-            loaded.append(str(ep))
-    return loaded
 
 
 def main():
@@ -5490,9 +5441,24 @@ def main():
             exit_code = _create_plugin_scaffold(args.plugin_name, args.output_dir)
         elif args.command == 'presets':
             from effgen.presets import list_presets as _list_presets
+            from effgen.presets.registry import preset_tool_overhead
             cli.print_header("Available Agent Presets")
             for name, desc in _list_presets().items():
-                cli.print(f"  {name:12s} — {desc}")
+                try:
+                    n_tools, approx = preset_tool_overhead(name)
+                except Exception:  # noqa: BLE001 - listing never fails on one preset
+                    n_tools, approx = 0, 0
+                if n_tools:
+                    overhead = f"{n_tools} tool{'s' if n_tools != 1 else ''} · ~{approx} tok/call"
+                else:
+                    overhead = "no tools"
+                cli.print(f"  {name:12s}  {overhead}")
+                cli.print(f"               {desc}")
+            cli.print(
+                "\n'~N tok/call' is the approximate tool-schema size sent on every "
+                "request — a tool-heavy preset costs more per call and can exceed "
+                "a small-context or rate-limited model."
+            )
             cli.print("\nUsage: effgen run --preset <name> \"your task\"")
             exit_code = 0
         elif args.command in ('quickstart', 'tutorial'):

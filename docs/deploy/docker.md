@@ -1,6 +1,6 @@
 # Docker Deployment
 
-effGen ships a production-grade Docker image built with a multi-stage Dockerfile.
+effGen ships a Docker image built with a multi-stage Dockerfile.
 
 ## Quick start
 
@@ -74,24 +74,41 @@ docker run --rm -p 8080:8080 \
 | `EFFGEN_SANDBOX_BACKEND` | `subprocess` | `docker`, `subprocess`, or `off` |
 | `EFFGEN_AUDIT_DIR` | `~/.effgen/audit` | Audit log directory |
 
-## Docker Compose (example)
+## Docker Compose
+
+A ready-to-run `deploy/docker/docker-compose.yml` builds the image and starts
+the server (dev mode, auth disabled) in one command:
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml up --build
+curl http://localhost:8080/health   # {"status":"ok"}
+```
+
+The file:
 
 ```yaml
 services:
   effgen:
     build:
-      context: .
+      context: ../..
       dockerfile: deploy/docker/Dockerfile
+      args:
+        EXTRAS: server
+    image: effgen:local
     ports:
       - "8080:8080"
     environment:
       EFFGEN_DEV_MODE: "1"
+      EFFGEN_PORT: "8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 ```
+
+For a deployment that faces a network, drop `EFFGEN_DEV_MODE` and set the
+`EFFGEN_OIDC_*` variables (see "Production run" above).
 
 ## Building for multiple architectures
 

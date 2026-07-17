@@ -351,6 +351,78 @@ def _instantiate_tools(tool_names: list[str]) -> list:
     return tools
 
 
+# The JSON schema for every attached tool is sent to the model on each call, so
+# a tool-heavy preset adds a fixed per-call token (and cost) overhead on top of
+# the task. Above this approximate size, agents built with the preset get a
+# one-time heads-up: on a small-context or rate-limited model the schemas alone
+# can exceed the limit, and even where they fit they multiply per-call cost.
+_TOOL_OVERHEAD_HEADS_UP_TOKENS = 4000
+_tool_overhead_warned: set[str] = set()
+
+
+def _approx_schema_tokens(tools: list) -> int:
+    """Approximate the token size of the tool schemas sent to the model.
+
+    Serializes each tool's function-calling JSON schema and estimates tokens at
+    ~4 characters per token — enough to compare presets and flag a heavy one,
+    not an exact provider tokenizer count.
+    """
+    import json
+
+    total_chars = 0
+    for t in tools:
+        meta = getattr(t, "metadata", None)
+        if meta is None or not hasattr(meta, "to_json_schema"):
+            continue
+        try:
+            total_chars += len(json.dumps(meta.to_json_schema()))
+        except Exception:  # noqa: BLE001 - a single unserializable schema shouldn't break the estimate
+            continue
+    return total_chars // 4
+
+
+def preset_tool_overhead(name: str) -> tuple[int, int]:
+    """Return ``(tool_count, approx_schema_tokens)`` for a named preset.
+
+    ``approx_schema_tokens`` is the estimated per-call token cost of the
+    preset's tool schemas — sent on every request regardless of the task — so a
+    caller can pick a preset that fits a small-context or rate-limited model.
+    """
+    cfg = get_preset(name)
+    # Instantiating optional tools without their keys logs skip warnings; this
+    # is an inspection helper, so keep it quiet.
+    _prev = logger.level
+    logger.setLevel(logging.ERROR)
+    try:
+        tools = _instantiate_tools(cfg.tool_names)
+    finally:
+        logger.setLevel(_prev)
+    return len(tools), _approx_schema_tokens(tools)
+
+
+def _warn_tool_schema_overhead(spec_name: str, tools: list) -> None:
+    """Log a one-time heads-up when an agent's tool schemas are large.
+
+    Fires at most once per spec name per process. Silent when the estimated
+    schema size is under :data:`_TOOL_OVERHEAD_HEADS_UP_TOKENS`, so lean presets
+    say nothing.
+    """
+    if len(tools) < 2 or spec_name in _tool_overhead_warned:
+        return
+    approx = _approx_schema_tokens(tools)
+    if approx < _TOOL_OVERHEAD_HEADS_UP_TOKENS:
+        return
+    _tool_overhead_warned.add(spec_name)
+    logger.warning(
+        "Agent '%s' carries %d tools (~%d tokens of tool schema sent on every "
+        "call). On a small-context or rate-limited model this alone can exceed "
+        "the limit; where it fits it still adds that cost to each request. A "
+        "smaller preset (e.g. 'minimal' or 'math') or a larger-context model "
+        "reduces it.",
+        spec_name, len(tools), approx,
+    )
+
+
 def _normalize_extra_tools(extra_tools: list, *, _arg: str = "extra_tools") -> list:
     """Resolve ``extra_tools`` entries to tool instances.
 
@@ -811,12 +883,16 @@ def create_agent(
                 "directory path, a raw text string, a list of them, or a "
                 "VectorMemoryStore. The rag preset never builds a retrieval "
                 "agent with zero documents indexed; pass one, e.g. "
-                "create_agent('rag', model, knowledge_base='notes.txt')."
+                "create_agent('rag', model, knowledge_base='notes.txt'). "
+                "From the CLI, point it at documents with "
+                "`effgen run --preset rag --file notes.txt \"your question\"`."
             )
         _ingest_rag_knowledge_base(tools, knowledge_base)
 
     if extra_tools:
         tools.extend(_normalize_extra_tools(extra_tools))
+
+    _warn_tool_schema_overhead(spec_name, tools)
 
     # The agent's guardrails: an explicit guardrails= wins, otherwise the spec's
     # (a domain carries its own, presets default to None). config_overrides may

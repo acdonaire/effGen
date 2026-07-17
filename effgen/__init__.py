@@ -8,6 +8,13 @@ This framework enables SLMs to function as powerful agentic systems through:
 - Multi-GPU support with vLLM and Transformers
 - Comprehensive configuration management
 
+The command-line tools load a nearby ``.env`` automatically. In a script or
+notebook, call :func:`effgen.load_env` once to get the same key discovery::
+
+    from effgen import load_env, create_agent
+    load_env()  # reads OPENAI_API_KEY / GROQ_API_KEY / ... from a nearby .env
+    agent = create_agent("minimal", "groq:llama-3.1-8b-instant")
+
 The public surface (``effgen.__all__``) is resolved **lazily**: importing
 ``effgen`` only sets up version metadata and logging hygiene, and the first
 access of a name (``effgen.Agent``, ``from effgen import load_model``) imports
@@ -239,6 +246,7 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "list_models": ("effgen.models.registry", "list_models"),
     "list_presets": ("effgen.presets.registry", "list_presets"),
     "list_providers": ("effgen.models.registry", "list_providers"),
+    "load_env": ("effgen._env", "load_env"),
     "load_model": ("effgen.models.model_loader", "load_model"),
     "lookup": ("effgen.models.registry", "lookup"),
     "openai_available_models": ("effgen.models.openai_models", "available_models"),
@@ -519,6 +527,9 @@ __all__ = [
     # Presets
     "create_agent",
     "list_presets",
+
+    # Environment / keys
+    "load_env",
 
     # Guardrails (also importable from effgen.guardrails). Listed here so the
     # everyday classes are as discoverable at the top level as the domains above.

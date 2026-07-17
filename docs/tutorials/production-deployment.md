@@ -1,6 +1,6 @@
 # Production Deployment
 
-This guide covers deploying effGen as a production API server with the v0.2.0 production gateway features.
+This guide covers deploying effGen as an API server, with authentication, rate limiting, and the OpenAI-compatible gateway endpoints.
 
 ## API Server Quick Start
 
@@ -17,7 +17,7 @@ EFFGEN_RATE_LIMIT=120 effgen serve --port 8000
 
 ## OpenAI-Compatible API
 
-The v2 API server exposes OpenAI-compatible endpoints:
+The API server exposes OpenAI-compatible endpoints:
 
 ```bash
 # Chat completions (drop-in OpenAI replacement)

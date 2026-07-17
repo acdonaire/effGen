@@ -238,6 +238,26 @@ class TestModelsListDiscoverability:
         assert r.status_code == 200
         assert {m["id"] for m in r.json()["data"]} >= {"gpt-4"}
 
+    def test_legacy_aliases_marked_as_compatibility_aliases(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.get("/v1/models", headers={"X-API-Key": "k"})
+        by_id = {m["id"]: m for m in r.json()["data"]}
+        # A client can tell gpt-4 is a local-model alias, not real GPT-4.
+        entry = by_id["gpt-4"]
+        assert entry["effgen"]["compatibility_alias"] is True
+        assert entry["effgen"]["mapped_to"] == entry["root"]
+        assert entry["root"] != "gpt-4"
+
+    def test_listing_notes_that_any_provider_model_is_callable(self):
+        c = _client(api_key="k", runner=_ok_runner)
+        r = c.get("/v1/models", headers={"X-API-Key": "k"})
+        body = r.json()
+        # Standard OpenAI shape is preserved; the extra hint is additive.
+        assert body["object"] == "list"
+        assert isinstance(body["data"], list)
+        note = body["effgen"]["note"].lower()
+        assert "provider:model" in note or "provider" in note
+
 
 class TestServedModelTracking:
     """The default ``/v1/models`` source lists only ids that actually served a
