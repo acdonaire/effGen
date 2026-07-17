@@ -93,9 +93,75 @@ effgen prompts eval --domain research --live --model gpt-oss-120b
 
 # Write eval table to file
 effgen prompts eval --output outputs/eval.txt
+
+# Gate CI on the pass rate (exits non-zero below the threshold; without
+# --fail-under, any single failing eval already exits non-zero)
+effgen prompts eval --domain research --fail-under 0.9
+
+# Render + run a template, raising the completion cap for a reasoning model
+# (an empty/truncated result reports the reason and exits non-zero)
+effgen prompts run research.literature_review.v1 -m openai:gpt-5-nano --max-tokens 2000
+```
+
+## Authoring your own templates
+
+You do not need to edit the installed package to add reusable templates. Point
+`EFFGEN_PROMPTS_DIR` at one or more directories (separated by your platform's
+path separator — `:` on Linux/macOS, `;` on Windows) of Python files, and every
+`effgen prompts` command discovers them alongside the built-in library:
+
+```bash
+export EFFGEN_PROMPTS_DIR=~/my-prompts
+effgen prompts list --domain marketing
+effgen prompts run marketing.explainer.v1 -m groq:llama-3.1-8b-instant
+```
+
+Each `*.py` file in the directory is loaded (files whose name starts with `_`
+are skipped). A file makes templates available either way:
+
+```python
+# ~/my-prompts/marketing.py
+from effgen.prompts.library import LibraryPrompt
+
+def _render(topic, audience, tone="plain", **_):
+    return f"Explain {topic} to {audience} in a {tone} tone. Use one analogy."
+
+# Option A: expose a module-level PROMPTS list.
+PROMPTS = [
+    LibraryPrompt(
+        name="marketing.explainer.v1",
+        domain="marketing",
+        variant="zero_shot",
+        description="Explain a topic to an audience in a chosen tone.",
+        template=_render,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "minLength": 2},
+                "audience": {"type": "string", "minLength": 2},
+                "tone": {"type": "string"},
+            },
+            "required": ["topic", "audience"],
+        },
+        fixture={"topic": "vector databases", "audience": "product managers"},
+        expected_shape=None,
+        tags=["marketing"],
+    )
+]
+
+# Option B: call registry.register(prompt) directly instead of PROMPTS.
+```
+
+Within a running Python process you can also add a template in-process:
+
+```python
+from effgen.prompts.library import registry
+registry.register(prompt)  # visible to this process only
 ```
 
 ## Adding a New Domain
+
+To contribute a domain to the built-in library:
 
 1. Create `effgen/prompts/library/domains/<domain>/__init__.py`
 2. Create one file per template, e.g. `my_prompt_v1.py`

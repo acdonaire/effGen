@@ -24,6 +24,33 @@ GOLDENS_DIR = Path(__file__).parent.parent.parent.parent / "tests" / "prompts" /
 
 
 @dataclass
+class RunOutput:
+    """Text plus per-call metadata from a single model run.
+
+    ``run_model`` returns this so a caller (the CLI ``prompts run`` path, the
+    playground) can detect an empty/truncated billed result and read the
+    token/cost/latency figures the model reported, rather than seeing only the
+    text and treating an empty answer as a normal one.
+    """
+
+    text: str
+    finish_reason: str = ""
+    truncated: bool = False
+    tokens_used: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cost_usd: float | None = None
+    latency_ms: float | None = None
+    max_tokens: int | None = None
+    model_name: str = ""
+
+    @property
+    def is_empty(self) -> bool:
+        """True when the model produced no visible (non-whitespace) text."""
+        return not (self.text or "").strip()
+
+
+@dataclass
 class EvalResult:
     name: str
     passed: bool
@@ -216,8 +243,15 @@ class PromptEval:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _run_model(self, prompt_text: str, model: str) -> str:
-        """Call a model via effgen's model loader and return the text output.
+    def run_model(
+        self,
+        prompt_text: str,
+        model: str,
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> RunOutput:
+        """Call a model via effgen's model loader and return text + metadata.
 
         Routing rules (applied in order):
         1. ``provider:model_id`` prefix is handled natively by ``load_model``.
@@ -225,6 +259,11 @@ class PromptEval:
            auto-routed to that provider. (Ambiguous ids raise as usual.)
         3. Otherwise the loader's default detection runs (OpenAI/Anthropic/
            Gemini/HF).
+
+        ``max_tokens``/``temperature`` override the loaded model's own settings
+        when supplied. With neither set and no model-level cap, the completion
+        cap defaults to 4096 so structured-output prompts (JSON arrays,
+        multi-section briefs) don't truncate mid-stream.
         """
         from effgen.models import load_model
 
@@ -243,9 +282,7 @@ class PromptEval:
 
         loaded = load_model(model, provider=provider) if provider else load_model(model)
 
-        # Use a generous max_tokens cap so structured-output prompts (JSON arrays,
-        # multi-section briefs) don't truncate mid-stream and fail shape validation.
-        # We honour any pre-existing config the caller set on the loaded model.
+        resolved_max: int | None = None
         gen_kwargs: dict[str, Any] = {}
         try:
             from effgen.models.base import GenerationConfig
@@ -254,18 +291,58 @@ class PromptEval:
             existing_cfg = getattr(loaded, "config", None)
             if existing_cfg is not None:
                 existing_max = getattr(existing_cfg, "max_tokens", None)
-            if existing_max is None:
-                gen_kwargs["config"] = GenerationConfig(max_tokens=4096)
+            resolved_max = max_tokens if max_tokens is not None else existing_max
+            if resolved_max is None:
+                resolved_max = 4096
+            # Only build a fresh config when we change something; otherwise the
+            # loaded model's own config (which may set a cap) is left untouched.
+            if max_tokens is not None or temperature is not None or existing_max is None:
+                cfg_kwargs: dict[str, Any] = {"max_tokens": resolved_max}
+                if temperature is not None:
+                    cfg_kwargs["temperature"] = temperature
+                gen_kwargs["config"] = GenerationConfig(**cfg_kwargs)
         except Exception:
             pass
 
         result = loaded.generate(prompt_text, **gen_kwargs)
+        return self._to_run_output(result, resolved_max, model)
+
+    @staticmethod
+    def _to_run_output(result: Any, max_tokens: int | None, model: str) -> RunOutput:
+        """Fold a raw ``generate()`` return into a :class:`RunOutput`."""
         text = getattr(result, "text", None)
         if text is None and isinstance(result, dict):
             text = result.get("text") or result.get("content")
         if text is None:
             text = str(result)
-        return text
+        meta = getattr(result, "metadata", None) or {}
+        finish_reason = getattr(result, "finish_reason", "") or ""
+        truncated = bool(meta.get("truncated")) or finish_reason == "length"
+        return RunOutput(
+            text=text,
+            finish_reason=finish_reason,
+            truncated=truncated,
+            tokens_used=getattr(result, "tokens_used", None),
+            prompt_tokens=meta.get("prompt_tokens"),
+            completion_tokens=meta.get("completion_tokens"),
+            cost_usd=meta.get("cost_usd"),
+            latency_ms=meta.get("latency_ms"),
+            max_tokens=max_tokens,
+            model_name=getattr(result, "model_name", None) or str(model),
+        )
+
+    def _run_model(
+        self,
+        prompt_text: str,
+        model: str,
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        """Return only the text output (used by the live-eval shape checks)."""
+        return self.run_model(
+            prompt_text, model, max_tokens=max_tokens, temperature=temperature
+        ).text
 
     @staticmethod
     def _is_rate_limit_error(exc: Exception) -> bool:

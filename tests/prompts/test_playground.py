@@ -537,3 +537,140 @@ class TestPlaygroundREPL:
             child.expect(r"Rendered Prompt|---", timeout=self.TIMEOUT)
         child.sendline("exit")
         child.expect(pexpect.EOF, timeout=self.TIMEOUT)
+
+
+# -------------------------------------------------------------------------
+# Unknown-input-key handling
+# -------------------------------------------------------------------------
+
+class TestUnknownInputKeys:
+    def test_extra_key_reports_clean_error_not_typeerror(self, capsys):
+        from effgen.cli.playground import cmd_render
+
+        rc = cmd_render(
+            "business.elevator_pitch.v1",
+            {
+                "product_name": "X",
+                "target_audience": "devs",
+                "problem": "a problem statement here",
+                "solution": "a solution statement here",
+                "differentiator": "a differentiator here",
+                "EXTRA_TYPO_KEY": "oops",
+            },
+        )
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "unknown input key 'EXTRA_TYPO_KEY'" in out
+        # The private render function name must never leak.
+        assert "_elevator_pitch" not in out
+        assert "unexpected keyword argument" not in out
+
+    def test_valid_keys_are_listed(self, capsys):
+        from effgen.cli.playground import cmd_render
+
+        cmd_render("business.elevator_pitch.v1", {"nope": 1})
+        out = capsys.readouterr().out
+        assert "valid keys:" in out
+        assert "product_name" in out
+
+    def test_kwargs_template_allows_extra_keys(self):
+        from effgen.cli.playground import _unknown_input_keys
+        from effgen.prompts.library.base import LibraryPrompt
+
+        def _render(topic="a", **_):
+            return f"About {topic}"
+
+        p = LibraryPrompt(
+            name="t.kw.v1",
+            domain="t",
+            variant="zero_shot",
+            description="d",
+            template=_render,
+            input_schema={"type": "object", "properties": {"topic": {"type": "string"}}},
+            fixture={"topic": "a"},
+            expected_shape=None,
+            tags=[],
+        )
+        # The render signature accepts **kwargs, so no key is "unknown".
+        assert _unknown_input_keys(p, {"topic": "a", "extra": "b"}) == []
+
+
+# -------------------------------------------------------------------------
+# Empty / truncated result handling (fail-closed) + footer + verdict
+# -------------------------------------------------------------------------
+
+class TestRunFailClosed:
+    def _stub(self, monkeypatch, result):
+        import effgen.cli.playground as pg
+
+        def fake_run(rendered, model, *, max_tokens=None, temperature=None):
+            return result
+
+        monkeypatch.setattr(pg, "_run_prompt", fake_run)
+
+    def test_truncated_result_exits_nonzero_with_marker(self, monkeypatch, capsys):
+        from effgen.cli.playground import cmd_run
+        from effgen.prompts.library.eval import RunOutput
+
+        self._stub(
+            monkeypatch,
+            RunOutput(text="", finish_reason="length", truncated=True, max_tokens=16),
+        )
+        rc = cmd_run("business.elevator_pitch.v1", {}, "openai:gpt-5-nano")
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "no usable output" in out
+        assert "--max-tokens" in out
+
+    def test_empty_text_exits_nonzero(self, monkeypatch, capsys):
+        from effgen.cli.playground import cmd_run
+        from effgen.prompts.library.eval import RunOutput
+
+        self._stub(monkeypatch, RunOutput(text="   ", finish_reason="stop"))
+        rc = cmd_run("business.elevator_pitch.v1", {}, "groq:llama-3.1-8b-instant")
+        assert rc == 1
+
+    def test_nonempty_result_prints_footer(self, monkeypatch, capsys):
+        from effgen.cli.playground import cmd_run
+        from effgen.prompts.library.eval import RunOutput
+
+        self._stub(
+            monkeypatch,
+            RunOutput(
+                text="a real answer",
+                finish_reason="stop",
+                prompt_tokens=10,
+                completion_tokens=5,
+                cost_usd=0.00012,
+                latency_ms=321.0,
+            ),
+        )
+        rc = cmd_run("business.elevator_pitch.v1", {}, "groq:llama-3.1-8b-instant")
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "a real answer" in out
+        assert "tokens: 15 (10 in / 5 out)" in out
+        assert "cost: $0.000120" in out
+
+    def test_structured_verdict_reported(self, monkeypatch, capsys):
+        from effgen.cli.playground import cmd_run
+        from effgen.prompts.library.eval import RunOutput
+
+        # coding.code_review.v1 declares a json expected_shape.
+        self._stub(
+            monkeypatch,
+            RunOutput(text='{"issues": []}', finish_reason="stop"),
+        )
+        rc = cmd_run("coding.code_review.v1", {}, "groq:llama-3.1-8b-instant")
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "expected_shape" in out
+
+
+class TestRunOutput:
+    def test_is_empty(self):
+        from effgen.prompts.library.eval import RunOutput
+
+        assert RunOutput(text="").is_empty
+        assert RunOutput(text="   \n ").is_empty
+        assert not RunOutput(text="x").is_empty

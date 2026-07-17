@@ -3348,6 +3348,9 @@ Model id formats:
     prompts_eval.add_argument('--delay', type=float, default=35.0,
                               help='Seconds to wait between live model calls (default: 35)')
     prompts_eval.add_argument('--output', help='Write eval table to this file')
+    prompts_eval.add_argument('--fail-under', type=float, default=None, metavar='FRACTION',
+                              help='Exit non-zero if the pass rate is below this fraction '
+                                   '(0.0-1.0). Without it, any failing eval exits non-zero.')
 
     # Playground subcommands
     prompts_subparsers.add_parser('playground', help='Launch interactive prompt playground REPL')
@@ -3364,6 +3367,11 @@ Model id formats:
                              help="JSON file with input variables, validated against the prompt's "
                                   "input_schema (see 'prompts show <name>'); omit to render the fixture")
     prompts_run.add_argument('-m', '--model', required=True, help='Model identifier to run against')
+    prompts_run.add_argument('--max-tokens', type=int, default=None,
+                             help='Completion token cap for this run (raise it when a reasoning '
+                                  'or structured prompt returns empty/truncated output)')
+    prompts_run.add_argument('--temperature', type=float, default=None,
+                             help='Sampling temperature for this run')
 
     # Load test command
     from effgen.cli.loadtest import add_loadtest_subparser  # noqa: PLC0415
@@ -5174,7 +5182,7 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
                 }
                 for p in prompts
             ]
-            print(_json.dumps(rows, indent=2))
+            print(_json.dumps(rows, indent=2, ensure_ascii=False))
             return 0
 
         if fmt == 'markdown':
@@ -5251,6 +5259,7 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
         model = getattr(args, 'model', None)
         delay = getattr(args, 'delay', 35.0)
         output_path = getattr(args, 'output', None)
+        fail_under = getattr(args, 'fail_under', None)
 
         prompts = registry.search(domain=domain_filter)
         evaluator = PromptEval()
@@ -5262,6 +5271,9 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
 
         full_table = "=== Golden Eval ===\n" + table
 
+        total = len(golden_report.results)
+        passed = len(golden_report.passed())
+
         if live:
             if not model:
                 cli.print_error("--model is required for --live eval")
@@ -5271,11 +5283,29 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
             live_table = live_report.as_table()
             print(live_table)
             full_table += "\n=== Live Eval ===\n" + live_table
+            total += len(live_report.results)
+            passed += len(live_report.passed())
 
         if output_path:
             Path(output_path).write_text(full_table)
             cli.print_success(f"Eval table written to {output_path}")
 
+        # Reflect failures in the exit code so the harness can gate CI. With
+        # --fail-under, compare the pass rate to the threshold; otherwise any
+        # single failure exits non-zero.
+        failed = total - passed
+        if fail_under is not None:
+            rate = (passed / total) if total else 1.0
+            if rate < fail_under:
+                cli.print_error(
+                    f"Pass rate {rate:.1%} ({passed}/{total}) is below the "
+                    f"--fail-under threshold of {fail_under:.1%}."
+                )
+                return 1
+            return 0
+        if failed:
+            cli.print_error(f"{failed} of {total} eval(s) failed.")
+            return 1
         return 0
 
     # ---- playground ----
@@ -5304,6 +5334,8 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
         name = getattr(args, 'prompt_name', None)
         input_file = getattr(args, 'input_file', None)
         model = getattr(args, 'model', None)
+        max_tokens = getattr(args, 'max_tokens', None)
+        temperature = getattr(args, 'temperature', None)
         inputs = {}
         if input_file:
             try:
@@ -5311,7 +5343,7 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
             except Exception as exc:
                 cli.print_error(f"Could not read input file: {exc}")
                 return 1
-        return cmd_run(name, inputs, model)
+        return cmd_run(name, inputs, model, max_tokens=max_tokens, temperature=temperature)
 
     cli.print("Usage: effgen prompts [list|show|eval|playground|render|run]")
     return 1

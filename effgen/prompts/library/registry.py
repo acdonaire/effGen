@@ -5,9 +5,13 @@ PromptRegistry — singleton registry with auto-discovery of domain packages.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import logging
+import os
 import pkgutil
+import sys
 from collections.abc import Iterator
+from pathlib import Path
 
 from jsonschema import Draft202012Validator
 from jsonschema import exceptions as jsonschema_exceptions
@@ -15,6 +19,10 @@ from jsonschema import exceptions as jsonschema_exceptions
 from .base import LibraryPrompt
 
 logger = logging.getLogger(__name__)
+
+#: Environment variable naming one or more directories of user prompt files
+#: (``os.pathsep``-separated) discovered alongside the built-in library.
+USER_PROMPTS_ENV = "EFFGEN_PROMPTS_DIR"
 
 VALID_VARIANTS = {"zero_shot", "cot", "few_shot", "tool", "structured"}
 
@@ -124,6 +132,7 @@ class PromptRegistry:
         if not self._discovered:
             self._discovered = True
             self._discover_domains()
+            self._discover_user_dirs()
 
     def _discover_domains(self) -> None:
         """Walk effgen.prompts.library.domains and import every sub-module."""
@@ -146,6 +155,68 @@ class PromptRegistry:
                 logger.debug("Discovered prompt module: %s", modname)
             except Exception as exc:
                 logger.warning("Failed to import %s: %s", modname, exc)
+
+    def _discover_user_dirs(self) -> None:
+        """Load user templates from directories named by ``EFFGEN_PROMPTS_DIR``.
+
+        The variable holds one or more directories (``os.pathsep``-separated).
+        Each ``*.py`` file in a directory (excluding names starting with ``_``)
+        is imported; a file registers templates by calling
+        ``registry.register(...)`` and/or by exposing ``LibraryPrompt`` values
+        (a module-level ``PROMPTS`` list or top-level ``LibraryPrompt``
+        attributes), which are registered when their name is not already taken.
+        """
+        raw = os.environ.get(USER_PROMPTS_ENV, "").strip()
+        if not raw:
+            return
+        for part in raw.split(os.pathsep):
+            entry = part.strip()
+            if entry:
+                self._load_user_dir(Path(entry).expanduser())
+
+    def _load_user_dir(self, directory: Path) -> None:
+        if not directory.is_dir():
+            logger.warning(
+                "%s entry is not a directory: %s", USER_PROMPTS_ENV, directory
+            )
+            return
+        for py_file in sorted(directory.glob("*.py")):
+            if py_file.name.startswith("_"):
+                continue
+            self._load_user_file(py_file)
+
+    def _load_user_file(self, path: Path) -> None:
+        modname = f"effgen_user_prompts_{path.stem}"
+        try:
+            spec = importlib.util.spec_from_file_location(modname, path)
+            if spec is None or spec.loader is None:
+                logger.warning("Could not load prompt file %s", path)
+                return
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[modname] = module
+            spec.loader.exec_module(module)
+        except Exception as exc:
+            logger.warning("Failed to load prompt file %s: %s", path, exc)
+            return
+        # A file may register directly, or just declare LibraryPrompt values.
+        candidates: list[LibraryPrompt] = []
+        declared = getattr(module, "PROMPTS", None)
+        if isinstance(declared, list | tuple):
+            candidates.extend(p for p in declared if isinstance(p, LibraryPrompt))
+        for value in vars(module).values():
+            if isinstance(value, LibraryPrompt):
+                candidates.append(value)
+        for prompt in candidates:
+            if prompt.name not in self._prompts:
+                try:
+                    self.register(prompt)
+                except Exception as exc:
+                    logger.warning(
+                        "Skipping prompt %r from %s: %s",
+                        getattr(prompt, "name", "?"),
+                        path,
+                        exc,
+                    )
 
 
 registry = PromptRegistry()

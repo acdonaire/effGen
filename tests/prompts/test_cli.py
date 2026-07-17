@@ -114,3 +114,77 @@ class TestPromptsEvalCLI:
         result = run_cli("prompts", "eval", "--live")
         assert result.returncode != 0
         assert "--model" in result.stdout or "--model" in result.stderr
+
+
+class TestPromptsEvalExitCode:
+    def test_all_pass_exits_zero(self):
+        result = run_cli("prompts", "eval", "--domain", "business")
+        assert result.returncode == 0
+
+    def test_fail_under_met_exits_zero(self):
+        result = run_cli("prompts", "eval", "--domain", "business", "--fail-under", "1.0")
+        assert result.returncode == 0
+
+    def test_fail_under_unreachable_exits_nonzero(self):
+        # An all-pass golden run has a 100% rate; a 110% threshold cannot be met.
+        result = run_cli("prompts", "eval", "--domain", "business", "--fail-under", "1.1")
+        assert result.returncode == 1
+        assert "below" in (result.stdout + result.stderr).lower()
+
+    def test_golden_failure_exits_nonzero(self, tmp_path):
+        # A user template whose stored golden no longer matches its render must
+        # make the eval exit non-zero so it can gate CI.
+        from effgen.prompts.library.eval import PromptEval
+
+        (tmp_path / "zz.py").write_text(
+            'from effgen.prompts.library import LibraryPrompt\n'
+            'PROMPTS = [LibraryPrompt(name="zzeval.stale.v1", domain="zzeval",\n'
+            '    variant="zero_shot", description="d",\n'
+            '    template=lambda **_: "FRESH RENDER",\n'
+            '    input_schema={"type": "object", "properties": {}},\n'
+            '    fixture={}, expected_shape=None, tags=[])]\n'
+        )
+        golden = PromptEval().goldens_dir / "zzeval.stale.v1.txt"
+        golden.write_text("STALE CONTENT")
+        try:
+            env = dict(os.environ, EFFGEN_PROMPTS_DIR=str(tmp_path))
+            result = subprocess.run(
+                [sys.executable, "-m", "effgen.cli", "prompts", "eval", "--domain", "zzeval"],
+                capture_output=True, text=True, env=env,
+            )
+            assert result.returncode == 1
+            assert "fail" in result.stdout.lower()
+        finally:
+            golden.unlink(missing_ok=True)
+
+
+class TestPromptsListJsonEncoding:
+    def test_list_json_emits_raw_unicode(self):
+        result = run_cli("prompts", "list", "--format", "json")
+        assert result.returncode == 0
+        # Raw UTF-8, not \\u-escaped, consistent with other --json surfaces.
+        assert "\\u2264" not in result.stdout
+
+
+class TestPromptsRunFlags:
+    def test_run_help_lists_max_tokens_and_temperature(self):
+        result = run_cli("prompts", "run", "--help")
+        assert result.returncode == 0
+        assert "--max-tokens" in result.stdout
+        assert "--temperature" in result.stdout
+
+    def test_run_unknown_key_exits_nonzero(self, tmp_path):
+        inp = tmp_path / "bad.json"
+        inp.write_text(json.dumps({
+            "product_name": "X", "target_audience": "devs",
+            "problem": "a problem here", "solution": "a solution here",
+            "differentiator": "a differentiator here", "TYPO_KEY": "oops",
+        }))
+        result = run_cli(
+            "prompts", "run", "business.elevator_pitch.v1",
+            "--input", str(inp), "-m", "groq:llama-3.1-8b-instant",
+        )
+        assert result.returncode != 0
+        assert "unknown input key" in (result.stdout + result.stderr)
+        # No private render function name leaks.
+        assert "_elevator_pitch" not in (result.stdout + result.stderr)

@@ -8,7 +8,8 @@ REPL commands:
   set <key> <value>       — bind a variable (JSON-decoded if possible)
   unset <key>             — remove a variable binding
   render                  — print the rendered prompt using current vars
-  run [--model <id>]      — run rendered prompt through a model
+  run [--model <id>] [--max-tokens N] [--temperature T]
+                          — run rendered prompt through a model
   save [<path>]           — save session to JSON
   load <path>             — restore a saved session
   reload                  — re-import the template module (hot-reload)
@@ -28,9 +29,12 @@ import importlib
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from effgen.prompts.library.base import LibraryPrompt
+
+if TYPE_CHECKING:
+    from effgen.prompts.library.eval import RunOutput
 from effgen.prompts.library.registry import registry
 from effgen.prompts.library.session import PlaygroundSession
 
@@ -205,16 +209,123 @@ def _reload_prompt(name: str) -> bool:
 # Run helper
 # ---------------------------------------------------------------------------
 
-def _run_prompt(rendered: str, model: str) -> str:
-    """Call a model via effgen's model loader and return text."""
+def _run_prompt(
+    rendered: str,
+    model: str,
+    *,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> "RunOutput":
+    """Call a model via effgen's model loader and return text + metadata."""
     from effgen.prompts.library.eval import PromptEval
     evaluator = PromptEval()
-    return evaluator._run_model(rendered, model)
+    return evaluator.run_model(
+        rendered, model, max_tokens=max_tokens, temperature=temperature
+    )
+
+
+def _print_run_footer(result: "RunOutput") -> None:
+    """Print a one-line token/cost/latency footer under a model output."""
+    parts: list[str] = []
+    if result.prompt_tokens is not None and result.completion_tokens is not None:
+        total = result.prompt_tokens + result.completion_tokens
+        parts.append(
+            f"tokens: {total} ({result.prompt_tokens} in / {result.completion_tokens} out)"
+        )
+    elif result.tokens_used is not None:
+        parts.append(f"tokens: {result.tokens_used}")
+    if result.cost_usd is not None:
+        parts.append(f"cost: ${result.cost_usd:.6f}")
+    if result.latency_ms is not None:
+        parts.append(f"latency: {result.latency_ms:.0f} ms")
+    if not parts:
+        return
+    line = "  ·  ".join(parts)
+    if _RICH and _console:
+        _console.print(f"[dim]{line}[/dim]")
+    else:
+        print(line)
+
+
+def _print_shape_verdict(prompt: LibraryPrompt, output: str) -> None:
+    """Print whether *output* parses / matches the template's expected_shape.
+
+    Runs for templates that declare an ``expected_shape`` or a ``structured``
+    variant, so a structured-output author sees the same pass/fail signal the
+    eval harness uses without a second command.
+    """
+    from effgen.prompts.library.eval import PromptEval
+
+    spec = prompt.expected_shape
+    if spec is None and prompt.variant != "structured":
+        return
+    if spec is None:
+        # A structured template with no explicit shape: check it is JSON.
+        parsed = PromptEval._extract_json_object(output)
+        if parsed is not None:
+            _print_ok("✓ valid JSON")
+        else:
+            _print_warn("output did not parse as a JSON object")
+        return
+    ok, msg = PromptEval._check_shape(output, spec)
+    if ok:
+        _print_ok("✓ output matches expected_shape")
+    else:
+        _print_warn(f"output does not match expected_shape: {msg}")
+
+
+def _report_empty_result(result: "RunOutput", model: str) -> None:
+    """Show a marker in place of a blank panel for an empty/truncated result."""
+    if result.truncated:
+        cap = result.max_tokens
+        cap_note = f" (currently {cap})" if cap is not None else ""
+        detail = (
+            "the output-token budget was spent before any visible text "
+            f"(finish_reason={result.finish_reason!r}). "
+            f"Raise the cap with --max-tokens{cap_note}."
+        )
+    else:
+        detail = "the model returned no text."
+    _print_output(f"[empty result] {detail}", model)
+    _print_err(f"Model returned no usable output — {detail}")
 
 
 # ---------------------------------------------------------------------------
 # Non-interactive entry-points
 # ---------------------------------------------------------------------------
+
+def _unknown_input_keys(p: LibraryPrompt, inputs: dict[str, Any]) -> list[str]:
+    """Supplied keys the template can't accept — not in the schema's declared
+    ``properties`` and not absorbed by a ``**kwargs`` render signature.
+
+    Templates render with a fixed keyword signature, so an undeclared key would
+    otherwise reach ``template(**inputs)`` and raise a raw ``TypeError`` naming
+    the private render function. Returns the offending keys so the caller can
+    report a schema-anchored message instead.
+    """
+    import inspect
+
+    props = (p.input_schema or {}).get("properties")
+    if not isinstance(props, dict) or not props:
+        return []
+    try:
+        sig = inspect.signature(p.template)
+        if any(
+            par.kind == inspect.Parameter.VAR_KEYWORD
+            for par in sig.parameters.values()
+        ):
+            return []
+    except (TypeError, ValueError):
+        pass
+    return [k for k in inputs if k not in props]
+
+
+def _report_unknown_keys(p: LibraryPrompt, unknown: list[str]) -> None:
+    valid = ", ".join(sorted((p.input_schema or {}).get("properties", {}))) or "—"
+    for key in unknown:
+        _print_err(f"unknown input key '{key}'; valid keys: {valid}")
+    _print(f"Run 'effgen prompts show {p.name}' to see the schema and a valid fixture example.")
+
 
 def _validate_or_report(p: LibraryPrompt, inputs: dict[str, Any]) -> bool:
     """Validate a non-empty --input object against the prompt's input_schema.
@@ -226,6 +337,10 @@ def _validate_or_report(p: LibraryPrompt, inputs: dict[str, Any]) -> bool:
     """
     if not inputs:
         return True
+    unknown = _unknown_input_keys(p, inputs)
+    if unknown:
+        _report_unknown_keys(p, unknown)
+        return False
     errors = p.validate_input(inputs)
     if not errors:
         return True
@@ -255,8 +370,20 @@ def cmd_render(name: str, inputs: dict[str, Any]) -> int:
     return 0
 
 
-def cmd_run(name: str, inputs: dict[str, Any], model: str) -> int:
-    """Non-interactive run: render + call model + print output."""
+def cmd_run(
+    name: str,
+    inputs: dict[str, Any],
+    model: str,
+    *,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> int:
+    """Non-interactive run: render + call model + print output.
+
+    Returns non-zero when the model produces no usable text (an empty answer or
+    a budget-exhausted/truncated reasoning result), so a scripted caller can
+    tell an empty billed result from a good one.
+    """
     try:
         p, _resolved_name = _resolve_prompt(name)
     except KeyError as exc:
@@ -272,11 +399,18 @@ def cmd_run(name: str, inputs: dict[str, Any], model: str) -> int:
         return 1
     _print_prompt(rendered)
     try:
-        output = _run_prompt(rendered, model)
+        result = _run_prompt(
+            rendered, model, max_tokens=max_tokens, temperature=temperature
+        )
     except Exception as exc:
         _print_err(f"Model call failed: {exc}")
         return 1
-    _print_output(output, model)
+    if result.is_empty:
+        _report_empty_result(result, model)
+        return 1
+    _print_output(result.text, model)
+    _print_run_footer(result)
+    _print_shape_verdict(p, result.text)
     return 0
 
 
@@ -290,7 +424,8 @@ REPL commands:
   set <key> <value>       bind a variable (JSON or plain string)
   unset <key>             remove a variable
   render                  print the rendered prompt
-  run [--model <id>]      run rendered prompt through a model
+  run [--model <id>] [--max-tokens N] [--temperature T]
+                          run rendered prompt through a model
   save [<path>]           save session to JSON
   load <path>             restore a saved session
   reload                  hot-reload the template module
@@ -306,8 +441,24 @@ class PlaygroundREPL:
 
     def __init__(self, default_model: str | None = None) -> None:
         self.session = PlaygroundSession()
-        self.default_model = default_model or "cerebras:gpt-oss-120b"
+        # A run with no --model resolves a broadly-available model (a keyed
+        # cloud model if one is configured, else a small local one) at call
+        # time, rather than defaulting to a provider a newcomer may not have a
+        # key for.
+        self.default_model = default_model
         self._running = False
+
+    def _resolve_run_model(self) -> tuple[str | None, str | None]:
+        """Return ``(model_id, note)`` for a run with no explicit --model."""
+        if self.default_model:
+            return self.default_model, None
+        try:
+            from effgen.cli._main import _quickstart_suggest_model
+
+            model_id, _provider, reason = _quickstart_suggest_model()
+            return model_id, reason
+        except Exception:  # noqa: BLE001
+            return None, None
 
     # ------------------------------------------------------------------
     # Entry
@@ -425,6 +576,10 @@ class PlaygroundREPL:
         except KeyError:
             _print_err(f"Prompt '{self.session.prompt_name}' not in registry")
             return
+        unknown = _unknown_input_keys(p, self.session.variables)
+        if unknown:
+            _report_unknown_keys(p, unknown)
+            return
         try:
             rendered = p.template(**self.session.variables)
         except Exception as exc:
@@ -433,25 +588,60 @@ class PlaygroundREPL:
         self.session.add_render(rendered)
         _print_prompt(rendered)
 
+    @staticmethod
+    def _parse_run_args(rest: str) -> tuple[str | None, int | None, float | None]:
+        """Parse ``run`` flags: ``--model/-m``, ``--max-tokens``, ``--temperature``."""
+        model: str | None = None
+        max_tokens: int | None = None
+        temperature: float | None = None
+        args = rest.split()
+        i = 0
+        while i < len(args):
+            token = args[i]
+            has_next = i + 1 < len(args)
+            if token in ("--model", "-m") and has_next:
+                model = args[i + 1]
+                i += 2
+            elif token == "--max-tokens" and has_next:
+                try:
+                    max_tokens = int(args[i + 1])
+                except ValueError:
+                    _print_warn(f"Ignoring non-integer --max-tokens '{args[i + 1]}'")
+                i += 2
+            elif token == "--temperature" and has_next:
+                try:
+                    temperature = float(args[i + 1])
+                except ValueError:
+                    _print_warn(f"Ignoring non-numeric --temperature '{args[i + 1]}'")
+                i += 2
+            else:
+                i += 1
+        return model, max_tokens, temperature
+
     def _cmd_run(self, rest: str) -> None:
         if not self.session.prompt_name:
             _print_err("No prompt selected. Use 'select <name>' first.")
             return
 
-        model = self.default_model
-        args = rest.split()
-        i = 0
-        while i < len(args):
-            if args[i] in ("--model", "-m") and i + 1 < len(args):
-                model = args[i + 1]
-                i += 2
-            else:
-                i += 1
+        model, max_tokens, temperature = self._parse_run_args(rest)
+        note = None
+        if model is None:
+            model, note = self._resolve_run_model()
+        if model is None:
+            _print_err(
+                "No model specified and none configured. "
+                "Use 'run --model <id>' (e.g. run --model groq:llama-3.1-8b-instant)."
+            )
+            return
 
         try:
             p = registry.get(self.session.prompt_name)
         except KeyError:
             _print_err(f"Prompt '{self.session.prompt_name}' not in registry")
+            return
+        unknown = _unknown_input_keys(p, self.session.variables)
+        if unknown:
+            _report_unknown_keys(p, unknown)
             return
         try:
             rendered = p.template(**self.session.variables)
@@ -459,14 +649,22 @@ class PlaygroundREPL:
             _print_err(f"Render failed: {exc}")
             return
 
-        _print(f"Running with model: {model} ...")
+        note_suffix = f" ({note})" if note else ""
+        _print(f"Running with model: {model}{note_suffix} ...")
         try:
-            output = _run_prompt(rendered, model)
+            result = _run_prompt(
+                rendered, model, max_tokens=max_tokens, temperature=temperature
+            )
         except Exception as exc:
             _print_err(f"Model call failed: {exc}")
             return
-        self.session.add_run(model=model, rendered=rendered, output=output)
-        _print_output(output, model)
+        if result.is_empty:
+            _report_empty_result(result, model)
+            return
+        self.session.add_run(model=model, rendered=rendered, output=result.text)
+        _print_output(result.text, model)
+        _print_run_footer(result)
+        _print_shape_verdict(p, result.text)
 
     def _cmd_save(self, rest: str) -> None:
         path_str = rest.strip()

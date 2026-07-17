@@ -147,3 +147,72 @@ class TestGlobalRegistry:
         results = r.search(domain="__nonexistent__")
         assert isinstance(results, list)
         assert len(results) == 0
+
+
+class TestUserPromptsDir:
+    """Discovery of user templates named by EFFGEN_PROMPTS_DIR."""
+
+    def _write_template(self, directory, *, use_register: bool) -> None:
+        body = (
+            'from effgen.prompts.library import LibraryPrompt\n'
+            '\n'
+            'def _render(topic="x", **_):\n'
+            '    return f"About {topic}"\n'
+            '\n'
+            '_p = LibraryPrompt(\n'
+            '    name="userdom.custom.v1",\n'
+            '    domain="userdom",\n'
+            '    variant="zero_shot",\n'
+            '    description="A user-authored template.",\n'
+            '    template=_render,\n'
+            '    input_schema={"type": "object", "properties": {"topic": {"type": "string"}}},\n'
+            '    fixture={"topic": "vector databases"},\n'
+            '    expected_shape=None,\n'
+            '    tags=["user"],\n'
+            ')\n'
+        )
+        if use_register:
+            body += 'from effgen.prompts.library import registry\nregistry.register(_p)\n'
+        else:
+            body += 'PROMPTS = [_p]\n'
+        (directory / "custom.py").write_text(body)
+
+    def test_discovers_via_register_call(self, tmp_path, monkeypatch):
+        self._write_template(tmp_path, use_register=True)
+        monkeypatch.setenv("EFFGEN_PROMPTS_DIR", str(tmp_path))
+        r = PromptRegistry()
+        try:
+            found = r.get("userdom.custom.v1")
+            assert found.domain == "userdom"
+            assert "About vector databases" == found.render_fixture()
+        finally:
+            # The file's register() call targets the global singleton; keep the
+            # session registry clean for later tests.
+            from effgen.prompts.library.registry import registry as _global
+            _global._prompts.pop("userdom.custom.v1", None)
+
+    def test_discovers_via_prompts_list(self, tmp_path, monkeypatch):
+        self._write_template(tmp_path, use_register=False)
+        monkeypatch.setenv("EFFGEN_PROMPTS_DIR", str(tmp_path))
+        r = PromptRegistry()
+        names = [p.name for p in r.search(domain="userdom")]
+        assert "userdom.custom.v1" in names
+
+    def test_underscore_files_are_skipped(self, tmp_path, monkeypatch):
+        (tmp_path / "_helpers.py").write_text("raise RuntimeError('should not import')\n")
+        monkeypatch.setenv("EFFGEN_PROMPTS_DIR", str(tmp_path))
+        r = PromptRegistry()
+        # A leading-underscore file is not imported, so discovery stays clean.
+        assert isinstance(r.search(domain="userdom"), list)
+
+    def test_missing_directory_warns_not_raises(self, tmp_path, monkeypatch, caplog):
+        missing = tmp_path / "does_not_exist"
+        monkeypatch.setenv("EFFGEN_PROMPTS_DIR", str(missing))
+        r = PromptRegistry()
+        # Discovery must not crash on a bad path.
+        assert isinstance(r.all(), list)
+
+    def test_unset_env_loads_nothing_extra(self, monkeypatch):
+        monkeypatch.delenv("EFFGEN_PROMPTS_DIR", raising=False)
+        r = PromptRegistry()
+        assert "userdom.custom.v1" not in [p.name for p in r.all()]
