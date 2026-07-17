@@ -21,6 +21,7 @@ erases itself when the work finishes) so it never corrupts the final output.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -374,6 +375,42 @@ def _truncate(value: Any, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def format_tool_call(name: str, tool_input: Any, limit: int = 72) -> str:
+    """Render a tool call as ``name(key="value", …)`` on one balanced line.
+
+    ``tool_input`` may be a dict of arguments or a JSON string of one; either
+    is shown as compact ``key="value"`` pairs. Anything else is shown as a
+    single truncated argument. The parentheses always close — a call trimmed to
+    fit ends in ``…)`` rather than a dangling ``,`` or an unbalanced brace.
+    """
+    args: Any = tool_input
+    if isinstance(args, str):
+        text = args.strip()
+        if text[:1] in ("{", "["):
+            try:
+                args = json.loads(text)
+            except (ValueError, TypeError):
+                args = text
+        else:
+            args = text
+
+    if isinstance(args, dict):
+        parts = []
+        for key, val in args.items():
+            if isinstance(val, str):
+                rendered = f'{key}="{val}"'
+            else:
+                rendered = f"{key}={val}"
+            parts.append(rendered.replace("\n", " "))
+        inner = ", ".join(parts)
+    else:
+        inner = str(args).replace("\n", " ")
+
+    if len(inner) > limit:
+        inner = inner[: limit - 1].rstrip(", ") + "…"
+    return f"{name}({inner})"
+
+
 def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str, str]]:
     """Turn an :class:`ExecutionTracker` event trace into readable ``(style, text)``.
 
@@ -394,9 +431,10 @@ def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str,
         elif etype == "tool_call_start":
             name = data.get("tool_name", "tool")
             tool_input = data.get("tool_input", data.get("input", ""))
-            detail = f"🔧 {name}"
             if tool_input:
-                detail += f"({_truncate(tool_input, 80)})"
+                detail = f"🔧 {format_tool_call(name, tool_input)}"
+            else:
+                detail = f"🔧 {name}"
             out.append(("green", detail))
         elif etype == "tool_call_complete":
             result = data.get("result", data.get("output", ""))

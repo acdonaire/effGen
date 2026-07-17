@@ -99,6 +99,7 @@ from effgen.cli import onboarding as _onboarding
 from effgen.cli import progress as _progress
 
 # Shared Rich theme + console factory (one palette across the whole CLI).
+from effgen.ui.tables import console_is_interactive, render_table
 from effgen.ui.theme import CODE_THEME
 from effgen.ui.theme import get_console as _get_console
 
@@ -214,6 +215,40 @@ def filter_incompatible_tools(
         for name, why in skipped:
             warn(f"Skipping native tool '{name}' ({why})")
     return kept, skipped
+
+
+# Commands that render their own failures (a classified message pointing at the
+# fix, a red error panel). For these, a raw ``<timestamp> - <logger> - ERROR``
+# console line from the library beneath the framed message is duplicate noise at
+# default verbosity — it is kept only under ``--verbose`` and in a ``--log-file``.
+_SELF_RENDERING_ERROR_COMMANDS = frozenset({
+    "run", "batch", "chat", "eval", "compare", "debug", "resume",
+    "quickstart", "tutorial",
+})
+
+
+class _CLIEchoedErrorFilter(logging.Filter):
+    """Drop console ERROR records the CLI already surfaces as a framed message.
+
+    Applied to the console handler only (a ``--log-file`` still captures the full
+    stream) and only for the commands that render their own errors, so a library
+    ``ERROR`` log does not print a second time beneath the CLI's own message.
+    ``effgen serve`` is excluded — an operator wants those server-side ERRORs.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.ERROR and (
+            record.name == "effgen" or record.name.startswith("effgen.")
+        ):
+            return False
+        return True
+
+
+def _suppress_echoed_error_logs() -> None:
+    """Attach :class:`_CLIEchoedErrorFilter` to the root console handler."""
+    for h in logging.getLogger().handlers:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            h.addFilter(_CLIEchoedErrorFilter())
 
 
 # Configure logging
@@ -412,6 +447,24 @@ class CLIInterface:
             console.print(f"[yellow]⚠[/yellow] {text}")
         else:
             print(f"⚠ {text}", file=sys.stderr if self._human_to_stderr else None)
+
+    def print_error_panel(self, message: str, *, title: str = "Error"):
+        """Render a failure as a red-bordered panel, or a styled line without rich.
+
+        A run that fails at generation and a run that fails to load its model
+        then read the same way — one red panel — instead of a panel in one case
+        and a bare line in the other. The message is shown as plain text so
+        provider error strings can't inject console markup.
+        """
+        console = self._human()
+        if console and RICH_AVAILABLE:
+            from rich.panel import Panel
+            from rich.text import Text
+            console.print(
+                Panel(Text(message or ""), title=f"[red]{title}[/red]", border_style="red")
+            )
+        else:
+            self.print_error(message)
 
     def interactive_wizard(self, args):
         """
@@ -973,7 +1026,9 @@ class CLIInterface:
             self.print()
 
             exit_code = 0
-            animate = self._animate(args)
+            # --json emits a single JSON document to stdout: no live spinner,
+            # which would otherwise render there on an interactive terminal.
+            animate = self._animate(args) and not json_mode
             quiet = getattr(args, 'quiet', False)
             model_label = _progress.short_model_label(
                 getattr(agent.config, "model", None) if hasattr(agent, "config") else None
@@ -1024,17 +1079,15 @@ class CLIInterface:
                     # Display response
                     self.print_header("Response")
 
-                    if self.console:
-                        # A partial (iteration-cap) run still shows its recovered
-                        # text, framed distinctly from a success or an outright
-                        # failure.
-                        _partial = bool((response.metadata or {}).get("partial"))
-                        if response.success:
-                            _border = "green"
-                        elif _partial:
-                            _border = "yellow"
-                        else:
-                            _border = "red"
+                    # A partial (iteration-cap) run still shows its recovered
+                    # text, framed distinctly from a success or an outright
+                    # failure. An outright failure reads the same as a
+                    # model-load failure below — a red "Error" panel.
+                    _partial = bool((response.metadata or {}).get("partial"))
+                    if not response.success and not _partial:
+                        self.print_error_panel(response.output, title="Error")
+                    elif self.console:
+                        _border = "green" if response.success else "yellow"
                         # Rich markdown formatting
                         self.console.print(Panel(
                             Markdown(response.output),
@@ -1103,7 +1156,10 @@ class CLIInterface:
             return exit_code
 
         except Exception as e:
-            self.print_error(f"Error running agent: {e}")
+            # Same presentation as a generation failure above — a red "Error"
+            # panel — so a run that fails to load its model reads the same as
+            # one that fails mid-generation.
+            self.print_error_panel(str(e), title="Error")
             if getattr(args, 'verbose', False):
                 import traceback
                 traceback.print_exc()
@@ -1529,6 +1585,8 @@ class CLIInterface:
             self._config_init(args)
         elif args.config_command == 'set':
             self._config_set(args)
+        elif args.config_command is None:
+            return _print_group_help(args)
         else:
             self.print_error(f"Unknown config command: {args.config_command}")
             return 1
@@ -1657,6 +1715,8 @@ class CLIInterface:
             return self._tools_info(args)
         elif args.tool_command == 'test':
             return self._tools_test(args)
+        elif args.tool_command is None:
+            return _print_group_help(args)
         else:
             self.print_error(f"Unknown tools command: {args.tool_command}")
             return 1
@@ -1918,6 +1978,8 @@ class CLIInterface:
             self._models_status(args)
         elif args.model_command == 'refresh':
             return self._models_refresh(args) or 0
+        elif args.model_command is None:
+            return _print_group_help(args)
         else:
             self.print_error(f"Unknown models command: {args.model_command}")
             return 1
@@ -2592,6 +2654,8 @@ class CLIInterface:
             return self._examples_list(args) or 0
         elif args.example_command == 'run':
             return self._examples_run(args) or 0
+        elif args.example_command is None:
+            return _print_group_help(args)
         else:
             self.print_error(f"Unknown examples command: {args.example_command}")
             return 1
@@ -2819,6 +2883,11 @@ Model id formats:
         'run', help='Run an agent with a task',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
+            "Examples:\n"
+            "  effgen run \"What is 25 * 17?\" -t calculator\n"
+            "  effgen run \"Summarize this\" --file report.pdf -m gpt-5-nano\n"
+            "  effgen run \"Draft a reply\" --persona \"terse, formal\" --json | jq .output\n"
+            "\n"
             "Environment:\n"
             "  EFFGEN_WORKSPACE   directory where the file and shell tools read\n"
             "                     and write by default. Set it to keep files an\n"
@@ -2909,6 +2978,7 @@ Model id formats:
 
     # Sessions commands
     sessions_parser = subparsers.add_parser('sessions', help='Manage persistent sessions')
+    sessions_parser.set_defaults(_group_parser=sessions_parser)
     sessions_subparsers = sessions_parser.add_subparsers(dest='session_command', help='Sessions command')
     _sessions_list = sessions_subparsers.add_parser('list', help='List sessions')
     _sessions_list.add_argument('--json', dest='output_json', action='store_true',
@@ -2922,7 +2992,19 @@ Model id formats:
     sc.add_argument('--days', type=int, default=30)
 
     # Chat command
-    chat_parser = subparsers.add_parser('chat', help='Interactive chat mode')
+    chat_parser = subparsers.add_parser(
+        'chat', help='Interactive chat mode',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  effgen chat -m gpt-5-nano --provider openai\n"
+            "  effgen chat --preset research -t calculator wikipedia\n"
+            "  effgen chat --session-id support-42   # resume a saved session\n"
+            "\n"
+            "In-session slash commands: /help /model /tools /cost /trace /reset "
+            "/save /load /doctor /exit\n"
+        ),
+    )
     chat_parser.add_argument('-m', '--model', help='Model to use')
     chat_parser.add_argument(
         '--provider',
@@ -2933,6 +3015,11 @@ Model id formats:
         '--preset', choices=_preset_choices,
         help='Agent preset for the session (e.g. math, research) — attaches the '
              "preset's tools and system prompt, same as `effgen run --preset`",
+    )
+    chat_parser.add_argument(
+        '-t', '--tools', nargs='+', metavar='TOOL',
+        help='Tools to enable for the session, same as `effgen run --tools` '
+             '(e.g. calculator wikipedia). Also addable mid-session with /tools.',
     )
     chat_parser.add_argument(
         '--system-prompt', '--persona', dest='system_prompt', metavar='TEXT',
@@ -3025,6 +3112,7 @@ Model id formats:
 
     # Config commands
     config_parser = subparsers.add_parser('config', help='Configuration management')
+    config_parser.set_defaults(_group_parser=config_parser)
     config_subparsers = config_parser.add_subparsers(dest='config_command', help='Config command')
 
     config_show = config_subparsers.add_parser('show', help='Show configuration')
@@ -3043,6 +3131,7 @@ Model id formats:
 
     # Tools commands
     tools_parser = subparsers.add_parser('tools', help='Tool management')
+    tools_parser.set_defaults(_group_parser=tools_parser)
     tools_subparsers = tools_parser.add_subparsers(dest='tool_command', help='Tools command')
 
     tools_list = tools_subparsers.add_parser('list', help='List tools')
@@ -3058,6 +3147,7 @@ Model id formats:
 
     # Models commands
     models_parser = subparsers.add_parser('models', help='Model management')
+    models_parser.set_defaults(_group_parser=models_parser)
     models_subparsers = models_parser.add_subparsers(dest='model_command', help='Models command')
 
     models_list = models_subparsers.add_parser('list', help='List models')
@@ -3091,6 +3181,7 @@ Model id formats:
 
     # Examples commands
     examples_parser = subparsers.add_parser('examples', help='Run example scripts')
+    examples_parser.set_defaults(_group_parser=examples_parser)
     examples_subparsers = examples_parser.add_subparsers(dest='example_command', help='Examples command')
 
     examples_subparsers.add_parser('list', help='List examples')
@@ -3124,13 +3215,24 @@ Model id formats:
     plugin_parser.add_argument('-o', '--output-dir', default='.', help='Output directory')
 
     # Presets command
-    subparsers.add_parser('presets', help='List available agent presets')
+    presets_parser = subparsers.add_parser('presets', help='List available agent presets')
+    presets_parser.add_argument('--json', dest='output_json', action='store_true',
+                                help='Output the preset list as JSON')
 
-    # Quickstart / tutorial — a short guided first run.
+    # Quickstart / tutorial — a short guided first run. `tutorial` is a
+    # documented alias so both names a newcomer might try lead to the same
+    # guided run rather than one dead-ending.
+    _qs_help = {
+        'quickstart': 'Guided first run: pick a model, run an agent, see the trace and cost',
+        'tutorial': 'Alias of quickstart — the same guided first run',
+    }
     for _qs_name in ('quickstart', 'tutorial'):
         qs_parser = subparsers.add_parser(
             _qs_name,
-            help='Guided first run: pick a model, run an agent, see the trace and cost',
+            help=_qs_help[_qs_name],
+            description=_qs_help['quickstart']
+            + ('.  (`effgen tutorial` is an alias of `effgen quickstart`.)'
+               if _qs_name == 'tutorial' else '.'),
         )
         qs_parser.add_argument('-m', '--model', help='Model to use (skips the model prompt)')
         qs_parser.add_argument('--provider', help='Provider for a bare model id')
@@ -3140,6 +3242,7 @@ Model id formats:
 
     # Workflow command
     workflow_parser = subparsers.add_parser('workflow', help='Run a DAG-based workflow')
+    workflow_parser.set_defaults(_group_parser=workflow_parser)
     workflow_subparsers = workflow_parser.add_subparsers(dest='workflow_command', help='Workflow command')
 
     workflow_run = workflow_subparsers.add_parser('run', help='Run a workflow from YAML file')
@@ -3158,8 +3261,20 @@ Model id formats:
                                    help='Emit the validation result as JSON to stdout')
 
     # Batch command
-    batch_parser = subparsers.add_parser('batch', help='Run batch queries from a file')
-    batch_parser.add_argument('-i', '--input', required=True, help='Input file (JSONL, CSV, JSON, or plain text)')
+    batch_parser = subparsers.add_parser(
+        'batch', help='Run batch queries from a file',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  effgen batch queries.jsonl -o answers.jsonl -m gpt-5-nano\n"
+            "  effgen batch -i rows.csv --query-field question -o out.csv --excel\n"
+            "  effgen batch prompts.txt --json -q | jq '.rows[].output'\n"
+        ),
+    )
+    batch_parser.add_argument('input_file', nargs='?', default=None, metavar='INPUT',
+                              help='Input file (JSONL, CSV, JSON, or plain text). '
+                                   'Same as -i/--input.')
+    batch_parser.add_argument('-i', '--input', help='Input file (JSONL, CSV, JSON, or plain text)')
     batch_parser.add_argument('-o', '--output',
                               help='Output file (JSONL, CSV, or JSON). .jsonl rows are '
                                    'written as each query finishes, so their file order '
@@ -3269,7 +3384,19 @@ Model id formats:
                               help='Disable the live progress bar (plain output)')
 
     # Compare command
-    compare_parser = subparsers.add_parser('compare', help='Compare multiple models on a test suite')
+    compare_parser = subparsers.add_parser(
+        'compare', help='Compare multiple models on a test suite',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  effgen compare --models gpt-5-nano,groq:llama-3.1-8b-instant --suite math\n"
+            "  effgen compare --models gpt-5-nano,gpt-5-mini --suite reasoning --optimize cost\n"
+            "  effgen compare --models a,b --suite ./cases.jsonl --json | jq .recommendations\n"
+            "\n"
+            "compare reports a bake-off and always exits 0; use `eval --fail-under` "
+            "to gate a build.\n"
+        ),
+    )
     compare_parser.add_argument('--models', required=True,
                                  help='Comma-separated model ids. Use a '
                                       'provider:model prefix to pin a provider '
@@ -3604,7 +3731,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
         cli.print("Then set a cap with: effgen cost set-budget 1.00")
         return 0
 
-    if RICH_AVAILABLE and cli.console:
+    if console_is_interactive(cli.console):
         table = Table(title=f"effGen Cost Summary — {period_label}", show_footer=True)
         table.add_column("Provider", style="cyan", no_wrap=True)
         # Wrap (fold) long model ids instead of truncating with an ellipsis.
@@ -4133,8 +4260,7 @@ def _handle_workflow_command(args, cli) -> int:
             return 1
 
     else:
-        cli.print("Usage: effgen workflow [run|validate] <file.yaml>")
-        return 0
+        return _print_group_help(args)
 
 
 def _batch_structured_kwargs(args) -> dict:
@@ -4212,8 +4338,11 @@ def _read_done_indices(output_path: Path) -> dict:
 def _handle_batch_command(args, cli) -> int:
     """Handle the 'batch' CLI subcommand."""
     from effgen.core.batch import _QUERY_ALIASES, BatchConfig, BatchRunner
+    from effgen.core.batch import SUPPORTED_OUTPUT_FORMATS as _BATCH_OUTPUT_FORMATS
 
-    input_path = args.input
+    # Accept the input file as a positional argument or via -i/--input; the
+    # explicit flag wins if both are given.
+    input_path = getattr(args, 'input', None) or getattr(args, 'input_file', None)
     output_path = getattr(args, 'output', None)
     model_name = getattr(args, 'model', None) or 'Qwen/Qwen2.5-1.5B-Instruct'
     preset_name = getattr(args, 'preset', None)
@@ -4241,6 +4370,12 @@ def _handle_batch_command(args, cli) -> int:
             }, indent=2, ensure_ascii=False))
         return 1
 
+    if not input_path:
+        msg = ("No input file given. Pass one as `effgen batch FILE` "
+               "or with -i/--input (JSONL, CSV, JSON, or plain text).")
+        cli.print_error(msg)
+        return _json_error(ValueError(msg))
+
     # Extra kwargs forwarded to each agent.run() call.
     run_kwargs: dict = {}
     if max_tokens is not None:
@@ -4254,6 +4389,17 @@ def _handle_batch_command(args, cli) -> int:
         return _json_error(e)
 
     out_suffix = Path(output_path).suffix.lower() if output_path else None
+    # Reject an unsupported --output extension before loading a model or making
+    # a single billed call, naming the formats that do work — rather than
+    # running the whole batch and failing at write time.
+    if output_path and out_suffix not in _BATCH_OUTPUT_FORMATS:
+        shown = out_suffix or "(none)"
+        msg = (
+            f"Unsupported --output format: {shown}. "
+            f"Use one of: {', '.join(sorted(_BATCH_OUTPUT_FORMATS))}."
+        )
+        cli.print_error(msg)
+        return _json_error(ValueError(msg))
     # A .jsonl output streams each finished row as it completes, so a crash
     # mid-job keeps the rows already done; --resume then skips those on rerun.
     stream_jsonl = bool(output_path) and out_suffix == ".jsonl"
@@ -4368,7 +4514,9 @@ def _handle_batch_command(args, cli) -> int:
             out_fh.write(json.dumps(row, ensure_ascii=False) + "\n")
             out_fh.flush()
 
-        animate = _progress.animation_enabled(
+        # --json emits a single JSON document to stdout: no live progress bar,
+        # which would otherwise render there on an interactive terminal.
+        animate = not json_mode and _progress.animation_enabled(
             quiet=getattr(args, 'quiet', False),
             no_animation=getattr(args, 'no_animation', False),
         )
@@ -4601,7 +4749,9 @@ def _handle_eval_command(args, cli) -> int:
 
         cli.print(f"Running {suite_name} suite ({len(suite)} cases, scoring={args.scoring})...")
         evaluator = AgentEvaluator(agent, scoring=scoring, pass_threshold=threshold)
-        animate = _progress.animation_enabled(
+        # --json emits a single JSON document to stdout: no live progress bar,
+        # which would otherwise render there on an interactive terminal.
+        animate = not json_mode and _progress.animation_enabled(
             quiet=getattr(args, 'quiet', False),
             no_animation=getattr(args, 'no_animation', False),
         )
@@ -4615,10 +4765,20 @@ def _handle_eval_command(args, cli) -> int:
         # Display results
         summary = results.summary()
         cli.print_header(f"Evaluation Results: {suite_name}")
-        cli.print(f"  Accuracy:       {summary['accuracy']:.1%} ({summary['passed']}/{summary['total']})")
-        cli.print(f"  Avg Latency:    {summary['avg_latency']:.4f}s")
-        cli.print(f"  Total Tokens:   {summary['total_tokens']}")
-        cli.print(f"  Tool Accuracy:  {summary['avg_tool_accuracy']:.1%}")
+        # Under --json the summary is human chatter: route it to stderr so
+        # stdout carries only the JSON document below.
+        render_table(
+            columns=["Metric", "Value"],
+            rows=[
+                ["Accuracy", f"{summary['accuracy']:.1%} ({summary['passed']}/{summary['total']})"],
+                ["Avg Latency", f"{summary['avg_latency']:.4f}s"],
+                ["Total Tokens", f"{summary['total_tokens']}"],
+                ["Tool Accuracy", f"{summary['avg_tool_accuracy']:.1%}"],
+            ],
+            console=None if json_mode else cli.console,
+            styles=["cyan", None],
+            file=sys.stderr if json_mode else None,
+        )
 
         if summary.get('by_difficulty'):
             cli.print("\n  By Difficulty:")
@@ -4700,6 +4860,57 @@ def _handle_eval_command(args, cli) -> int:
                     pass
 
 
+def _render_comparison_tables(cli, matrix) -> None:
+    """Render a comparison matrix as one Rich table per metric (terminal view).
+
+    Carries the same accuracy / latency / cost cells as ``matrix.to_markdown``
+    — including ``ERROR`` for a failed model, ``unpriced`` for a model with no
+    published price, and ``—`` for a missing cell — so the terminal and the
+    piped Markdown say the same thing.
+    """
+    if not matrix.scores:
+        cli.print("No scores recorded.")
+        return
+    suites = sorted({s.suite_name for s in matrix.scores})
+    models = sorted({s.model_name for s in matrix.scores})
+    lookup = {(s.model_name, s.suite_name): s for s in matrix.scores}
+
+    def _cell(sc, kind):
+        if sc is None:
+            return "—"
+        if sc.error:
+            return "ERROR"
+        if kind == "accuracy":
+            return f"{sc.accuracy:.1%}"
+        if kind == "latency":
+            return f"{sc.avg_latency:.3f}"
+        if sc.avg_cost_usd is not None:
+            return f"${sc.avg_cost_usd:.6f}"
+        return "unpriced"
+
+    for kind, title in (
+        ("accuracy", "Accuracy"),
+        ("latency", "Avg Latency (s)"),
+        ("cost", "Avg Cost (USD/run)"),
+    ):
+        rows = [
+            [m] + [_cell(lookup.get((m, su)), kind) for su in suites]
+            for m in models
+        ]
+        render_table(
+            columns=["Model", *suites],
+            rows=rows,
+            console=cli.console,
+            title=title,
+            justify=["left", *(["right"] * len(suites))],
+            styles=["cyan", *([None] * len(suites))],
+        )
+    if matrix.recommendations:
+        cli.print(f"\nRecommendations (optimized for {matrix.optimize}):")
+        for su, model in sorted(matrix.recommendations.items()):
+            cli.print(f"  {su}: {model}")
+
+
 def _handle_compare_command(args, cli) -> int:
     """Handle 'effgen compare' subcommand."""
     from effgen.eval import ModelComparison
@@ -4776,8 +4987,13 @@ def _handle_compare_command(args, cli) -> int:
         comparison = ModelComparison(scoring=scoring, pass_threshold=threshold)
         matrix = comparison.run(agents, [suite], optimize=optimize)
 
-        # Display
-        cli.print(matrix.to_markdown())
+        # Display: rich per-metric tables on a terminal, copy-pasteable Markdown
+        # (the same content) when piped or redirected. Under --json the Markdown
+        # goes to stderr (via cli.print) so stdout carries only the JSON below.
+        if not json_mode and console_is_interactive(cli.console):
+            _render_comparison_tables(cli, matrix)
+        else:
+            cli.print(matrix.to_markdown())
 
         # Write output
         if args.output:
@@ -5143,9 +5359,17 @@ def _handle_sessions_command(args, cli) -> int:
                 "creates a session you can resume)."
             )
             return 0
-        for s in sessions:
-            cli.print(f"  {s['session_id']:36s}  msgs={s['messages']:<4d}  updated={s.get('updated_at')}")
-        cli.print(f"\nStored in: {mgr.sessions_dir}")
+        render_table(
+            columns=["Session", "Messages", "Updated"],
+            rows=[
+                [s['session_id'], s['messages'], s.get('updated_at') or "—"]
+                for s in sessions
+            ],
+            console=cli.console,
+            justify=["left", "right", "left"],
+            styles=["cyan", "yellow", None],
+            caption=f"Stored in: {mgr.sessions_dir}",
+        )
         return 0
     if cmd == 'delete':
         ok = mgr.delete(args.session_id)
@@ -5165,8 +5389,7 @@ def _handle_sessions_command(args, cli) -> int:
         n = mgr.cleanup(older_than_days=args.days)
         cli.print(f"Removed {n} old session(s).")
         return 0
-    cli.print("Usage: effgen sessions [list|delete|export|cleanup]")
-    return 1
+    return _print_group_help(args)
 
 
 def _handle_prompts_command(args, cli: "CLIInterface") -> int:
@@ -5369,6 +5592,19 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
 
 
 
+def _print_group_help(args) -> int:
+    """Print a command group's help when it is invoked with no subcommand.
+
+    A bare group command (``effgen tools``, ``effgen models``, ...) has nothing
+    to do on its own, so it shows the group's usage and subcommand list instead
+    of an error, matching what ``--help`` prints.
+    """
+    parser = getattr(args, "_group_parser", None)
+    if parser is not None:
+        parser.print_help()
+    return 0
+
+
 def main():
     """Main entry point for CLI."""
     # Load .env early so all subcommands see API keys (see load_env_files).
@@ -5385,11 +5621,17 @@ def main():
 
     # Setup logging. --verbose / --quiet may appear either before the
     # subcommand (global) or after it (per-command); honor whichever is set.
+    _verbose = getattr(args, 'verbose', False)
     setup_logging(
-        verbose=getattr(args, 'verbose', False),
+        verbose=_verbose,
         log_file=getattr(args, 'log_file', None),
         quiet=getattr(args, 'quiet', False),
     )
+    # For a command that renders its own failures, keep the console free of the
+    # duplicate raw library ERROR line at default verbosity (--verbose / a
+    # --log-file still carry the full diagnostic stream).
+    if not _verbose and getattr(args, 'command', None) in _SELF_RENDERING_ERROR_COMMANDS:
+        _suppress_echoed_error_logs()
 
     # Create CLI interface
     cli = CLIInterface()
@@ -5442,25 +5684,41 @@ def main():
         elif args.command == 'presets':
             from effgen.presets import list_presets as _list_presets
             from effgen.presets.registry import preset_tool_overhead
-            cli.print_header("Available Agent Presets")
-            for name, desc in _list_presets().items():
-                try:
-                    n_tools, approx = preset_tool_overhead(name)
-                except Exception:  # noqa: BLE001 - listing never fails on one preset
-                    n_tools, approx = 0, 0
-                if n_tools:
-                    overhead = f"{n_tools} tool{'s' if n_tools != 1 else ''} · ~{approx} tok/call"
-                else:
-                    overhead = "no tools"
-                cli.print(f"  {name:12s}  {overhead}")
-                cli.print(f"               {desc}")
-            cli.print(
-                "\n'~N tok/call' is the approximate tool-schema size sent on every "
-                "request — a tool-heavy preset costs more per call and can exceed "
-                "a small-context or rate-limited model."
-            )
-            cli.print("\nUsage: effgen run --preset <name> \"your task\"")
-            exit_code = 0
+            if getattr(args, 'output_json', False):
+                rows = []
+                for name, desc in _list_presets().items():
+                    try:
+                        n_tools, approx = preset_tool_overhead(name)
+                    except Exception:  # noqa: BLE001 - listing never fails on one preset
+                        n_tools, approx = 0, 0
+                    rows.append({
+                        "name": name,
+                        "description": desc,
+                        "tool_count": n_tools,
+                        "approx_tokens_per_call": approx,
+                    })
+                print(json.dumps(rows, indent=2, ensure_ascii=False))
+                exit_code = 0
+            else:
+                cli.print_header("Available Agent Presets")
+                for name, desc in _list_presets().items():
+                    try:
+                        n_tools, approx = preset_tool_overhead(name)
+                    except Exception:  # noqa: BLE001 - listing never fails on one preset
+                        n_tools, approx = 0, 0
+                    if n_tools:
+                        overhead = f"{n_tools} tool{'s' if n_tools != 1 else ''} · ~{approx} tok/call"
+                    else:
+                        overhead = "no tools"
+                    cli.print(f"  {name:12s}  {overhead}")
+                    cli.print(f"               {desc}")
+                cli.print(
+                    "\n'~N tok/call' is the approximate tool-schema size sent on every "
+                    "request — a tool-heavy preset costs more per call and can exceed "
+                    "a small-context or rate-limited model."
+                )
+                cli.print("\nUsage: effgen run --preset <name> \"your task\"")
+                exit_code = 0
         elif args.command in ('quickstart', 'tutorial'):
             exit_code = _handle_quickstart_command(args, cli)
         elif args.command == 'workflow':

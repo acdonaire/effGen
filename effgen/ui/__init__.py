@@ -21,12 +21,15 @@ from .render import (
     response_show,
     response_trace,
 )
+from .tables import console_is_interactive, render_table
 from .theme import EFFGEN_THEME, color_enabled, get_console, rich_available
 
 __all__ = [
     "EFFGEN_THEME",
     "color_enabled",
+    "console_is_interactive",
     "get_console",
+    "render_table",
     "rich_available",
     "answer_renderable",
     "format_cost",

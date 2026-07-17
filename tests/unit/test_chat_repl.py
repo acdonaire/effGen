@@ -232,6 +232,31 @@ def test_default_tools_empty_for_clean_streaming():
     assert repl.tool_names == []
 
 
+def test_tools_flag_attaches_named_tools():
+    repl, _ = _make_repl(tools=["calculator", "datetime"])
+    assert repl.tool_names == ["calculator", "datetime"]
+
+
+def test_tools_flag_unknown_name_warns_with_hint():
+    repl, cli = _make_repl(tools=["calculatorr"])
+    assert "calculatorr" not in repl.tool_names
+    assert any("No tool named 'calculatorr'" in m for m in cli.messages)
+    assert any("Did you mean: calculator" in m for m in cli.messages)
+
+
+def test_tools_flag_merges_with_preset_tools():
+    repl, _ = _make_repl(preset="math", tools=["datetime"])
+    # Preset tools first, then the extra --tools, deduplicated.
+    assert repl.tool_names == ["calculator", "python_repl", "datetime"]
+
+
+def test_non_interactive_session_marks_not_interactive():
+    # Under pytest stdin/stdout are not ttys, so the "Thinking…" placeholder
+    # is suppressed for a piped session.
+    repl, _ = _make_repl()
+    assert repl.interactive is False
+
+
 # ---------------------------------------------------------------------------
 # --preset attaches the preset's tools (mirrors `effgen run --preset`)
 # ---------------------------------------------------------------------------

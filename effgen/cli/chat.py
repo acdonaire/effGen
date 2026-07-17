@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -64,6 +65,13 @@ class ChatREPL:
         self.quiet = getattr(args, "quiet", False)
         self.verbose = getattr(args, "verbose", False)
         self.animate = cli._animate(args)
+        # A piped session (``echo hi | effgen chat``) has no terminal to show a
+        # transient "Thinking…" indicator on, so the placeholder is suppressed
+        # there and only the labeled answer and footer are emitted.
+        try:
+            self.interactive = sys.stdin.isatty() and sys.stdout.isatty()
+        except (ValueError, OSError):  # pragma: no cover - closed std streams
+            self.interactive = False
 
         self.model_id = getattr(args, "model", None) or self.DEFAULT_MODEL
         self.preset = getattr(args, "preset", None)
@@ -104,6 +112,30 @@ class ChatREPL:
                 self.tool_names = list(_preset_cfg.tool_names)
                 self._preset_system_prompt = _preset_cfg.system_prompt
                 self._preset_temperature = _preset_cfg.temperature
+
+        # Tools named with --tools/-t start attached (in addition to any the
+        # preset brought), matching `effgen run --tools`. An unknown name is
+        # reported with a close-match hint rather than silently ignored.
+        requested_tools = getattr(args, "tools", None) or []
+        if requested_tools:
+            try:
+                registry = self.cli.tool_registry
+                registry.discover_builtin_tools()
+                available = set(registry.list_tools())
+            except Exception:  # noqa: BLE001 - never let tool discovery sink startup
+                available = set()
+            for name in requested_tools:
+                if available and name not in available:
+                    import difflib
+
+                    hint = difflib.get_close_matches(name, sorted(available), n=1)
+                    suffix = f" Did you mean: {hint[0]}?" if hint else ""
+                    self.cli.print_warning(
+                        f"No tool named '{name}'.{suffix} See: effgen tools list"
+                    )
+                    continue
+                if name not in self.tool_names:
+                    self.tool_names.append(name)
 
         self.agent: Any = None
         self.session_tokens = 0
@@ -514,13 +546,14 @@ class ChatREPL:
                         first = tok
                         break
         else:
-            if not self.quiet:
+            show_placeholder = not self.quiet and self.interactive
+            if show_placeholder:
                 print("Thinking…", end="", flush=True)
             for tok in gen:
                 if tok:
                     first = tok
                     break
-            if not self.quiet:
+            if show_placeholder:
                 print("\r" + " " * 10 + "\r", end="", flush=True)
 
         if self.console:
@@ -552,7 +585,7 @@ class ChatREPL:
             ):
                 response = self.agent.run(user_input, mode=AgentMode.AUTO)
         else:
-            if not self.quiet:
+            if not self.quiet and self.interactive:
                 print("Thinking…")
             response = self.agent.run(user_input, mode=AgentMode.AUTO)
 

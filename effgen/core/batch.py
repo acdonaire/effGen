@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 # works without ``--query-field``.
 _QUERY_ALIASES = ("query", "input", "prompt", "question", "text")
 
+# File extensions ``write_results`` can serialize a batch to. The CLI checks a
+# requested ``--output`` against this set up front so an unsupported extension
+# fails before any billed call rather than after the whole run.
+SUPPORTED_OUTPUT_FORMATS = (".jsonl", ".json", ".csv")
+
 
 def _resolve_row_query(obj: dict[str, Any], query_field: str) -> str:
     """Return a row's query text, trying *query_field* then the common aliases.
@@ -317,7 +322,10 @@ class BatchRunner:
                     for row in rows:
                         writer.writerow(BatchRunner._csv_flatten(row))
         else:
-            raise ValueError(f"Unsupported output format: {suffix}")
+            raise ValueError(
+                f"Unsupported output format: {suffix}. "
+                f"Use one of: {', '.join(SUPPORTED_OUTPUT_FORMATS)}."
+            )
 
         logger.info("Wrote %d results to %s", len(rows), path)
 
