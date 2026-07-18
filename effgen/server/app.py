@@ -97,6 +97,7 @@ def create_app(
     metrics_auth: bool = False,
     public_metrics: bool | None = None,
     public_dashboard: bool | None = None,
+    public_playground: bool | None = None,
     cors_origins: list[str] | None = None,
     rate_limit_per_minute: int | None = None,
     trust_proxy: bool | None = None,
@@ -142,6 +143,11 @@ def create_app(
         public_metrics = False
     if public_dashboard is None:
         public_dashboard = _dev or _truthy_env("EFFGEN_PUBLIC_DASHBOARD")
+    # The playground drives real, billed model calls, so its local-view opt-in
+    # is a flag of its own (not shared with the dashboard's) — an operator must
+    # knowingly authorize spend from a page anyone with the URL can reach.
+    if public_playground is None:
+        public_playground = _dev or _truthy_env("EFFGEN_PUBLIC_PLAYGROUND")
 
     app = FastAPI(
         title="effGen API",
@@ -206,8 +212,16 @@ def create_app(
         api_key=api_key,
         public_metrics=public_metrics,
         public_dashboard=public_dashboard,
+        public_playground=public_playground,
         dev_mode=_dev,
     )
+
+    # Record the resolved playground settings so the playground bootstrap route
+    # can decide whether to expose a local-view session key and report whether
+    # spend is authorized without re-reading the environment.
+    app.state.public_playground = bool(public_playground)
+    app.state.dev_mode = bool(_dev)
+    app.state.api_key = api_key if api_key is not None else os.getenv("EFFGEN_API_KEY", "")
 
     # 3. Audit middleware (logs every request; reads user from state set by auth)
     from effgen.server.audit import AuditMiddleware
@@ -336,6 +350,9 @@ def create_app(
 
     # Mount the local dashboard (static SPA + data.json + SSE spans).
     _mount_dashboard(app)
+
+    # Mount the in-browser playground (static SPA + bootstrap config).
+    _mount_playground(app)
 
     return app
 
@@ -472,6 +489,72 @@ def _extract_cost(response: Any) -> float | None:
         return None
 
 
+_TRACE_ARG_MAX = 200
+_TRACE_RESULT_MAX = 200
+
+
+def _extract_tool_trace(response: Any) -> list[dict[str, Any]]:
+    """Summarize the tools a run executed, in call order.
+
+    The agent records each tool call as a start/complete (or failed) pair of
+    events in ``response.execution_trace``. This pairs them into a compact
+    per-tool summary — ``{tool, args, result_summary, ok, duration_ms}`` — so a
+    caller can render what the agent actually did. Returns an empty list when no
+    tool ran (a direct model answer).
+    """
+    trace = getattr(response, "execution_trace", None) or []
+    if not isinstance(trace, list):
+        return []
+    steps: list[dict[str, Any]] = []
+    pending: dict[str, Any] | None = None
+
+    def _truncate(value: Any, limit: int) -> str:
+        text = "" if value is None else str(value)
+        return text if len(text) <= limit else text[: limit - 1] + "…"
+
+    for event in trace:
+        if not isinstance(event, dict):
+            continue
+        etype = event.get("type")
+        data = event.get("data") or {}
+        if etype == "tool_call_start":
+            if pending is not None:
+                steps.append(pending)  # a start with no matching completion
+            pending = {
+                "tool": data.get("tool_name") or "tool",
+                "args": _truncate(data.get("tool_input"), _TRACE_ARG_MAX),
+                "result_summary": None,
+                "ok": None,
+                "duration_ms": None,
+                "_start_ts": event.get("timestamp"),
+            }
+        elif etype in ("tool_call_complete", "tool_call_failed"):
+            step = pending or {
+                "tool": data.get("tool_name") or "tool",
+                "args": _truncate(data.get("input"), _TRACE_ARG_MAX),
+                "_start_ts": None,
+            }
+            pending = None
+            ok = etype == "tool_call_complete"
+            if ok:
+                step["result_summary"] = _truncate(data.get("result"), _TRACE_RESULT_MAX)
+            else:
+                step["result_summary"] = _truncate(data.get("error"), _TRACE_RESULT_MAX)
+            step["ok"] = ok
+            start_ts = step.pop("_start_ts", None)
+            end_ts = event.get("timestamp")
+            if isinstance(start_ts, int | float) and isinstance(end_ts, int | float):
+                step["duration_ms"] = round(max(0.0, (end_ts - start_ts) * 1000), 1)
+            step.setdefault("result_summary", None)
+            step.setdefault("ok", ok)
+            step.setdefault("duration_ms", None)
+            steps.append(step)
+    if pending is not None:
+        pending.pop("_start_ts", None)
+        steps.append(pending)
+    return steps
+
+
 def _build_default_runner() -> Any:
     """Construct an agent-backed runner for the OpenAI-compatible endpoints.
 
@@ -537,6 +620,20 @@ def _build_default_runner() -> Any:
             response = agent.run(prompt)
             _record_served_model(resolved_model)
             prompt_tokens, completion_tokens = _extract_usage(response)
+            tool_trace = _extract_tool_trace(response)
+            run_meta = getattr(response, "metadata", None) or {}
+            # Surface which tools ran (and how many) so a caller can render the
+            # step trace. Lives in the runner's ``metadata`` and is carried into
+            # the response's non-standard ``effgen`` object by the OpenAI-compat
+            # layer; standard OpenAI clients ignore unknown keys.
+            extra_meta: dict[str, Any] = {
+                "tool_calls": int(getattr(response, "tool_calls", 0) or 0),
+            }
+            if tool_trace:
+                extra_meta["trace"] = tool_trace
+            run_id = run_meta.get("run_id")
+            if run_id:
+                extra_meta["run_id"] = run_id
             return RunnerResult(
                 text=getattr(response, "output", "") or "",
                 prompt_tokens=prompt_tokens,
@@ -544,6 +641,7 @@ def _build_default_runner() -> Any:
                 resolved_model=resolved_model,
                 cost_usd=_extract_cost(response),
                 finish_reason="stop",
+                metadata=extra_meta,
             )
         finally:
             agent.close()
@@ -994,6 +1092,118 @@ def _mount_dashboard(app: Any) -> None:
 
     except Exception as exc:  # noqa: BLE001
         logger.warning("Dashboard not mounted: %s", exc)
+
+
+def _mount_playground(app: Any) -> None:
+    """Mount the in-browser playground SPA at /playground.
+
+    Serves:
+    - ``GET /playground``            — the SPA index.html
+    - ``GET /playground/bootstrap``  — presets, tool options, defaults, and (in
+      local-view mode) a session key, as JSON
+    - ``GET /playground/{path}``     — other static assets (JS, CSS)
+
+    The Run button drives the existing ``POST /v1/chat/completions`` endpoint;
+    the playground adds no new model-execution path.
+    """
+    try:
+        from pathlib import Path as _Path
+
+        from fastapi import APIRouter
+        from fastapi.responses import FileResponse, JSONResponse
+
+        router = APIRouter(prefix="/playground", tags=["playground"])
+        static_dir = _Path(__file__).parent.parent / "playground" / "static"
+
+        @router.get("", include_in_schema=False)
+        @router.get("/", include_in_schema=False)
+        async def playground_index() -> Any:
+            index = static_dir / "index.html"
+            if index.exists():
+                return FileResponse(str(index), media_type="text/html")
+            return JSONResponse({"detail": "playground not found"}, status_code=404)
+
+        @router.get("/bootstrap", include_in_schema=False)
+        async def playground_bootstrap(request: _FastAPIRequest) -> Any:  # type: ignore[valid-type]
+            """Config the page needs to render the pickers and (optionally) run."""
+            return JSONResponse(_build_playground_bootstrap(request))
+
+        @router.get("/{asset_path:path}", include_in_schema=False)
+        async def playground_static(asset_path: str) -> Any:
+            asset = static_dir / asset_path
+            if asset.exists() and asset.is_file():
+                return FileResponse(str(asset))
+            return JSONResponse({"detail": "not found"}, status_code=404)
+
+        app.include_router(router)
+        logger.info("Mounted playground at /playground")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Playground not mounted: %s", exc)
+
+
+# Tool names offered as one-click attachments in the playground. Kept to
+# credential-free, side-effect-free tools so a first run works with no setup;
+# a preset the user selects may pre-fill its own tools on top of these.
+_PLAYGROUND_SAFE_TOOLS: tuple[str, ...] = ("calculator", "wikipedia")
+
+
+def _build_playground_bootstrap(request: Any) -> dict[str, Any]:
+    """Assemble the JSON served at /playground/bootstrap.
+
+    Carries the presets (name + system prompt + tools, applied client-side), the
+    always-safe tool options, sensible defaults, and — only when the operator
+    opted into a public playground and a static key is configured — a session
+    key so a local-view demo can Run without pasting one. When spend is not
+    authorized locally the key is ``None`` and the page prompts for one.
+    """
+    app_state = getattr(request, "app", None)
+    state = getattr(app_state, "state", None)
+    public_playground = bool(getattr(state, "public_playground", False))
+    dev_mode = bool(getattr(state, "dev_mode", False))
+    configured_key = getattr(state, "api_key", "") or ""
+
+    # Only hand the browser a key when the operator has authorized local spend
+    # (public playground) AND a static key exists. In dev mode auth is bypassed,
+    # so no key is needed for Run to work.
+    session_key = configured_key if (public_playground and configured_key) else None
+
+    presets: list[dict[str, Any]] = []
+    try:
+        from effgen.presets.registry import list_presets as _list_presets
+
+        for name in _list_presets():
+            try:
+                from effgen.presets.registry import get_preset as _get_preset
+
+                cfg = _get_preset(name)
+            except Exception:  # noqa: BLE001 - skip a preset that won't load
+                continue
+            presets.append(
+                {
+                    "name": getattr(cfg, "name", name),
+                    "description": getattr(cfg, "description", ""),
+                    "system_prompt": getattr(cfg, "system_prompt", "") or "",
+                    "tools": list(getattr(cfg, "tool_names", []) or []),
+                    "temperature": getattr(cfg, "temperature", None),
+                }
+            )
+    except Exception:  # noqa: BLE001 - presets are optional; page still works without them
+        presets = []
+
+    from effgen.api.openai_compat import default_model_id
+
+    return {
+        "version": _server_version(),
+        "presets": presets,
+        "tools": list(_PLAYGROUND_SAFE_TOOLS),
+        "default_model": default_model_id(),
+        "spend_authorized": bool(session_key) or dev_mode,
+        "session_key": session_key,
+        "dev_mode": dev_mode,
+        # Client-side spend guardrails the page applies by default.
+        "defaults": {"max_tokens": 512, "temperature": 0.7, "stream": True},
+        "catalog_url": "/v1/models/catalog",
+    }
 
 
 def _build_dashboard_data() -> dict[str, Any]:

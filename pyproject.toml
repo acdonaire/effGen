@@ -465,6 +465,9 @@ effgen = [
     "dashboard/static/*.html",
     "dashboard/static/*.js",
     "dashboard/static/*.css",
+    "playground/static/*.html",
+    "playground/static/*.js",
+    "playground/static/*.css",
 ]
 
 # Black - Code Formatter

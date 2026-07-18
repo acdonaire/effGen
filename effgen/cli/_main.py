@@ -1404,6 +1404,9 @@ class CLIInterface:
             public_dashboard = dev_mode or os.environ.get(
                 "EFFGEN_PUBLIC_DASHBOARD", "0"
             ).strip() == "1"
+            public_playground = dev_mode or os.environ.get(
+                "EFFGEN_PUBLIC_PLAYGROUND", "0"
+            ).strip() == "1"
 
             self.print(f"Starting server on {host}:{port}")
             self.print(f"  OpenAI-compatible API : http://{host}:{port}/v1")
@@ -1412,6 +1415,10 @@ class CLIInterface:
             if not public_dashboard:
                 dashboard_line += "  (data requires an API key; set EFFGEN_PUBLIC_DASHBOARD=1 for local viewing)"
             self.print(dashboard_line)
+            playground_line = f"  Playground            : http://{host}:{port}/playground"
+            if not public_playground:
+                playground_line += "  (paste an API key, or set EFFGEN_PUBLIC_PLAYGROUND=1 for local viewing)"
+            self.print(playground_line)
             self.print()
 
             # Keep uvicorn's proxy-header handling consistent with the rate

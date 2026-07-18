@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<!-- No data-theme on first paint so the CSS follows the OS color scheme with no
+     JavaScript; app.js overrides only when the user has a stored choice. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
+  <title>effGen Playground</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- All assets are served locally; the page renders with no external network. -->
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <h1 class="logo"><span aria-hidden="true">⚡</span> effGen</h1>
+      <span class="tagline">Playground</span>
+    </div>
+    <div class="header-right">
+      <a class="nav-link" href="/dashboard">Dashboard</a>
+      <button id="theme-btn" type="button" aria-label="Switch color theme" title="Switch color theme">
+        <span aria-hidden="true" id="theme-icon">◐</span>
+      </button>
+    </div>
+  </header>
+
+  <div id="auth-banner" class="banner banner-warn" role="alert" hidden></div>
+  <div id="error-banner" class="banner banner-err" role="alert" hidden></div>
+
+  <main class="main">
+    <!-- Controls -->
+    <section class="panel" aria-label="Request controls">
+      <h2>Compose</h2>
+
+      <div class="field" id="key-field" hidden>
+        <label for="api-key">API key</label>
+        <input type="password" id="api-key" autocomplete="off" spellcheck="false"
+               placeholder="Authorization: Bearer &lt;key&gt;" />
+        <p class="hint">Held in memory for this tab only — never written to disk.</p>
+      </div>
+
+      <div class="field">
+        <label for="preset-select">Preset (optional)</label>
+        <select id="preset-select">
+          <option value="">None — model only</option>
+        </select>
+        <p class="hint" id="preset-hint"></p>
+      </div>
+
+      <div class="field">
+        <label for="model-select">Model</label>
+        <select id="model-select">
+          <option value="">Loading catalog…</option>
+        </select>
+        <p class="hint" id="model-hint"></p>
+      </div>
+
+      <div class="field">
+        <label for="prompt">Prompt</label>
+        <textarea id="prompt" placeholder="Ask anything…">What is 8347 * 219?</textarea>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced controls</summary>
+        <div class="field">
+          <label>Attach tools</label>
+          <div class="tool-list" id="tool-list"></div>
+          <p class="hint">Tools run server-side; the step trace shows what ran (non-streamed runs).</p>
+        </div>
+        <div class="row-2">
+          <div class="field">
+            <label for="temperature">Temperature</label>
+            <input type="number" id="temperature" min="0" max="2" step="0.1" value="0.7" />
+          </div>
+          <div class="field">
+            <label for="max-tokens">Max tokens</label>
+            <input type="number" id="max-tokens" min="1" step="1" value="512" />
+          </div>
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="stream-toggle" checked /> Stream tokens live
+        </label>
+      </details>
+
+      <button class="run-btn" id="run-btn" type="button">Run</button>
+    </section>
+
+    <!-- Results -->
+    <section class="panel results" aria-label="Results">
+      <h2>Result</h2>
+      <div class="answer placeholder" id="answer" aria-live="polite">
+        The answer appears here after you Run.
+      </div>
+
+      <div class="stats" id="stats" hidden>
+        <div class="stat"><div class="stat-label">Model</div><div class="stat-value" id="stat-model">—</div></div>
+        <div class="stat"><div class="stat-label">Tokens (in/out)</div><div class="stat-value" id="stat-tokens">—</div></div>
+        <div class="stat"><div class="stat-label">Total</div><div class="stat-value" id="stat-total">—</div></div>
+        <div class="stat"><div class="stat-label">Cost</div><div class="stat-value" id="stat-cost">—</div></div>
+        <div class="stat"><div class="stat-label">Latency</div><div class="stat-value" id="stat-latency">—</div></div>
+      </div>
+
+      <div class="trace" id="trace-wrap" hidden>
+        <h2>Tool trace</h2>
+        <div id="trace"></div>
+      </div>
+
+      <div id="snippets" hidden>
+        <h2>Copy this run</h2>
+        <div class="snippet-tabs" role="tablist">
+          <button class="snippet-tab active" data-kind="curl" role="tab">curl</button>
+          <button class="snippet-tab" data-kind="cli" role="tab">CLI</button>
+          <button class="snippet-tab" data-kind="python" role="tab">Python</button>
+        </div>
+        <div class="snippet-box">
+          <button class="copy-btn" id="copy-btn" type="button">Copy</button>
+          <pre id="snippet-code">—</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

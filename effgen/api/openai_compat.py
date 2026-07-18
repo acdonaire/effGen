@@ -359,6 +359,119 @@ def build_text_completion(
 
 
 # ---------------------------------------------------------------------------
+# Model catalog (read-only)
+# ---------------------------------------------------------------------------
+
+_LOCAL_WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".gguf", ".onnx")
+
+
+def _local_cached_models() -> list[dict[str, Any]]:
+    """List models present in the local HuggingFace cache (best-effort).
+
+    Each entry marks whether the download is ``complete`` (has real weight
+    files) so an incomplete snapshot isn't offered as ready. Returns an empty
+    list when the cache can't be scanned (e.g. ``huggingface_hub`` absent).
+    """
+    out: list[dict[str, Any]] = []
+    try:
+        from huggingface_hub import scan_cache_dir
+
+        info = scan_cache_dir()
+        for repo in sorted(info.repos, key=lambda r: r.repo_id):
+            if repo.repo_type != "model":
+                continue
+            has_weights = any(
+                f.file_name.endswith(_LOCAL_WEIGHT_SUFFIXES)
+                and not f.file_name.endswith(".index.json")
+                for rev in repo.revisions
+                for f in rev.files
+            )
+            out.append(
+                {
+                    "id": repo.repo_id,
+                    "provider": "local",
+                    "engine": "transformers",
+                    "size_gb": round(repo.size_on_disk / (1024**3), 2),
+                    "complete": bool(has_weights),
+                    "local": True,
+                    "is_priced": False,
+                }
+            )
+    except Exception:  # noqa: BLE001 - cache scan is best-effort
+        pass
+    return out
+
+
+def build_model_catalog(provider: str | None = None) -> dict[str, Any]:
+    """Assemble the catalog payload served at ``GET /v1/models/catalog``.
+
+    Reads the in-package model catalog (the same source the ``effgen models``
+    CLI uses) so a picker sees real ids, pricing, capabilities and provenance
+    instead of the drop-in aliases ``GET /v1/models`` returns. Never raises: on
+    any read failure it returns whatever parsed, with empty lists otherwise.
+    """
+    data: list[dict[str, Any]] = []
+    providers_meta: list[dict[str, Any]] = []
+    try:
+        from effgen.models import _catalog
+
+        names = (
+            [provider]
+            if provider and provider in _catalog.known_providers()
+            else _catalog.known_providers()
+        )
+        for prov in names:
+            try:
+                records = _catalog.list_models(prov)
+            except Exception:  # noqa: BLE001 - skip a provider whose catalog won't load
+                continue
+            meta = {}
+            try:
+                meta = _catalog.snapshot_meta(prov)
+            except Exception:  # noqa: BLE001
+                meta = {}
+            providers_meta.append(
+                {
+                    "provider": prov,
+                    "count": len(records),
+                    "verified_on": meta.get("verified_on"),
+                    "default_model": _catalog.default_model(prov),
+                }
+            )
+            for rec in records:
+                data.append(
+                    {
+                        "id": rec.id,
+                        "provider": rec.provider,
+                        "family": rec.family,
+                        "context_window": rec.context_window,
+                        "max_output": rec.max_output,
+                        "price_in_per_1m": rec.price_in_per_1m,
+                        "price_out_per_1m": rec.price_out_per_1m,
+                        "supports_tools": rec.supports_tools,
+                        "supports_vision": rec.supports_vision,
+                        "free_tier": rec.free_tier,
+                        "deprecated": rec.deprecated,
+                        "is_priced": rec.is_priced,
+                        "price_source": rec.price_source,
+                        "verified_on": rec.verified_on or meta.get("verified_on"),
+                        "local": False,
+                    }
+                )
+    except Exception:  # noqa: BLE001 - degrade to whatever parsed
+        pass
+
+    local = _local_cached_models()
+    return {
+        "object": "list",
+        "providers": providers_meta,
+        "data": data,
+        "local": local,
+        "counts": {"catalog": len(data), "local": len(local)},
+    }
+
+
+# ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
 
@@ -695,6 +808,22 @@ def create_openai_router(
             },
         }
 
+    @router.get("/models/catalog")
+    async def models_catalog(provider: str | None = None) -> dict[str, Any]:
+        """Return the model catalog with pricing, capabilities and provenance.
+
+        Unlike ``GET /v1/models`` (drop-in aliases plus ids served this run),
+        this reports the same catalog the ``effgen models`` CLI reads: every
+        known provider model with its context window, per-1M pricing, tool/vision
+        support, free-tier flag, and the ``verified_on`` date and ``price_source``
+        the price came from — plus the models present in the local cache. Prices
+        are ``None`` when unpublished (never a fabricated ``$0``), so a picker can
+        label priced/free/unpriced accurately. Pass ``?provider=<name>`` to scope
+        to one provider. Degrades to an empty list if the catalog is unreadable
+        rather than failing the request.
+        """
+        return build_model_catalog(provider)
+
     @router.post("/chat/completions")
     async def chat_completions(request: ChatCompletionRequest) -> Any:
         # OpenAI rejects an empty `messages` array with a 400; match that instead
@@ -826,6 +955,16 @@ def create_openai_router(
             # clients ignore unknown keys); `None` when the model has no pricing.
             if result.cost_usd is not None:
                 effgen_meta = {**effgen_meta, "cost_usd": result.cost_usd}
+            # Surface the tool/step trace and run id a runner recorded (also in
+            # the `effgen` extension). ``trace`` is a compact list of the tools
+            # the server ran — ``{tool, args, result_summary, ok, duration_ms}``
+            # — so a caller can show what the agent did; ``tool_calls`` is the
+            # count. Absent when the run used no tools.
+            extra = result.metadata or {}
+            for key in ("trace", "tool_calls", "run_id"):
+                value = extra.get(key)
+                if value:
+                    effgen_meta = {**effgen_meta, key: value}
         else:
             content = result if isinstance(result, str) else "".join(str(c) for c in result)
             completion_tokens = None

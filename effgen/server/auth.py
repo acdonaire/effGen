@@ -352,6 +352,24 @@ def _is_dashboard_static(path: str) -> bool:
     return path.startswith("/dashboard/") and path.endswith(_STATIC_ASSET_SUFFIXES)
 
 
+# The playground can drive real (billed) model calls, so its data endpoint
+# (``/playground/bootstrap`` — presets, tools, and any local-view session key)
+# is protected by default and opens only when an operator explicitly opts in via
+# ``EFFGEN_PUBLIC_PLAYGROUND`` (a flag separate from the dashboard's, since it
+# authorizes spend). The static SPA shell stays public so the page can load and
+# prompt for a key.
+_PLAYGROUND_DATA_PATHS: frozenset[str] = frozenset({"/playground/bootstrap"})
+
+
+def _is_playground_static(path: str) -> bool:
+    """Return True for inert static playground assets (never data endpoints)."""
+    if path in ("/playground", "/playground/"):
+        return True
+    if path in _PLAYGROUND_DATA_PATHS:
+        return False
+    return path.startswith("/playground/") and path.endswith(_STATIC_ASSET_SUFFIXES)
+
+
 def get_auth_dependency():  # noqa: ANN201
     """Return a FastAPI Depends-compatible callable for JWT auth.
 
@@ -440,6 +458,7 @@ class AuthMiddleware:
         metrics_auth: bool = False,
         public_metrics: bool | None = None,
         public_dashboard: bool | None = None,
+        public_playground: bool | None = None,
         dev_mode: bool | None = None,
     ) -> None:
         self.app = app
@@ -474,6 +493,12 @@ class AuthMiddleware:
                 os.getenv("EFFGEN_PUBLIC_DASHBOARD", "0").strip() == "1"
             )
         self.public_dashboard: bool = bool(public_dashboard)
+
+        if public_playground is None:
+            public_playground = self._effective_dev_mode() or (
+                os.getenv("EFFGEN_PUBLIC_PLAYGROUND", "0").strip() == "1"
+            )
+        self.public_playground: bool = bool(public_playground)
 
         _extra = set(public_paths or set())
         _default_public = set(_PUBLIC_PATHS)
@@ -511,8 +536,16 @@ class AuthMiddleware:
             path == "/dashboard" or path.startswith("/dashboard/")
         )
         _is_dashboard = _is_dashboard_public or _is_dashboard_static(path)
+        # Playground exemption: the static shell is always public; the bootstrap
+        # data endpoint opens only when the operator opted into a public
+        # playground (it can carry a local-view session key that authorizes
+        # spend).
+        _is_playground_public = self.public_playground and (
+            path == "/playground" or path.startswith("/playground/")
+        )
+        _is_playground = _is_playground_public or _is_playground_static(path)
         _dev = self._effective_dev_mode()
-        if path in self.public_paths or _is_dashboard or _dev:
+        if path in self.public_paths or _is_dashboard or _is_playground or _dev:
             if _dev:
                 scope.setdefault("state", {})["user"] = TokenPayload(
                     sub="dev-user",
