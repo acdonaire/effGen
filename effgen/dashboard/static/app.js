@@ -400,6 +400,176 @@
   }
 
   // ------------------------------------------------------------------
+  // Model catalog browser
+  // ------------------------------------------------------------------
+  const CAT_PAGE_SIZE = 25;
+  let catalogAll = [];        // every record from /dashboard/catalog.json
+  let catalogView = [];       // filtered + sorted
+  let catalogPage = 0;
+  let catalogLoaded = false;
+
+  function fmtPrice(v) {
+    // A published nonzero rate shows as $<n>; null is unknown; 0 with no rate
+    // is unpriced rather than a fabricated $0 (mirrors the CLI label).
+    if (v == null) return null;
+    if (v === 0) return null;
+    return "$" + (Math.round(v * 1000) / 1000);
+  }
+
+  function priceCells(rec) {
+    const pin = fmtPrice(rec.price_in_per_1m);
+    const pout = fmtPrice(rec.price_out_per_1m);
+    if (pin || pout) return [pin || "?", pout || "?"];
+    const label = rec.free_tier ? "free" : (rec.is_priced ? "metered" : "unpriced");
+    return [label, label];
+  }
+
+  function catalogFilterSort() {
+    const q = ($("cat-search").value || "").toLowerCase().trim();
+    const prov = $("cat-provider").value || "";
+    const sort = $("cat-sort").value || "provider";
+    const wantTools = $("cat-tools").checked;
+    const wantVision = $("cat-vision").checked;
+    const wantAudio = $("cat-audio").checked;
+    const wantFree = $("cat-free").checked;
+    const minCtx = parseInt($("cat-min-context").value, 10);
+
+    let rows = catalogAll.filter((r) => {
+      if (prov && r.provider !== prov) return false;
+      if (wantTools && !r.supports_tools) return false;
+      if (wantVision && !r.supports_vision) return false;
+      if (wantAudio && !r.supports_audio) return false;
+      if (wantFree && !r.free_tier) return false;
+      if (!isNaN(minCtx) && (r.context_window || 0) < minCtx) return false;
+      if (q) {
+        const hay = (r.id + " " + (r.family || "") + " " + r.provider).toLowerCase();
+        if (hay.indexOf(q) === -1) return false;
+      }
+      return true;
+    });
+
+    const big = Number.POSITIVE_INFINITY;
+    const numIn = (r) => (r.price_in_per_1m == null ? big : r.price_in_per_1m);
+    const numOut = (r) => (r.price_out_per_1m == null ? big : r.price_out_per_1m);
+    const cmp = {
+      provider: (a, b) => (a.provider + a.id).localeCompare(b.provider + b.id),
+      id: (a, b) => a.id.localeCompare(b.id),
+      context: (a, b) => (a.context_window || 0) - (b.context_window || 0),
+      "max-out": (a, b) => (a.max_output || 0) - (b.max_output || 0),
+      "price-in": (a, b) => numIn(a) - numIn(b),
+      "price-out": (a, b) => numOut(a) - numOut(b),
+    }[sort] || ((a, b) => 0);
+    rows.sort(cmp);
+
+    catalogView = rows;
+    catalogPage = 0;
+    renderCatalogPage();
+  }
+
+  function renderCatalogPage() {
+    const tbody = $("catalog-tbody");
+    if (!tbody) return;
+    const total = catalogView.length;
+    const pages = Math.max(1, Math.ceil(total / CAT_PAGE_SIZE));
+    if (catalogPage >= pages) catalogPage = pages - 1;
+    const start = catalogPage * CAT_PAGE_SIZE;
+    const slice = catalogView.slice(start, start + CAT_PAGE_SIZE);
+
+    if (!slice.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-row">'
+        + (catalogAll.length ? "No models match those filters"
+                             : "Catalog unavailable") + "</td></tr>";
+    } else {
+      tbody.innerHTML = slice.map((r) => {
+        const [pin, pout] = priceCells(r);
+        const check = (on) => on ? '<span class="cat-yes" aria-label="yes">✓</span>' : "";
+        return `<tr>
+          <td>${esc(r.provider)}</td>
+          <td class="cat-id">${esc(r.id)}</td>
+          <td class="num">${r.context_window ? r.context_window.toLocaleString() : "—"}</td>
+          <td class="num">${r.max_output ? r.max_output.toLocaleString() : "—"}</td>
+          <td class="num">${esc(pin)}</td>
+          <td class="num">${esc(pout)}</td>
+          <td>${check(r.supports_tools)}</td>
+          <td>${check(r.supports_vision)}</td>
+          <td>${check(r.free_tier)}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    const from = total ? start + 1 : 0;
+    const to = Math.min(start + CAT_PAGE_SIZE, total);
+    setText("cat-page-info", total
+      ? `${from}–${to} of ${total} (of ${catalogAll.length})`
+      : `0 of ${catalogAll.length}`);
+    const prev = $("cat-prev");
+    const next = $("cat-next");
+    if (prev) prev.disabled = catalogPage <= 0;
+    if (next) next.disabled = catalogPage >= pages - 1;
+  }
+
+  function populateProviderSelect() {
+    const sel = $("cat-provider");
+    if (!sel) return;
+    const provs = Array.from(new Set(catalogAll.map((r) => r.provider))).sort();
+    // Keep the leading "all" option; append the discovered providers once.
+    provs.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p;
+      sel.appendChild(opt);
+    });
+  }
+
+  async function loadCatalog() {
+    if (catalogLoaded) return;
+    try {
+      const resp = await fetch("/dashboard/catalog.json", { cache: "no-store" });
+      if (resp.status === 401) {
+        setText("catalog-sub", "Catalog requires authentication (see the banner above).");
+        return;
+      }
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      catalogAll = (data.data || []).slice();
+      catalogLoaded = true;
+      populateProviderSelect();
+      const provCount = (data.providers || []).length;
+      const verified = (data.providers || [])
+        .map((p) => p.verified_on).filter(Boolean).sort();
+      const asOf = verified.length ? verified[0] : "unknown";
+      setText("catalog-sub",
+        `${catalogAll.length} models across ${provCount} providers · `
+        + `pricing from catalog snapshot (verified ${asOf}) · `
+        + `run “effgen models refresh” to update`);
+      catalogFilterSort();
+    } catch (err) {
+      setText("catalog-sub", "Catalog unavailable.");
+      console.warn("[effGen dashboard] catalog fetch failed:", err);
+    }
+  }
+
+  function initCatalog() {
+    const ids = ["cat-search", "cat-provider", "cat-sort", "cat-tools",
+                 "cat-vision", "cat-audio", "cat-free", "cat-min-context"];
+    ids.forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      const evt = (el.tagName === "INPUT" && (el.type === "search" || el.type === "number"))
+        ? "input" : "change";
+      el.addEventListener(evt, catalogFilterSort);
+    });
+    const prev = $("cat-prev");
+    if (prev) prev.addEventListener("click", () => {
+      if (catalogPage > 0) { catalogPage--; renderCatalogPage(); }
+    });
+    const next = $("cat-next");
+    if (next) next.addEventListener("click", () => {
+      catalogPage++; renderCatalogPage();
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Span stream
   // ------------------------------------------------------------------
   function spanKind(name) {
@@ -542,6 +712,9 @@
       const data = await resp.json();
       hideAuthBanner();
       setStatus(true);
+      // The catalog shares the dashboard's access rule; load it once data
+      // access is confirmed (a 401 there shows an inline note instead).
+      loadCatalog();
       renderCards(data);
       renderSLO(data);
       renderByModel(data);
@@ -563,6 +736,7 @@
   // ------------------------------------------------------------------
   function init() {
     initTheme();
+    initCatalog();
 
     // Wire up buttons
     const refreshBtn = $("refresh-btn");

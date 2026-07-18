@@ -175,6 +175,70 @@
       </div>
     </section>
 
+    <!-- Model catalog browser -->
+    <section class="panel" id="panel-catalog">
+      <h2>Model Catalog</h2>
+      <p class="panel-sub" id="catalog-sub">Loading catalog…</p>
+      <div class="catalog-toolbar" role="group" aria-label="Catalog filters">
+        <label class="cat-field">
+          <span class="cat-label">Search</span>
+          <input type="search" id="cat-search" placeholder="id, family, provider"
+                 autocomplete="off" aria-label="Search models" />
+        </label>
+        <label class="cat-field">
+          <span class="cat-label">Provider</span>
+          <select id="cat-provider" aria-label="Filter by provider">
+            <option value="">all</option>
+          </select>
+        </label>
+        <label class="cat-field">
+          <span class="cat-label">Sort</span>
+          <select id="cat-sort" aria-label="Sort models">
+            <option value="provider">provider</option>
+            <option value="id">id</option>
+            <option value="context">context</option>
+            <option value="max-out">max output</option>
+            <option value="price-in">$/1M in</option>
+            <option value="price-out">$/1M out</option>
+          </select>
+        </label>
+        <label class="cat-check"><input type="checkbox" id="cat-tools" /> Tools</label>
+        <label class="cat-check"><input type="checkbox" id="cat-vision" /> Vision</label>
+        <label class="cat-check"><input type="checkbox" id="cat-audio" /> Audio</label>
+        <label class="cat-check"><input type="checkbox" id="cat-free" /> Free</label>
+        <label class="cat-field">
+          <span class="cat-label">Min context</span>
+          <input type="number" id="cat-min-context" min="0" step="1000"
+                 placeholder="0" aria-label="Minimum context window" />
+        </label>
+      </div>
+      <div class="table-wrapper">
+        <table id="catalog-table">
+          <thead>
+            <tr>
+              <th scope="col">Provider</th>
+              <th scope="col">Model ID</th>
+              <th scope="col" class="num">Context</th>
+              <th scope="col" class="num">Max Out</th>
+              <th scope="col" class="num">$/1M in</th>
+              <th scope="col" class="num">$/1M out</th>
+              <th scope="col">Tools</th>
+              <th scope="col">Vision</th>
+              <th scope="col">Free</th>
+            </tr>
+          </thead>
+          <tbody id="catalog-tbody">
+            <tr><td colspan="9" class="empty-row">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="catalog-footer">
+        <button id="cat-prev" type="button" disabled>‹ Prev</button>
+        <span id="cat-page-info" aria-live="polite">—</span>
+        <button id="cat-next" type="button" disabled>Next ›</button>
+      </div>
+    </section>
+
     <!-- Row 7: raw metrics -->
     <section class="panel" id="panel-metrics">
       <h2>Prometheus Metrics (raw)</h2>

@@ -234,6 +234,26 @@ def test_lookup_unknown_returns_none():
     assert C.lookup("definitely-not-a-real-model-xyz") is None
 
 
+def test_variants_lists_every_provider_of_a_shared_id():
+    provs = C.providers_for("Qwen/Qwen2.5-7B-Instruct")
+    if len(provs) < 2:
+        import pytest
+        pytest.skip("catalog no longer serves this id on multiple providers")
+    recs = C.variants("Qwen/Qwen2.5-7B-Instruct")
+    assert {r.provider for r in recs} == set(provs)
+    assert all(r.id == "Qwen/Qwen2.5-7B-Instruct" for r in recs)
+
+
+def test_variants_single_provider_returns_one():
+    recs = C.variants("gpt-5-nano")
+    assert [r.provider for r in recs] == ["openai"]
+
+
+def test_variants_honors_provider_prefix():
+    recs = C.variants("openai:gpt-5-nano")
+    assert [r.provider for r in recs] == ["openai"]
+
+
 # ---------------------------------------------------------------------------
 # nearest_alternatives
 # ---------------------------------------------------------------------------

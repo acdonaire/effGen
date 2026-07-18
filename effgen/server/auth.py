@@ -335,6 +335,7 @@ _PUBLIC_PATHS: frozenset[str] = frozenset({
 _DASHBOARD_DATA_PATHS: frozenset[str] = frozenset({
     "/dashboard/data.json",
     "/dashboard/spans",
+    "/dashboard/catalog.json",
 })
 
 # File extensions treated as inert static dashboard assets.

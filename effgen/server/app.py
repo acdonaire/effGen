@@ -1042,6 +1042,20 @@ def _mount_dashboard(app: Any) -> None:
             """Live metrics + recent runs as JSON consumed by the SPA."""
             return JSONResponse(_build_dashboard_data())
 
+        # ---- /dashboard/catalog.json ----------------------------------------
+        @router.get("/catalog.json", include_in_schema=False)
+        async def dashboard_catalog(provider: str | None = None) -> Any:
+            """Model catalog (pricing, capabilities, provenance) for the SPA.
+
+            Serves the same payload as ``GET /v1/models/catalog`` but under the
+            dashboard's own access rule, so the catalog view follows the
+            dashboard's local-viewing story (``EFFGEN_PUBLIC_DASHBOARD``) rather
+            than requiring a separately-supplied API key.
+            """
+            from effgen.api.openai_compat import build_model_catalog
+
+            return JSONResponse(build_model_catalog(provider))
+
         # ---- /dashboard/spans (SSE) ----------------------------------------
         @router.get("/spans", include_in_schema=False)
         async def dashboard_spans(request: _FastAPIRequest) -> Any:  # type: ignore[valid-type]

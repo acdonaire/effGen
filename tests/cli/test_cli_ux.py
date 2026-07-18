@@ -202,6 +202,137 @@ def test_models_info_includes_local_block_alongside_cloud(capsys, monkeypatch):
     assert data["local"] is not None and data["local"]["cached"] is True
 
 
+# --------------------------------------------------------------------------- #
+# Cross-provider catalog browser (models browse)
+# --------------------------------------------------------------------------- #
+def _browse_args(**overrides):
+    base = {
+        "search": None, "provider": None, "free": False, "tools": False,
+        "vision": False, "audio": False, "min_context": None,
+        "max_price_in": None, "max_price_out": None, "sort": "provider",
+        "desc": False, "limit": None, "offset": 0, "include_local": False,
+        "output_json": False,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_models_browse_json_spans_all_providers(capsys):
+    code = _cli()._models_browse(_browse_args(output_json=True))
+    data = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert data["count"] > 100  # the full catalog, not one provider
+    provs = {m["provider"] for m in data["models"]}
+    assert {"openai", "groq", "together"} <= provs
+    # Every record carries the fields a browser needs, incl. is_priced.
+    rec = data["models"][0]
+    for f in ("id", "provider", "context_window", "price_in_per_1m",
+              "supports_vision", "supports_audio", "is_priced"):
+        assert f in rec
+
+
+def test_models_browse_search_filters(capsys):
+    code = _cli()._models_browse(_browse_args(search="gpt-5-nano", output_json=True))
+    data = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert data["count"] >= 1
+    assert all("gpt-5-nano" in m["id"] for m in data["models"])
+
+
+def test_models_browse_vision_and_min_context(capsys):
+    args = _browse_args(vision=True, min_context=128000, output_json=True)
+    data = json.loads(_run_json(_cli()._models_browse, args, capsys))
+    assert data["count"] >= 1
+    assert all(m["supports_vision"] and m["context_window"] >= 128000
+               for m in data["models"])
+
+
+def test_models_browse_sort_price_out_ascending(capsys):
+    args = _browse_args(sort="price-out", output_json=True, limit=40)
+    data = json.loads(_run_json(_cli()._models_browse, args, capsys))
+    priced = [m["price_out_per_1m"] for m in data["models"]
+              if m["price_out_per_1m"] is not None]
+    assert priced == sorted(priced)  # non-decreasing; None sorts last
+
+
+def test_models_browse_max_price_excludes_unpriced(capsys):
+    # A price ceiling must exclude unpriced rows, not treat them as free/cheap.
+    args = _browse_args(max_price_in=0.1, output_json=True)
+    data = json.loads(_run_json(_cli()._models_browse, args, capsys))
+    for m in data["models"]:
+        assert m["price_in_per_1m"] is not None
+        assert m["price_in_per_1m"] <= 0.1
+
+
+def test_models_browse_paging(capsys):
+    first = json.loads(_run_json(_cli()._models_browse,
+                                 _browse_args(limit=5, output_json=True), capsys))
+    assert len(first["models"]) == 5
+    second = json.loads(_run_json(_cli()._models_browse,
+                                  _browse_args(limit=5, offset=5, output_json=True), capsys))
+    assert first["count"] == second["count"]
+    assert first["models"][0]["id"] != second["models"][0]["id"]
+
+
+def test_models_browse_piped_is_complete(capsys, monkeypatch):
+    # Non-terminal output shows full ids and prices — no width truncation.
+    cli = _cli()
+    if cli.console is not None:
+        monkeypatch.setattr(type(cli.console), "is_terminal", property(lambda self: False))
+    cli._models_browse(_browse_args(search="qwen2.5-7b-instruct-turbo"))
+    out = capsys.readouterr().out
+    assert "Qwen/Qwen2.5-7B-Instruct-Turbo" in out  # full id, not truncated
+
+
+def test_models_browse_narrow_terminal_keeps_id_visible(capsys, monkeypatch):
+    # A narrow terminal must not hide the model id: the nine-column rich table
+    # would collapse the id column at ~80 cols, so browse renders the complete
+    # aligned plain-text table instead. The id and both prices stay present.
+    cli = _cli()
+    if cli.console is not None:
+        monkeypatch.setattr(type(cli.console), "is_terminal", property(lambda self: True))
+        monkeypatch.setattr(type(cli.console), "width", property(lambda self: 80))
+    cli._models_browse(_browse_args(search="gpt-5-nano"))
+    out = capsys.readouterr().out
+    assert "gpt-5-nano" in out           # id present, not collapsed to nothing
+    assert "$0.05" in out or "$0" in out  # a price cell present
+
+
+def test_models_browse_json_verified_on_populated(capsys):
+    # The advertised provenance field carries the provider snapshot date, not a
+    # null (mirrors the human view and the dashboard catalog payload).
+    data = json.loads(_run_json(_cli()._models_browse,
+                                _browse_args(limit=5, output_json=True), capsys))
+    assert data["models"]
+    assert all(m["verified_on"] for m in data["models"])
+
+
+def _run_json(fn, args, capsys):
+    capsys.readouterr()  # clear
+    fn(args)
+    return capsys.readouterr().out
+
+
+def test_models_info_surfaces_multi_provider(capsys):
+    # A bare id served by more than one provider lists the alternatives.
+    args = SimpleNamespace(name="Qwen/Qwen2.5-7B-Instruct", output_json=True)
+    code = _cli()._models_info(args)
+    data = json.loads(capsys.readouterr().out)
+    assert code == 0
+    also = data.get("also_available", [])
+    provs = {data["provider"]} | {v["provider"] for v in also}
+    assert {"together", "hf"} <= provs
+    for v in also:
+        assert v["provider"] != data["provider"]
+
+
+def test_models_info_single_provider_has_empty_alternatives(capsys):
+    args = SimpleNamespace(name="gpt-5-nano", output_json=True)
+    _cli()._models_info(args)
+    data = json.loads(capsys.readouterr().out)
+    assert data["also_available"] == []
+
+
 def test_models_list_flags_incomplete_download(capsys, monkeypatch):
     cli = _cli()
     monkeypatch.setattr(cli, "_local_cached_models", lambda: _fake_local([

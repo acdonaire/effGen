@@ -129,6 +129,22 @@ class TestStaticFiles:
         js = (STATIC_DIR / "app.js").read_text()
         assert "hideAuthBanner" in js
 
+    def test_index_contains_catalog_panel(self):
+        html = (STATIC_DIR / "index.html").read_text()
+        assert 'id="panel-catalog"' in html
+        assert 'id="catalog-table"' in html
+        assert 'id="cat-search"' in html
+
+    def test_app_js_loads_catalog(self):
+        js = (STATIC_DIR / "app.js").read_text()
+        assert "loadCatalog" in js
+        assert "/dashboard/catalog.json" in js
+
+    def test_app_js_catalog_pricing_labels_unpriced(self):
+        """The catalog view labels an unpriced model, never a fabricated $0."""
+        js = (STATIC_DIR / "app.js").read_text()
+        assert "unpriced" in js
+
 
 # ---------------------------------------------------------------------------
 # Dashboard data builder
@@ -498,6 +514,30 @@ class TestDashboardRoutes:
         for key in ("ts", "metrics", "slo", "recent_runs", "recent_spans", "raw_metrics"):
             assert key in data
 
+    def test_dashboard_catalog_json_200(self):
+        resp = self._client.get("/dashboard/catalog.json")
+        assert resp.status_code == 200
+        assert "json" in resp.headers.get("content-type", "")
+
+    def test_dashboard_catalog_json_shape(self):
+        data = self._client.get("/dashboard/catalog.json").json()
+        assert isinstance(data, dict)
+        for key in ("data", "providers", "local", "counts"):
+            assert key in data, f"missing catalog key {key!r}"
+        assert data["counts"]["catalog"] > 0
+        rec = data["data"][0]
+        # A browser needs pricing, capability, and provenance fields, plus the
+        # is_priced flag that backs unpriced labeling.
+        for field in ("id", "provider", "context_window", "price_in_per_1m",
+                      "supports_vision", "is_priced", "verified_on"):
+            assert field in rec, f"missing per-model field {field!r}"
+
+    def test_dashboard_catalog_json_provider_filter(self):
+        data = self._client.get("/dashboard/catalog.json?provider=openai").json()
+        provs = {p["provider"] for p in data["providers"]}
+        assert provs == {"openai"}
+        assert all(r["provider"] == "openai" for r in data["data"])
+
     def test_dashboard_static_app_js(self):
         resp = self._client.get("/dashboard/app.js")
         assert resp.status_code == 200
@@ -541,6 +581,40 @@ class TestDashboardAuth:
         client = TestClient(create_app(dev_mode=False), raise_server_exceptions=False)
         resp = client.get("/dashboardevil")
         assert resp.status_code == 401
+
+    def test_dashboard_catalog_requires_auth_by_default(self):
+        """The catalog data endpoint follows the dashboard's access rule: it is
+        protected by default and only public when the operator opts in."""
+        pytest.importorskip("fastapi")
+        pytest.importorskip("httpx")
+        from fastapi.testclient import TestClient
+
+        from effgen.server.app import create_app
+
+        client = TestClient(
+            create_app(dev_mode=False, api_key="secret-key"),
+            raise_server_exceptions=False,
+        )
+        assert client.get("/dashboard/catalog.json").status_code == 401
+        ok = client.get(
+            "/dashboard/catalog.json",
+            headers={"Authorization": "Bearer secret-key"},
+        )
+        assert ok.status_code == 200
+        assert ok.json()["counts"]["catalog"] > 0
+
+    def test_dashboard_catalog_public_when_opted_in(self):
+        pytest.importorskip("fastapi")
+        pytest.importorskip("httpx")
+        from fastapi.testclient import TestClient
+
+        from effgen.server.app import create_app
+
+        client = TestClient(
+            create_app(dev_mode=False, api_key="secret-key", public_dashboard=True),
+            raise_server_exceptions=False,
+        )
+        assert client.get("/dashboard/catalog.json").status_code == 200
 
 
 # ---------------------------------------------------------------------------

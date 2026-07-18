@@ -579,6 +579,29 @@ def lookup(model_id: str, provider: str | None = None) -> ModelRecord | None:
     return None
 
 
+def variants(model_id: str, provider: str | None = None) -> list[ModelRecord]:
+    """Return one :class:`ModelRecord` per provider that serves *model_id*.
+
+    A bare model id (e.g. ``Qwen/Qwen2.5-7B-Instruct``) can be offered by more
+    than one provider at different prices; this returns every provider's record
+    for it so a caller can compare where to run the same model. Honors an
+    optional ``provider:`` prefix on *model_id* or an explicit *provider* (which
+    scopes the result to that single provider). Records are ordered by
+    :func:`known_providers`.
+    """
+    pref_provider, bare = _split_prefix(model_id)
+    provider = provider or pref_provider
+    out: list[ModelRecord] = []
+    for prov in providers_for(bare if provider is None else f"{provider}:{bare}"):
+        try:
+            models = _load_models_dict(prov)
+        except Exception:  # pragma: no cover - one bad catalog shouldn't break the compare
+            continue
+        if bare in models:
+            out.append(normalize_record(prov, bare, models[bare]))
+    return out
+
+
 def providers_for(model_id: str) -> list[str]:
     """Return the providers whose in-package catalog exposes *model_id* exactly.
 
@@ -782,6 +805,7 @@ __all__ = [
     "check_drift_against_snapshot",
     "list_models",
     "lookup",
+    "variants",
     "providers_for",
     "nearest_alternatives",
     "suggest_for_missing",

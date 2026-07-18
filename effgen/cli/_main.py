@@ -2001,6 +2001,8 @@ class CLIInterface:
         """
         if args.model_command == 'list':
             return self._models_list(args) or 0
+        elif args.model_command == 'browse':
+            return self._models_browse(args) or 0
         elif args.model_command == 'info':
             return self._models_info(args) or 0
         elif args.model_command == 'load':
@@ -2131,13 +2133,16 @@ class CLIInterface:
                     "auth_ready": _refresh.has_credentials(prov),
                     "models": [
                         {
-                            "id": r.id, "context_window": r.context_window,
+                            "id": r.id, "family": r.family,
+                            "context_window": r.context_window,
                             "max_output": r.max_output,
                             "price_in_per_1m": r.price_in_per_1m,
                             "price_out_per_1m": r.price_out_per_1m,
                             "supports_tools": r.supports_tools,
                             "supports_vision": r.supports_vision,
+                            "supports_audio": r.supports_audio,
                             "free_tier": r.free_tier, "deprecated": r.deprecated,
+                            "is_priced": r.is_priced,
                             "price_source": r.price_source,
                         }
                         for r in _records(prov)
@@ -2156,17 +2161,17 @@ class CLIInterface:
             auth = "ready" if _refresh.has_credentials(provider_filter) else "no key"
             verified = meta.get("verified_on") or "unknown"
             default_id = _catalog.default_model(provider_filter)
-            if self.console:
+            if self._rich_tables():
                 title = (f"{provider_filter} — {len(recs)} models "
                          f"(auth: {auth}, verified: {verified})")
                 table = Table(title=title)
                 table.add_column("Model ID", style="cyan", overflow="fold")
-                table.add_column("Context", style="white", justify="right")
-                table.add_column("Max Out", style="white", justify="right")
-                table.add_column("$/1M in/out", style="green")
-                table.add_column("Tools", justify="center")
-                table.add_column("Vision", justify="center")
-                table.add_column("Free", justify="center")
+                table.add_column("Context", style="white", justify="right", no_wrap=True)
+                table.add_column("Max Out", style="white", justify="right", no_wrap=True)
+                table.add_column("$/1M in/out", style="green", no_wrap=True, overflow="fold")
+                table.add_column("Tools", justify="center", no_wrap=True)
+                table.add_column("Vision", justify="center", no_wrap=True)
+                table.add_column("Free", justify="center", no_wrap=True)
                 table.add_column("Status", style="yellow")
                 for r in recs:
                     status = "deprecated" if r.deprecated else ("default" if r.id == default_id else "")
@@ -2187,8 +2192,16 @@ class CLIInterface:
                     f"to update from the live API.[/dim]"
                 )
             else:
+                id_w = min(max((len(r.id) for r in recs), default=8), 60)
+                print(f"{provider_filter} — {len(recs)} models "
+                      f"(auth: {auth}, verified: {verified})")
                 for r in recs:
-                    print(f"- {r.id}  ctx={r.context_window}  {self._price_cell(r)}")
+                    pin, pout = self._price_in_out_cells(r)
+                    mark = " *" if r.id == default_id else ""
+                    print(f"  {r.id:<{id_w}}  ctx={r.context_window or '-':>9}  "
+                          f"in={pin:>9}  out={pout:>9}  "
+                          f"{'tools' if r.supports_tools else '':<5} "
+                          f"{'vision' if r.supports_vision else ''}{mark}")
             return 0
 
         # Overview: per-provider summary + filtered flat table when filtering.
@@ -2196,14 +2209,14 @@ class CLIInterface:
             label = "free-tier" if free_only else "tool-capable"
             if tools_only and free_only:
                 label = "free + tool-capable"
-            if self.console:
+            if self._rich_tables():
                 table = Table(title=f"{label.capitalize()} models (all providers)")
                 table.add_column("Model ID", style="cyan", overflow="fold")
-                table.add_column("Provider", style="magenta")
-                table.add_column("Context", justify="right")
-                table.add_column("$/1M in/out", style="green")
-                table.add_column("Tools", justify="center")
-                table.add_column("Free", justify="center")
+                table.add_column("Provider", style="magenta", no_wrap=True)
+                table.add_column("Context", justify="right", no_wrap=True)
+                table.add_column("$/1M in/out", style="green", no_wrap=True, overflow="fold")
+                table.add_column("Tools", justify="center", no_wrap=True)
+                table.add_column("Free", justify="center", no_wrap=True)
                 for prov in providers:
                     for r in _records(prov):
                         table.add_row(
@@ -2215,9 +2228,11 @@ class CLIInterface:
                         )
                 self.console.print(table)
             else:
-                for prov in providers:
-                    for r in _records(prov):
-                        print(f"- {prov}:{r.id}")
+                flat = [r for prov in providers for r in _records(prov)]
+                id_w = min(max((len(r.id) for r in flat), default=8), 60)
+                for r in flat:
+                    print(f"{r.id:<{id_w}}  {r.provider:<10}  "
+                          f"ctx={r.context_window or '-':>9}  {self._price_cell(r)}")
             return 0
 
         # Default overview: one row per provider.
@@ -2271,6 +2286,241 @@ class CLIInterface:
                     tag = "" if m.get("complete", True) else "  (incomplete)"
                     print(f"  {m['id']}  ({m['size_gb']:.1f} GB){tag}")
         return 0
+
+    def _rich_tables(self) -> bool:
+        """True when rich table rendering fits the destination (a real terminal).
+
+        Piped or redirected output narrows to a default width that truncates or
+        drops columns; there the catalog views emit complete, aligned plain text
+        instead so no model id or price is lost.
+        """
+        return bool(self.console) and bool(getattr(self.console, "is_terminal", False))
+
+    @staticmethod
+    def _browse_filter_sort(recs, args):
+        """Apply the browse filters/sort to a list of catalog records.
+
+        Filters compose (a record must satisfy every one supplied); records with
+        no published input/output price are excluded by a ``--max-price-*``
+        ceiling rather than treated as free. Returns the filtered, sorted list.
+        """
+        search = (getattr(args, "search", None) or "").lower().strip()
+        min_ctx = getattr(args, "min_context", None)
+        max_pin = getattr(args, "max_price_in", None)
+        max_pout = getattr(args, "max_price_out", None)
+
+        def keep(r) -> bool:
+            if getattr(args, "free", False) and not r.free_tier:
+                return False
+            if getattr(args, "tools", False) and not r.supports_tools:
+                return False
+            if getattr(args, "vision", False) and not r.supports_vision:
+                return False
+            if getattr(args, "audio", False) and not r.supports_audio:
+                return False
+            if min_ctx is not None and (r.context_window or 0) < min_ctx:
+                return False
+            if max_pin is not None and (r.price_in_per_1m is None or r.price_in_per_1m > max_pin):
+                return False
+            if max_pout is not None and (r.price_out_per_1m is None or r.price_out_per_1m > max_pout):
+                return False
+            if search and search not in (
+                f"{r.id} {r.family} {r.provider}".lower()
+            ):
+                return False
+            return True
+
+        out = [r for r in recs if keep(r)]
+
+        sort = getattr(args, "sort", "provider") or "provider"
+        # A missing numeric value sorts last on an ascending sort (unknown price
+        # or context is worst-case), so it never masquerades as the cheapest.
+        big = float("inf")
+
+        def price_in(r):
+            return r.price_in_per_1m if r.price_in_per_1m is not None else big
+
+        def price_out(r):
+            return r.price_out_per_1m if r.price_out_per_1m is not None else big
+
+        keyers = {
+            "provider": lambda r: (r.provider, r.id.lower()),
+            "id": lambda r: r.id.lower(),
+            "context": lambda r: (r.context_window or 0, r.id.lower()),
+            "max-out": lambda r: (r.max_output or 0, r.id.lower()),
+            "price-in": lambda r: (price_in(r), r.id.lower()),
+            "price-out": lambda r: (price_out(r), r.id.lower()),
+        }
+        out.sort(key=keyers.get(sort, keyers["provider"]))
+        if getattr(args, "desc", False):
+            out.reverse()
+        return out
+
+    def _models_browse(self, args):
+        """Browse the full cross-provider catalog with search/filter/sort/paging.
+
+        Reads the bundled, refreshable catalog (the same source ``models list``
+        and ``models info`` use). Every provider's models appear in one table so
+        a single view answers "cheapest vision model over 128k context" without
+        leaving the terminal. Price labeling is exact: an unpriced row reads
+        ``unpriced``, a free tier reads ``free``.
+        """
+        from effgen.models import _catalog
+
+        provider_filter, prov_err = resolve_provider_name(getattr(args, "provider", None))
+        if prov_err:
+            self.print_error(prov_err)
+            return 1
+
+        recs = _catalog.list_models(provider_filter)
+        matched = self._browse_filter_sort(recs, args)
+        total = len(matched)
+
+        offset = max(0, getattr(args, "offset", 0) or 0)
+        limit = getattr(args, "limit", None)
+        page = matched[offset:offset + limit] if limit else matched[offset:]
+
+        include_local = bool(getattr(args, "include_local", False))
+        local = self._local_cached_models() if include_local else []
+
+        # The snapshot "verified on" date is per provider, not stamped on the
+        # bundled record; resolve it once per provider on the page so the JSON
+        # provenance field carries the same date the table footer and the
+        # dashboard show, rather than a null.
+        verified_by_provider: dict[str, str | None] = {}
+
+        def _verified_on(prov: str) -> str | None:
+            if prov not in verified_by_provider:
+                verified_by_provider[prov] = _catalog.snapshot_meta(prov).get("verified_on")
+            return verified_by_provider[prov]
+
+        # ---- JSON output ----------------------------------------------------
+        if getattr(args, "output_json", False):
+            payload: dict[str, Any] = {
+                "count": total,
+                "offset": offset,
+                "limit": limit,
+                "models": [
+                    {
+                        "id": r.id, "provider": r.provider, "family": r.family,
+                        "context_window": r.context_window, "max_output": r.max_output,
+                        "price_in_per_1m": r.price_in_per_1m,
+                        "price_out_per_1m": r.price_out_per_1m,
+                        "supports_tools": r.supports_tools,
+                        "supports_vision": r.supports_vision,
+                        "supports_audio": r.supports_audio,
+                        "free_tier": r.free_tier, "deprecated": r.deprecated,
+                        "is_priced": r.is_priced,
+                        "price_source": r.price_source,
+                        "verified_on": r.verified_on or _verified_on(r.provider),
+                    }
+                    for r in page
+                ],
+            }
+            if include_local:
+                payload["local_cache"] = local
+            print(json.dumps(payload, indent=2))
+            return 0
+
+        # ---- Human table ----------------------------------------------------
+        self.print_header("Model Catalog")
+        if not matched:
+            self.print("No models match those filters. Loosen a filter or run "
+                       "[cyan]effgen models browse[/cyan] with no filters." if self.console
+                       else "No models match those filters.")
+            return 0
+
+        # The cross-provider table carries nine columns; on a narrow terminal
+        # rich would starve the (foldable) Model ID column — the one field this
+        # view exists for — to keep the fixed numeric columns, folding or even
+        # hiding the id. Below this width the complete aligned plain-text table
+        # reads better and never drops an id or a price.
+        wide_enough = getattr(self.console, "width", 0) >= 100
+        if self._rich_tables() and wide_enough:
+            shown = f"showing {len(page)} of {total}"
+            if offset:
+                shown += f" (from #{offset + 1})"
+            table = Table(title=f"Models across providers — {shown}")
+            table.add_column("Provider", style="magenta", no_wrap=True)
+            table.add_column("Model ID", style="cyan", overflow="fold")
+            table.add_column("Context", justify="right", no_wrap=True)
+            table.add_column("Max Out", justify="right", no_wrap=True)
+            table.add_column("$/1M in", style="green", justify="right",
+                             no_wrap=True, overflow="fold")
+            table.add_column("$/1M out", style="green", justify="right",
+                             no_wrap=True, overflow="fold")
+            table.add_column("Tools", justify="center", no_wrap=True)
+            table.add_column("Vision", justify="center", no_wrap=True)
+            table.add_column("Free", justify="center", no_wrap=True)
+            for r in page:
+                pin, pout = self._price_in_out_cells(r)
+                table.add_row(
+                    r.provider, r.id,
+                    f"{r.context_window:,}" if r.context_window else "—",
+                    f"{r.max_output:,}" if r.max_output else "—",
+                    pin, pout,
+                    "✓" if r.supports_tools else "",
+                    "✓" if r.supports_vision else "",
+                    "✓" if r.free_tier else "",
+                )
+            self.console.print(table)
+            if limit and offset + limit < total:
+                self.console.print(
+                    f"\n[dim]More: [cyan]--offset {offset + limit}[/cyan] "
+                    f"for the next page.[/dim]"
+                )
+            self.console.print(
+                "\n[dim]Pricing source: catalog snapshot. "
+                "Update: [cyan]effgen models refresh[/cyan]  ·  "
+                "Detail: [cyan]effgen models info <id>[/cyan][/dim]"
+            )
+        else:
+            # Complete, aligned plain text for piped/redirected output — every
+            # model id and price in full, no width-driven truncation.
+            id_w = max((len(r.id) for r in page), default=8)
+            id_w = min(max(id_w, 8), 60)
+            prov_w = max((len(r.provider) for r in page), default=8)
+            header = (f"{'PROVIDER':<{prov_w}}  {'MODEL ID':<{id_w}}  "
+                      f"{'CONTEXT':>9}  {'MAXOUT':>7}  {'$/1M IN':>9}  "
+                      f"{'$/1M OUT':>9}  TOOLS  VIS  FREE")
+            print(header)
+            for r in page:
+                pin, pout = self._price_in_out_cells(r)
+                print(f"{r.provider:<{prov_w}}  {r.id:<{id_w}}  "
+                      f"{(f'{r.context_window:,}' if r.context_window else '-'):>9}  "
+                      f"{(f'{r.max_output:,}' if r.max_output else '-'):>7}  "
+                      f"{pin:>9}  {pout:>9}  "
+                      f"{'yes' if r.supports_tools else '-':>5}  "
+                      f"{'yes' if r.supports_vision else '-':>3}  "
+                      f"{'yes' if r.free_tier else '-':>4}")
+            print(f"\nshowing {len(page)} of {total}"
+                  + (f" (from #{offset + 1})" if offset else "")
+                  + "  ·  pricing from catalog snapshot")
+
+        if include_local and local:
+            if self.console:
+                self.console.print(f"\n[dim]Local cache: {len(local)} model(s) "
+                                   f"— [cyan]effgen models list[/cyan] for detail.[/dim]")
+            else:
+                print("\nLocal cache:")
+                for m in local:
+                    print(f"  {m['id']}  ({m['size_gb']:.1f} GB)")
+        return 0
+
+    @classmethod
+    def _price_in_out_cells(cls, rec) -> tuple[str, str]:
+        """Return (input, output) price cells for the split-column browse table.
+
+        A published nonzero rate shows as ``$<n>``; a genuine free tier reads
+        ``free``, non-token billing reads ``metered``, and an unknown rate reads
+        ``unpriced`` — never a fabricated ``$0`` (mirrors :meth:`_price_cell`).
+        """
+        pin, pout = rec.price_in_per_1m, rec.price_out_per_1m
+        if (pin or 0) > 0 or (pout or 0) > 0:
+            fmt = lambda v: ("?" if v is None else f"${v:g}")  # noqa: E731
+            return fmt(pin), fmt(pout)
+        label = "free" if rec.free_tier else ("metered" if rec.price_note else "unpriced")
+        return label, label
 
     def _local_model_payload(self, entry: dict) -> dict:
         """Build the local-cache facts for one model: engines, size, ctx, status."""
@@ -2400,6 +2650,11 @@ class CLIInterface:
                        "'effgen models refresh' to update it.")
             return 1
 
+        # The same model id can be served by more than one provider at different
+        # prices; surface every alternative so the choice of *where* to run it is
+        # visible (the resolved provider stays first).
+        others = [v for v in _catalog.variants(rec.id) if v.provider != rec.provider]
+
         if getattr(args, "output_json", False):
             print(json.dumps({
                 "id": rec.id, "provider": rec.provider, "display_name": rec.display_name,
@@ -2411,6 +2666,18 @@ class CLIInterface:
                 "rpm": rec.rpm, "tpm": rec.tpm, "rpd": rec.rpd,
                 "price_source": rec.price_source, "verified_on": rec.verified_on,
                 "notes": rec.notes,
+                "also_available": [
+                    {
+                        "provider": v.provider,
+                        "price_in_per_1m": v.price_in_per_1m,
+                        "price_out_per_1m": v.price_out_per_1m,
+                        "context_window": v.context_window,
+                        "supports_tools": v.supports_tools,
+                        "supports_vision": v.supports_vision,
+                        "free_tier": v.free_tier,
+                    }
+                    for v in others
+                ],
                 "local": self._local_model_payload(local_entry) if local_entry else None,
             }, indent=2))
             return 0
@@ -2444,6 +2711,35 @@ class CLIInterface:
         else:
             for k, v in rows.items():
                 print(f"  {k}: {v}")
+
+        # When several providers serve this id, compare them so the analyst can
+        # pick where to run it (pin the choice with a ``provider:id`` form).
+        if others:
+            if self.console:
+                vtable = Table(title=f"Also served by ({len(others)} other provider(s))")
+                vtable.add_column("Provider", style="magenta", no_wrap=True)
+                vtable.add_column("$/1M in/out", style="green", no_wrap=True, overflow="fold")
+                vtable.add_column("Context", justify="right", no_wrap=True)
+                vtable.add_column("Tools", justify="center", no_wrap=True)
+                vtable.add_column("Vision", justify="center", no_wrap=True)
+                vtable.add_column("Free", justify="center", no_wrap=True)
+                for v in others:
+                    vtable.add_row(
+                        v.provider, self._price_cell(v),
+                        f"{v.context_window:,}" if v.context_window else "—",
+                        "✓" if v.supports_tools else "",
+                        "✓" if v.supports_vision else "",
+                        "✓" if v.free_tier else "",
+                    )
+                self.console.print(vtable)
+                self.console.print(
+                    f"\n[dim]Pin a provider: "
+                    f"[cyan]effgen run --provider <name> -m {rec.id}[/cyan][/dim]"
+                )
+            else:
+                names = ", ".join(v.provider for v in others)
+                print(f"\n  Also served by: {names} "
+                      f"(pin with 'provider:{rec.id}')")
 
         cloud_hint = f"effgen run --provider {rec.provider} -m {rec.id} \"...\""
         # If the same id is also downloaded locally, lead with the local engine
@@ -3194,6 +3490,48 @@ Model id formats:
     models_list.add_argument('--free', action='store_true', help='Show only free-tier models')
     models_list.add_argument('--tools', action='store_true', help='Show only tool-capable models')
     models_list.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
+
+    models_browse = models_subparsers.add_parser(
+        'browse',
+        help='Browse every provider in one table — search, filter, sort, page')
+    models_browse.add_argument(
+        '--search', metavar='TEXT',
+        help='Case-insensitive substring match on model id, family, or provider')
+    models_browse.add_argument('--provider', help='Limit to one provider')
+    models_browse.add_argument(
+        '--free', action='store_true', help='Only free-tier models')
+    models_browse.add_argument(
+        '--tools', action='store_true', help='Only tool-calling models')
+    models_browse.add_argument(
+        '--vision', action='store_true', help='Only vision-capable models')
+    models_browse.add_argument(
+        '--audio', action='store_true', help='Only audio-capable models')
+    models_browse.add_argument(
+        '--min-context', type=int, metavar='N', dest='min_context',
+        help='Only models with a context window of at least N tokens')
+    models_browse.add_argument(
+        '--max-price-in', type=float, metavar='USD', dest='max_price_in',
+        help='Only models whose input price ($/1M) is at most USD')
+    models_browse.add_argument(
+        '--max-price-out', type=float, metavar='USD', dest='max_price_out',
+        help='Only models whose output price ($/1M) is at most USD')
+    models_browse.add_argument(
+        '--sort', choices=['provider', 'id', 'context', 'max-out',
+                           'price-in', 'price-out'],
+        default='provider',
+        help='Sort order (default: provider then id)')
+    models_browse.add_argument(
+        '--desc', action='store_true', help='Sort in descending order')
+    models_browse.add_argument(
+        '--limit', type=int, metavar='N', help='Show at most N rows')
+    models_browse.add_argument(
+        '--offset', type=int, default=0, metavar='N',
+        help='Skip the first N rows (paging)')
+    models_browse.add_argument(
+        '--include-local', action='store_true', dest='include_local',
+        help='Also list models downloaded in the local HuggingFace cache')
+    models_browse.add_argument(
+        '--json', dest='output_json', action='store_true', help='Output as JSON')
 
     models_info = models_subparsers.add_parser('info', help='Show model information')
     models_info.add_argument('name', help='Model name (e.g. gpt-5-nano or openai:gpt-5-nano)')
