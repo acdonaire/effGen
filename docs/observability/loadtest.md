@@ -38,8 +38,17 @@ Options:
       --request-timeout N  Per-request timeout in seconds (default: 60)
       --provider NAME      Provider for live runs (e.g. cerebras, openai)
       --model MODEL_ID     Model id for live runs (e.g. gpt-oss-120b)
-  -o, --output PATH        Write the JSON report to PATH (default: stdout only)
+  -o, --output PATH        Write the report to PATH; a .html path renders the
+                           self-contained HTML report, anything else writes
+                           JSON (default: stdout only)
+      --report PATH.html   Write a self-contained HTML report — latency
+                           percentiles, throughput, error rate, and the error
+                           breakdown
 ```
+
+The HTML report opens with no network access; every style, script, and chart is
+inline. See [CLI developer-experience surfaces](../dx/cli.md) for the shared
+report surface across `compare`, `eval`, `cost`, and `loadtest`.
 
 ---
 

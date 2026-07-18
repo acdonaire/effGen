@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from .evaluator import AgentEvaluator, ScoringMode, SuiteResults
@@ -60,10 +61,22 @@ class ComparisonMatrix:
         recommendations: ``{suite: model_name}`` best model per suite.
         optimize: What the recommendation optimized for (``"accuracy"``,
             ``"cost"``, or ``"latency"``).
+        recommendation_rationale: ``{suite: sentence}`` — why each recommended
+            model won, stated with the numbers behind the choice.
+        num_cases: Test cases each model ran per suite, or ``None`` when the
+            matrix was assembled without that context.
+        scoring: Scoring mode the comparison used (e.g. ``"contains"``).
+        suite_sizes: ``{suite: case_count}`` for every compared suite.
+        generated_at: ISO-8601 UTC timestamp of when the run completed.
     """
     scores: list[ModelScore] = field(default_factory=list)
     recommendations: dict[str, str] = field(default_factory=dict)
     optimize: str = "accuracy"
+    recommendation_rationale: dict[str, str] = field(default_factory=dict)
+    num_cases: int | None = None
+    scoring: str | None = None
+    suite_sizes: dict[str, int] = field(default_factory=dict)
+    generated_at: str | None = None
 
     def to_markdown(self) -> str:
         """Render the matrix as a Markdown table."""
@@ -131,7 +144,8 @@ class ComparisonMatrix:
         if self.recommendations:
             lines.extend(["", f"## Recommendations (optimized for {self.optimize})", ""])
             for su, model in sorted(self.recommendations.items()):
-                lines.append(f"- **{su}**: {model}")
+                why = self.recommendation_rationale.get(su)
+                lines.append(f"- **{su}**: {model}" + (f" — {why}" if why else ""))
 
         return "\n".join(lines)
 
@@ -151,7 +165,12 @@ class ComparisonMatrix:
                 for s in self.scores
             ],
             "recommendations": self.recommendations,
+            "recommendation_rationale": self.recommendation_rationale,
             "optimize": self.optimize,
+            "scoring": self.scoring,
+            "num_cases": self.num_cases,
+            "suite_sizes": self.suite_sizes,
+            "generated_at": self.generated_at,
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -202,6 +221,15 @@ class ModelComparison:
             A :class:`ComparisonMatrix` with scores and recommendations.
         """
         matrix = ComparisonMatrix(optimize=optimize)
+        matrix.scoring = getattr(self.scoring, "value", str(self.scoring))
+        for suite in suites:
+            suite_name = suite.name if hasattr(suite, "name") else "custom"
+            try:
+                matrix.suite_sizes[suite_name] = len(suite)
+            except TypeError:
+                pass
+        if len(set(matrix.suite_sizes.values())) == 1:
+            matrix.num_cases = next(iter(matrix.suite_sizes.values()))
 
         for model_name, agent in agents.items():
             evaluator = AgentEvaluator(
@@ -250,12 +278,78 @@ class ModelComparison:
             by_suite.setdefault(s.suite_name, []).append(s)
 
         recommendations: dict[str, str] = {}
+        rationale: dict[str, str] = {}
         for suite_name, candidates in by_suite.items():
             best = _select_recommendation(candidates, self.pass_threshold, optimize)
             recommendations[suite_name] = best.model_name
+            rationale[suite_name] = _recommendation_rationale(best, candidates, optimize)
         matrix.recommendations = recommendations
+        matrix.recommendation_rationale = rationale
+        matrix.generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
         return matrix
+
+
+def _cost_phrase(score: ModelScore) -> str:
+    """Render a model's average cost per run, or say it is unpriced."""
+    if score.avg_cost_usd is None:
+        return "unpriced"
+    return f"${score.avg_cost_usd:.6f}/run"
+
+
+def _recommendation_rationale(
+    best: ModelScore,
+    candidates: list[ModelScore],
+    optimize: str,
+) -> str:
+    """Describe why *best* was recommended, using the numbers behind the choice.
+
+    Names the winning metric and, when there is a runner-up, the margin over
+    it — so a shared report states the reason rather than only the model id.
+    A model that failed to run is left out of the comparison, so its zeroed
+    metrics are never quoted as a margin.
+    """
+    others = [c for c in candidates if c is not best and not c.error]
+    if optimize == "cost":
+        priced = [c for c in others if c.avg_cost_usd is not None]
+        if best.avg_cost_usd is None:
+            # An unpriced model ranks as $0 for the cost objective. Say so, so
+            # the choice is not read as a measured price of zero.
+            lead = (
+                f"no published per-token price, which ranks first on cost, "
+                f"at {best.accuracy:.0%} accuracy"
+            )
+            if priced:
+                runner = min(priced, key=lambda c: c.avg_cost_usd or 0.0)
+                lead += f"; cheapest priced model is {runner.model_name} at {_cost_phrase(runner)}"
+        else:
+            lead = f"cheapest at {best.accuracy:.0%} accuracy — {_cost_phrase(best)}"
+            if priced:
+                runner = min(priced, key=lambda c: c.avg_cost_usd or 0.0)
+                lead += f" vs {_cost_phrase(runner)} for {runner.model_name}"
+    elif optimize == "latency":
+        lead = f"fastest at {best.accuracy:.0%} accuracy — {best.avg_latency:.3f}s/run"
+        if others:
+            runner = min(others, key=lambda c: c.avg_latency)
+            lead += f" vs {runner.avg_latency:.3f}s for {runner.model_name}"
+    else:
+        lead = f"highest accuracy at {best.accuracy:.0%}"
+        tied = [c for c in others if abs(c.accuracy - best.accuracy) < 1e-9]
+        if tied:
+            plural = "s" if len(tied) > 1 else ""
+            # The accuracy ranking breaks ties on lower latency, but two models
+            # can tie on latency too. Only claim the speed margin when it holds.
+            if all(best.avg_latency < c.avg_latency for c in tied):
+                lead += (
+                    f", tied with {len(tied)} other model{plural} "
+                    f"and faster at {best.avg_latency:.3f}s/run"
+                )
+            else:
+                lead += f", tied with {len(tied)} other model{plural} at {best.avg_latency:.3f}s/run"
+            lead += f" ({_cost_phrase(best)})"
+        else:
+            lead += f" ({_cost_phrase(best)}, {best.avg_latency:.3f}s/run)"
+    return lead
 
 
 def _select_recommendation(

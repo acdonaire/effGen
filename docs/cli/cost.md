@@ -12,6 +12,11 @@ The `effgen cost` subcommand gives you a live view of your API spend and lets yo
 | `effgen cost set-budget <amount>` | Set a daily budget in USD |
 | `effgen cost clear-budget` | Remove configured budget limits |
 
+Every spend subcommand takes `--report out.html` for a self-contained spend
+report (total against the daily budget, a per-provider/model table, and
+cost-share charts) and `-o PATH`, whose extension chooses the format. See
+[CLI developer-experience surfaces](../dx/cli.md).
+
 ## Viewing spend
 
 ```bash

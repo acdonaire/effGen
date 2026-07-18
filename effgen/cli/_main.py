@@ -3759,7 +3759,14 @@ Model id formats:
                                    '(default: ./.effgen/baselines under the current directory, '
                                    'created if missing). A baseline saved under the installed '
                                    'package tree by an older effGen version is still read.')
-    eval_parser.add_argument('-o', '--output', help='Output file for results (JSON)')
+    eval_parser.add_argument('-o', '--output',
+                              help='Output file for results. The extension chooses the '
+                                   'format: .html renders the shareable report, .md writes '
+                                   'Markdown, anything else writes JSON.')
+    eval_parser.add_argument('--report', metavar='PATH.html',
+                              help='Write a self-contained HTML report to PATH — pass rate, '
+                                   'exit gate, by-difficulty breakdown, and every case. The '
+                                   'file opens offline with no external references.')
     eval_parser.add_argument('--difficulty', choices=['easy', 'medium', 'hard'],
                               help='Filter test cases by difficulty')
     eval_parser.add_argument('--max-cases', type=int, default=None,
@@ -3816,7 +3823,15 @@ Model id formats:
                                       'on a big suite)')
     compare_parser.add_argument('--difficulty', choices=['easy', 'medium', 'hard'],
                                  help='Filter test cases by difficulty')
-    compare_parser.add_argument('-o', '--output', help='Output file for results (JSON or Markdown)')
+    compare_parser.add_argument('-o', '--output',
+                                 help='Output file for results. The extension chooses the '
+                                      'format: .html renders the shareable report, .md writes '
+                                      'Markdown, anything else writes JSON.')
+    compare_parser.add_argument('--report', metavar='PATH.html',
+                                 help='Write a self-contained HTML report to PATH — the '
+                                      'recommended model and why, a per-model table, and '
+                                      'accuracy/cost/latency charts. The file opens offline '
+                                      'with no external references.')
     compare_parser.add_argument('--json', dest='output_json', action='store_true',
                                  help='Emit the comparison matrix as JSON to stdout (for CI gating)')
     compare_parser.add_argument('--preset', choices=_preset_choices,
@@ -3844,18 +3859,56 @@ Model id formats:
     debug_parser.add_argument('--step', action='store_true', help='Step through each iteration')
 
     # Cost command — spend dashboard + budget management
+    _cost_output_help = ('Output file for the spend summary. The extension chooses the '
+                         'format: .html renders the shareable report, anything else '
+                         'writes JSON.')
+    _cost_report_help = ('Write a self-contained HTML spend report to PATH — total against '
+                         'the daily budget, a per-provider/model table, and cost-share '
+                         'charts. The file opens offline with no external references.')
     cost_parser = subparsers.add_parser('cost', help='View cost spend and manage budgets')
     cost_parser.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
+    cost_parser.add_argument('-o', '--output', help=_cost_output_help)
+    cost_parser.add_argument('--report', metavar='PATH.html', help=_cost_report_help)
     cost_subparsers = cost_parser.add_subparsers(dest='cost_command', help='Cost command')
-    _cost_today = cost_subparsers.add_parser('today', help='Show per-provider/model spend for the last 24 hours')
-    _cost_today.add_argument('--json', dest='output_json', action='store_true', default=argparse.SUPPRESS, help='Output as JSON')
-    _cost_week = cost_subparsers.add_parser('week', help='Show rolling 7-day spend summary')
-    _cost_week.add_argument('--json', dest='output_json', action='store_true', default=argparse.SUPPRESS, help='Output as JSON')
-    _cost_byprov = cost_subparsers.add_parser('by-provider', help='Show lifetime totals grouped by provider')
-    _cost_byprov.add_argument('--json', dest='output_json', action='store_true', default=argparse.SUPPRESS, help='Output as JSON')
+    for _cost_sub, _cost_help in (
+        ('today', 'Show per-provider/model spend for the last 24 hours'),
+        ('week', 'Show rolling 7-day spend summary'),
+        ('by-provider', 'Show lifetime totals grouped by provider'),
+    ):
+        _cost_period = cost_subparsers.add_parser(_cost_sub, help=_cost_help)
+        _cost_period.add_argument('--json', dest='output_json', action='store_true',
+                                  default=argparse.SUPPRESS, help='Output as JSON')
+        _cost_period.add_argument('-o', '--output', default=argparse.SUPPRESS,
+                                  help=_cost_output_help)
+        _cost_period.add_argument('--report', metavar='PATH.html',
+                                  default=argparse.SUPPRESS, help=_cost_report_help)
     cost_set_budget = cost_subparsers.add_parser('set-budget', help='Set a daily spend budget')
     cost_set_budget.add_argument('amount', type=float, help='Daily budget in USD (e.g. 1.0)')
     cost_subparsers.add_parser('clear-budget', help='Remove configured budget limits')
+
+    # Report command — render a saved result JSON as a shareable HTML file
+    from effgen.ui.report_html import REPORT_KINDS as _REPORT_KINDS
+    report_parser = subparsers.add_parser(
+        'report',
+        help='Render a saved compare/eval/cost/loadtest JSON result as an HTML report',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  effgen eval --suite math --json > eval.json && effgen report eval.json\n"
+            "  effgen report bakeoff.json -o bakeoff.html\n"
+            "  effgen report spend.json --kind cost\n"
+            "\n"
+            "The report kind is inferred from the JSON shape; --kind overrides it.\n"
+            "The written file is self-contained and opens with no network access.\n"
+        ),
+    )
+    report_parser.add_argument('result',
+                               help='Path to a JSON result saved from compare/eval/cost/loadtest')
+    report_parser.add_argument('-o', '--output', metavar='PATH.html',
+                               help='Where to write the HTML report '
+                                    '(default: the result path with an .html extension)')
+    report_parser.add_argument('--kind', choices=list(_REPORT_KINDS),
+                               help='Report shape to render, when the JSON cannot be identified')
 
     # Prompt library subcommand
     prompts_parser = subparsers.add_parser('prompts', help='Prompt library management')
@@ -4023,15 +4076,20 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
     # Spend-report subcommands
     store = SQLiteCostStore()
 
+    # period_days is the window the spend covers, so a budget comparison can be
+    # scaled to it. Lifetime spans no fixed window, so it carries None.
     if cost_cmd == 'today' or cost_cmd is None:
         events = store.query_today()
         period_label = "Last 24 hours"
+        period_days: int | None = 1
     elif cost_cmd == 'week':
         events = store.query_week()
         period_label = "Last 7 days"
+        period_days = 7
     elif cost_cmd == 'by-provider':
         events = store.query_all()
         period_label = "Lifetime"
+        period_days = None
     else:
         cli.print_error(f"Unknown cost command: {cost_cmd}")
         cli.print("Usage: effgen cost [today|week|by-provider|set-budget|clear-budget]")
@@ -4086,26 +4144,45 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
             pass
     daily_budget = budget_cfg.get('daily')
 
-    # JSON output — machine-readable spend report.
-    if getattr(args, 'output_json', False):
-        print(_json.dumps({
-            "period": period_label,
-            "total_requests": total_requests,
-            "total_cost_usd": round(total_cost, 8),
-            "daily_budget_usd": daily_budget,
-            "rows": [
-                {
-                    "provider": r["provider"],
-                    "model": r["model"],
-                    "requests": r["requests"],
-                    "prompt_tokens": r["prompt_tokens"],
-                    "completion_tokens": r["completion_tokens"],
-                    "cost_usd": round(r["cost_usd"], 8),
-                    "cost_label": _cost_label(r),
-                }
-                for r in rows
-            ],
-        }, indent=2))
+    spend_document = {
+        "period": period_label,
+        "period_days": period_days,
+        "total_requests": total_requests,
+        "total_cost_usd": round(total_cost, 8),
+        "daily_budget_usd": daily_budget,
+        "rows": [
+            {
+                "provider": r["provider"],
+                "model": r["model"],
+                "requests": r["requests"],
+                "prompt_tokens": r["prompt_tokens"],
+                "completion_tokens": r["completion_tokens"],
+                "cost_usd": round(r["cost_usd"], 8),
+                "cost_label": _cost_label(r),
+            }
+            for r in rows
+        ],
+    }
+
+    # JSON output — machine-readable spend report. Keep stdout to the JSON
+    # document alone, so any file-written notice goes to stderr.
+    json_mode = getattr(args, 'output_json', False)
+    if json_mode:
+        print(_json.dumps(spend_document, indent=2))
+        cli._human_to_stderr = True
+
+    # File output — the extension chooses the format; --report always writes HTML.
+    if getattr(args, 'output', None):
+        _write_result_artifact(
+            args.output,
+            cli=cli,
+            data=spend_document,
+            kind="cost",
+            json_text=_json.dumps(spend_document, indent=2),
+        )
+    _write_html_report_arg(args, cli=cli, data=spend_document, kind="cost")
+
+    if json_mode:
         return 0
 
     # Friendly empty state: warm message + a next step instead of a blank table.
@@ -5082,6 +5159,91 @@ def _resolve_eval_suite(suite_arg: str, difficulty=None, max_cases=None):
     return suite
 
 
+def _invoked_command() -> str:
+    """Return the command line that produced a result, for a report header."""
+    return " ".join(["effgen", *sys.argv[1:]]).strip()
+
+
+def _artifact_format(path: str) -> str:
+    """Map an output path's extension to a format: ``html``, ``markdown``, or ``json``."""
+    suffix = Path(path).suffix.lower()
+    if suffix in (".html", ".htm"):
+        return "html"
+    if suffix in (".md", ".markdown"):
+        return "markdown"
+    return "json"
+
+
+def _write_result_artifact(
+    path: str,
+    *,
+    cli,
+    data: dict,
+    kind: str,
+    json_text: str,
+    markdown_text: str | None = None,
+) -> None:
+    """Write a result to *path* in the format its extension names.
+
+    ``.html``/``.htm`` renders the self-contained report, ``.md``/``.markdown``
+    writes Markdown when the result has a Markdown form, and any other
+    extension writes JSON.
+    """
+    fmt = _artifact_format(path)
+    if fmt == "html":
+        from effgen.ui.report_html import write_html_report
+        write_html_report(path, data, kind=kind, command=_invoked_command())
+    elif fmt == "markdown" and markdown_text is not None:
+        Path(path).write_text(markdown_text, encoding="utf-8")
+    else:
+        Path(path).write_text(json_text, encoding="utf-8")
+    cli.print(f"\nResults written to {path}")
+
+
+def _write_html_report_arg(args, *, cli, data: dict, kind: str) -> None:
+    """Write the ``--report`` HTML file when the flag was given."""
+    report_path = getattr(args, "report", None)
+    if not report_path:
+        return
+    from effgen.ui.report_html import ReportError, write_html_report
+    try:
+        written = write_html_report(
+            report_path, data, kind=kind, command=_invoked_command()
+        )
+    except ReportError as exc:
+        cli.print_error(str(exc))
+        return
+    cli.print(f"\nHTML report written to {written}")
+
+
+def _handle_report_command(args, cli) -> int:
+    """Handle 'effgen report' — render a saved result JSON as an HTML report."""
+    from effgen.ui.report_html import (
+        ReportError,
+        detect_report_kind,
+        load_result_document,
+        write_html_report,
+    )
+
+    try:
+        data = load_result_document(args.result)
+    except ReportError as exc:
+        cli.print_error(str(exc))
+        return 2
+
+    kind = getattr(args, "kind", None) or detect_report_kind(data)
+    output = getattr(args, "output", None) or str(Path(args.result).with_suffix(".html"))
+    try:
+        written = write_html_report(
+            output, data, kind=kind, command=f"effgen report {args.result}"
+        )
+    except ReportError as exc:
+        cli.print_error(str(exc))
+        return 2
+    cli.print(f"HTML report written to {written} ({kind})")
+    return 0
+
+
 def _handle_eval_command(args, cli) -> int:
     """Handle 'effgen eval' subcommand."""
     from effgen.eval import AgentEvaluator, RegressionTracker, list_suites
@@ -5226,10 +5388,23 @@ def _handle_eval_command(args, cli) -> int:
             report = tracker.compare(suite.name, results, version=__version__)
             cli.print(f"\n{report.to_markdown()}")
 
-        # Write output
+        # Stamp the run context the report header and exit-gate verdict read.
+        results.metadata.setdefault("model", model_name)
+        results.metadata.setdefault("scoring", args.scoring)
+        results.metadata["fail_under"] = fail_under
+
+        # Write output — the extension chooses the format.
         if args.output:
-            Path(args.output).write_text(results.to_json(), encoding="utf-8")
-            cli.print(f"\n  Results written to {args.output}")
+            _write_result_artifact(
+                args.output,
+                cli=cli,
+                data=results.summary(),
+                kind="eval",
+                json_text=results.to_json(),
+                markdown_text=results.to_markdown(),
+            )
+
+        _write_html_report_arg(args, cli=cli, data=results.summary(), kind="eval")
 
         # Emit the same results document to stdout for piping/CI gating.
         if json_mode:
@@ -5323,7 +5498,8 @@ def _render_comparison_tables(cli, matrix) -> None:
     if matrix.recommendations:
         cli.print(f"\nRecommendations (optimized for {matrix.optimize}):")
         for su, model in sorted(matrix.recommendations.items()):
-            cli.print(f"  {su}: {model}")
+            why = matrix.recommendation_rationale.get(su)
+            cli.print(f"  {su}: {model}" + (f" — {why}" if why else ""))
 
 
 def _handle_compare_command(args, cli) -> int:
@@ -5410,14 +5586,18 @@ def _handle_compare_command(args, cli) -> int:
         else:
             cli.print(matrix.to_markdown())
 
-        # Write output
+        # Write output — the extension chooses the format.
         if args.output:
-            output_path = args.output
-            if output_path.endswith('.md'):
-                Path(output_path).write_text(matrix.to_markdown(), encoding="utf-8")
-            else:
-                Path(output_path).write_text(matrix.to_json(), encoding="utf-8")
-            cli.print(f"\nResults written to {output_path}")
+            _write_result_artifact(
+                args.output,
+                cli=cli,
+                data=matrix.to_dict(),
+                kind="comparison",
+                json_text=matrix.to_json(),
+                markdown_text=matrix.to_markdown(),
+            )
+
+        _write_html_report_arg(args, cli=cli, data=matrix.to_dict(), kind="comparison")
 
         # Emit the comparison matrix as JSON to stdout for piping/CI gating.
         if json_mode:
@@ -6180,6 +6360,8 @@ def main():
             exit_code = _handle_compare_command(args, cli)
         elif args.command == 'cost':
             exit_code = _handle_cost_command(args, cli)
+        elif args.command == 'report':
+            exit_code = _handle_report_command(args, cli)
         elif args.command == 'prompts':
             exit_code = _handle_prompts_command(args, cli)
         elif args.command == 'loadtest':

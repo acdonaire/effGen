@@ -139,6 +139,12 @@ class EvalResult:
     details: dict[str, Any] = field(default_factory=dict)
 
 
+def _md_cell(text: str, limit: int = 120) -> str:
+    """Flatten *text* into one Markdown table cell (pipes escaped, newlines folded)."""
+    flat = " ".join(str(text).split()).replace("|", "\\|")
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
 @dataclass
 class SuiteResults:
     """Aggregated results from running a full test suite.
@@ -217,6 +223,51 @@ class SuiteResults:
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.summary(), indent=indent, ensure_ascii=False)
+
+    def to_markdown(self) -> str:
+        """Render the suite results as Markdown: totals, difficulty split, cases.
+
+        A case with no published price reads ``unpriced`` rather than ``$0``.
+        """
+        s = self.summary()
+        cost = (
+            f"${s['total_cost_usd']:.6f}" if s["total_cost_usd"] is not None else "unpriced"
+        )
+        lines = [
+            f"# Evaluation Results — {s['suite'] or 'suite'}",
+            "",
+            f"- **Accuracy**: {s['accuracy']:.1%} ({s['passed']}/{s['total']} cases)",
+            f"- **Avg latency**: {s['avg_latency']:.4f}s",
+            f"- **Total tokens**: {s['total_tokens']:,}",
+            f"- **Total cost**: {cost}",
+        ]
+        if s["metadata"].get("scoring"):
+            lines.append(f"- **Scoring**: {s['metadata']['scoring']}")
+
+        if s["by_difficulty"]:
+            lines.extend(["", "## By difficulty", "",
+                          "| Difficulty | Passed | Total | Accuracy |",
+                          "|------------|--------|-------|----------|"])
+            for name, info in sorted(s["by_difficulty"].items()):
+                lines.append(
+                    f"| {name} | {info['passed']} | {info['total']} | {info['accuracy']:.1%} |"
+                )
+
+        if s["results"]:
+            lines.extend(["", "## Cases", "",
+                          "| Query | Expected | Got | Result | Latency | Cost |",
+                          "|-------|----------|-----|--------|---------|------|"])
+            for r in s["results"]:
+                case_cost = (
+                    f"${r['cost_usd']:.6f}" if r["cost_usd"] is not None else "unpriced"
+                )
+                lines.append(
+                    f"| {_md_cell(r['query'])} | {_md_cell(r['expected_output'], 80)} "
+                    f"| {_md_cell(r['agent_output'], 120)} "
+                    f"| {'PASS' if r['passed'] else 'FAIL'} | {r['latency']:.3f}s "
+                    f"| {case_cost} |"
+                )
+        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

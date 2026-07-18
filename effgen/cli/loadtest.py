@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..tools.loadgen import LoadConfig, LoadGenerator, LoadScenario
+from ..ui.report_html import ReportError, write_html_report
 
 if TYPE_CHECKING:
     import asyncio
@@ -131,8 +132,20 @@ def add_loadtest_subparser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         metavar="PATH",
         help=(
-            "Write the JSON report to PATH. If omitted, the report is only "
-            "printed to stdout."
+            "Write the report to PATH. The extension chooses the format: "
+            ".html renders the self-contained HTML report, anything else "
+            "writes JSON. If omitted, the report is only printed to stdout."
+        ),
+    )
+    p.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        metavar="PATH.html",
+        help=(
+            "Write a self-contained HTML report to PATH — latency "
+            "percentiles, throughput, error rate, and the error breakdown. "
+            "The file opens offline with no external references."
         ),
     )
     p.set_defaults(func=run_loadtest_command)
@@ -298,8 +311,13 @@ def run_loadtest_command(args: argparse.Namespace) -> int:
     """Execute the load test and print / save the report."""
 
     # Resolve output path: write a file only when --output is given,
-    # otherwise the report is printed to stdout.
+    # otherwise the report is printed to stdout. An .html path is rendered
+    # after the run rather than written as JSON by the generator.
     output_path: Path | None = Path(args.output) if args.output else None
+    html_output = output_path if _is_html(output_path) else None
+    if html_output is not None:
+        output_path = None
+    report_path: Path | None = Path(args.report) if getattr(args, "report", None) else None
 
     scenario = LoadScenario(args.scenario)
 
@@ -379,7 +397,26 @@ def run_loadtest_command(args: argparse.Namespace) -> int:
     # Pretty-print report to stdout
     _print_report(report)
 
+    for target_path in (html_output, report_path):
+        if target_path is None:
+            continue
+        try:
+            written = write_html_report(
+                target_path,
+                report.to_dict(),
+                kind="loadtest",
+                command=" ".join(["effgen", *sys.argv[1:]]).strip(),
+            )
+        except ReportError as exc:
+            print(f"[loadtest] Error: {exc}", file=sys.stderr)
+            return 2
+        print(f"HTML report written to {written}")
+
     return 0 if report.error_rate < 1.0 else 1
+
+
+def _is_html(path: Path | None) -> bool:
+    return path is not None and path.suffix.lower() in (".html", ".htm")
 
 
 def _print_report(report) -> None:  # type: ignore[no-untyped-def]

@@ -41,9 +41,11 @@ def _make_cli() -> "CLIInterface":
 def _args(**kwargs):
     """Build a minimal argparse-like namespace."""
     ns = MagicMock()
-    # argparse always provides these flags as real booleans; default them so the
+    # argparse always provides these flags as real values; default them so the
     # MagicMock doesn't auto-vivify them as truthy mocks.
     ns.output_json = False
+    ns.output = None
+    ns.report = None
     for k, v in kwargs.items():
         setattr(ns, k, v)
     return ns

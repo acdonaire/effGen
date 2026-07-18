@@ -102,6 +102,23 @@ effgen eval --suite math --compare-baseline # Compare against saved baseline
 effgen compare --models "model_a,model_b" --suite math,reasoning -o comparison.md
 ```
 
+### Shareable reports
+
+`-o` picks its format from the extension (`.html` renders a report, `.md`
+writes Markdown, anything else JSON), and `--report out.html` writes the
+shareable report alongside the usual output:
+
+```bash
+effgen eval --suite math -m gpt-5-nano --provider openai --report eval.html
+effgen compare --models "model_a,model_b" --suite math --report bakeoff.html
+
+# Or render a result captured earlier, without re-running the models
+effgen eval --suite math --json > eval.json && effgen report eval.json
+```
+
+The HTML file is self-contained and opens offline. Details in
+[CLI developer-experience surfaces](../dx/cli.md).
+
 ## CI/CD Integration
 
 The nightly CI workflow automatically:
