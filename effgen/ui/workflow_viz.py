@@ -13,14 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# Status glyph + style name (matches the shared theme styles used elsewhere).
-_STATUS_GLYPH: dict[str, tuple[str, str]] = {
-    "completed": ("●", "effgen.success"),
-    "running": ("◐", "effgen.accent"),
-    "pending": ("○", "effgen.muted"),
-    "skipped": ("⊘", "effgen.warning"),
-    "failed": ("✗", "effgen.error"),
-}
+from .palette import status_glyph, status_style
 
 
 def _fmt_dur(seconds: float | None) -> str:
@@ -86,7 +79,7 @@ def workflow_diagram_lines(
         for nid in level:
             nr = results_by_id.get(nid, {})
             status = str(nr.get("status", "pending"))
-            glyph, style = _STATUS_GLYPH.get(status, ("○", "effgen.muted"))
+            glyph, style = status_glyph(status), status_style(status)
             meta = nr.get("metadata") or {}
             bits = [status]
             dur = _fmt_dur(nr.get("execution_time"))

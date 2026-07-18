@@ -420,7 +420,7 @@ class CLIInterface:
         """Print a header."""
         console = self._human()
         if console:
-            console.print(f"\n[bold cyan]{text}[/bold cyan]")
+            console.print(f"\n[effgen.heading]{text}[/effgen.heading]")
         else:
             print(f"\n=== {text} ===", file=sys.stderr if self._human_to_stderr else None)
 
@@ -444,7 +444,7 @@ class CLIInterface:
         """Print warning message."""
         console = self._human()
         if console:
-            console.print(f"[yellow]⚠[/yellow] {text}")
+            console.print(f"[effgen.warning]⚠[/effgen.warning] {text}")
         else:
             print(f"⚠ {text}", file=sys.stderr if self._human_to_stderr else None)
 
@@ -2899,6 +2899,10 @@ Model id formats:
     parser.add_argument('--no-animation', action='store_true',
                         help='Disable live spinners/progress animation '
                              '(also via NO_COLOR or EFFGEN_NO_ANIM=1)')
+    parser.add_argument('--theme', choices=['default', 'high-contrast', 'monochrome', 'light'],
+                        help='Color theme for terminal output (also via EFFGEN_THEME). '
+                             'high-contrast targets low-vision readers; monochrome keeps '
+                             'structure without hue; NO_COLOR still turns color off entirely')
     parser.add_argument('--completion', choices=['bash', 'zsh', 'fish'],
                         help='Print shell completion script and exit')
 
@@ -5671,13 +5675,47 @@ def _print_group_help(args) -> int:
     return 0
 
 
+def _extract_theme_arg(argv: list[str]) -> tuple[list[str], str | None]:
+    """Pull a ``--theme <name>`` (any position) out of *argv*.
+
+    ``--theme`` selects the terminal color theme for every command's output, so
+    it is accepted before or after the subcommand. Returns the remaining
+    arguments and the requested theme name (or ``None``).
+    """
+    remaining: list[str] = []
+    theme: str | None = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--theme":
+            if i + 1 < len(argv):
+                theme = argv[i + 1]
+                i += 2
+                continue
+            i += 1
+            continue
+        if arg.startswith("--theme="):
+            theme = arg.split("=", 1)[1]
+            i += 1
+            continue
+        remaining.append(arg)
+        i += 1
+    return remaining, theme
+
+
 def main():
     """Main entry point for CLI."""
     # Load .env early so all subcommands see API keys (see load_env_files).
     load_env_files()
 
+    # A --theme selects the color theme for every console built below; accept it
+    # in any position (EFFGEN_THEME serves the same purpose without a flag).
+    argv, theme_arg = _extract_theme_arg(sys.argv[1:])
+    if theme_arg:
+        os.environ["EFFGEN_THEME"] = theme_arg
+
     parser = create_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Handle completion script generation
     if getattr(args, 'completion', None):

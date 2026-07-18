@@ -101,31 +101,58 @@
   // ------------------------------------------------------------------
   // Theme
   // ------------------------------------------------------------------
-  function applyTheme(theme) {
-    document.documentElement.setAttribute("data-theme", theme);
+  // The effective theme: an explicit choice (data-theme attribute) if set,
+  // otherwise the OS preference the CSS is already following.
+  function currentTheme() {
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "dark" || attr === "light") return attr;
+    const prefersLight = window.matchMedia
+      && window.matchMedia("(prefers-color-scheme: light)").matches;
+    return prefersLight ? "light" : "dark";
+  }
+
+  function syncThemeButton() {
+    const theme = currentTheme();
     const icon = $("theme-icon");
     if (icon) icon.textContent = theme === "dark" ? "☾" : "☀";
     const btn = $("theme-btn");
     if (btn) btn.setAttribute("aria-label",
       theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
+  }
+
+  // Set an explicit theme (overriding the OS scheme). Persisted only on a click.
+  function applyTheme(theme, persist) {
+    document.documentElement.setAttribute("data-theme", theme);
+    if (persist) {
+      try { localStorage.setItem(THEME_KEY, theme); } catch { /* storage blocked */ }
+    }
+    syncThemeButton();
     drawChart();
   }
 
   function initTheme() {
     let stored = null;
     try { stored = localStorage.getItem(THEME_KEY); } catch { /* storage blocked */ }
-    if (stored !== "dark" && stored !== "light") {
-      const prefersLight = window.matchMedia
-        && window.matchMedia("(prefers-color-scheme: light)").matches;
-      stored = prefersLight ? "light" : "dark";
+    if (stored === "dark" || stored === "light") {
+      // Honor the user's saved choice.
+      applyTheme(stored, false);
+    } else {
+      // No stored choice: leave first paint to the CSS/OS scheme, just label
+      // the toggle to match. Follow live OS-scheme changes until a choice is made.
+      syncThemeButton();
+      if (window.matchMedia) {
+        window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+          if (!document.documentElement.getAttribute("data-theme")) {
+            syncThemeButton();
+            drawChart();
+          }
+        });
+      }
     }
-    applyTheme(stored);
     const btn = $("theme-btn");
     if (btn) btn.addEventListener("click", () => {
-      const next = document.documentElement.getAttribute("data-theme") === "dark"
-        ? "light" : "dark";
-      try { localStorage.setItem(THEME_KEY, next); } catch { /* storage blocked */ }
-      applyTheme(next);
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      applyTheme(next, true);
     });
   }
 

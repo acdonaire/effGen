@@ -18,8 +18,13 @@
   --warn:        #fbbf24;
   --err:         #f87171;
   --focus:       #22d3ee;
-  --font:        'Inter', 'Segoe UI', system-ui, sans-serif;
-  --mono:        'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  /* Label ink for waterfall bars. The dark-theme bar fills are light/saturated,
+     so white text on them fails WCAG; near-black reads on every bar color. */
+  --wf-label:    #0a0c14;
+  /* Own the system font stack explicitly — no webfont is bundled, so what is
+     declared is what renders. Trailing named fonts apply only if installed. */
+  --font:        system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono:        ui-monospace, SFMono-Regular, Menlo, Consolas, 'JetBrains Mono', 'Fira Code', monospace;
   --radius:      8px;
 }
 
@@ -40,6 +45,8 @@
   --warn:        #b45309;
   --err:         #b91c1c;
   --focus:       #4f46e5;
+  /* Light-theme bar fills are dark, so white label ink reads on them. */
+  --wf-label:    #ffffff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -58,6 +65,7 @@
     --warn:        #b45309;
     --err:         #b91c1c;
     --focus:       #4f46e5;
+    --wf-label:    #ffffff;
   }
 }
 
@@ -360,14 +368,16 @@ td.num { text-align: right; }
   align-items: center;
   overflow: hidden;
 }
+/* Bar fills are categorical (which kind of span), so green (--ok) stays reserved
+   for success/status meaning and the tool bar uses the secondary accent. */
 .wf-bar.wf-model { background: var(--accent); }
-.wf-bar.wf-tool  { background: var(--ok); }
+.wf-bar.wf-tool  { background: var(--accent2); }
 .wf-bar.wf-run   { background: var(--text-faint); }
 .wf-bar.wf-router { background: var(--warn); }
 .wf-bar.is-error { background: var(--err); }
 .wf-bar-label {
   font-size: 0.6rem;
-  color: #fff;
+  color: var(--wf-label);
   padding: 0 0.3rem;
   white-space: nowrap;
   overflow: hidden;
