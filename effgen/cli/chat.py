@@ -2,15 +2,20 @@
 
 This is the most "alive" surface in the CLI, so it aims to feel like a real
 chat: streaming tokens with a thinking spinner, a model/tool-aware prompt,
-slash commands (``/model``, ``/tools``, ``/cost``, ``/trace``, …), persistent
-↑/↓ history, multiline input, and a per-turn Ctrl-C that cancels the current
-answer without dropping you out of the session.
+slash commands (``/model``, ``/tools``, ``/status``, ``/cost``, ``/trace``, …),
+persistent ↑/↓ history, multiline input, and a per-turn Ctrl-C that cancels the
+current answer without dropping you out of the session.
 
 Everything here is presentation/coordination over the existing :class:`Agent`
 machinery — it adds no model, provider, or tool behavior. Plain chat (no tools)
 streams the model's answer directly for the cleanest live feel; once tools are
 attached (via ``/tools``) a turn runs under the shared live-status spinner so
 per-tool ticks and an accurate token/cost footer can be shown.
+
+A non-interactive invocation (``echo "hi" | effgen chat``) keeps a plain
+fallback: the interactive chrome (banner, prompt echo, ``assistant`` label,
+footer, "Goodbye!") is kept off stdout so the answer is the only thing there,
+with ``-q`` yielding one answer per input line that a caller can parse directly.
 """
 
 from __future__ import annotations
@@ -25,16 +30,19 @@ from pathlib import Path
 from typing import Any
 
 from effgen.cli import progress as _progress
+from effgen.ui.theme import color_enabled
 
 # Slash commands surfaced in /help and tab-completion. Kept in one place so the
 # help text, the completer, and the dispatcher never drift apart.
 _SLASH_COMMANDS: dict[str, str] = {
-    "/help": "Show this help",
+    "/help": "Show this help (or type just / for the menu)",
     "/model": "Hot-swap the active model:  /model gpt-5-nano",
     "/tools": "List tools, or toggle one:  /tools calculator",
+    "/status": "Show the session state: model, persona, tools, running totals",
     "/cost": "Session token + cost total",
     "/reset": "Clear the conversation memory",
-    "/save": "Save this conversation:  /save [name]",
+    "/save": "Save this chat to a file:  /save [name]  (see /session to resume)",
+    "/session": "Show or name the resumable session id (used by `effgen sessions`)",
     "/load": "Load a saved conversation:  /load [name|number]",
     "/trace": "Show the last turn's reasoning/tool steps",
     "/doctor": "Run a quick environment check",
@@ -53,7 +61,7 @@ def _history_dir() -> Path:
 
 
 class ChatREPL:
-    """A polished interactive chat session over a single :class:`Agent`."""
+    """An interactive chat session over a single :class:`Agent`."""
 
     DEFAULT_MODEL = "Qwen/Qwen2.5-3B-Instruct"
 
@@ -65,14 +73,28 @@ class ChatREPL:
         self.quiet = getattr(args, "quiet", False)
         self.verbose = getattr(args, "verbose", False)
         self.animate = cli._animate(args)
-        # A piped session (``echo hi | effgen chat``) has no terminal to show a
-        # transient "Thinking…" indicator on, so the placeholder is suppressed
-        # there and only the labeled answer and footer are emitted.
+        # Whether styled output (bold/dim/color SGR) is allowed. ``NO_COLOR``
+        # turns this off, and the REPL then emits its own surfaces (banner,
+        # answer label, footer, /help) as plain text with no escape codes.
+        self._color = color_enabled()
+        # A piped session (``echo hi | effgen chat``) has no terminal, so the
+        # interactive chrome is kept off stdout and the answer is emitted plainly.
         try:
             self.interactive = sys.stdin.isatty() and sys.stdout.isatty()
         except (ValueError, OSError):  # pragma: no cover - closed std streams
             self.interactive = False
+        # Route all human-facing chatter (banner, warnings, footer, "Goodbye!")
+        # to stderr when there is no terminal, so stdout carries only answers and
+        # `echo … | effgen chat -q` is directly parseable.
+        if not self.interactive:
+            try:
+                self.cli._human_to_stderr = True
+            except Exception:  # noqa: BLE001 - CLI without the stderr routing hook
+                pass
 
+        # Whether the model was chosen by the user or fell back to the local
+        # default (drives a one-line first-run download note in the banner).
+        self._model_defaulted = getattr(args, "model", None) is None
         self.model_id = getattr(args, "model", None) or self.DEFAULT_MODEL
         self.preset = getattr(args, "preset", None)
         # Optional custom persona: steers every reply (e.g. a Socratic tutor),
@@ -245,6 +267,32 @@ class ChatREPL:
         return len(getattr(agent, "tools", {}) or {})
 
     # ------------------------------------------------------------------
+    # Output helpers (color-aware, non-TTY-aware)
+    # ------------------------------------------------------------------
+    def _chrome_console(self) -> Any:
+        """The console human-facing chrome should print to (stderr when piped)."""
+        human = getattr(self.cli, "_human", None)
+        if callable(human):
+            try:
+                return human()
+            except Exception:  # noqa: BLE001
+                pass
+        return getattr(self.cli, "console", None)
+
+    def _banner_line(self, text: str, style: str | None = None) -> None:
+        """Print one banner line without number/repr auto-highlighting.
+
+        Styling is applied only when color is enabled, so versions/counts read
+        as one token and a ``NO_COLOR`` banner carries no escape codes.
+        """
+        console = getattr(self.cli, "console", None)
+        if console:
+            markup = f"[{style}]{text}[/{style}]" if (style and self._color) else text
+            console.print(markup, highlight=False)
+        else:
+            self.cli.print(text)
+
+    # ------------------------------------------------------------------
     # Prompt / banner
     # ------------------------------------------------------------------
     def _prompt_str(self) -> str:
@@ -266,18 +314,20 @@ class ChatREPL:
     def _banner(self) -> None:
         from effgen import __version__
 
-        self.cli.print_header(f"effGen v{__version__} · chat")
+        self._banner_line(f"\neffGen v{__version__} · chat", style="bold cyan")
         label = _progress.short_model_label(self.model_id)
         meta = f"Model: {label}"
         if self.provider:
             meta += f"  (provider: {self.provider})"
         if self.preset:
             meta = f"Preset: {self.preset}  ·  " + meta
-        self.cli.print(meta)
+        self._banner_line(meta)
+        if self.system_prompt:
+            self._banner_line("Persona: custom (steers every reply)")
         if self.tool_names:
-            self.cli.print(f"Tools: {', '.join(self.tool_names)}")
+            self._banner_line(f"Tools: {', '.join(self.tool_names)}")
         if self.guardrails:
-            self.cli.print(f"Guardrails: {self.guardrails}")
+            self._banner_line(f"Guardrails: {self.guardrails}")
         # Show that we're continuing a named session (and how many turns it has).
         if self.session_id:
             try:
@@ -287,17 +337,26 @@ class ChatREPL:
             except Exception:  # noqa: BLE001
                 prior = 0
             if prior:
-                self.cli.print(
+                self._banner_line(
                     f"Session: {self.session_id}  ·  resuming {prior} prior message(s)"
                 )
             else:
-                self.cli.print(f"Session: {self.session_id}  ·  new (will be saved)")
-        self.cli.print(
+                self._banner_line(f"Session: {self.session_id}  ·  new (will be saved)")
+        self._banner_line(
             "Type your message and press Enter.  "
             "End a line with \\ for multi-line input.\n"
-            "Slash commands: /help  /model  /tools  /cost  /trace  /reset  "
-            "/save  /load  /doctor  /exit"
+            "Slash commands (type / for the menu): /help  /model  /tools  /status  "
+            "/cost  /trace  /reset  /save  /session  /load  /doctor  /exit"
         )
+        # A first-timer running bare `effgen chat` gets a local model by default;
+        # name the download and offer a fast keyed alternative so the wait is not
+        # a surprise.
+        if self._model_defaulted and "/" in self.model_id and ":" not in self.model_id:
+            self._banner_line(
+                f"Loading a local model ({self.model_id}); the first run downloads it. "
+                "For a fast keyed model:  effgen chat -m groq:llama-3.1-8b-instant",
+                style="dim",
+            )
         # Friendly resume: if there are saved conversations, point at the most
         # recent one so a returning user can pick up where they left off. A
         # single non-spammy line — we never auto-load (that would silently mix
@@ -308,7 +367,7 @@ class ChatREPL:
             saved = []
         if saved:
             last = saved[0].name[len("chat_"):-len(".json")] or saved[0].name
-            self.cli.print(
+            self._banner_line(
                 f"Resume: {len(saved)} saved — `/load` to list, "
                 f"or `/load {last}` for the most recent."
             )
@@ -354,11 +413,13 @@ class ChatREPL:
 
     def _read_input(self) -> str | None:
         """Read one (possibly multi-line) user entry. ``None`` on EOF."""
-        prompt = self._prompt_str()
+        # A piped session shows no prompt so it can't leak onto answer-only stdout.
+        prompt = self._prompt_str() if self.interactive else ""
+        cont = "… " if self.interactive else ""
         lines: list[str] = []
         while True:
             try:
-                line = input(prompt if not lines else "… ")
+                line = input(prompt if not lines else cont)
             except EOFError:
                 return None
             if line.endswith("\\"):
@@ -372,13 +433,19 @@ class ChatREPL:
     # Main loop
     # ------------------------------------------------------------------
     def run(self) -> int:
-        self._banner()
+        # The banner is interactive chrome; a piped run stays answer-only.
+        if self.interactive:
+            self._banner()
         self._setup_readline()
         try:
             self.agent = self._build_agent()
         except Exception as e:  # noqa: BLE001
-            self.cli.print_error(f"Could not start chat: {e}")
-            self._teach_model_error(e)
+            hint = self._unknown_model_message(self.model_id, e)
+            if hint:
+                self.cli.print_error(f"Could not start chat: {hint}")
+            else:
+                self.cli.print_error(f"Could not start chat: {e}")
+                self._teach_model_error(e)
             return 1
 
         try:
@@ -387,17 +454,20 @@ class ChatREPL:
                     user_input = self._read_input()
                 except KeyboardInterrupt:
                     # Ctrl-C at an empty prompt: clear the line, keep the session.
-                    self.cli.print("")
+                    if self.interactive:
+                        self.cli.print("")
                     continue
                 if user_input is None:  # EOF / Ctrl-D
-                    self.cli.print("\nGoodbye!")
+                    if self.interactive:
+                        self.cli.print("\nGoodbye!")
                     break
                 if not user_input.strip():
                     continue
 
                 action = self._dispatch(user_input.strip())
                 if action == "exit":
-                    self.cli.print("Goodbye!")
+                    if self.interactive:
+                        self.cli.print("Goodbye!")
                     break
                 if action == "handled":
                     continue
@@ -434,6 +504,12 @@ class ChatREPL:
         if not text.startswith("/"):
             return None
 
+        # A bare "/" opens the command menu, so slash commands stay discoverable
+        # after the start banner scrolls away.
+        if text.strip() == "/":
+            self._cmd_help()
+            return "handled"
+
         parts = text[1:].split(maxsplit=1)
         cmd = ("/" + parts[0]).lower() if parts else "/"
         arg = parts[1].strip() if len(parts) > 1 else ""
@@ -444,6 +520,8 @@ class ChatREPL:
             "/quit": lambda: "exit",
             "/model": lambda: self._cmd_model(arg),
             "/tools": lambda: self._cmd_tools(arg),
+            "/status": lambda: self._cmd_status(),
+            "/session": lambda: self._cmd_session(arg),
             "/cost": lambda: self._cmd_cost(),
             "/reset": lambda: self._cmd_reset(),
             "/save": lambda: self._cmd_save(arg),
@@ -454,9 +532,16 @@ class ChatREPL:
         }
         handler = handlers.get(cmd)
         if handler is None:
-            self.cli.print_warning(
-                f"Unknown command '{text.split()[0]}'. Type /help for the list."
+            import difflib
+
+            typed = text.split()[0]
+            close = difflib.get_close_matches(cmd, list(_SLASH_COMMANDS), n=3)
+            hint = (
+                f" Did you mean: {', '.join(close)}?"
+                if close
+                else " Type /help for the list."
             )
+            self.cli.print_warning(f"Unknown command '{typed}'.{hint}")
             return "handled"
         result = handler()
         return result if result == "exit" else "handled"
@@ -490,10 +575,10 @@ class ChatREPL:
         except KeyboardInterrupt:
             interrupted = True
             self.cli.print("")
-            if self.console:
+            if self._color and self.console:
                 self.console.print("[yellow]Stopped.[/yellow]")
             else:
-                print("Stopped.")
+                self.cli.print("Stopped.")
         except Exception as e:  # noqa: BLE001
             self.cli.print_error(f"{e}")
             self._teach_model_error(e)
@@ -526,11 +611,11 @@ class ChatREPL:
         except Exception:  # noqa: BLE001 - persistence is best-effort
             pass
 
-    def _stream_plain(self, user_input: str) -> str:
-        """Stream the model's answer token-by-token with a thinking spinner."""
-        gen = iter(self.agent.stream(user_input))
-        first = None
-
+    # ------------------------------------------------------------------
+    # Answer rendering
+    # ------------------------------------------------------------------
+    def _await_first_token(self, gen: Any) -> str | None:
+        """Consume up to the first non-empty token, showing a wait indicator."""
         if self.animate and self.console:
             from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -543,33 +628,85 @@ class ChatREPL:
                 progress.add_task("Thinking…", total=None)
                 for tok in gen:
                     if tok:
-                        first = tok
-                        break
-        else:
-            show_placeholder = not self.quiet and self.interactive
-            if show_placeholder:
-                print("Thinking…", end="", flush=True)
-            for tok in gen:
-                if tok:
-                    first = tok
-                    break
-            if show_placeholder:
-                print("\r" + " " * 10 + "\r", end="", flush=True)
-
-        if self.console:
-            self.console.print("[bold green]assistant[/bold green] ", end="")
-        else:
-            print("assistant ", end="", flush=True)
-
-        collected: list[str] = []
-        if first:
-            print(first, end="", flush=True)
-            collected.append(first)
+                        return tok
+            return None
+        show = not self.quiet
+        if show:
+            print("Thinking…", end="", flush=True)
+        first: str | None = None
         for tok in gen:
-            print(tok, end="", flush=True)
-            collected.append(tok)
-        print()
+            if tok:
+                first = tok
+                break
+        if show:
+            print("\r" + " " * 10 + "\r", end="", flush=True)
+        return first
+
+    def _stream_raw(self, gen: Any) -> str:
+        """Emit the answer as plain text on stdout (piped/non-TTY fallback)."""
+        collected: list[str] = []
+        for tok in gen:
+            if tok:
+                sys.stdout.write(tok)
+                collected.append(tok)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
         return "".join(collected).strip()
+
+    def _stream_live_markdown(self, gen: Any, first: str | None) -> str:
+        """Stream tokens into a live markdown region so lists/code render inline."""
+        from rich.live import Live
+
+        from effgen.ui.render import answer_renderable
+
+        collected: list[str] = [first] if first else []
+        self.console.print("[bold green]assistant[/bold green]", highlight=False)
+        with Live(
+            console=self.console,
+            refresh_per_second=8,
+            transient=False,
+            vertical_overflow="visible",
+        ) as live:
+            if collected:
+                live.update(answer_renderable("".join(collected)))
+            for tok in gen:
+                collected.append(tok)
+                live.update(answer_renderable("".join(collected)))
+        return "".join(collected).strip()
+
+    def _show_answer(self, answer: str) -> None:
+        """Print a finished answer, rendering markdown when a rich console is up."""
+        if self.console:
+            from effgen.ui.render import answer_renderable
+
+            label = "[bold green]assistant[/bold green] " if self._color else "assistant "
+            self.console.print(label, end="", highlight=False)
+            self.console.print(answer_renderable(answer))
+        else:
+            print(f"assistant {answer}")
+
+    def _stream_plain(self, user_input: str) -> str:
+        """Stream the model's answer, rendering markdown the way tool turns do.
+
+        A piped/non-TTY run emits the raw answer only; an interactive terminal
+        renders lists/headings/code the same whether or not a tool ran.
+        """
+        gen = iter(self.agent.stream(user_input))
+        if not self.interactive:
+            return self._stream_raw(gen)
+
+        first = self._await_first_token(gen)
+        if self.console and self.animate and self._color:
+            return self._stream_live_markdown(gen, first)
+
+        # No animation (or no rich): collect, then render once so the answer is
+        # markdown-formatted like the tool path instead of raw text.
+        collected: list[str] = [first] if first else []
+        for tok in gen:
+            collected.append(tok)
+        answer = "".join(collected).strip()
+        self._show_answer(answer)
+        return answer
 
     def _run_with_tools(self, user_input: str) -> str:
         """Run a tool-enabled turn under the live-status spinner, then show the answer."""
@@ -582,6 +719,7 @@ class ChatREPL:
                 model_label=_progress.short_model_label(self.model_id),
                 reasoning=reasoning,
                 tracker=self.agent.execution_tracker,
+                hint="Ctrl-C to cancel",
             ):
                 response = self.agent.run(user_input, mode=AgentMode.AUTO)
         else:
@@ -595,13 +733,11 @@ class ChatREPL:
             self.last_trace = None
 
         answer = response.output or ""
-        if self.console:
-            from rich.markdown import Markdown
-
-            self.console.print("[bold green]assistant[/bold green] ", end="")
-            self.console.print(Markdown(answer))
+        if not self.interactive:
+            sys.stdout.write((answer or "") + "\n")
+            sys.stdout.flush()
         else:
-            print(f"assistant {answer}")
+            self._show_answer(answer)
 
         # Prefer the response's own accounting for the footer when available.
         meta = response.metadata or {}
@@ -618,6 +754,33 @@ class ChatREPL:
         except Exception:  # noqa: BLE001
             return 0
 
+    def _footer_text(
+        self, elapsed: float, tok: int, cost: float, interrupted: bool
+    ) -> str:
+        """Build the per-turn footer, appending a running session total over time."""
+        from effgen.ui.render import format_cost
+
+        parts = [f"{elapsed:.1f}s"]
+        if tok:
+            parts.append(f"{tok:,} tok")
+        if cost > 0:
+            c = format_cost(cost)
+            if c:
+                parts.append(c)
+        footer = "· " + " · ".join(parts)
+        if interrupted:
+            footer += " · stopped"
+        # A compact running total once a session has more than one turn, so the
+        # cumulative spend stays visible between turns without asking /cost.
+        if self.turns > 1 and (self.session_tokens or self.session_cost):
+            run = f"{self.turns} turns · {self.session_tokens:,} tok"
+            if self.session_cost > 0:
+                rc = format_cost(self.session_cost)
+                if rc:
+                    run += f" · {rc}"
+            footer += f"    (session: {run})"
+        return footer
+
     def _print_footer(
         self, elapsed: float, dtok: int, dcost: float, interrupted: bool
     ) -> None:
@@ -629,25 +792,22 @@ class ChatREPL:
         tok = rtok or max(dtok, 0)
         cost = rcost or max(dcost, 0.0)
 
-        parts = [f"{elapsed:.1f}s"]
-        if tok:
-            parts.append(f"{tok:,} tok")
-        if cost > 0:
-            from effgen.ui.render import format_cost
-            parts.append(format_cost(cost))
-        footer = "· " + " · ".join(parts)
-        if interrupted:
-            footer += " · stopped"
-        if self.console:
-            self.console.print(f"[dim]{footer}[/dim]")
+        footer = self._footer_text(elapsed, tok, cost, interrupted)
+        console = self._chrome_console()
+        if console:
+            console.print(
+                f"[dim]{footer}[/dim]" if self._color else footer, highlight=False
+            )
         else:
-            print(footer)
+            print(footer, file=None if self.interactive else sys.stderr)
 
     # ------------------------------------------------------------------
     # Slash command implementations
     # ------------------------------------------------------------------
     def _cmd_help(self) -> None:
-        if self.console:
+        # A rich table only on an interactive color terminal; a piped or
+        # NO_COLOR run gets plain lines with no box-drawing or escape codes.
+        if self.console and self.interactive and self._color:
             from rich.table import Table
 
             table = Table(title="Chat commands", show_header=True, header_style="cyan")
@@ -657,9 +817,9 @@ class ChatREPL:
                 table.add_row(cmd, desc)
             self.console.print(table)
         else:
-            print("Chat commands:")
+            self.cli.print("Chat commands:")
             for cmd, desc in _SLASH_COMMANDS.items():
-                print(f"  {cmd:9s} {desc}")
+                self.cli.print(f"  {cmd:9s} {desc}")
 
     def _resolve_swap_target(self, new_id: str) -> tuple[str | None, str]:
         """Resolve a ``/model`` argument the same way a fresh ``chat -m <id>``
@@ -683,6 +843,33 @@ class ChatREPL:
             if prefix in known and rest:
                 return prefix, rest
         return None, new_id
+
+    def _unknown_model_message(self, attempted: str, exc: Exception) -> str | None:
+        """Return a teach message when *attempted* resolves to no known model.
+
+        A bare id (no ``provider:`` prefix, not a ``org/repo`` path) that fails
+        to load is almost always a mistyped/nonexistent model rather than an
+        auth or download problem, so it earns a "check the id / name a provider"
+        hint instead of the loader's Hugging Face token message.
+        """
+        if ":" in attempted or "/" in attempted:
+            return None
+        m = str(exc).lower()
+        markers = (
+            "not a valid model identifier",
+            "is not a local folder",
+            "not found",
+            "404",
+            "model_not_found",
+            "no model",
+        )
+        if any(s in m for s in markers):
+            return (
+                f"No model '{attempted}'. Check the id with `effgen models list`, "
+                "or name a provider with `/model provider:id` "
+                "(e.g. /model openai:gpt-5-nano)."
+            )
+        return None
 
     def _cmd_model(self, arg: str) -> None:
         if not arg:
@@ -708,8 +895,14 @@ class ChatREPL:
         except Exception as e:  # noqa: BLE001
             self.model_id = old_id
             self.provider = old_provider
-            self.cli.print_error(f"Could not switch to '{new_id}': {e}")
-            self._teach_model_error(e)
+            # An unresolvable id gets a "check the id / name a provider" hint
+            # rather than the loader's raw download/auth message.
+            hint = self._unknown_model_message(new_id, e)
+            if hint:
+                self.cli.print_error(hint)
+            else:
+                self.cli.print_error(f"Could not switch to '{new_id}': {e}")
+                self._teach_model_error(e)
             # Restore the working agent.
             try:
                 self._rebuild()
@@ -755,6 +948,85 @@ class ChatREPL:
                 )
             else:
                 self.cli.print_success(f"Added tool '{name}' ({self.tool_count} active)")
+
+    def _cmd_status(self) -> None:
+        """Show the session state a long chat needs to stay legible."""
+        from effgen.ui.render import format_cost
+
+        self.cli.print_header("Session")
+        self.cli.print(f"Model: {self.model_id}")
+        if self.provider:
+            self.cli.print(f"Provider: {self.provider}")
+        if self.preset:
+            self.cli.print(f"Preset: {self.preset}")
+        if self.system_prompt:
+            self.cli.print("Persona: custom (set with --persona/--system-prompt)")
+        if self.guardrails:
+            self.cli.print(f"Guardrails: {self.guardrails}")
+        active = sorted(getattr(self.agent, "tools", {}) or {})
+        self.cli.print(f"Tools: {', '.join(active) if active else '(none)'}")
+        if self.session_id:
+            self.cli.print(
+                f"Session: {self.session_id}  (resumable via `effgen sessions`)"
+            )
+        else:
+            self.cli.print("Session: not persisted  (start one with /session <id>)")
+        cost = format_cost(self.session_cost) if self.session_cost else "$0.00"
+        self.cli.print(
+            f"Totals: {self.turns} turns · {self.session_tokens:,} tok · {cost}"
+        )
+
+    def _cmd_session(self, arg: str) -> None:
+        """Show, or begin persisting under, the resumable session id.
+
+        This id maps to the core Session store that ``effgen sessions`` lists and
+        ``effgen chat --session-id`` / ``effgen run --session-id`` resume — a
+        different store from the file-based ``/save`` + ``/load`` snapshots.
+        """
+        if not arg:
+            if self.session_id:
+                self.cli.print(f"Session id: {self.session_id}")
+                self.cli.print(
+                    "Resume later with:  effgen chat --session-id "
+                    f"{self.session_id}   (also shown by `effgen sessions`)."
+                )
+            else:
+                self.cli.print("This chat is not being saved to the session store.")
+                self.cli.print(
+                    "Start persisting:  /session <id>   "
+                    "(then `effgen sessions` and --session-id can resume it)."
+                )
+            return
+        name = arg.split()[0]
+        if self.session_id == name:
+            self.cli.print(f"Already on session '{name}'.")
+            return
+        if self.session_id:
+            self.cli.print_warning(
+                f"Already saving to '{self.session_id}'. Restart with "
+                f"`effgen chat --session-id {name}` to switch id."
+            )
+            return
+        try:
+            from effgen.core.session import Session
+
+            session = Session.load_or_create(name)
+            for msg in self._dump_history():
+                if msg["role"] == "user":
+                    session.add_user_message(msg["content"])
+                elif msg["role"] == "assistant":
+                    session.add_assistant_message(msg["content"])
+            session.save()
+            self.session_id = name
+            if self.agent is not None:
+                self.agent.session = session
+                self.agent._session_id = name
+            self.cli.print_success(
+                f"Saving this conversation as session '{name}'. "
+                f"Resume with `effgen chat --session-id {name}`."
+            )
+        except Exception as e:  # noqa: BLE001
+            self.cli.print_error(f"Could not start session '{name}': {e}")
 
     def _cmd_cost(self) -> None:
         self.cli.print_header("Session cost")
@@ -876,10 +1148,10 @@ class ChatREPL:
             self.cli.print("(no detailed steps recorded for this turn)")
             return
         for style, text in lines:
-            if self.console:
+            if self.console and self._color:
                 self.console.print(f"[{style}]{text}[/{style}]")
             else:
-                print(text)
+                self.cli.print(text)
 
     def _cmd_doctor(self) -> None:
         from effgen.cli._main import _handle_doctor_command

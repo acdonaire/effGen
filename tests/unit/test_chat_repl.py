@@ -634,5 +634,205 @@ def test_cmd_model_failed_swap_verbose_still_shows_library_error_log(caplog):
     assert any(r.levelno == logging.ERROR for r in caplog.records)
 
 
+# ---------------------------------------------------------------------------
+# Non-interactive / piped fallback (answer-only stdout, chrome to stderr)
+# ---------------------------------------------------------------------------
+
+
+class _RoutingCLI(_FakeCLI):
+    """A CLI that also exposes the stderr-routing hook the real one has."""
+
+    def __init__(self):
+        super().__init__()
+        self._human_to_stderr = False
+
+
+def test_non_interactive_routes_chrome_to_stderr():
+    # Under pytest stdin/stdout are not ttys, so the REPL keeps chrome off stdout.
+    args = SimpleNamespace(
+        model="gpt-5-nano", provider=None, _provider=None, preset=None,
+        temperature=None, no_sub_agents=False, quiet=False, verbose=False,
+        no_animation=True,
+    )
+    cli = _RoutingCLI()
+    repl = C.ChatREPL(cli, args)
+    assert repl.interactive is False
+    assert cli._human_to_stderr is True
+
+
+def test_read_input_emits_no_prompt_when_non_interactive(monkeypatch):
+    repl, _ = _make_repl()
+    assert repl.interactive is False
+    seen: list[str] = []
+
+    def _fake_input(prompt=""):
+        seen.append(prompt)
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _fake_input)
+    assert repl._read_input() is None
+    # A piped read shows no prompt, so it can't leak onto answer-only stdout.
+    assert seen == [""]
+
+
+# ---------------------------------------------------------------------------
+# Command discoverability: bare "/" menu + fuzzy suggestions
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_bare_slash_opens_menu():
+    repl, cli = _make_repl()
+    assert repl._dispatch("/") == "handled"
+    assert any("Chat commands" in m for m in cli.messages)
+
+
+def test_dispatch_unknown_command_suggests_close_match():
+    repl, cli = _make_repl()
+    assert repl._dispatch("/mdoel") == "handled"
+    joined = "\n".join(cli.messages)
+    assert "Unknown command '/mdoel'" in joined
+    assert "Did you mean: /model" in joined
+
+
+def test_help_lists_new_commands():
+    repl, cli = _make_repl()
+    repl._cmd_help()
+    joined = "\n".join(cli.messages)
+    assert "/status" in joined
+    assert "/session" in joined
+
+
+# ---------------------------------------------------------------------------
+# Bad /model teaches the real fix (not the loader's HF token message)
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_model_message_for_bare_id():
+    repl, _ = _make_repl()
+    exc = RuntimeError(
+        "gpt-9-imaginary is not a valid model identifier listed on "
+        "'https://huggingface.co/models'"
+    )
+    msg = repl._unknown_model_message("gpt-9-imaginary", exc)
+    assert msg is not None
+    assert "No model 'gpt-9-imaginary'" in msg
+    assert "effgen models list" in msg
+    assert "/model provider:id" in msg
+
+
+def test_unknown_model_message_skips_provider_prefixed_and_repo_paths():
+    repl, _ = _make_repl()
+    exc = RuntimeError("not a valid model identifier")
+    # A provider-prefixed id is the loader's own error to explain.
+    assert repl._unknown_model_message("openai:gpt-9", exc) is None
+    # An org/repo path may legitimately need HF auth — leave its error intact.
+    assert repl._unknown_model_message("some-org/some-model", exc) is None
+
+
+def test_cmd_model_bare_unknown_teaches_provider_hint():
+    repl, cli = _make_repl(provider=None, _provider=None)
+
+    def _fake_rebuild_fails():
+        raise RuntimeError(
+            "Failed to load model 'gpt-9-imaginary': gpt-9-imaginary is not a "
+            "valid model identifier listed on 'https://huggingface.co/models'"
+        )
+
+    repl._rebuild = _fake_rebuild_fails
+    repl._cmd_model("gpt-9-imaginary")
+    joined = "\n".join(cli.messages)
+    assert "No model 'gpt-9-imaginary'" in joined
+    # It must not surface the raw loader/HF message or the "check your keys" tip.
+    assert "huggingface.co" not in joined
+    assert "provider keys are set" not in joined
+
+
+# ---------------------------------------------------------------------------
+# Live meters + visible session state (/status, running footer total)
+# ---------------------------------------------------------------------------
+
+
+def test_footer_text_includes_running_session_total():
+    repl, _ = _make_repl()
+    repl.turns = 3
+    repl.session_tokens = 201
+    repl.session_cost = 0.000011
+    footer = repl._footer_text(0.1, 55, 0.000003, interrupted=False)
+    assert footer.startswith("· 0.1s")
+    assert "55 tok" in footer
+    assert "session: 3 turns · 201 tok" in footer
+
+
+def test_footer_text_no_running_total_on_first_turn():
+    repl, _ = _make_repl()
+    repl.turns = 1
+    repl.session_tokens = 55
+    footer = repl._footer_text(0.1, 55, 0.0, interrupted=False)
+    assert "session:" not in footer
+
+
+def test_cmd_status_reports_model_tools_and_totals():
+    repl, cli = _make_repl(guardrails="phi", system_prompt="You are a tutor.")
+    repl.agent = SimpleNamespace(tools={"calculator": 1})
+    repl.turns = 2
+    repl.session_tokens = 300
+    repl._cmd_status()
+    joined = "\n".join(cli.messages)
+    assert "Model: gpt-5-nano" in joined
+    assert "Guardrails: phi" in joined
+    assert "Persona: custom" in joined
+    assert "calculator" in joined
+    assert "2 turns" in joined and "300 tok" in joined
+
+
+# ---------------------------------------------------------------------------
+# /session — show and begin persisting under a resumable id
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_session_reports_no_persistence_by_default():
+    repl, cli = _make_repl()
+    repl._cmd_session("")
+    joined = "\n".join(cli.messages)
+    assert "not being saved" in joined
+    assert "/session <id>" in joined
+
+
+def test_cmd_session_names_and_persists_current_conversation(tmp_path, monkeypatch):
+    monkeypatch.setenv("EFFGEN_SESSIONS_DIR", str(tmp_path / "sess"))
+    from effgen.core.session import Session
+
+    repl, cli = _make_repl()
+    repl.agent = SimpleNamespace(short_term_memory=_FakeMemory(), session=None)
+    repl._cmd_session("cust-55")
+
+    assert repl.session_id == "cust-55"
+    assert repl.agent.session is not None
+    # The existing conversation is seeded into the resumable store.
+    reloaded = Session.load_or_create("cust-55")
+    contents = [m["content"] for m in reloaded.messages]
+    assert "hi" in contents and "hello" in contents
+    assert any("session 'cust-55'" in m for m in cli.messages)
+
+
+# ---------------------------------------------------------------------------
+# First-run download note for a defaulted local model
+# ---------------------------------------------------------------------------
+
+
+def test_banner_first_run_note_when_model_defaulted():
+    repl, cli = _make_repl(model=None)
+    repl._banner()
+    joined = "\n".join(cli.messages)
+    assert "first run downloads" in joined
+    assert "groq:llama-3.1-8b-instant" in joined
+
+
+def test_banner_no_first_run_note_when_model_given():
+    repl, cli = _make_repl(model="groq:llama-3.1-8b-instant")
+    repl._banner()
+    assert not any("first run downloads" in m for m in cli.messages)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

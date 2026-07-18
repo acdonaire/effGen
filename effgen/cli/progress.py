@@ -175,13 +175,16 @@ class _StatusState:
     # readable "Running <tool>…" rather than being skipped between refreshes.
     _STICKY_SECONDS = 0.6
 
-    def __init__(self, model_label: str, reasoning: bool):
+    def __init__(self, model_label: str, reasoning: bool, hint: str | None = None):
         self.start = time.monotonic()
         self.model_label = model_label
         self.reasoning = reasoning
         self.base_label = self._idle_label()
         self.sticky_label: str | None = None
         self.sticky_until = 0.0
+        # An optional trailing hint (e.g. "Ctrl-C to cancel") shown dim after the
+        # status label and cleared with the line when the run finishes.
+        self.hint = hint
 
     def _idle_label(self) -> str:
         if self.reasoning:
@@ -217,6 +220,8 @@ class _StatusRenderable:
         text.append(frame + " ", style="cyan")
         text.append(s.effective_label())
         text.append(f"   ⏱ {elapsed:4.1f}s", style="dim")
+        if s.hint:
+            text.append(f"   ({s.hint})", style="dim")
         return text
 
 
@@ -241,10 +246,11 @@ class LiveStatus:
         model_label: str = "model",
         reasoning: bool = False,
         tracker: Any = None,
+        hint: str | None = None,
     ):
         self.console = console
         self.tracker = tracker
-        self.state = _StatusState(model_label, reasoning)
+        self.state = _StatusState(model_label, reasoning, hint=hint)
         self._live: Any = None
         self._active = bool(_RICH_AVAILABLE and console is not None)
 
