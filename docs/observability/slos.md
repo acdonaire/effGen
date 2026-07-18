@@ -141,6 +141,23 @@ Content-Type: application/json
 }
 ```
 
+`/slo` reports the objectives *this server process registered* with the
+tracker. It does not derive an SLO from request metrics, so it returns an empty
+list — with a `detail` note — on a server that has served traffic but
+registered no objective:
+
+```json
+{
+  "slos": [],
+  "detail": "No SLO objectives are registered in this process. ..."
+}
+```
+
+Measured latency percentiles (p50/p95/p99), error-rate burn and availability
+for the traffic a server has actually served are in the `slo` block of
+`GET /dashboard/data.json`, and are rendered by the dashboard and by
+`effgen top`.
+
 ---
 
 ## Alert Thresholds

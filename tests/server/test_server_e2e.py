@@ -116,7 +116,32 @@ def test_health_is_public(client):
 def test_slo_is_public_and_returns_empty_by_default(client):
     r = client.get("/slo")
     assert r.status_code == 200
-    assert r.json() == {"slos": []}
+    body = r.json()
+    assert body["slos"] == []
+    # An empty list must say why, and point at where measured latency and
+    # availability for served traffic actually live.
+    assert "registered" in body["detail"]
+    assert "/dashboard/data.json" in body["detail"]
+
+
+def test_legacy_convenience_slo_route_explains_an_empty_list_too():
+    """The convenience routes also serve /slo; both must explain an empty list the same way."""
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from effgen.cli._main import CLIInterface
+    from effgen.observability.slo import EMPTY_SLO_DETAIL, _reset_global_tracker
+
+    _reset_global_tracker()
+    app = fastapi.FastAPI()
+    cli = CLIInterface()
+    app.state.cli = cli
+    cli._register_convenience_routes(app)
+
+    body = TestClient(app).get("/slo").json()
+    assert body["slos"] == []
+    assert body["detail"] == EMPTY_SLO_DETAIL
+    assert "/dashboard/data.json" in body["detail"]
 
 
 def test_slo_reflects_registered_tracker_state(client):

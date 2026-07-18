@@ -17,6 +17,7 @@ This page is the entry point. Each subsystem has its own reference:
 | Fuzz harness | [fuzz.md](fuzz.md) | Hypothesis-based input fuzzing |
 | Load testing | [loadtest.md](loadtest.md) | `effgen loadtest` CLI + load-gen library |
 | Alerting | [alerting.md](alerting.md) | Alertmanager rule pack + `AlertWebhook` |
+| Live terminal monitor | [../cli/top.md](../cli/top.md) | `effgen top` — runs, traffic, spend and GPU on one screen |
 
 ---
 

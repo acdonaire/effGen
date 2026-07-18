@@ -334,8 +334,20 @@ def _reset_global_tracker() -> None:
     _global_tracker = None
 
 
+#: Explanation attached to an empty ``/slo`` response. A tracker with nothing
+#: registered is the normal state, and an unqualified empty list reads as "this
+#: server has no SLO data" next to a dashboard showing populated percentiles.
+#: Shared by every ``/slo`` endpoint so the wording cannot drift between them.
+EMPTY_SLO_DETAIL = (
+    "No SLO objectives are registered in this process. This endpoint reports "
+    "registered objectives only; measured latency percentiles and availability "
+    "for served traffic are in the 'slo' block of /dashboard/data.json."
+)
+
+
 __all__ = [
     "SLO",
+    "EMPTY_SLO_DETAIL",
     "SLOTracker",
     "get_tracker",
     "_reset_global_tracker",

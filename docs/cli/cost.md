@@ -17,6 +17,10 @@ report (total against the daily budget, a per-provider/model table, and
 cost-share charts) and `-o PATH`, whose extension chooses the format. See
 [CLI developer-experience surfaces](../dx/cli.md).
 
+For a live view that puts 24-hour spend, the daily budget and a $/hour burn
+rate next to run activity, server traffic and GPU load, see
+[`effgen top`](top.md).
+
 ## Viewing spend
 
 ```bash

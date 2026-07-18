@@ -29,6 +29,7 @@ Compatibility level
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -480,6 +481,23 @@ def build_model_catalog(provider: str | None = None) -> dict[str, Any]:
 Runner = Callable[..., Any]
 
 
+async def _call_runner(runner: Runner, prompt: str, **kwargs: Any) -> Any:
+    """Invoke the synchronous runner in a worker thread.
+
+    The runner blocks for the duration of its work — model loading, the
+    provider HTTP call, tool execution — so calling it directly from a
+    coroutine holds the event loop for the whole generation and makes
+    concurrent requests to ``/health``, ``/metrics`` and the dashboard
+    endpoints wait behind it. Dispatching it to a thread keeps those endpoints
+    answering while a generation is in flight.
+
+    For a streaming request this covers the setup that produces the iterator;
+    the iterator itself is consumed by :class:`StreamingResponse`, which
+    already iterates a synchronous generator in a worker thread.
+    """
+    return await asyncio.to_thread(runner, prompt, **kwargs)
+
+
 _SECRET_RE = re.compile(
     r"(sk-[A-Za-z0-9_\-]{8,}|(?:bearer|api[-_ ]?key|token|secret|password)"
     r"[=: ]+[^\s'\"]+)",
@@ -853,7 +871,8 @@ def create_openai_router(
         effgen_meta = _effgen_meta(request.model, resolved)
 
         try:
-            result = runner(
+            result = await _call_runner(
+                runner,
                 prompt,
                 model=resolved,
                 tools=request.tools or [],
@@ -990,7 +1009,8 @@ def create_openai_router(
         prompt_tokens = _approx_tokens(prompt)
 
         try:
-            result = runner(
+            result = await _call_runner(
+                runner,
                 prompt,
                 model=model,
                 tools=[],

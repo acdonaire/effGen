@@ -298,13 +298,22 @@ def create_app(
     async def slo_status() -> dict[str, Any]:
         """SLO burn-rate status for every registered SLO (public, like /health).
 
-        Empty until the process registers at least one SLO via
-        ``effgen.observability.slo.get_tracker().register(...)`` and records
-        events with ``tracker.record(name, ok=...)``.
+        Lists objectives this process registered via
+        ``effgen.observability.slo.get_tracker().register(...)`` and recorded
+        events against with ``tracker.record(name, ok=...)``. It does not
+        compute latency or availability from request metrics, so it stays empty
+        on a server that has served traffic but registered no objective; the
+        measured percentiles and availability for that traffic are in the
+        ``slo`` block of ``/dashboard/data.json``. An empty list carries a
+        ``detail`` note saying so.
         """
-        from effgen.observability.slo import get_tracker
+        from effgen.observability.slo import EMPTY_SLO_DETAIL, get_tracker
 
-        return {"slos": get_tracker().all_statuses()}
+        statuses = get_tracker().all_statuses()
+        payload: dict[str, Any] = {"slos": statuses}
+        if not statuses:
+            payload["detail"] = EMPTY_SLO_DETAIL
+        return payload
 
     @app.get("/whoami", tags=["auth"])
     async def whoami(request: _FastAPIRequest) -> dict[str, Any]:  # type: ignore[valid-type]

@@ -1547,11 +1547,25 @@ class CLIInterface:
 
         @app.get("/slo")
         async def slo_endpoint() -> Any:
-            """SLO burn-rate status for all registered SLOs."""
-            try:
-                from effgen.observability.slo import get_tracker as _get_tracker
+            """Burn-rate status for the SLO objectives registered in this process.
 
-                return {"slos": _get_tracker().all_statuses()}
+            Measured latency and availability for served traffic live in the
+            ``slo`` block of ``/dashboard/data.json``; an empty list here says so
+            rather than leaving the caller to guess.
+            """
+            try:
+                from effgen.observability.slo import (
+                    EMPTY_SLO_DETAIL as _EMPTY_DETAIL,
+                )
+                from effgen.observability.slo import (
+                    get_tracker as _get_tracker,
+                )
+
+                statuses = _get_tracker().all_statuses()
+                payload: dict[str, Any] = {"slos": statuses}
+                if not statuses:
+                    payload["detail"] = _EMPTY_DETAIL
+                return payload
             except Exception as exc:  # noqa: BLE001
                 return {"slos": [], "error": str(exc)}
 
@@ -3512,6 +3526,10 @@ Model id formats:
             "                        only environment variables the orchestrator set\n"
             "                        are visible (EFFGEN_DOTENV=none is equivalent).\n"
             "\n"
+            "Watching a running server: `effgen top` reads this server's\n"
+            "/dashboard/data.json. Point it with --url/--port, or export\n"
+            "EFFGEN_SERVER_URL so it finds this server with no flags.\n"
+            "\n"
             "Scaling: `effgen serve` runs a single worker. For multiple workers,\n"
             "run the app factory under uvicorn/gunicorn, e.g.:\n"
             "  uvicorn effgen.server.app:create_app --factory --workers 4 --port 8000\n"
@@ -3535,6 +3553,71 @@ Model id formats:
              'proxy that sets/overwrites this header — otherwise any caller '
              'can spoof it to bypass the rate limit.',
     )
+
+    # Live mission-control view (`top`, with `monitor` as an alias)
+    from effgen.cli.monitor import (
+        DEFAULT_ACTIVITY_LIMIT as _MON_LIMIT,
+    )
+    from effgen.cli.monitor import (
+        DEFAULT_INTERVAL as _MON_INTERVAL,
+    )
+    _top_epilog = (
+        "Examples:\n"
+        "  effgen top                          # live view, refreshing in place\n"
+        "  effgen top --interval 1             # faster refresh\n"
+        "  effgen top --url http://host:8000   # watch a remote server\n"
+        "  effgen top --once                   # one static snapshot\n"
+        "  effgen top --json | jq .spend       # machine-readable snapshot\n"
+        "\n"
+        "Panels and their sources:\n"
+        "  Activity    completed runs from the local run history (all processes)\n"
+        "  Traffic     the server's own counters, since that process started\n"
+        "  Per-model   per-model calls, errors, p95 latency and cost from the server\n"
+        "  Spend       the local cost ledger: 24h total, daily budget, $/h burn\n"
+        "  GPU         physical device memory and utilization, across all processes\n"
+        "\n"
+        "Each panel names the window and process it measures; figures from\n"
+        "different sources are never combined. Activity, Spend and GPU need no\n"
+        "server, so the view is useful on a host running only local agents; the\n"
+        "server-backed panels then read as unavailable, naming the URL tried.\n"
+        "\n"
+        "The server URL comes from --url, --port, EFFGEN_SERVER_URL, or\n"
+        "http://127.0.0.1:8000. Reading a server's data needs its API key unless\n"
+        "it was started with EFFGEN_PUBLIC_DASHBOARD=1; pass --api-key or set\n"
+        "EFFGEN_API_KEY.\n"
+        "\n"
+        "Piped output, --json, --once, --no-animation, NO_COLOR and\n"
+        "EFFGEN_NO_ANIM=1 all print a single snapshot and exit instead of taking\n"
+        "over the screen. On a terminal, q or Ctrl-C quits.\n"
+    )
+    for _top_name, _top_help in (
+        ('top', 'Live terminal view of runs, traffic, spend and GPU'),
+        ('monitor', 'Alias for `effgen top`'),
+    ):
+        _top_parser = subparsers.add_parser(
+            _top_name, help=_top_help,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=_top_epilog,
+        )
+        _top_parser.add_argument('--json', dest='output_json', action='store_true',
+                                 help='Print one snapshot as JSON and exit')
+        _top_parser.add_argument('--once', action='store_true',
+                                 help='Print one static snapshot and exit (no refresh loop)')
+        _top_parser.add_argument('--interval', type=float, default=_MON_INTERVAL, metavar='SECONDS',
+                                 help=f'Seconds between refreshes (default: {_MON_INTERVAL:g})')
+        _top_parser.add_argument('--count', type=int, default=None, metavar='N',
+                                 help='Stop after N refreshes (default: run until you quit)')
+        _top_parser.add_argument('--limit', type=int, default=_MON_LIMIT, metavar='N',
+                                 help=f'Runs to show in the activity panel (default: {_MON_LIMIT})')
+        _top_parser.add_argument('--url', metavar='URL',
+                                 help='Server base URL (default: EFFGEN_SERVER_URL '
+                                      'or http://127.0.0.1:8000)')
+        _top_parser.add_argument('-p', '--port', type=int, metavar='PORT',
+                                 help='Server port on 127.0.0.1 (shorthand for --url)')
+        _top_parser.add_argument('--api-key', dest='api_key', metavar='KEY',
+                                 help='API key for the server (default: EFFGEN_API_KEY)')
+        _top_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
+                                 help='Print one static snapshot instead of the live view')
 
     # Config commands
     config_parser = subparsers.add_parser('config', help='Configuration management')
@@ -6747,6 +6830,9 @@ def main():
             exit_code = _handle_eval_command(args, cli)
         elif args.command == 'compare':
             exit_code = _handle_compare_command(args, cli)
+        elif args.command in ('top', 'monitor'):
+            from effgen.cli.monitor import run_monitor_command
+            exit_code = run_monitor_command(args)
         elif args.command == 'cost':
             exit_code = _handle_cost_command(args, cli)
         elif args.command == 'report':
