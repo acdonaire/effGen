@@ -32,6 +32,11 @@
   let spanCount = 0;
   let spanPaused = false;
   let eventSource = null;
+  // Spans grouped by run id for the per-run waterfall. Insertion order is the
+  // order runs first appeared; the newest few are drawn.
+  const runs = new Map();
+  const seenSpans = new Set();
+  const MAX_RUNS = 8;
 
   // ------------------------------------------------------------------
   // DOM helpers
@@ -405,6 +410,76 @@
       stream.removeChild(stream.firstChild);
     }
     stream.scrollTop = stream.scrollHeight;
+
+    collectForWaterfall(span);
+  }
+
+  // ------------------------------------------------------------------
+  // Per-run waterfall
+  // ------------------------------------------------------------------
+  function spanSignature(span) {
+    return [span.run_id, span.name, span.offset_ms, span.duration_ms].join("|");
+  }
+
+  function collectForWaterfall(span) {
+    const runId = span.run_id;
+    if (!runId) return;
+    // A run that streams live may replay buffered spans on reconnect; dedupe.
+    const sig = spanSignature(span);
+    if (seenSpans.has(sig)) return;
+    seenSpans.add(sig);
+
+    if (!runs.has(runId)) {
+      runs.set(runId, { id: runId, ts: span.ts, spans: [] });
+      // Bound memory: drop the oldest run once we exceed the cap.
+      while (runs.size > MAX_RUNS) {
+        const oldest = runs.keys().next().value;
+        runs.delete(oldest);
+      }
+    }
+    runs.get(runId).spans.push({
+      kind: spanKind(span.name).kind,
+      label: spanKind(span.name).label || span.name,
+      offset: Number(span.offset_ms) || 0,
+      duration: Number(span.duration_ms) || 0,
+      error: !!span.error,
+    });
+    renderWaterfall();
+  }
+
+  function renderWaterfall() {
+    const host = $("waterfall");
+    if (!host) return;
+    const list = Array.from(runs.values()).reverse();  // newest first
+    if (!list.length) {
+      host.innerHTML = '<p class="empty-row" id="waterfall-empty">No runs recorded yet.</p>';
+      return;
+    }
+    const rows = list.map((run) => {
+      // A run's total span is the agent.run bar; scale everything to it.
+      const total = Math.max(
+        1,
+        ...run.spans.map((s) => s.offset + s.duration)
+      );
+      const bars = run.spans
+        .slice()
+        .sort((a, b) => a.offset - b.offset)
+        .map((s) => {
+          const left = (s.offset / total) * 100;
+          const width = Math.max(0.6, (s.duration / total) * 100);
+          const cls = s.error ? "wf-bar is-error" : "wf-bar wf-" + s.kind;
+          const title = `${s.kind}: ${esc(s.label)} — ${s.duration.toFixed(1)}ms @ +${s.offset.toFixed(0)}ms`;
+          return `<div class="wf-track"><span class="wf-track-label">${esc(s.kind)}</span>`
+            + `<div class="wf-lane"><div class="${cls}" style="left:${left}%;width:${width}%" `
+            + `title="${title}"><span class="wf-bar-label">${esc(s.label)} · ${s.duration.toFixed(0)}ms</span></div></div></div>`;
+        })
+        .join("");
+      return `<div class="wf-run"><div class="wf-run-head">`
+        + `<span class="wf-run-id">run ${esc(run.id)}</span>`
+        + `<span class="wf-run-total">${total.toFixed(0)}ms · ${run.spans.length} spans</span></div>`
+        + `${bars}</div>`;
+    }).join("");
+    host.innerHTML = rows;
   }
 
   function startSSE() {
@@ -472,6 +547,9 @@
       if (s) s.innerHTML = "";
       spanCount = 0;
       setText("span-count", "0 spans");
+      runs.clear();
+      seenSpans.clear();
+      renderWaterfall();
     });
 
     const pauseCb = $("span-pause-cb");

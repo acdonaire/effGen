@@ -178,6 +178,45 @@ def test_execution_trace_lines_empty_for_direct_answer():
     assert P.execution_trace_lines(None) == []
 
 
+def test_execution_trace_lines_shows_per_step_duration():
+    # The gap before a tool_call_start is the model's think time for that step;
+    # the renderer surfaces it so a slow step no longer looks instant.
+    trace = [
+        {"type": "reasoning_step", "message": "Iteration 1", "timestamp": 100.0},
+        {"type": "tool_call_start", "timestamp": 114.4,
+         "data": {"tool_name": "calculator", "tool_input": "1+1"}},
+        {"type": "tool_call_complete", "timestamp": 114.5, "data": {"result": "2"}},
+    ]
+    text = " ".join(t for _s, t in P.execution_trace_lines(trace))
+    assert "14.4s" in text  # think time attributed to the tool step
+
+
+def test_execution_timeline_lines_bars_and_total():
+    trace = [
+        {"type": "reasoning_step", "message": "i1", "timestamp": 0.0},
+        {"type": "tool_call_start", "timestamp": 6.0,
+         "data": {"tool_name": "calculator", "tool_input": "a"}},
+        {"type": "tool_call_complete", "timestamp": 6.1, "data": {"result": "x"}},
+        {"type": "reasoning_step", "message": "i2", "timestamp": 6.1},
+        {"type": "tool_call_start", "timestamp": 9.1,
+         "data": {"tool_name": "calculator", "tool_input": "b"}},
+        {"type": "tool_call_complete", "timestamp": 9.2, "data": {"result": "y"}},
+    ]
+    lines = P.execution_timeline_lines(trace)
+    text = "\n".join(t for _s, t in lines)
+    assert "█" in text          # a proportional bar was drawn
+    assert "6.0s" in text       # the first step's duration
+    assert lines[-1][1].startswith("total")
+    assert "9.0s" in lines[-1][1]  # 6.0 + 3.0 across the two steps
+
+
+def test_execution_timeline_lines_empty_without_steps():
+    assert P.execution_timeline_lines([]) == []
+    assert P.execution_timeline_lines(None) == []
+    # reasoning-only (no tool/delegation) has nothing to time.
+    assert P.execution_timeline_lines([{"type": "reasoning_step", "timestamp": 1.0}]) == []
+
+
 # ---------------------------------------------------------------------------
 # sticky status state
 # ---------------------------------------------------------------------------

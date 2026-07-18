@@ -13,12 +13,27 @@ Tracks all execution events including:
 
 from __future__ import annotations
 
+import itertools
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any
+
+# Monotonic sequence so every event id is unique even when several events are
+# created within the same millisecond. A bare ``time.time()*1000`` id collides
+# under a tight tool loop, which would make parent/child links ambiguous.
+_EVENT_SEQ = itertools.count(1)
+_EVENT_SEQ_LOCK = threading.Lock()
+
+
+def _next_event_id() -> str:
+    """Return a process-unique event id (``evt_<ms>_<seq>``)."""
+    with _EVENT_SEQ_LOCK:
+        seq = next(_EVENT_SEQ)
+    return f"evt_{int(time.time() * 1000)}_{seq}"
 
 
 class EventType(Enum):
@@ -63,7 +78,7 @@ class ExecutionEvent:
     message: str = ""
     data: dict[str, Any] = field(default_factory=dict)
     parent_event_id: str | None = None
-    event_id: str = field(default_factory=lambda: f"evt_{int(time.time()*1000)}")
+    event_id: str = field(default_factory=_next_event_id)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -189,6 +204,10 @@ class ExecutionTracker:
         self.end_time: float | None = None
         self.active_agents: set = set()
         self.active_tools: set = set()
+        # The sub-agent currently executing, if any. Tool/reasoning events that
+        # arrive while a sub-agent is running hang under it in the tree; events
+        # outside any delegation hang under the root task.
+        self._active_agent_id: str | None = None
         # Optional live observers (e.g. the CLI status line). Each is called
         # synchronously with every tracked event; a misbehaving listener must
         # never break the run, so calls are wrapped in a try/except.
@@ -218,6 +237,10 @@ class ExecutionTracker:
         Args:
             event: Execution event to track
         """
+        # Link the event into the hierarchy before it is stored so a consumer
+        # reading the flat trace can reconstruct the tree from parent ids.
+        self._assign_parent(event)
+
         self.events.append(event)
 
         # Update internal state based on event type
@@ -233,6 +256,34 @@ class ExecutionTracker:
             except Exception:  # noqa: BLE001 - observers are best-effort
                 pass
 
+    # Event types that describe delegation structure rather than work done
+    # inside a step; they hang directly under the root task, not under a
+    # currently-running sub-agent.
+    _STRUCTURAL_EVENTS = frozenset({
+        EventType.SUB_AGENT_SPAWN,
+        EventType.SUB_AGENT_START,
+        EventType.SUB_AGENT_PROGRESS,
+        EventType.SUB_AGENT_COMPLETE,
+        EventType.SUB_AGENT_FAILED,
+        EventType.ROUTING_DECISION,
+        EventType.TASK_DECOMPOSITION,
+    })
+
+    def _assign_parent(self, event: ExecutionEvent) -> None:
+        """Fill ``parent_event_id`` so the flat trace forms a tree.
+
+        The root task has no parent. A delegation event hangs under the root; a
+        tool or reasoning step hangs under the sub-agent running it, or the root
+        task when no delegation is active. An explicit ``parent_event_id`` set by
+        the caller is left untouched.
+        """
+        if event.type == EventType.TASK_START or event.parent_event_id is not None:
+            return
+        if event.type in self._STRUCTURAL_EVENTS:
+            event.parent_event_id = self.root_node_id
+        else:
+            event.parent_event_id = self._active_agent_id or self.root_node_id
+
     def _update_state(self, event: ExecutionEvent):
         """Update internal state based on event."""
         if event.type == EventType.TASK_START:
@@ -245,10 +296,13 @@ class ExecutionTracker:
         elif event.type == EventType.SUB_AGENT_START:
             if event.agent_id:
                 self.active_agents.add(event.agent_id)
+                self._active_agent_id = event.agent_id
 
         elif event.type in [EventType.SUB_AGENT_COMPLETE, EventType.SUB_AGENT_FAILED]:
             if event.agent_id:
                 self.active_agents.discard(event.agent_id)
+                if self._active_agent_id == event.agent_id:
+                    self._active_agent_id = None
 
         elif event.type == EventType.TOOL_CALL_START:
             tool_name = event.data.get("tool_name", "unknown")
@@ -310,29 +364,66 @@ class ExecutionTracker:
                 self.nodes[event.agent_id].completed_at = event.timestamp
 
         elif event.type == EventType.TOOL_CALL_START:
-            # Create tool node
-            tool_id = event.event_id
+            # Create a tool node under the step that spawned it. ``agent_id`` on
+            # a tool event is the agent's *name*, not a node id, so resolve the
+            # parent from the assigned ``parent_event_id`` and fall back to the
+            # root task when the referenced node is unknown.
+            parent_id = event.parent_event_id
+            if parent_id not in self.nodes:
+                parent_id = event.agent_id if event.agent_id in self.nodes else self.root_node_id
             node = ExecutionNode(
-                node_id=tool_id,
+                node_id=event.event_id,
                 node_type="tool",
                 name=event.data.get("tool_name", "Tool"),
                 status="running",
                 started_at=event.timestamp,
-                parent_id=event.agent_id or self.root_node_id,
+                parent_id=parent_id,
                 metadata=event.data
             )
             self.nodes[node.node_id] = node
 
             # Add to parent's children
-            if node.parent_id and node.parent_id in self.nodes:
-                self.nodes[node.parent_id].children.append(node)
+            if parent_id and parent_id in self.nodes:
+                self.nodes[parent_id].children.append(node)
 
-        elif event.type == EventType.TOOL_CALL_COMPLETE:
-            # Find and update tool node
-            tool_id = event.data.get("tool_call_id", event.event_id)
-            if tool_id in self.nodes:
-                self.nodes[tool_id].status = "completed"
-                self.nodes[tool_id].completed_at = event.timestamp
+        elif event.type in (EventType.TOOL_CALL_COMPLETE, EventType.TOOL_CALL_FAILED):
+            # A completion event carries no id back-reference, so finalize the
+            # most recent still-running tool node with a matching name.
+            tool_node = self._latest_running_tool(event.data.get("tool_name"))
+            if tool_node is not None:
+                tool_node.status = (
+                    "completed" if event.type == EventType.TOOL_CALL_COMPLETE else "failed"
+                )
+                tool_node.completed_at = event.timestamp
+                for key in ("result", "error"):
+                    if event.data.get(key) is not None:
+                        tool_node.metadata = {**tool_node.metadata, key: event.data[key]}
+
+        elif event.type in (EventType.TASK_COMPLETE, EventType.TASK_FAILED):
+            # Finalize the root task and any tool nodes still marked running so
+            # the tree reports a terminal status and a real duration.
+            if self.root_node_id and self.root_node_id in self.nodes:
+                root = self.nodes[self.root_node_id]
+                root.status = (
+                    "completed" if event.type == EventType.TASK_COMPLETE else "failed"
+                )
+                root.completed_at = event.timestamp
+                for key in ("execution_time", "tokens_used", "tool_calls"):
+                    if key in event.data:
+                        root.metadata = {**root.metadata, key: event.data[key]}
+            for node in self.nodes.values():
+                if node.node_type == "tool" and node.status == "running":
+                    node.status = "completed"
+                    node.completed_at = event.timestamp
+
+    def _latest_running_tool(self, tool_name: str | None) -> ExecutionNode | None:
+        """Return the most recently started running tool node (matching name)."""
+        for node in reversed(list(self.nodes.values())):
+            if node.node_type != "tool" or node.status != "running":
+                continue
+            if tool_name is None or node.name == tool_name:
+                return node
+        return None
 
     def get_live_status(self) -> ExecutionStatus:
         """
@@ -544,6 +635,7 @@ class ExecutionTracker:
         self.end_time = None
         self.active_agents = set()
         self.active_tools = set()
+        self._active_agent_id = None
 
     def get_performance_metrics(self) -> dict[str, Any]:
         """

@@ -417,6 +417,35 @@ def format_tool_call(name: str, tool_input: Any, limit: int = 72) -> str:
     return f"{name}({inner})"
 
 
+def _fmt_duration(seconds: float) -> str:
+    """Human duration: ``820ms`` under a second, ``14.4s`` / ``1m03s`` above."""
+    if seconds < 1.0:
+        return f"{seconds * 1000:.0f}ms"
+    if seconds < 60.0:
+        return f"{seconds:.1f}s"
+    m, s = divmod(int(round(seconds)), 60)
+    return f"{m}m{s:02d}s"
+
+
+def _event_gaps(trace: list[dict[str, Any]]) -> list[float]:
+    """Wall-clock seconds elapsed *before* each event (gap from the previous one).
+
+    The gap before a ``tool_call_start`` is the model's think time for that
+    step — the time the flat trace throws away. The first event's gap is 0.
+    """
+    gaps: list[float] = []
+    prev: float | None = None
+    for ev in trace:
+        ts = ev.get("timestamp")
+        if isinstance(ts, int | float) and prev is not None:
+            gaps.append(max(0.0, float(ts) - prev))
+        else:
+            gaps.append(0.0)
+        if isinstance(ts, int | float):
+            prev = float(ts)
+    return gaps
+
+
 def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str, str]]:
     """Turn an :class:`ExecutionTracker` event trace into readable ``(style, text)``.
 
@@ -424,11 +453,14 @@ def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str,
     ``message``, ``data``) — not a ReAct ``thought/action/observation`` shape —
     so a plain ``step.get("thought")`` renders blank. This formatter walks the
     events and produces one human line each (reasoning, tool call + result,
-    delegation, …), shared by ``effgen run --explain`` and chat's ``/trace`` so
-    they agree.
+    delegation, …), annotating each step with the wall-clock time it took, and
+    is shared by ``effgen run --explain`` and chat's ``/trace`` so they agree.
     """
+    events = list(trace or [])
+    gaps = _event_gaps(events)
+    # Pair each tool_call_start with its terminal event to time the tool itself.
     out: list[tuple[str, str]] = []
-    for ev in trace or []:
+    for i, ev in enumerate(events):
         etype = str(ev.get("type", "") or "")
         msg = str(ev.get("message", "") or "")
         data = ev.get("data") or {}
@@ -441,10 +473,16 @@ def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str,
                 detail = f"🔧 {format_tool_call(name, tool_input)}"
             else:
                 detail = f"🔧 {name}"
+            # Attribute the model's think time (the gap into this call) so the
+            # step reads with the time it cost, not as if it were instant.
+            if gaps[i] >= 0.1:
+                detail += f"  ⏱ {_fmt_duration(gaps[i])}"
             out.append(("green", detail))
         elif etype == "tool_call_complete":
             result = data.get("result", data.get("output", ""))
-            out.append(("dim", f"   ✓ {_truncate(result, 120)}" if result else "   ✓ done"))
+            exec_s = gaps[i] if gaps[i] >= 0.5 else 0.0
+            suffix = f"  ({_fmt_duration(exec_s)})" if exec_s else ""
+            out.append(("dim", f"   ✓ {_truncate(result, 120)}{suffix}" if result else f"   ✓ done{suffix}"))
         elif etype == "tool_call_failed":
             err = data.get("error", msg)
             out.append(("red", f"   ✗ {_truncate(err, 120)}"))
@@ -456,6 +494,52 @@ def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str,
         elif etype in ("task_complete", "answer"):
             if msg:
                 out.append(("dim", f"   {_truncate(msg, 120)}"))
+    return out
+
+
+def execution_timeline_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str, str]]:
+    """A compact per-step timeline: each step with a proportional bar + duration.
+
+    Collapses the event stream into one line per meaningful step (a tool call,
+    reasoning, or delegation), sizes a bar by the step's wall-clock share, and
+    labels it with the elapsed time — so a run's slow steps are visible at a
+    glance. Falls back to an empty list when there is nothing timed to show.
+    """
+    events = list(trace or [])
+    if not events:
+        return []
+    gaps = _event_gaps(events)
+
+    # Build steps: a tool call is timed by the think-gap leading into it; a bare
+    # reasoning or delegation step is timed by its own leading gap.
+    steps: list[tuple[str, str, float]] = []  # (style, label, seconds)
+    for i, ev in enumerate(events):
+        etype = str(ev.get("type", "") or "")
+        data = ev.get("data") or {}
+        if etype == "tool_call_start":
+            name = data.get("tool_name", "tool")
+            tool_input = data.get("tool_input", data.get("input", ""))
+            label = format_tool_call(name, tool_input) if tool_input else name
+            steps.append(("green", f"🔧 {label}", gaps[i]))
+        elif etype == "sub_agent_start":
+            name = data.get("agent_name") or ev.get("agent_id") or "sub-agent"
+            steps.append(("magenta", f"👥 {name}", gaps[i]))
+        elif etype == "task_decomposition":
+            steps.append(("yellow", "🧩 planning", gaps[i]))
+    if not steps:
+        return []
+
+    longest = max((s for _, _, s in steps), default=0.0) or 1.0
+    bar_w = 20
+    label_w = min(40, max(len(lbl) for _, lbl, _ in steps))
+    out: list[tuple[str, str]] = []
+    for style, label, secs in steps:
+        filled = int(round((secs / longest) * bar_w)) if longest > 0 else 0
+        bar = "█" * filled + "·" * (bar_w - filled)
+        lbl = label if len(label) <= label_w else label[: label_w - 1] + "…"
+        out.append((style, f"{lbl:<{label_w}}  {bar}  {_fmt_duration(secs):>7}"))
+    total = sum(s for _, _, s in steps)
+    out.append(("dim", f"{'total':<{label_w}}  {'':<{bar_w}}  {_fmt_duration(total):>7}"))
     return out
 
 

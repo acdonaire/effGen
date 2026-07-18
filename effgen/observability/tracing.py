@@ -49,16 +49,24 @@ own exceptions so a tracing failure never propagates to inference.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import threading
 import time
+import uuid
 from collections import deque
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# The run a buffered span belongs to. Set for the duration of an agent run so
+# nested model-call/tool-call spans can be grouped into a per-run timeline.
+_RUN_CONTEXT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "effgen_span_run_context", default=None
+)
 
 # ---------------------------------------------------------------------------
 # Optional OTel imports — graceful no-op when SDK is not installed
@@ -581,21 +589,30 @@ def start_agent_run(
     if run_id:
         attrs[AgentAttrs.RUN_ID] = run_id
     start = time.monotonic()
+    # Correlate every span nested in this run so the dashboard can group them.
+    _ctx_token = _RUN_CONTEXT.set({"run_id": run_id or uuid.uuid4().hex[:12], "start": start})
     try:
         with tracer.start_as_current_span(SpanName.AGENT_RUN, attributes=attrs) as span:
             try:
                 yield span
-                _buffer_span(f"{SpanName.AGENT_RUN} {preset}", (time.monotonic() - start) * 1000)
+                _buffer_span(
+                    f"{SpanName.AGENT_RUN} {preset}",
+                    (time.monotonic() - start) * 1000,
+                    start_monotonic=start,
+                )
             except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _mark_error(span, exc)
                 _buffer_span(
                     f"{SpanName.AGENT_RUN} {preset}",
                     (time.monotonic() - start) * 1000,
                     error=str(exc),
+                    start_monotonic=start,
                 )
                 raise
     except Exception:
         raise
+    finally:
+        _RUN_CONTEXT.reset(_ctx_token)
 
 
 @contextmanager
@@ -686,7 +703,11 @@ def start_model_call(
                 if not _has_outcome(span):
                     _set_safe(span, ModelAttrs.OUTCOME, "ok")
                 _mark_ok(span)
-                _buffer_span(f"{SpanName.MODEL_CALL} {_model_label}", (time.monotonic() - start) * 1000)
+                _buffer_span(
+                    f"{SpanName.MODEL_CALL} {_model_label}",
+                    (time.monotonic() - start) * 1000,
+                    start_monotonic=start,
+                )
             except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _set_safe(span, ModelAttrs.OUTCOME, "error")
                 _set_safe(span, ModelAttrs.LATENCY_MS, round((time.monotonic() - start) * 1000, 1))
@@ -695,6 +716,7 @@ def start_model_call(
                     f"{SpanName.MODEL_CALL} {_model_label}",
                     (time.monotonic() - start) * 1000,
                     error=str(exc),
+                    start_monotonic=start,
                 )
                 raise
     except Exception:
@@ -730,7 +752,11 @@ def start_tool_call(
                 if not _has_tool_status(span):
                     _set_safe(span, ToolAttrs.STATUS, "ok")
                 _mark_ok(span)
-                _buffer_span(f"{SpanName.TOOL_CALL} {tool_name}", (time.monotonic() - start) * 1000)
+                _buffer_span(
+                    f"{SpanName.TOOL_CALL} {tool_name}",
+                    (time.monotonic() - start) * 1000,
+                    start_monotonic=start,
+                )
             except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _set_safe(span, ToolAttrs.STATUS, "error")
                 _set_safe(span, ToolAttrs.LATENCY_MS, round((time.monotonic() - start) * 1000, 1))
@@ -739,6 +765,7 @@ def start_tool_call(
                     f"{SpanName.TOOL_CALL} {tool_name}",
                     (time.monotonic() - start) * 1000,
                     error=str(exc),
+                    start_monotonic=start,
                 )
                 raise
     except Exception:
@@ -963,14 +990,33 @@ _SPAN_BUFFER_LOCK: threading.Lock = threading.Lock()
 _SPAN_BUFFER: deque[dict] = deque(maxlen=500)  # type: ignore[type-arg]
 
 
-def _buffer_span(name: str, duration_ms: float, error: str | None = None) -> None:
-    """Append a span dict to the in-memory ring buffer (best-effort, never raises)."""
+def _buffer_span(
+    name: str,
+    duration_ms: float,
+    error: str | None = None,
+    *,
+    start_monotonic: float | None = None,
+) -> None:
+    """Append a span dict to the in-memory ring buffer (best-effort, never raises).
+
+    When called within an agent run the record also carries the run's id and the
+    span's start offset (ms from the run's start), so a consumer can group spans
+    by run and lay them out on a timeline. Both default to ``None``/``0`` for a
+    span recorded outside any run.
+    """
     try:
+        ctx = _RUN_CONTEXT.get()
+        run_id = ctx.get("run_id") if ctx else None
+        offset_ms = 0.0
+        if ctx and start_monotonic is not None:
+            offset_ms = round(max(0.0, (start_monotonic - ctx["start"]) * 1000.0), 1)
         record = {
             "ts": time.strftime("%H:%M:%S", time.gmtime()),
             "name": name,
             "duration_ms": round(duration_ms, 1),
             "error": error,
+            "run_id": run_id,
+            "offset_ms": offset_ms,
         }
         with _SPAN_BUFFER_LOCK:
             _SPAN_BUFFER.append(record)

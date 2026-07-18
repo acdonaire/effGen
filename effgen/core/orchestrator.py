@@ -64,6 +64,14 @@ def _response_cost(response: Any) -> float:
         return 0.0
 
 
+def _response_time(response: Any) -> float:
+    """Wall-clock seconds an agent's run took (0.0 when not recorded)."""
+    try:
+        return round(float(getattr(response, "execution_time", 0.0) or 0.0), 3)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _aggregate_usage(responses: list[dict[str, Any]]) -> dict[str, Any]:
     """Sum ``cost_usd``/``tokens_used`` across member-agent result dicts.
 
@@ -434,6 +442,7 @@ class MultiAgentOrchestrator:
                 "success": response.success,
                 "tokens_used": response.tokens_used,
                 "cost_usd": _response_cost(response),
+                "execution_time": _response_time(response),
             }
             responses.append(agent_result)
 
@@ -573,6 +582,7 @@ class MultiAgentOrchestrator:
                 "success": response.success,
                 "tokens_used": response.tokens_used,
                 "cost_usd": _response_cost(response),
+                "execution_time": _response_time(response),
             }
             if not response.success:
                 detail = (getattr(response, "metadata", None) or {}).get("error")
@@ -638,6 +648,7 @@ Use only the worker names listed above."""
                 "success": response.success,
                 "tokens_used": response.tokens_used,
                 "cost_usd": _response_cost(response),
+                "execution_time": _response_time(response),
             })
             if not response.success:
                 detail = (getattr(response, "metadata", None) or {}).get("error")
@@ -732,6 +743,7 @@ Consider the above viewpoints and provide your perspective or refined answer."""
                     "success": response.success,
                     "tokens_used": response.tokens_used,
                     "cost_usd": _response_cost(response),
+                    "execution_time": _response_time(response),
                 }
                 if not response.success:
                     any_failure = True

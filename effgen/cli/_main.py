@@ -1101,9 +1101,25 @@ class CLIInterface:
                     if not quiet:
                         _progress.print_summary(self, response)
 
-                    # Display explain trace (tool reasoning)
-                    if getattr(args, 'explain', False) and response.execution_trace:
-                        self.print_header("Execution Trace (Explain Mode)")
+                    _explain = getattr(args, 'explain', False)
+                    _trace = getattr(args, 'trace', False)
+
+                    # A per-step timeline (bars + durations) shows where the
+                    # wall-clock went across the run's steps.
+                    if _trace and response.execution_trace:
+                        self.print_header("Timeline")
+                        _tl = _progress.execution_timeline_lines(response.execution_trace)
+                        if not _tl:
+                            self.print("(no timed steps recorded for this run)")
+                        for _style, _text in _tl:
+                            if self.console:
+                                self.console.print(f"[{_style}]{_text}[/{_style}]")
+                            else:
+                                print(_text)
+
+                    # Display the step trace (tool reasoning + per-step timing).
+                    if (_explain or _trace) and response.execution_trace:
+                        self.print_header("Execution Trace")
                         _lines = _progress.execution_trace_lines(response.execution_trace)
                         if not _lines:
                             self.print("(no detailed steps recorded for this run)")
@@ -1113,8 +1129,18 @@ class CLIInterface:
                             else:
                                 print(_text)
 
+                    # On a multi-step run without an explicit trace flag, point
+                    # the user at the timeline rather than leaving it hidden.
+                    elif not quiet and not _explain and int(getattr(response, "tool_calls", 0) or 0) >= 1:
+                        _steps = int(getattr(response, "tool_calls", 0) or 0)
+                        _hint = f"{_steps} tool step{'s' if _steps != 1 else ''} — run with --trace to see the timeline"
+                        if self.console:
+                            self.console.print(f"[effgen.muted]{_hint}[/effgen.muted]")
+                        else:
+                            print(_hint)
+
                     # Display execution statistics
-                    if getattr(args, 'verbose', False) or getattr(args, 'explain', False):
+                    if getattr(args, 'verbose', False) or _explain or _trace:
                         self.print_header("Execution Statistics")
                         stats_table = self._create_stats_table({
                             "Mode": response.mode.value,
@@ -2947,6 +2973,8 @@ Model id formats:
     )
     run_parser.add_argument('--explain', action='store_true',
                             help='Show why the agent chose each tool')
+    run_parser.add_argument('--trace', action='store_true',
+                            help='Show a step-by-step timeline with per-step durations')
     run_parser.add_argument('--checkpoint-dir', help='Directory to write agent checkpoints')
     run_parser.add_argument('--checkpoint-interval', type=int, default=0,
                             help='Checkpoint every N iterations (requires --checkpoint-dir)')
@@ -3254,11 +3282,20 @@ Model id formats:
                               'workflow entry node(s) (alternative to --input)')
     workflow_run.add_argument('--json', dest='output_json', action='store_true',
                               help='Emit the workflow result as JSON to stdout (for CI gating)')
+    workflow_run.add_argument('--diagram', action='store_true',
+                              help='Draw the workflow as a dependency graph (nodes by '
+                                   'level, edges, per-node status/duration/cost)')
+    workflow_run.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
+                              help='Quiet output (errors only); --json still emits to stdout')
 
     workflow_validate = workflow_subparsers.add_parser('validate', help='Validate a workflow YAML file')
     workflow_validate.add_argument('file', help='Path to workflow YAML file')
     workflow_validate.add_argument('--json', dest='output_json', action='store_true',
                                    help='Emit the validation result as JSON to stdout')
+    workflow_validate.add_argument('--diagram', action='store_true',
+                                   help='Draw the workflow dependency graph (nodes by level, edges)')
+    workflow_validate.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
+                                   help='Quiet output (errors only); --json still emits to stdout')
 
     # Batch command
     batch_parser = subparsers.add_parser(
@@ -4129,6 +4166,24 @@ def _handle_workflow_command(args, cli) -> int:
     json_mode = getattr(args, 'output_json', False)
     if json_mode:
         cli._human_to_stderr = True
+    show_diagram = getattr(args, 'diagram', False)
+
+    def _print_diagram(dag, node_results=None):
+        from effgen.ui.workflow_viz import workflow_diagram_lines
+        order = dag.topological_order()
+        levels = dag._compute_levels(order)
+        lines = workflow_diagram_lines(
+            dag.name,
+            [n.id for n in dag.nodes],
+            [e.to_dict() for e in dag.edges],
+            levels,
+            node_results=node_results,
+        )
+        for style, text in lines:
+            if cli.console and style:
+                cli.console.print(f"[{style}]{text}[/{style}]")
+            else:
+                cli.print(text)
 
     if wf_cmd == 'validate':
         try:
@@ -4147,6 +4202,9 @@ def _handle_workflow_command(args, cli) -> int:
             cli.print(f"  Nodes: {len(dag.nodes)}")
             cli.print(f"  Edges: {len(dag.edges)}")
             cli.print(f"  Execution order: {' -> '.join(order)}")
+            if show_diagram:
+                cli.print("")
+                _print_diagram(dag)
             return 0
         except Exception as e:
             if json_mode:
@@ -4197,8 +4255,10 @@ def _handle_workflow_command(args, cli) -> int:
                 )
                 return Agent(config)
 
+            quiet = getattr(args, 'quiet', False)
             dag = WorkflowDAG.from_yaml(args.file, agent_factory=_agent_factory)
-            cli.print(f"Running workflow '{dag.name}' ({len(dag.nodes)} nodes)...")
+            if not quiet:
+                cli.print(f"Running workflow '{dag.name}' ({len(dag.nodes)} nodes)...")
 
             # Per-node ``task:`` strings declared in the YAML become each node's
             # default input (so `effgen workflow run workflow.yaml` works with no
@@ -4238,17 +4298,23 @@ def _handle_workflow_command(args, cli) -> int:
                 print(json.dumps(result.to_dict(), indent=2, default=str, ensure_ascii=False))
                 return 0 if result.success else 1
 
-            cli.print(f"\nWorkflow {'succeeded' if result.success else 'FAILED'} "
-                       f"in {result.execution_time:.2f}s")
-            for nr in result.node_results:
-                status = nr['status']
-                cli.print(f"  [{status:>9s}] {nr['id']} ({nr['execution_time']:.2f}s)")
+            if not quiet:
+                cli.print(f"\nWorkflow {'succeeded' if result.success else 'FAILED'} "
+                          f"in {result.execution_time:.2f}s")
 
-            if result.success:
-                # Show final outputs
-                cli.print("\nOutputs:")
-                for key, val in result.outputs.items():
-                    cli.print(f"  {key}: {str(val)[:200]}")
+                if show_diagram:
+                    cli.print("")
+                    _print_diagram(dag, node_results=result.node_results)
+                else:
+                    for nr in result.node_results:
+                        status = nr['status']
+                        cli.print(f"  [{status:>9s}] {nr['id']} ({nr['execution_time']:.2f}s)")
+
+                if result.success:
+                    # Show final outputs
+                    cli.print("\nOutputs:")
+                    for key, val in result.outputs.items():
+                        cli.print(f"  {key}: {str(val)[:200]}")
 
             return 0 if result.success else 1
 

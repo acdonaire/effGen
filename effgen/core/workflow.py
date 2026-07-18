@@ -460,6 +460,11 @@ class WorkflowDAG:
                 "node_count": len(self._nodes),
                 "cost_usd": round(total_cost, 6),
                 "tokens_used": total_tokens,
+                # Carry the topology so any consumer can rebuild the graph from
+                # the result alone (the per-node dicts don't record edges).
+                "edges": [e.to_dict() for e in self._edges],
+                "topological_order": order,
+                "levels": levels,
             },
         )
 

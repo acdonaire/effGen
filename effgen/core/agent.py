@@ -1320,7 +1320,6 @@ Question: {task}
                 # Add execution metadata
                 response.execution_time = time.time() - start_time
                 response.execution_trace = self.execution_tracker.get_trace()
-                response.execution_tree = self.execution_tracker.generate_execution_tree()
                 response.metadata["run_id"] = run_id
                 if input_redaction is not None:
                     response.metadata["input_redaction"] = input_redaction
@@ -1344,6 +1343,11 @@ Question: {task}
                         "tool_calls": response.tool_calls
                     }
                 ))
+
+                # Build the execution tree after completion is tracked so its
+                # root carries a terminal status and a real duration (not a
+                # still-"running" snapshot measured at serialize time).
+                response.execution_tree = self.execution_tracker.generate_execution_tree()
 
                 # Metrics: record latency and tokens
                 prom_metrics.response_latency.observe(response.execution_time, labels=labels)
@@ -1474,6 +1478,7 @@ Question: {task}
                     success=False,
                     execution_time=time.time() - start_time,
                     execution_trace=self.execution_tracker.get_trace(),
+                    execution_tree=self.execution_tracker.generate_execution_tree(),
                     metadata={"reason": "run_failed", "error": detail, "run_id": run_id}
                 )
                 self._record_dashboard_run(response, error=redacted_msg)

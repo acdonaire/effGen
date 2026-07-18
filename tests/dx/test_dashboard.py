@@ -26,6 +26,7 @@ REQUIRED_PANEL_IDS = [
     "panel-latency-chart",
     "panel-agent-runs",
     "panel-spans",
+    "panel-waterfall",
     "panel-metrics",
 ]
 
@@ -76,6 +77,14 @@ class TestStaticFiles:
     def test_app_js_has_sse_support(self):
         js = (STATIC_DIR / "app.js").read_text()
         assert "EventSource" in js
+
+    def test_app_js_groups_spans_into_waterfall(self):
+        # The per-run waterfall groups spans by run id and lays them out by the
+        # start offset each span now carries.
+        js = (STATIC_DIR / "app.js").read_text()
+        assert "renderWaterfall" in js
+        assert "run_id" in js
+        assert "offset_ms" in js
 
     def test_style_css_has_variables(self):
         css = (STATIC_DIR / "style.css").read_text()

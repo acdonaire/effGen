@@ -33,6 +33,7 @@ class _FakeResponse:
     success: bool = True
     tokens_used: int = 7
     tool_calls: int = 0
+    execution_time: float = 0.05
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -430,6 +431,50 @@ def test_workflow_cost_and_tokens_aggregated():
     assert res.success is True
     assert res.metadata["cost_usd"] == pytest.approx(0.005)
     assert res.metadata["tokens_used"] == 14
+
+
+def test_workflow_result_carries_topology():
+    # A --json consumer must be able to rebuild the graph from the result alone;
+    # the per-node dicts do not record edges, so the result metadata carries the
+    # edges, topological order, and parallel levels.
+    from effgen.core.workflow import WorkflowDAG, WorkflowNode
+    dag = WorkflowDAG("fanout")
+    for nid in ("research", "pros", "cons", "summary"):
+        dag.add_node(WorkflowNode(id=nid, agent=FakeAgent(nid)))
+    dag.connect("research", "pros")
+    dag.connect("research", "cons")
+    dag.connect("pros", "summary")
+    dag.connect("cons", "summary")
+    res = dag.run("go")
+    meta = res.metadata
+    assert [(e["source"], e["target"]) for e in meta["edges"]] == [
+        ("research", "pros"), ("research", "cons"),
+        ("pros", "summary"), ("cons", "summary"),
+    ]
+    assert meta["topological_order"][0] == "research"
+    assert meta["topological_order"][-1] == "summary"
+    # pros and cons run in parallel on the same level.
+    assert ["pros", "cons"] in meta["levels"] or ["cons", "pros"] in meta["levels"]
+
+
+def test_team_agent_responses_carry_execution_time():
+    # Per-agent timing was absent from team responses; each member's wall-clock
+    # time must be present so a delegation view can show where time went.
+    from effgen.core.orchestrator import (
+        MultiAgentOrchestrator,
+        OrchestrationPattern,
+    )
+    orch = MultiAgentOrchestrator()
+    team = orch.create_team(
+        "t", [FakeAgent("a"), FakeAgent("b")],
+        pattern=OrchestrationPattern.SEQUENTIAL,
+    )
+    res = orch.assign_task("go", team)
+    assert res.success is True
+    assert [r["agent_name"] for r in res.agent_responses] == ["a", "b"]
+    for r in res.agent_responses:
+        assert "execution_time" in r
+        assert isinstance(r["execution_time"], int | float)
 
 
 # --------------------------------------------------------------------------- #
