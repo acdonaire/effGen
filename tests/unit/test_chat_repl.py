@@ -501,6 +501,25 @@ def test_persist_session_turn_writes_to_store(tmp_path, monkeypatch):
     assert "Noted, ORD-7788." in contents
 
 
+def test_persist_session_turn_records_model_tokens_and_cost(tmp_path, monkeypatch):
+    # A stored turn carries what it was answered with, so a reviewer reading the
+    # session later sees the model, tokens, cost and latency per turn.
+    monkeypatch.setenv("EFFGEN_SESSIONS_DIR", str(tmp_path / "sess"))
+    from effgen.core.session import Session
+
+    repl, _ = _make_repl(session_id="cust-2", model="gpt-5-nano")
+    repl.agent = SimpleNamespace(session=Session.load_or_create("cust-2"))
+    repl._persist_session_turn("q", "a", tokens=120, cost=0.0004, elapsed=1.25)
+
+    reloaded = Session.load_or_create("cust-2")
+    meta = reloaded.messages[-1]["metadata"]
+    assert meta["model"] == "gpt-5-nano"
+    assert meta["tokens_used"] == 120
+    assert meta["cost_usd"] == pytest.approx(0.0004)
+    assert meta["latency_ms"] == pytest.approx(1250.0)
+    assert reloaded.metadata["model"] == "gpt-5-nano"
+
+
 def test_persist_session_turn_noop_without_session():
     # No attached session -> nothing happens, no crash.
     repl, _ = _make_repl()

@@ -31,6 +31,25 @@ def isolated_budget_path(tmp_path, monkeypatch):
 # SQLiteCostStore unit tests
 # ---------------------------------------------------------------------------
 
+class TestCostStoreLocation:
+    """Where cost events land when no explicit path is given."""
+
+    def test_effgen_home_relocates_the_database(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("EFFGEN_COST_DB", raising=False)
+        monkeypatch.setenv("EFFGEN_HOME", str(tmp_path / "state"))
+
+        store = SQLiteCostStore()
+
+        assert store._path == str(tmp_path / "state" / "costs.sqlite")
+        assert (tmp_path / "state").is_dir()
+
+    def test_explicit_env_path_wins_over_effgen_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("EFFGEN_HOME", str(tmp_path / "state"))
+        monkeypatch.setenv("EFFGEN_COST_DB", str(tmp_path / "explicit.sqlite"))
+
+        assert SQLiteCostStore()._path == str(tmp_path / "explicit.sqlite")
+
+
 class TestSQLiteCostStore:
     """Unit tests for SQLiteCostStore using an in-memory DB."""
 

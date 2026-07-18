@@ -42,6 +42,43 @@ def _default_session_dir() -> str:
 DEFAULT_SESSION_DIR = _default_session_dir()
 
 
+def _last_message_field(messages: list[Any], key: str) -> Any:
+    """Return *key* from the most recent message metadata that carries it."""
+    for m in reversed(messages):
+        if isinstance(m, dict):
+            value = (m.get("metadata") or {}).get(key)
+            if value:
+                return value
+    return None
+
+
+def _sum_message_costs(messages: list[Any]) -> float | None:
+    """Total recorded cost across a session's turns, or ``None`` if unpriced.
+
+    A turn stamps the same per-run cost on both the user and the assistant
+    message, so the reply side of each turn is what gets counted, and costs
+    sharing a ``run_id`` are counted once.
+    """
+    total = 0.0
+    seen_runs: set[str] = set()
+    priced = False
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") == "user":
+            continue
+        meta = m.get("metadata") or {}
+        cost = meta.get("cost_usd")
+        if not isinstance(cost, int | float):
+            continue
+        run_id = meta.get("run_id")
+        if run_id:
+            if run_id in seen_runs:
+                continue
+            seen_runs.add(str(run_id))
+        total += float(cost)
+        priced = True
+    return round(total, 6) if priced else None
+
+
 @dataclass
 class Session:
     """
@@ -153,28 +190,51 @@ class SessionManager:
         )
         os.makedirs(self.sessions_dir, exist_ok=True)
 
-    def list_sessions(self) -> list[dict[str, Any]]:
+    def scan(self) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+        """Return ``(sessions, unreadable)`` for the store.
+
+        ``sessions`` holds one summary per readable session file, newest first.
+        ``unreadable`` names every file that could not be parsed, with the
+        reason, so a listing never under-counts without saying so.
+        """
         out: list[dict[str, Any]] = []
-        for fname in os.listdir(self.sessions_dir):
+        unreadable: list[dict[str, str]] = []
+        for fname in sorted(os.listdir(self.sessions_dir)):
             if not fname.endswith(".json"):
                 continue
             try:
                 with open(os.path.join(self.sessions_dir, fname)) as f:
                     data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("session file is not a JSON object")
+                messages = data.get("messages") or []
+                meta = data.get("metadata") or {}
                 out.append({
                     "session_id": data.get("session_id", fname[:-5]),
                     "agent_name": data.get("agent_name", ""),
-                    "messages": len(data.get("messages", [])),
+                    "messages": len(messages),
                     "created_at": data.get("created_at"),
                     "updated_at": data.get("updated_at"),
+                    "model": meta.get("model") or _last_message_field(messages, "model"),
+                    "cost_usd": _sum_message_costs(messages),
                 })
-            except (OSError, json.JSONDecodeError) as e:
-                # Listing must stay resilient to one bad file, but a corrupt
-                # session is worth a breadcrumb (it won't load individually).
-                logger.debug("Skipping unreadable session file %s: %s", fname, e)
-                continue
+            except (OSError, json.JSONDecodeError, ValueError) as e:
+                unreadable.append({"file": fname, "reason": str(e)})
         out.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
-        return out
+        return out, unreadable
+
+    def list_sessions(self) -> list[dict[str, Any]]:
+        """Return a summary of every readable session, newest first.
+
+        Files that cannot be parsed are omitted here; use :meth:`scan` to also
+        get the list of unreadable files.
+        """
+        sessions, unreadable = self.scan()
+        for entry in unreadable:
+            logger.debug(
+                "Skipping unreadable session file %s: %s", entry["file"], entry["reason"]
+            )
+        return sessions
 
     def get(self, session_id: str) -> Session:
         return Session.load(session_id, self.sessions_dir)

@@ -49,6 +49,19 @@ from typing import cast
 
 _DEFAULT_DB_PATH = Path.home() / ".effgen" / "costs.sqlite"
 
+
+def _default_db_path() -> Path:
+    """Where cost events are stored when no path is given.
+
+    ``EFFGEN_HOME`` relocates the whole effGen state directory, so the cost
+    database follows it to ``$EFFGEN_HOME/costs.sqlite``; otherwise it lives at
+    ``~/.effgen/costs.sqlite``.
+    """
+    home = os.environ.get("EFFGEN_HOME")
+    if home:
+        return Path(os.path.expanduser(home)).absolute() / "costs.sqlite"
+    return _DEFAULT_DB_PATH
+
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS cost_events (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,7 +118,9 @@ class SQLiteCostStore:
 
     Args:
         db_path: Path to the SQLite file.  Use ``":memory:"`` for tests.
-                 Defaults to ``~/.effgen/costs.sqlite``.
+                 Defaults to ``$EFFGEN_HOME/costs.sqlite`` when ``EFFGEN_HOME``
+                 is set, else ``~/.effgen/costs.sqlite``. ``EFFGEN_COST_DB``
+                 overrides both.
     """
 
     def __init__(self, db_path: str | os.PathLike | None = None) -> None:
@@ -113,7 +128,7 @@ class SQLiteCostStore:
             # Allow tests / sandboxes to redirect persistence away from the
             # user's real ~/.effgen/costs.sqlite via EFFGEN_COST_DB.
             env_path = os.environ.get("EFFGEN_COST_DB")
-            db_path = env_path if env_path else _DEFAULT_DB_PATH
+            db_path = env_path if env_path else _default_db_path()
         self._path = str(db_path)
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)

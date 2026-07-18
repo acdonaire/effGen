@@ -561,6 +561,7 @@ class ChatREPL:
         t0 = time.monotonic()
         answer = ""
         interrupted = False
+        plain_turn = False
         self.last_trace = None
 
         try:
@@ -569,9 +570,9 @@ class ChatREPL:
                 answer = self._run_with_tools(user_input)
             else:
                 answer = self._stream_plain(user_input)
-                # The streaming path bypasses agent.run(), so persist the turn to
-                # the session ourselves when one is attached.
-                self._persist_session_turn(user_input, answer)
+                # The streaming path bypasses agent.run(), so the turn is
+                # persisted below once its tokens/cost/latency are known.
+                plain_turn = True
         except KeyboardInterrupt:
             interrupted = True
             self.cli.print("")
@@ -596,17 +597,42 @@ class ChatREPL:
             dtok = self._count_tokens(answer)  # local models: count the output
         self.session_tokens += max(dtok, 0)
         self.session_cost += max(dcost, 0.0)
+        if plain_turn and not interrupted:
+            self._persist_session_turn(
+                user_input, answer,
+                tokens=max(dtok, 0), cost=max(dcost, 0.0), elapsed=elapsed,
+            )
         if not self.quiet:
             self._print_footer(elapsed, dtok, dcost, interrupted)
 
-    def _persist_session_turn(self, user_input: str, answer: str) -> None:
-        """Append a plain (streamed) turn to the persistent session, if any."""
+    def _persist_session_turn(
+        self,
+        user_input: str,
+        answer: str,
+        *,
+        tokens: int = 0,
+        cost: float = 0.0,
+        elapsed: float | None = None,
+    ) -> None:
+        """Append a plain (streamed) turn to the persistent session, if any.
+
+        The turn carries the model, token count, cost and latency it was
+        answered with, matching what `agent.run()` stores for tool turns.
+        """
         session = getattr(self.agent, "session", None)
         if session is None or not answer:
             return
+        meta: dict[str, object] = {"model": self.model_id}
+        if tokens:
+            meta["tokens_used"] = tokens
+        if cost:
+            meta["cost_usd"] = round(cost, 8)
+        if elapsed is not None:
+            meta["latency_ms"] = round(elapsed * 1000, 1)
         try:
-            session.add_user_message(user_input)
-            session.add_assistant_message(answer)
+            session.add_message("user", user_input, **meta)
+            session.add_message("assistant", answer, **meta)
+            session.metadata["model"] = self.model_id
             session.save()
         except Exception:  # noqa: BLE001 - persistence is best-effort
             pass

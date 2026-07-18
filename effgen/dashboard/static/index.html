@@ -154,6 +154,62 @@
       </div>
     </section>
 
+    <!-- Run & session history -->
+    <section class="panel" id="panel-history">
+      <h2>History</h2>
+      <p class="panel-sub" id="history-sub">Loading stored runs…</p>
+      <div class="catalog-toolbar" role="group" aria-label="History filters">
+        <label class="cat-field">
+          <span class="cat-label">Search</span>
+          <input type="search" id="hist-search" placeholder="task, model, run id"
+                 autocomplete="off" aria-label="Search run history" />
+        </label>
+        <label class="cat-field">
+          <span class="cat-label">Status</span>
+          <select id="hist-status" aria-label="Filter runs by status">
+            <option value="">all</option>
+            <option value="ok">ok</option>
+            <option value="error">failed</option>
+          </select>
+        </label>
+      </div>
+      <div class="table-wrapper">
+        <table id="history-table">
+          <thead>
+            <tr>
+              <th scope="col">When</th>
+              <th scope="col">Model</th>
+              <th scope="col">Task</th>
+              <th scope="col" class="num">Cost</th>
+              <th scope="col" class="num">Duration</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody">
+            <tr><td colspan="6" class="empty-row">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="history-detail" class="history-detail" aria-live="polite" hidden></div>
+      <h3 class="history-heading">Saved Sessions</h3>
+      <div class="table-wrapper">
+        <table id="history-sessions-table">
+          <thead>
+            <tr>
+              <th scope="col">Session</th>
+              <th scope="col" class="num">Messages</th>
+              <th scope="col">Model</th>
+              <th scope="col" class="num">Cost</th>
+              <th scope="col">Updated</th>
+            </tr>
+          </thead>
+          <tbody id="history-sessions-tbody">
+            <tr><td colspan="5" class="empty-row">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Row 6: live span stream -->
     <section class="panel" id="panel-spans">
       <h2>Live Span Stream</h2>

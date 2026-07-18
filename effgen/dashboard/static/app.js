@@ -8,6 +8,7 @@
  *  - per-model breakdown (calls, error rate, p95, tokens, cost)
  *  - HTTP responses by status code
  *  - recent agent runs table
+ *  - history of stored runs and saved sessions, with per-run drill-in
  *  - live span stream (SSE from /dashboard/spans if available)
  *  - raw Prometheus metrics table
  *
@@ -698,6 +699,133 @@
   }
 
   // ------------------------------------------------------------------
+  // History (stored runs + saved sessions)
+  // ------------------------------------------------------------------
+  let historyRuns = [];
+  let historyPayload = {};
+  let openRunId = null;
+
+  function fmtWhen(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts).slice(0, 16);
+    return d.toLocaleString(undefined, {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit",
+    });
+  }
+
+  function clip(text, width) {
+    if (text == null || text === "") return "—";
+    const flat = String(text).replace(/\s+/g, " ").trim();
+    return flat.length > width ? flat.slice(0, width - 1) + "…" : flat;
+  }
+
+  async function loadHistory() {
+    const params = new URLSearchParams({ limit: "50" });
+    const search = $("hist-search");
+    const status = $("hist-status");
+    if (search && search.value.trim()) params.set("search", search.value.trim());
+    if (status && status.value) params.set("status", status.value);
+    try {
+      const resp = await fetch("/dashboard/history.json?" + params.toString(),
+                               { cache: "no-store" });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      renderHistory(await resp.json());
+    } catch (err) {
+      setText("history-sub", "History unavailable.");
+      console.warn("[effGen dashboard] history fetch failed:", err);
+    }
+  }
+
+  function renderHistory(data) {
+    historyPayload = data || {};
+    historyRuns = data.runs || [];
+    const sessions = data.sessions || [];
+    const where = data.runs_dir ? " Stored in " + data.runs_dir + "." : "";
+    const note = data.persisted === false
+      ? " Persistence is off (EFFGEN_RUN_HISTORY=0); only this process's runs are listed."
+      : where;
+    setText("history-sub",
+      historyRuns.length + " run(s), " + sessions.length + " session(s)." + note);
+
+    const tbody = $("history-tbody");
+    if (tbody) {
+      tbody.innerHTML = historyRuns.length
+        ? historyRuns.map((r, i) => `
+          <tr class="history-row${r.run_id && r.run_id === openRunId ? " is-open" : ""}">
+            <td>${esc(fmtWhen(r.ts))}</td>
+            <td>${esc(clip(r.model, 28))}</td>
+            <td><button type="button" class="link-btn" data-run-index="${i}"
+                aria-expanded="${r.run_id && r.run_id === openRunId ? "true" : "false"}"
+                >${esc(clip(r.task || r.run_id || "(no task recorded)", 60))}</button></td>
+            <td class="num">${fmtCost(r.cost_usd)}</td>
+            <td class="num">${fmtSeconds(r.duration_s)}</td>
+            <td><span class="badge ${r.status === "error" ? "badge-err" : "badge-ok"}">${esc(r.status || "ok")}</span></td>
+          </tr>`).join("")
+        : '<tr><td colspan="6" class="empty-row">No runs recorded yet</td></tr>';
+      tbody.querySelectorAll("button[data-run-index]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const run = historyRuns[Number(btn.dataset.runIndex)];
+          openRunId = (run && run.run_id === openRunId) ? null : (run && run.run_id) || null;
+          renderRunDetail(openRunId ? run : null);
+        });
+      });
+    }
+
+    const stbody = $("history-sessions-tbody");
+    if (stbody) {
+      stbody.innerHTML = sessions.length
+        ? sessions.map((s) => `
+          <tr>
+            <td>${esc(s.session_id)}</td>
+            <td class="num">${fmt(s.messages)}</td>
+            <td>${esc(clip(s.model, 28))}</td>
+            <td class="num">${fmtCost(s.cost_usd)}</td>
+            <td>${esc(fmtWhen(s.updated_at))}</td>
+          </tr>`).join("")
+        : '<tr><td colspan="5" class="empty-row">No saved sessions</td></tr>';
+    }
+  }
+
+  function renderRunDetail(run) {
+    const box = $("history-detail");
+    if (!box) return;
+    if (!run) {
+      box.hidden = true;
+      box.innerHTML = "";
+      renderHistory(historyPayload);
+      return;
+    }
+    const rows = [
+      ["Run id", run.run_id || "—"],
+      ["When", fmtWhen(run.ts)],
+      ["Model", (run.model || "—") + (run.provider ? " (" + run.provider + ")" : "")],
+      ["Agent", run.agent || "—"],
+      ["Session", run.session_id || "—"],
+      ["Tokens", (run.input_tokens || 0) + " in / " + (run.output_tokens || 0) + " out"],
+      ["Cost", fmtCost(run.cost_usd)],
+      ["Duration", fmtSeconds(run.duration_s)],
+    ];
+    box.innerHTML =
+      '<dl class="run-detail">' +
+      rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("") +
+      "</dl>" +
+      (run.task ? `<h4>Task</h4><pre class="run-text">${esc(run.task)}</pre>` : "") +
+      (run.output ? `<h4>Answer</h4><pre class="run-text">${esc(run.output)}</pre>` : "") +
+      (run.error ? `<h4>Error</h4><pre class="run-text run-error">${esc(run.error)}</pre>` : "");
+    box.hidden = false;
+  }
+
+  function initHistory() {
+    ["hist-search", "hist-status"].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.addEventListener(el.tagName === "SELECT" ? "change" : "input", loadHistory);
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Data polling
   // ------------------------------------------------------------------
   async function fetchData() {
@@ -721,6 +849,7 @@
       renderByStatus(data);
       renderRuns(data);
       renderMetrics(data);
+      loadHistory();
       // Seed the span stream from the payload if SSE has not connected.
       if (!eventSource && data.recent_spans) {
         data.recent_spans.forEach(appendSpan);
@@ -737,6 +866,7 @@
   function init() {
     initTheme();
     initCatalog();
+    initHistory();
 
     // Wire up buttons
     const refreshBtn = $("refresh-btn");

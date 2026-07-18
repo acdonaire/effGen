@@ -84,6 +84,13 @@ if "EFFGEN_COST_DB" not in os.environ:
     # budget configured", which is the state a clean CI runner sees.
     os.environ["EFFGEN_BUDGET_CONFIG"] = str(Path(_TEST_COST_DB_DIR) / "budget.json")
 
+# Run history is durable too: keep test runs out of the user's real
+# ~/.effgen/runs, and keep the user's stored runs out of test assertions.
+if "EFFGEN_RUN_HISTORY_DIR" not in os.environ:
+    if _TEST_COST_DB_DIR is None:
+        _TEST_COST_DB_DIR = tempfile.mkdtemp(prefix="effgen_test_costs_")
+    os.environ["EFFGEN_RUN_HISTORY_DIR"] = str(Path(_TEST_COST_DB_DIR) / "runs")
+
 
 def pytest_sessionfinish(session, exitstatus):
     """Remove the isolated cost DB created for this pytest session."""

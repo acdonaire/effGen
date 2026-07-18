@@ -44,6 +44,18 @@ from pathlib import Path
 
 _DEFAULT_DB_PATH = Path.home() / ".effgen" / "rate_limits.sqlite"
 
+
+def _default_db_path() -> Path:
+    """Where rate-limit events are stored when no path is given.
+
+    Follows ``EFFGEN_HOME`` when set, so the whole effGen state directory moves
+    with one variable; otherwise ``~/.effgen/rate_limits.sqlite``.
+    """
+    home = os.environ.get("EFFGEN_HOME")
+    if home:
+        return Path(os.path.expanduser(home)).absolute() / "rate_limits.sqlite"
+    return _DEFAULT_DB_PATH
+
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS rate_events (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,12 +111,13 @@ class SQLiteRateLimitStore:
 
     Args:
         db_path: Path to the SQLite file.  Use ``":memory:"`` for tests.
-                 Defaults to ``~/.effgen/rate_limits.sqlite``.
+                 Defaults to ``$EFFGEN_HOME/rate_limits.sqlite`` when
+                 ``EFFGEN_HOME`` is set, else ``~/.effgen/rate_limits.sqlite``.
     """
 
     def __init__(self, db_path: str | os.PathLike | None = None) -> None:
         if db_path is None:
-            db_path = _DEFAULT_DB_PATH
+            db_path = _default_db_path()
         self._path = str(db_path)
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)

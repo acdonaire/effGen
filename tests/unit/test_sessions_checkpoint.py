@@ -84,6 +84,41 @@ def test_corrupt_session_skipped_in_listing(tmp_path):
     assert [e["session_id"] for e in listing] == ["ok"]
 
 
+def test_scan_names_unreadable_session_files(tmp_path):
+    (tmp_path / "broken.json").write_text("{not json")
+    Session(session_id="ok", agent_name="a").save(str(tmp_path))
+
+    sessions, unreadable = SessionManager(str(tmp_path)).scan()
+
+    assert [e["session_id"] for e in sessions] == ["ok"]
+    assert [u["file"] for u in unreadable] == ["broken.json"]
+    assert unreadable[0]["reason"]
+
+
+def test_listing_reports_per_session_model_and_cost(tmp_path):
+    s = Session(session_id="priced", agent_name="a")
+    s.add_message("user", "q", model="gpt-5-nano", run_id="r1", cost_usd=0.002)
+    s.add_message("assistant", "a", model="gpt-5-nano", run_id="r1", cost_usd=0.002)
+    s.add_message("assistant", "a2", model="gpt-5-nano", run_id="r2", cost_usd=0.003)
+    s.metadata["model"] = "gpt-5-nano"
+    s.save(str(tmp_path))
+
+    entry = SessionManager(str(tmp_path)).list_sessions()[0]
+
+    assert entry["model"] == "gpt-5-nano"
+    # One cost per turn: the pair sharing run r1 counts once.
+    assert entry["cost_usd"] == pytest.approx(0.005)
+
+
+def test_listing_cost_is_none_when_no_turn_was_priced(tmp_path):
+    s = Session(session_id="unpriced", agent_name="a")
+    s.add_message("user", "q")
+    s.add_message("assistant", "a")
+    s.save(str(tmp_path))
+
+    assert SessionManager(str(tmp_path)).list_sessions()[0]["cost_usd"] is None
+
+
 def test_session_atomic_save_no_partial_file(tmp_path):
     s = Session(session_id="atomic")
     s.save(str(tmp_path))

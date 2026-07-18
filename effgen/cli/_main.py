@@ -49,6 +49,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -415,6 +416,32 @@ class CLIInterface:
             console.print(*args, **kwargs)
         else:
             print(*args, file=sys.stderr if self._human_to_stderr else None, **kwargs)
+
+    def print_data(self, text: str):
+        """Write *text* to stdout byte-for-byte.
+
+        Used for output that is data rather than chatter — an exported session,
+        a rendered prompt, a model answer. It bypasses the markup renderer, so
+        square-bracket content such as ``[bold]`` or ``[1]`` survives instead of
+        being read as console markup and dropped.
+        """
+        sys.stdout.write(text)
+        if not text.endswith("\n"):
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+
+    def print_line(self, text: str, style: str | None = None):
+        """Print one line with no markup parsing and no value highlighting.
+
+        Stored values such as model ids, timestamps and durations stay intact
+        instead of being read as console markup or split into separately
+        colored tokens.
+        """
+        console = self._human()
+        if console:
+            console.print(text, highlight=False, markup=False, style=style)
+        else:
+            print(text, file=sys.stderr if self._human_to_stderr else None)
 
     def print_header(self, text: str):
         """Print a header."""
@@ -3312,12 +3339,43 @@ Model id formats:
     resume_parser.add_argument('--preset', choices=_preset_choices)
 
     # Sessions commands
-    sessions_parser = subparsers.add_parser('sessions', help='Manage persistent sessions')
+    sessions_parser = subparsers.add_parser(
+        'sessions', help='Browse and manage saved conversations',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  effgen sessions list --search refund --since 2026-07-01\n"
+            "  effgen sessions show support-4471 --last 4\n"
+            "  effgen sessions browse\n"
+            "\n"
+            "Continue a saved conversation with `effgen chat --session-id <id>` or\n"
+            "`effgen run \"...\" --session-id <id>`. (`effgen resume` replays a\n"
+            "workflow checkpoint, which is a different store.)\n"
+        ),
+    )
     sessions_parser.set_defaults(_group_parser=sessions_parser)
     sessions_subparsers = sessions_parser.add_subparsers(dest='session_command', help='Sessions command')
     _sessions_list = sessions_subparsers.add_parser('list', help='List sessions')
     _sessions_list.add_argument('--json', dest='output_json', action='store_true',
                                 help='Output the session list as JSON')
+    _sessions_list.add_argument('--search', help='Only sessions whose id, agent or messages match this text')
+    _sessions_list.add_argument('--since', help='Only sessions updated on/after this date (YYYY-MM-DD)')
+    _sessions_list.add_argument('--until', help='Only sessions updated on/before this date (YYYY-MM-DD)')
+    _sessions_list.add_argument('--model', help='Only sessions answered by a model matching this text')
+    _sessions_list.add_argument('--limit', type=int, default=50, help='Maximum sessions to show (default: 50)')
+    ss = sessions_subparsers.add_parser(
+        'show', help='Read a conversation turn by turn',
+    )
+    ss.add_argument('session_id', help='Session id')
+    ss.add_argument('--last', type=int, help='Show only the last N messages')
+    ss.add_argument('--json', dest='output_json', action='store_true',
+                    help='Output the conversation as JSON')
+    sb = sessions_subparsers.add_parser(
+        'browse', help='Pick a session from the list and read it',
+    )
+    sb.add_argument('--json', dest='output_json', action='store_true',
+                    help='Output the session list as JSON instead of prompting')
+    sb.add_argument('--limit', type=int, default=20, help='Sessions to offer (default: 20)')
     sd = sessions_subparsers.add_parser('delete', help='Delete a session')
     sd.add_argument('session_id', help='Session id')
     se = sessions_subparsers.add_parser('export', help='Export a session')
@@ -3325,6 +3383,39 @@ Model id formats:
     se.add_argument('--format', choices=['json', 'text'], default='json')
     sc = sessions_subparsers.add_parser('cleanup', help='Delete sessions older than N days')
     sc.add_argument('--days', type=int, default=30)
+
+    # Runs commands (agent run history)
+    runs_parser = subparsers.add_parser(
+        'runs', help='Browse agent run history',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  effgen runs list --status failed --since 2026-07-17\n"
+            "  effgen runs list --model gpt-5-nano --json\n"
+            "  effgen runs show 3f9a1c2b\n"
+            "\n"
+            "Runs are appended to $EFFGEN_HOME/runs (default ~/.effgen/runs) as\n"
+            "one JSONL file per day. Set EFFGEN_RUN_HISTORY=0 to keep history in\n"
+            "memory only; EFFGEN_RUN_HISTORY_MAX_DAYS sets retention (default 30).\n"
+        ),
+    )
+    runs_parser.set_defaults(_group_parser=runs_parser)
+    runs_subparsers = runs_parser.add_subparsers(dest='runs_command', help='Runs command')
+    rl = runs_subparsers.add_parser('list', help='List recent runs')
+    rl.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
+    rl.add_argument('--status', choices=['ok', 'error', 'failed'],
+                    help="Only runs with this status ('failed' is an alias for 'error')")
+    rl.add_argument('--model', help='Only runs on a model matching this text')
+    rl.add_argument('--search', help='Only runs whose task, answer, id or error match this text')
+    rl.add_argument('--session-id', dest='session_filter', help='Only runs from this session')
+    rl.add_argument('--since', help='Only runs on/after this date (YYYY-MM-DD)')
+    rl.add_argument('--until', help='Only runs on/before this date (YYYY-MM-DD)')
+    rl.add_argument('--limit', type=int, default=20, help='Maximum runs to show (default: 20)')
+    rs = runs_subparsers.add_parser('show', help='Show one run in full')
+    rs.add_argument('run_id', help='Run id (as shown by `effgen runs list`)')
+    rs.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
+    rc = runs_subparsers.add_parser('cleanup', help='Delete run history older than N days')
+    rc.add_argument('--days', type=int, default=30)
 
     # Chat command
     chat_parser = subparsers.add_parser(
@@ -5657,6 +5748,10 @@ def _handle_resume_command(args, cli) -> int:
     except FileNotFoundError as e:
         cli.print(f"Error: {e}")
         cli.print("List available checkpoints by pointing --checkpoint at their directory.")
+        cli.print(
+            "Looking for a saved conversation instead? Those are listed by "
+            "`effgen sessions list` and continued with `effgen chat --session-id <id>`."
+        )
         return 2
     except CorruptStateError as e:
         cli.print(f"Error: {e}")
@@ -5698,7 +5793,7 @@ def _handle_resume_command(args, cli) -> int:
 
     try:
         response = agent.resume(checkpoint_id=cp_id, checkpoint_dir=ckpt_dir)
-        cli.print(response.output if hasattr(response, 'output') else str(response))
+        cli.print_data(response.output if hasattr(response, 'output') else str(response))
         return 0 if getattr(response, 'success', True) else 1
     finally:
         # Release the agent so resume never emits the "garbage-collected
@@ -5933,38 +6028,330 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
                 logging.debug(f"quickstart: agent close failed: {e}")
 
 
+def _short_ts(value: Any) -> str:
+    """Render a stored ISO timestamp as 'YYYY-MM-DD HH:MM' for a table cell."""
+    if not value:
+        return "—"
+    text = str(value)
+    try:
+        return datetime.fromisoformat(text).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return text[:16]
+
+
+def _fmt_cost(value: Any) -> str:
+    """Format a cost in USD, or '—' when the run was not priced.
+
+    Sub-cent amounts keep enough precision to stay distinguishable from a free
+    run, so a priced turn never reads as ``$0.0000``.
+    """
+    if not isinstance(value, int | float):
+        return "—"
+    if value == 0:
+        return "$0.00"
+    if value < 0.0001:
+        return f"${value:.6f}"
+    return f"${value:.4f}" if value < 1 else f"${value:.2f}"
+
+
+def _one_line(text: Any, width: int = 60) -> str:
+    """Collapse text to a single line no wider than *width*."""
+    if text is None:
+        return "—"
+    flat = " ".join(str(text).split())
+    if not flat:
+        return "—"
+    return flat if len(flat) <= width else flat[: width - 1] + "…"
+
+
+def _session_matches(entry: dict, mgr, *, search: str | None, model: str | None,
+                     since: str | None, until: str | None) -> bool:
+    """Whether a session summary passes the list filters."""
+    updated = str(entry.get("updated_at") or "")
+    if since and updated[:10] < since:
+        return False
+    if until and updated[:10] > until:
+        return False
+    if model and model.lower() not in str(entry.get("model") or "").lower():
+        return False
+    if search:
+        needle = search.lower()
+        if needle in str(entry.get("session_id", "")).lower() or \
+           needle in str(entry.get("agent_name", "")).lower():
+            return True
+        try:
+            session = mgr.get(entry["session_id"])
+        except Exception:  # noqa: BLE001 - an unreadable file simply cannot match
+            return False
+        return any(
+            needle in str(m.get("content", "")).lower() for m in session.messages
+        )
+    return True
+
+
+def _render_session(session, cli, *, last: int | None = None) -> None:
+    """Print a conversation with speaker labels and per-turn model/cost."""
+    messages = session.messages
+    shown = messages[-last:] if last and last > 0 else messages
+    cli.print_line(f"Session: {session.session_id}")
+    if session.agent_name:
+        cli.print_line(f"Agent:   {session.agent_name}")
+    if session.metadata.get("model"):
+        cli.print_line(f"Model:   {session.metadata['model']}")
+    cli.print_line(
+        f"Turns:   {len(messages)} message(s)"
+        + (f" (showing last {len(shown)})" if len(shown) != len(messages) else "")
+    )
+    cli.print("")
+    for m in shown:
+        meta = m.get("metadata") or {}
+        role = str(m.get("role", "?"))
+        stamp = _short_ts(m.get("timestamp"))
+        detail = []
+        if meta.get("model"):
+            detail.append(str(meta["model"]))
+        tokens = meta.get("tokens_used")
+        if tokens:
+            detail.append(f"{tokens} tok")
+        if isinstance(meta.get("cost_usd"), int | float):
+            detail.append(_fmt_cost(meta["cost_usd"]))
+        if isinstance(meta.get("latency_ms"), int | float):
+            detail.append(f"{meta['latency_ms']:.0f} ms")
+        suffix = ("  ·  " + "  ".join(detail)) if detail else ""
+        cli.print_line(f"--- {role} · {stamp}{suffix}", style="dim")
+        cli.print_data(str(m.get("content", "")))
+        cli.print("")
+
+
+def _browse_sessions(sessions: list[dict], mgr, cli) -> int:
+    """Offer the listed sessions for selection and read the chosen one.
+
+    On a non-interactive stdin the list is all that is printed, so the command
+    stays usable when piped or run from a script.
+    """
+    if not sessions:
+        return 0
+    if not sys.stdin.isatty():
+        cli.print("Read one with: effgen sessions show <id>")
+        return 0
+    cli.print("")
+    try:
+        choice = input("Open which session? (number, id, or Enter to quit): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        cli.print("")
+        return 0
+    if not choice:
+        return 0
+    session_id = None
+    if choice.isdigit() and 1 <= int(choice) <= len(sessions):
+        session_id = sessions[int(choice) - 1]["session_id"]
+    else:
+        session_id = choice
+    try:
+        session = mgr.get(session_id)
+    except FileNotFoundError:
+        cli.print_line(f"Session not found: {session_id}")
+        return 1
+    cli.print("")
+    _render_session(session, cli)
+    cli.print_line(f"Continue this conversation: effgen chat --session-id {session.session_id}")
+    return 0
+
+
+def _handle_runs_command(args, cli) -> int:
+    """Handle 'effgen runs' subcommands over the run history store."""
+    import json as _json
+
+    from effgen.observability import run_log
+
+    cmd = getattr(args, 'runs_command', None)
+    if cmd == 'list':
+        status = getattr(args, 'status', None)
+        if status == 'failed':
+            status = 'error'
+        runs = run_log.read_runs(
+            limit=max(int(getattr(args, 'limit', 20) or 20), 1),
+            status=status,
+            model=getattr(args, 'model', None),
+            search=getattr(args, 'search', None),
+            since=getattr(args, 'since', None),
+            until=getattr(args, 'until', None),
+            session_id=getattr(args, 'session_filter', None),
+        )
+        if getattr(args, 'output_json', False):
+            print(_json.dumps({
+                "runs": runs,
+                "runs_dir": str(run_log.history_dir()),
+                "persisted": run_log.history_enabled(),
+            }, indent=2, default=str, ensure_ascii=False))
+            return 0
+        if not runs:
+            filtered = any((
+                status, getattr(args, 'model', None), getattr(args, 'search', None),
+                getattr(args, 'since', None), getattr(args, 'until', None),
+                getattr(args, 'session_filter', None),
+            ))
+            if filtered:
+                cli.print(
+                    "No runs match those filters. Widen them, or list everything "
+                    "with: effgen runs list"
+                )
+            else:
+                cli.print("No runs recorded yet. Run an agent (effgen run \"...\") and try again.")
+            if not run_log.history_enabled():
+                cli.print(
+                    "Run history is disabled (EFFGEN_RUN_HISTORY=0), so only runs "
+                    "from this process are visible."
+                )
+            return 0
+        render_table(
+            columns=["Run", "When", "Model", "Task", "Cost", "Time", "Status"],
+            rows=[
+                [
+                    r.get("run_id") or "—",
+                    _short_ts(r.get("ts")),
+                    _one_line(r.get("model"), 24),
+                    _one_line(r.get("task"), 40),
+                    _fmt_cost(r.get("cost_usd")),
+                    f"{r['duration_s']:.1f}s" if isinstance(r.get("duration_s"), int | float) else "—",
+                    r.get("status") or ("error" if r.get("error") else "ok"),
+                ]
+                for r in runs
+            ],
+            console=cli.console,
+            justify=["left", "left", "left", "left", "right", "right", "left"],
+            styles=["cyan", None, None, None, None, None, "yellow"],
+            caption=f"Stored in: {run_log.history_dir()}",
+        )
+        cli.print("Open one with: effgen runs show <run-id>")
+        return 0
+    if cmd == 'show':
+        record = run_log.get_run(args.run_id)
+        if record is None:
+            cli.print_line(f"Run not found: {args.run_id}")
+            cli.print("List the stored runs with: effgen runs list")
+            return 1
+        if getattr(args, 'output_json', False):
+            print(_json.dumps(record, indent=2, default=str, ensure_ascii=False))
+            return 0
+        cli.print_line(f"Run:      {record.get('run_id') or '—'}")
+        cli.print_line(f"When:     {record.get('ts') or '—'}")
+        cli.print_line(f"Status:   {record.get('status') or '—'}")
+        cli.print_line(f"Model:    {record.get('model') or '—'}"
+                       + (f" ({record['provider']})" if record.get("provider") else ""))
+        if record.get("agent"):
+            cli.print_line(f"Agent:    {record['agent']}")
+        if record.get("session_id"):
+            cli.print_line(f"Session:  {record['session_id']}"
+                           f"   (read it with: effgen sessions show {record['session_id']})")
+        tokens = f"{record.get('input_tokens') or 0} in / {record.get('output_tokens') or 0} out"
+        cli.print_line(f"Tokens:   {tokens}")
+        cli.print_line(f"Cost:     {_fmt_cost(record.get('cost_usd'))}")
+        if isinstance(record.get("duration_s"), int | float):
+            cli.print_line(f"Duration: {record['duration_s']:.2f}s")
+        if record.get("task"):
+            cli.print("\nTask:")
+            cli.print_data(str(record["task"]))
+        if record.get("output"):
+            cli.print("\nAnswer:")
+            cli.print_data(str(record["output"]))
+        if record.get("error"):
+            cli.print("\nError:")
+            cli.print_data(str(record["error"]))
+        return 0
+    if cmd == 'cleanup':
+        removed = run_log.cleanup_runs(older_than_days=args.days)
+        cli.print(f"Removed {removed} run history file(s).")
+        return 0
+    return _print_group_help(args)
+
+
 def _handle_sessions_command(args, cli) -> int:
     """Handle 'effgen sessions' subcommands."""
+    import json as _json
+
     from effgen.core.session import SessionManager
     from effgen.errors import CorruptStateError
     mgr = SessionManager()
     cmd = getattr(args, 'session_command', None)
-    if cmd == 'list':
-        sessions = mgr.list_sessions()
+    if cmd in ('list', 'browse'):
+        sessions, unreadable = mgr.scan()
+        limit = getattr(args, 'limit', None)
+        if cmd == 'list':
+            sessions = [
+                s for s in sessions
+                if _session_matches(
+                    s, mgr,
+                    search=getattr(args, 'search', None),
+                    model=getattr(args, 'model', None),
+                    since=getattr(args, 'since', None),
+                    until=getattr(args, 'until', None),
+                )
+            ]
+        if limit and limit > 0:
+            sessions = sessions[:limit]
         if getattr(args, 'output_json', False):
-            import json as _json
             print(_json.dumps({
                 "sessions": sessions,
+                "unreadable": unreadable,
                 "sessions_dir": str(mgr.sessions_dir),
             }, indent=2, default=str, ensure_ascii=False))
             return 0
-        if not sessions:
+        if not sessions and not unreadable:
             cli.print(
                 "No sessions yet. Start one with: effgen chat  (or effgen run \"...\" "
                 "creates a session you can resume)."
             )
             return 0
-        render_table(
-            columns=["Session", "Messages", "Updated"],
-            rows=[
-                [s['session_id'], s['messages'], s.get('updated_at') or "—"]
-                for s in sessions
-            ],
-            console=cli.console,
-            justify=["left", "right", "left"],
-            styles=["cyan", "yellow", None],
-            caption=f"Stored in: {mgr.sessions_dir}",
-        )
+        if sessions:
+            render_table(
+                columns=["#", "Session", "Messages", "Model", "Cost", "Updated"],
+                rows=[
+                    [
+                        i,
+                        s['session_id'],
+                        s['messages'],
+                        _one_line(s.get('model'), 28),
+                        _fmt_cost(s.get('cost_usd')),
+                        _short_ts(s.get('updated_at')),
+                    ]
+                    for i, s in enumerate(sessions, start=1)
+                ],
+                console=cli.console,
+                justify=["right", "left", "right", "left", "right", "left"],
+                styles=[None, "cyan", "yellow", None, None, None],
+                caption=f"Stored in: {mgr.sessions_dir}",
+            )
+        if unreadable:
+            names = ", ".join(u["file"] for u in unreadable)
+            cli.print_warning(
+                f"{len(unreadable)} session file(s) could not be read and are not "
+                f"listed: {names}"
+            )
+        if cmd == 'browse':
+            return _browse_sessions(sessions, mgr, cli)
+        cli.print("Read one:  effgen sessions show <id>")
+        cli.print("Continue:  effgen chat --session-id <id>")
+        return 0
+    if cmd == 'show':
+        try:
+            session = mgr.get(args.session_id)
+        except FileNotFoundError:
+            cli.print_line(f"Session not found: {args.session_id}")
+            cli.print("List the stored sessions with: effgen sessions list")
+            return 1
+        except CorruptStateError as e:
+            cli.print(f"Error: {e}")
+            return 2
+        if getattr(args, 'output_json', False):
+            data = session.to_dict()
+            last = getattr(args, 'last', None)
+            if last and last > 0:
+                data["messages"] = data["messages"][-last:]
+            print(_json.dumps(data, indent=2, default=str, ensure_ascii=False))
+            return 0
+        _render_session(session, cli, last=getattr(args, 'last', None))
+        cli.print_line(f"Continue this conversation: effgen chat --session-id {session.session_id}")
         return 0
     if cmd == 'delete':
         ok = mgr.delete(args.session_id)
@@ -5972,9 +6359,9 @@ def _handle_sessions_command(args, cli) -> int:
         return 0 if ok else 1
     if cmd == 'export':
         try:
-            cli.print(mgr.export(args.session_id, format=args.format))
+            cli.print_data(mgr.export(args.session_id, format=args.format))
         except FileNotFoundError:
-            cli.print(f"Session not found: {args.session_id}")
+            cli.print_line(f"Session not found: {args.session_id}")
             return 1
         except CorruptStateError as e:
             cli.print(f"Error: {e}")
@@ -6073,9 +6460,9 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
         cli.print(f"  Description: {p.description}")
         cli.print(f"  Tags:        {', '.join(p.tags) or '—'}")
         cli.print("\n[bold]Input Schema:[/bold]" if RICH_AVAILABLE else "\nInput Schema:")
-        cli.print("  " + _json.dumps(p.input_schema, indent=2).replace("\n", "\n  "))
+        cli.print_data("  " + _json.dumps(p.input_schema, indent=2).replace("\n", "\n  "))
         cli.print("\n[bold]Fixture:[/bold]" if RICH_AVAILABLE else "\nFixture:")
-        cli.print("  " + _json.dumps(p.fixture, indent=2).replace("\n", "\n  "))
+        cli.print_data("  " + _json.dumps(p.fixture, indent=2).replace("\n", "\n  "))
         try:
             rendered = p.render_fixture()
             cli.print(
@@ -6083,7 +6470,7 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
                 if RICH_AVAILABLE
                 else "\nRendered (fixture):"
             )
-            cli.print(rendered)
+            cli.print_data(rendered)
         except Exception as exc:
             cli.print_warning(f"Could not render: {exc}")
         return 0
@@ -6308,6 +6695,8 @@ def main():
             exit_code = _handle_resume_command(args, cli)
         elif args.command == 'sessions':
             exit_code = _handle_sessions_command(args, cli)
+        elif args.command == 'runs':
+            exit_code = _handle_runs_command(args, cli)
         elif args.command == 'create-plugin':
             exit_code = _create_plugin_scaffold(args.plugin_name, args.output_dir)
         elif args.command == 'presets':

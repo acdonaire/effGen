@@ -1056,6 +1056,25 @@ def _mount_dashboard(app: Any) -> None:
 
             return JSONResponse(build_model_catalog(provider))
 
+        # ---- /dashboard/history.json ----------------------------------------
+        @router.get("/history.json", include_in_schema=False)
+        async def dashboard_history(
+            limit: int = 50,
+            status: str | None = None,
+            search: str | None = None,
+            run_id: str | None = None,
+        ) -> Any:
+            """Stored run history and saved sessions for the History view.
+
+            Reads the same run store as ``effgen runs`` and the same session
+            files as ``effgen sessions``, so the dashboard shows runs recorded
+            by the CLI and by other processes, not only this server's traffic.
+            Served under the dashboard's own access rule.
+            """
+            return JSONResponse(_build_dashboard_history(
+                limit=limit, status=status, search=search, run_id=run_id,
+            ))
+
         # ---- /dashboard/spans (SSE) ----------------------------------------
         @router.get("/spans", include_in_schema=False)
         async def dashboard_spans(request: _FastAPIRequest) -> Any:  # type: ignore[valid-type]
@@ -1604,6 +1623,41 @@ def _get_prompt_templates() -> list[dict[str, str]]:
         return templates
     except Exception:  # noqa: BLE001
         return []
+
+
+def _build_dashboard_history(
+    *,
+    limit: int = 50,
+    status: str | None = None,
+    search: str | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Assemble the payload served at /dashboard/history.json."""
+    limit = max(1, min(int(limit or 50), 500))
+    payload: dict[str, Any] = {"runs": [], "sessions": [], "run": None}
+    try:
+        from effgen.observability import run_log
+
+        if status == "failed":
+            status = "error"
+        payload["runs"] = run_log.read_runs(limit=limit, status=status, search=search)
+        payload["runs_dir"] = str(run_log.history_dir())
+        payload["persisted"] = run_log.history_enabled()
+        if run_id:
+            payload["run"] = run_log.get_run(run_id)
+    except Exception:  # noqa: BLE001 - an empty history is a valid view
+        logger.debug("Dashboard history: run store unavailable", exc_info=True)
+    try:
+        from effgen.core.session import SessionManager
+
+        manager = SessionManager()
+        sessions, unreadable = manager.scan()
+        payload["sessions"] = sessions[:limit]
+        payload["unreadable_sessions"] = unreadable
+        payload["sessions_dir"] = str(manager.sessions_dir)
+    except Exception:  # noqa: BLE001
+        logger.debug("Dashboard history: session store unavailable", exc_info=True)
+    return payload
 
 
 def _get_recent_runs() -> list[dict[str, Any]]:

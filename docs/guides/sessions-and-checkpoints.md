@@ -38,15 +38,62 @@ effgen run --session-id user-123 "What is my favorite color?"   # remembers
 ### Managing sessions
 
 ```bash
-effgen sessions list                 # ids, message counts, timestamps, storage dir
+effgen sessions list                 # id, messages, model, cost, updated
+effgen sessions show <id>            # read the conversation turn by turn
+effgen sessions show <id> --last 4   # tail a long thread
+effgen sessions browse               # list, then pick one to read
 effgen sessions export <id>          # JSON (default) — a documented, reloadable format
 effgen sessions export <id> --format text
 effgen sessions delete <id>          # exit 0 if removed, 1 if not found
 effgen sessions cleanup --days 30    # delete sessions not updated in N days
 ```
 
+`list` narrows with `--search <text>` (matches ids, agent names and message
+content), `--model`, `--since`/`--until` (YYYY-MM-DD) and `--limit`. `list`,
+`show` and `browse` all accept `--json`; `browse` prints the list and stops when
+stdin is not a terminal, so it stays usable in a pipeline. Session files that
+cannot be parsed are named in the output rather than dropped from the count.
+
+Export writes to stdout byte-for-byte, so message content containing square
+brackets (`[bold]`, `[REDACTED]`, `[1]`) survives intact and the JSON form
+round-trips.
+
+Each turn is stamped with the model, token counts, cost and latency it was
+answered with, which is what `sessions list` and `sessions show` report.
+
 Exit codes follow the CLI convention: `0` success, `1` user error (e.g. a
 missing id), `2` a corrupt file (see below).
+
+### Run history
+
+Every agent run is also recorded in a run history store, keyed by the same
+`run_id` its trace spans carry:
+
+```bash
+effgen runs list                     # run id, time, model, task, cost, status
+effgen runs list --status failed     # only the runs that failed
+effgen runs list --search refund --since 2026-07-01
+effgen runs show <run_id>            # task, answer, tokens, cost, error, session
+effgen runs cleanup --days 30        # drop history older than N days
+```
+
+Records are appended to one JSONL file per day under `$EFFGEN_HOME/runs`
+(default `~/.effgen/runs`), so runs from the CLI, a script and the server share
+one history and survive a restart. A run that belongs to a session records its
+session id, so `runs show` links back to the conversation it came from.
+
+| Variable | Effect |
+|---|---|
+| `EFFGEN_RUN_HISTORY_DIR` | Exact directory for run history files. |
+| `EFFGEN_RUN_HISTORY` | `0` keeps history in memory only (nothing written to disk). |
+| `EFFGEN_RUN_HISTORY_MAX_DAYS` | Retention in days (default 30); older files are removed on write. |
+
+History writes are best-effort: if the store cannot be written, the run itself
+still succeeds. Task and answer text is stored truncated to a 500-character
+preview.
+
+The dashboard's History view reads the same store, with drill-in from a run to
+its task, answer, tokens and cost.
 
 ### Where sessions are stored
 
@@ -56,7 +103,7 @@ location with environment variables (resolved at call time):
 | Variable | Effect |
 |---|---|
 | `EFFGEN_SESSIONS_DIR` | Exact directory for session files. |
-| `EFFGEN_HOME` | Base effGen state dir; sessions go in `$EFFGEN_HOME/sessions`. |
+| `EFFGEN_HOME` | Base effGen state dir; sessions go in `$EFFGEN_HOME/sessions`, run history in `$EFFGEN_HOME/runs`, and the cost and rate-limit databases alongside them. |
 
 Saves are **atomic** (written to a temp file then renamed) so a crash mid-write
 can never leave a truncated session that fails to load later.

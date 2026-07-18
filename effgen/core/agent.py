@@ -1392,7 +1392,7 @@ Question: {task}
                     tool_calls=response.tool_calls,
                     success=response.success,
                 )
-                self._record_dashboard_run(response)
+                self._record_dashboard_run(response, task=task)
 
                 # Store conversation in short-term memory for context retention
                 if response.success and response.output:
@@ -1412,10 +1412,16 @@ Question: {task}
                             tags=["conversation"],
                         )
 
-                    # Persist to session
+                    # Persist to session, stamping each turn with the model,
+                    # token counts, cost and latency it was answered with so a
+                    # stored conversation can be reviewed turn by turn.
                     if self.session is not None:
-                        self.session.add_user_message(task)
-                        self.session.add_assistant_message(response.output)
+                        turn_meta = self._session_turn_metadata(response, run_id=run_id)
+                        self.session.add_message("user", task, **turn_meta)
+                        self.session.add_message("assistant", response.output, **turn_meta)
+                        if turn_meta.get("model"):
+                            self.session.metadata["model"] = turn_meta["model"]
+                        self.session.metadata.setdefault("agent_name", self.name)
                         try:
                             self.session.save()
                         except Exception as _e:
@@ -1484,7 +1490,7 @@ Question: {task}
                     execution_tree=self.execution_tracker.generate_execution_tree(),
                     metadata={"reason": "run_failed", "error": detail, "run_id": run_id}
                 )
-                self._record_dashboard_run(response, error=redacted_msg)
+                self._record_dashboard_run(response, error=redacted_msg, task=task)
                 self._record_provider_metrics(
                     execution_time=response.execution_time,
                     outcome=classify_provider_error(e).category,
@@ -1494,13 +1500,47 @@ Question: {task}
             finally:
                 prom_metrics.active_agents.dec(labels=labels)
 
+    def _session_turn_metadata(
+        self,
+        response: AgentResponse,
+        *,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Model, tokens, cost and latency to stamp on a stored session turn."""
+        metadata = response.metadata or {}
+        meta: dict[str, Any] = {
+            "model": str(getattr(self, "model_name", None) or "unknown"),
+            "run_id": run_id,
+            "latency_ms": round(response.execution_time * 1000, 1) if response.execution_time else None,
+        }
+        provider = metadata.get("provider") or getattr(self.config, "provider", None)
+        if provider:
+            meta["provider"] = str(provider)
+        prompt_tokens = _safe_int_or_none(
+            metadata.get("prompt_tokens", metadata.get("input_tokens"))
+        )
+        completion_tokens = _safe_int_or_none(
+            metadata.get("completion_tokens", metadata.get("output_tokens"))
+        )
+        if prompt_tokens is not None:
+            meta["prompt_tokens"] = prompt_tokens
+        if completion_tokens is not None:
+            meta["completion_tokens"] = completion_tokens
+        if response.tokens_used:
+            meta["tokens_used"] = response.tokens_used
+        cost = _safe_float_or_none(metadata.get("cost_usd", metadata.get("cost")))
+        if cost is not None:
+            meta["cost_usd"] = cost
+        return {k: v for k, v in meta.items() if v is not None}
+
     def _record_dashboard_run(
         self,
         response: AgentResponse,
         *,
         error: str | None = None,
+        task: str | None = None,
     ) -> None:
-        """Best-effort process-local run log used by the dashboard."""
+        """Record the run in the history store read by `effgen runs` and the dashboard."""
         try:
             from effgen.observability.run_log import record_run
 
@@ -1510,6 +1550,7 @@ Question: {task}
             if output_tokens is None and response.tokens_used:
                 output_tokens = response.tokens_used
             input_tokens = metadata.get("input_tokens", metadata.get("prompt_tokens"))
+            provider = metadata.get("provider") or getattr(self.config, "provider", None)
             record_run(
                 model=str(getattr(self, "model_name", None) or "unknown"),
                 input_tokens=_safe_int_or_none(input_tokens),
@@ -1517,9 +1558,15 @@ Question: {task}
                 duration_s=response.execution_time,
                 cost_usd=_safe_float_or_none(cost),
                 error=error if error is not None else (None if response.success else response.output[:200]),
+                run_id=metadata.get("run_id"),
+                task=task,
+                output=response.output if response.success else None,
+                provider=str(provider) if provider else None,
+                session_id=self._session_id,
+                agent=self.name,
             )
-        except Exception:  # noqa: BLE001 - dashboard logging must not break runs
-            logger.debug("Dashboard run logging failed", exc_info=True)
+        except Exception:  # noqa: BLE001 - run history must not break runs
+            logger.debug("Run history logging failed", exc_info=True)
 
     def run_batch(
         self,
