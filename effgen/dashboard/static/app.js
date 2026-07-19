@@ -13,6 +13,10 @@
  *  - live span stream (SSE from /dashboard/spans if available)
  *  - raw Prometheus metrics table
  *
+ * Keyboard navigation — the section jump row, the Cmd/Ctrl-K command palette
+ * and the "?" shortcut list — comes from webui.js, which the playground loads
+ * as well. This file supplies the dashboard's own palette commands.
+ *
  * All assets are served locally; the page has no external network dependency.
  */
 
@@ -25,7 +29,9 @@
   const POLL_MS = 5000;
   const MAX_SPANS = 200;
   const MAX_CHART_POINTS = 30;
-  const THEME_KEY = "effgen-dashboard-theme";
+  // The keyboard layer shared with the playground. Absent only if webui.js
+  // failed to load, in which case the page keeps working without shortcuts.
+  const webui = window.effgenWebUI || null;
 
   // ------------------------------------------------------------------
   // State
@@ -125,28 +131,30 @@
     return prefersLight ? "light" : "dark";
   }
 
-  function syncThemeButton() {
+  function syncThemeButton(announce) {
     const theme = currentTheme();
     const icon = $("theme-icon");
     if (icon) icon.textContent = theme === "dark" ? "☾" : "☀";
     const btn = $("theme-btn");
     if (btn) btn.setAttribute("aria-label",
-      theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
+      theme === "dark" ? "Dark theme active. Switch to light theme."
+                       : "Light theme active. Switch to dark theme.");
+    // A change the viewer made is announced; the initial sync stays silent.
+    if (announce) setText("theme-status", theme === "dark" ? "Dark theme" : "Light theme");
   }
 
   // Set an explicit theme (overriding the OS scheme). Persisted only on a click.
   function applyTheme(theme, persist) {
     document.documentElement.setAttribute("data-theme", theme);
-    if (persist) {
-      try { localStorage.setItem(THEME_KEY, theme); } catch { /* storage blocked */ }
-    }
-    syncThemeButton();
+    if (persist && webui) webui.storeTheme(theme);
+    syncThemeButton(persist);
     drawChart();
   }
 
   function initTheme() {
-    let stored = null;
-    try { stored = localStorage.getItem(THEME_KEY); } catch { /* storage blocked */ }
+    // One preference key is shared by every effGen web surface, so a choice
+    // made here also applies on the playground.
+    const stored = webui ? webui.readStoredTheme() : null;
     if (stored === "dark" || stored === "light") {
       // Honor the user's saved choice.
       applyTheme(stored, false);
@@ -784,6 +792,7 @@
           renderRunDetail(openRunId ? run : null);
         });
       });
+      syncRunDisclosure();
     }
 
     const stbody = $("history-sessions-tbody");
@@ -801,13 +810,27 @@
     }
   }
 
+  // Keep each row's disclosure state on the row itself, without rebuilding the
+  // table — a rebuild would drop the keyboard focus mid-interaction.
+  function syncRunDisclosure() {
+    const tbody = $("history-tbody");
+    if (!tbody) return;
+    tbody.querySelectorAll("button[data-run-index]").forEach((btn) => {
+      const run = historyRuns[Number(btn.dataset.runIndex)];
+      const open = !!(run && run.run_id && run.run_id === openRunId);
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      const row = btn.closest("tr");
+      if (row) row.classList.toggle("is-open", open);
+    });
+  }
+
   function renderRunDetail(run) {
     const box = $("history-detail");
     if (!box) return;
     if (!run) {
       box.hidden = true;
       box.innerHTML = "";
-      renderHistory(historyPayload);
+      syncRunDisclosure();
       return;
     }
     const rows = [
@@ -828,6 +851,7 @@
       (run.output ? `<h4>Answer</h4><pre class="run-text">${esc(run.output)}</pre>` : "") +
       (run.error ? `<h4>Error</h4><pre class="run-text run-error">${esc(run.error)}</pre>` : "");
     box.hidden = false;
+    syncRunDisclosure();
   }
 
   function initHistory() {
@@ -851,6 +875,9 @@
   let topologyData = [];
   let topoSelected = "";
   let topoNodeId = null;
+  // The graph is one tab stop: the node carrying it is remembered here and the
+  // arrow keys move between nodes, so a large team does not add N tab stops.
+  let topoFocusId = null;
 
   const TOPO_GLYPH = { ok: "●", running: "◐", skipped: "⊘", error: "✗" };
   const TOPO_COL_W = 220;
@@ -916,7 +943,7 @@
     };
   }
 
-  function topoNodeSvg(entry, selectedId) {
+  function topoNodeSvg(entry, selectedId, isTabStop) {
     const n = entry.node;
     const status = n.status || "ok";
     const glyph = TOPO_GLYPH[status] || TOPO_GLYPH.ok;
@@ -933,8 +960,11 @@
       + (n.model ? `, model ${n.model}` : "")
       + (n.error ? ", failed" : "");
     const selected = n.id === selectedId ? " is-selected" : "";
+    // Exactly one node holds the tab stop; the rest are reachable with the
+    // arrow keys and stay out of the page's tab order.
+    const tabStop = isTabStop ? `tabindex="0"` : `tabindex="-1"`;
     return `<g class="topo-node status-${esc(status)}${selected}" transform="translate(${entry.x},${entry.y})" `
-      + `tabindex="0" role="button" data-node="${esc(n.id)}" aria-label="${esc(label)}">`
+      + `${tabStop} role="button" data-node="${esc(n.id)}" aria-label="${esc(label)}">`
       + shape
       + `<text class="topo-glyph" x="12" y="20">${glyph}</text>`
       + `<text class="topo-name" x="28" y="20">${esc(clip(n.label, 16))}</text>`
@@ -998,20 +1028,40 @@
       && document.activeElement.closest("g.topo-node")
       ? document.activeElement.closest("g.topo-node").getAttribute("data-node")
       : null;
+    const order = Array.from(layout.placed.values());
+    if (!order.some((entry) => entry.node.id === topoFocusId)) {
+      topoFocusId = order.length ? order[0].node.id : null;
+    }
     svg.setAttribute("viewBox", `0 0 ${layout.width} ${layout.height}`);
     svg.setAttribute("height", String(layout.height));
     svg.innerHTML = defs
       + execution.edges.map((e) => topoEdgeSvg(e, layout, animate)).join("")
-      + Array.from(layout.placed.values()).map((entry) => topoNodeSvg(entry, topoNodeId)).join("");
+      + order.map((entry) => topoNodeSvg(entry, topoNodeId, entry.node.id === topoFocusId)).join("");
 
-    svg.querySelectorAll("g.topo-node").forEach((g) => {
+    const nodeEls = Array.from(svg.querySelectorAll("g.topo-node"));
+    const moveFocus = (from, delta) => {
+      if (nodeEls.length < 2) return;
+      const at = nodeEls.indexOf(from);
+      const next = nodeEls[((at + delta) % nodeEls.length + nodeEls.length) % nodeEls.length];
+      nodeEls.forEach((el) => el.setAttribute("tabindex", el === next ? "0" : "-1"));
+      topoFocusId = next.getAttribute("data-node");
+      next.focus();
+    };
+    nodeEls.forEach((g) => {
       const open = () => {
         topoNodeId = g.getAttribute("data-node");
+        topoFocusId = topoNodeId;
         renderTopology();
       };
       g.addEventListener("click", open);
+      g.addEventListener("focus", () => { topoFocusId = g.getAttribute("data-node"); });
       g.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
+        else if (ev.key === "ArrowRight" || ev.key === "ArrowDown") {
+          ev.preventDefault(); moveFocus(g, 1);
+        } else if (ev.key === "ArrowLeft" || ev.key === "ArrowUp") {
+          ev.preventDefault(); moveFocus(g, -1);
+        }
       });
     });
 
@@ -1086,6 +1136,178 @@
   }
 
   // ------------------------------------------------------------------
+  // Keyboard navigation: section jump row + command palette
+  //
+  // Commands are rebuilt each time the palette opens, from data the page has
+  // already loaded, so runs and models added since the last open are listed.
+  // ------------------------------------------------------------------
+  function jump(panelId) {
+    if (webui) webui.jumpTo(panelId);
+  }
+
+  function closeTopoDetail() {
+    if (topoNodeId == null) return false;
+    topoNodeId = null;
+    renderTopology();
+    return true;
+  }
+
+  function closeRunDetail() {
+    if (!openRunId) return false;
+    openRunId = null;
+    renderRunDetail(null);
+    return true;
+  }
+
+  function openHistoryRun(run) {
+    openRunId = run.run_id || null;
+    renderRunDetail(run);
+    jump("panel-history");
+    const tbody = $("history-tbody");
+    const button = tbody && tbody.querySelector('button[aria-expanded="true"]');
+    if (button) button.focus({ preventScroll: true });
+  }
+
+  function navigationCommands() {
+    const panels = [
+      ["summary-cards", "Summary metrics"],
+      ["panel-slo", "SLO burn rates"],
+      ["panel-latency-chart", "Latency chart"],
+      ["panel-by-model", "By model"],
+      ["panel-by-status", "HTTP responses by status"],
+      ["panel-agent-runs", "Recent agent runs"],
+      ["panel-history", "History"],
+      ["panel-spans", "Live span stream"],
+      ["panel-waterfall", "Run timeline"],
+      ["panel-topology", "Agent topology"],
+      ["panel-catalog", "Model catalog"],
+      ["panel-metrics", "Prometheus metrics"],
+    ];
+    const commands = panels.map(([id, label]) => ({
+      id: "nav:" + id,
+      group: "Navigate",
+      label: "Go to " + label,
+      keywords: id.replace(/-/g, " ") + " panel section",
+      hint: "panel",
+      run: () => jump(id),
+    }));
+    commands.push({
+      id: "nav:playground",
+      group: "Navigate",
+      label: "Open the playground",
+      keywords: "playground prompt compose run request",
+      hint: "/playground",
+      run: () => { window.location.href = "/playground"; },
+    });
+    return commands;
+  }
+
+  function runCommands() {
+    return historyRuns.slice(0, 40).map((run, i) => ({
+      id: "run:" + (run.run_id || i),
+      group: "Runs",
+      label: clip(run.task || run.run_id || "(no task recorded)", 70),
+      keywords: [run.model, run.run_id, run.status, run.agent].filter(Boolean).join(" "),
+      hint: clip(run.model, 24),
+      run: () => openHistoryRun(run),
+    }));
+  }
+
+  function modelCommands() {
+    return catalogAll.slice(0, 400).map((rec) => ({
+      id: "model:" + rec.provider + ":" + rec.id,
+      group: "Models",
+      label: rec.id,
+      keywords: [rec.provider, rec.family, rec.free_tier ? "free" : "",
+                 rec.supports_vision ? "vision" : "",
+                 rec.supports_tools ? "tools" : ""].filter(Boolean).join(" "),
+      hint: rec.provider,
+      run: () => {
+        const search = $("cat-search");
+        if (search) { search.value = rec.id; catalogFilterSort(); }
+        jump("panel-catalog");
+      },
+    }));
+  }
+
+  function actionCommands() {
+    const pause = $("span-pause-cb");
+    return [
+      {
+        id: "action:theme",
+        group: "Actions",
+        label: "Switch color theme",
+        keywords: "dark light appearance",
+        run: () => applyTheme(currentTheme() === "dark" ? "light" : "dark", true),
+      },
+      {
+        id: "action:refresh",
+        group: "Actions",
+        label: "Refresh data now",
+        keywords: "reload poll update",
+        run: fetchData,
+      },
+      {
+        id: "action:clear-spans",
+        group: "Actions",
+        label: "Clear the span stream",
+        keywords: "spans trace empty",
+        run: () => { const b = $("span-clear-btn"); if (b) b.click(); },
+      },
+      {
+        id: "action:toggle-spans",
+        group: "Actions",
+        label: (pause && pause.checked ? "Resume" : "Pause") + " the span stream",
+        keywords: "spans stream live pause resume",
+        run: () => {
+          if (!pause) return;
+          pause.checked = !pause.checked;
+          pause.dispatchEvent(new Event("change"));
+        },
+      },
+      {
+        id: "action:search-history",
+        group: "Actions",
+        label: "Search run history",
+        keywords: "find run filter",
+        run: () => { jump("panel-history"); const el = $("hist-search"); if (el) el.focus(); },
+      },
+      {
+        id: "action:search-catalog",
+        group: "Actions",
+        label: "Search the model catalog",
+        keywords: "models pricing context vision",
+        run: () => { jump("panel-catalog"); const el = $("cat-search"); if (el) el.focus(); },
+      },
+    ];
+  }
+
+  function initKeyboard() {
+    const nav = $("panel-nav");
+    if (nav) {
+      nav.addEventListener("click", (event) => {
+        const link = event.target.closest("a[data-panel-jump]");
+        if (!link) return;
+        event.preventDefault();
+        jump(link.dataset.panelJump);
+      });
+    }
+    if (!webui) return;
+    const palette = webui.init({
+      surface: "dashboard",
+      actions: () => navigationCommands()
+        .concat(actionCommands(), runCommands(), modelCommands()),
+      shortcuts: [
+        { keys: "← → ↑ ↓", label: "Move between topology nodes once one has focus" },
+      ],
+    });
+    palette.onEscape(() => closeTopoDetail() || closeRunDetail());
+    setText("palette-hint", webui.chord("K") + " for commands · ? for shortcuts");
+    const btn = $("palette-btn");
+    if (btn) btn.addEventListener("click", palette.open);
+  }
+
+  // ------------------------------------------------------------------
   // Data polling
   // ------------------------------------------------------------------
   async function fetchData() {
@@ -1129,6 +1351,7 @@
     initCatalog();
     initHistory();
     initTopology();
+    initKeyboard();
 
     // Wire up buttons
     const refreshBtn = $("refresh-btn");

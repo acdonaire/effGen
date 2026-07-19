@@ -1446,6 +1446,7 @@ class CLIInterface:
             if not public_playground:
                 playground_line += "  (paste an API key, or set EFFGEN_PUBLIC_PLAYGROUND=1 for local viewing)"
             self.print(playground_line)
+            self.print("  Both pages: Cmd/Ctrl-K opens the command palette, ? lists shortcuts.")
             self.print()
 
             # Keep uvicorn's proxy-header handling consistent with the rate

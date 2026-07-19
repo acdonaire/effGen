@@ -468,6 +468,8 @@ effgen = [
     "playground/static/*.html",
     "playground/static/*.js",
     "playground/static/*.css",
+    "webui/static/*.js",
+    "webui/static/*.css",
 ]
 
 # Black - Code Formatter

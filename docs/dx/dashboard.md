@@ -14,6 +14,37 @@ The effGen local dashboard is a lightweight single-page web app served by the AP
 | **Live span stream** | Real-time feed of trace spans via Server-Sent Events (SSE).  Includes a pause toggle and clear button. |
 | **Prometheus metrics (raw)** | Sortable table of all registered Prometheus metric names and their current values. |
 
+## Keyboard navigation
+
+Both web surfaces — the dashboard and the in-browser playground at
+`/playground` — share one keyboard layer.
+
+| Key | Action |
+|-----|--------|
+| `Cmd/Ctrl-K` | Open the command palette |
+| `?` | Show the shortcut reference |
+| `↑` `↓` | Move through palette results |
+| `Enter` | Run the highlighted command |
+| `Esc` | Close the palette, the shortcut list, or an open detail pane |
+| `Tab` | Move through the page; the first stop is a "Skip to content" link |
+
+The palette searches four groups of commands, built from data the page has
+already loaded: **Navigate** (every panel, plus the other surface), **Actions**
+(switch theme, refresh, clear or pause the span stream, focus a search box),
+**Runs** (stored runs, matched on task text, model, status or run id — selecting
+one opens its detail), and **Models** (the catalog, matched on id, provider,
+family or capability — selecting one filters the catalog table). The commands
+invoked most recently lead the list when the palette opens with an empty query.
+
+A section jump row under the header links to every panel. Selecting an entry —
+from the row or the palette — scrolls to the panel and moves focus to it, so the
+next `Tab` continues from there; the traversal cost does not grow with the number
+of stored runs. Smooth scrolling is skipped when the viewer prefers reduced
+motion.
+
+The colour-theme choice is stored under one key, `effgen-theme`, shared by every
+effGen web surface, so a theme picked on one applies on the other.
+
 ## Starting the server
 
 ```bash
@@ -138,13 +169,19 @@ a shared deployment.
 
 ## Static files
 
-The SPA consists of three files shipped with the `effgen` package:
+The SPA consists of these files shipped with the `effgen` package:
 
 | File | Purpose |
 |------|---------|
 | `effgen/dashboard/static/index.html` | Dashboard HTML shell |
 | `effgen/dashboard/static/app.js` | All dashboard JavaScript (polling, charts, SSE) |
 | `effgen/dashboard/static/style.css` | Dark and light theme styles |
+| `effgen/webui/static/webui.js` | Command palette, shortcuts, focus handling — shared with the playground |
+| `effgen/webui/static/webui.css` | Styling for the shared keyboard layer |
+
+The two shared files live outside the dashboard's own static directory and are
+served by both surfaces (`/dashboard/webui.js` and `/playground/webui.js`), each
+under the access rule of the page that loads them.
 
 Every asset is served from the package: the page references no external host, so
 it renders the same in an air-gapped deployment. The charts are drawn on a

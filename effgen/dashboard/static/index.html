@@ -7,16 +7,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark light" />
   <title>effGen Dashboard</title>
+  <link rel="stylesheet" href="webui.css" />
   <link rel="stylesheet" href="style.css" />
   <!-- All assets are served locally; the page renders with no external network. -->
 </head>
 <body>
+  <a class="eff-skip-link" href="#main-content">Skip to content</a>
   <header class="header">
     <div class="header-left">
       <h1 class="logo"><span aria-hidden="true">⚡</span> effGen</h1>
       <span class="version" id="header-version"></span>
     </div>
     <div class="header-right">
+      <a class="nav-link" href="/playground">Playground</a>
+      <span class="eff-sr-only" id="theme-status" role="status" aria-live="polite"></span>
       <span class="status" id="status" role="status" aria-live="polite">
         <span class="status-dot" id="status-dot" aria-hidden="true"></span>
         <span id="status-text">Connecting…</span>
@@ -27,15 +31,35 @@
       <button id="refresh-btn" type="button" aria-label="Refresh data now" title="Refresh data now">
         <span aria-hidden="true">↺</span>
       </button>
+      <button id="palette-btn" type="button" aria-label="Open the command palette"
+              title="Open the command palette">
+        <span aria-hidden="true">⌕</span>
+      </button>
     </div>
   </header>
 
   <div id="auth-banner" class="auth-banner" role="alert" hidden></div>
 
-  <main class="main">
+  <nav class="eff-panel-nav" id="panel-nav" aria-label="Dashboard sections">
+    <a href="#summary-cards" data-panel-jump="summary-cards">Summary</a>
+    <a href="#panel-slo" data-panel-jump="panel-slo">SLO</a>
+    <a href="#panel-latency-chart" data-panel-jump="panel-latency-chart">Latency</a>
+    <a href="#panel-by-model" data-panel-jump="panel-by-model">By model</a>
+    <a href="#panel-by-status" data-panel-jump="panel-by-status">Status codes</a>
+    <a href="#panel-agent-runs" data-panel-jump="panel-agent-runs">Recent runs</a>
+    <a href="#panel-history" data-panel-jump="panel-history">History</a>
+    <a href="#panel-spans" data-panel-jump="panel-spans">Spans</a>
+    <a href="#panel-waterfall" data-panel-jump="panel-waterfall">Timeline</a>
+    <a href="#panel-topology" data-panel-jump="panel-topology">Topology</a>
+    <a href="#panel-catalog" data-panel-jump="panel-catalog">Catalog</a>
+    <a href="#panel-metrics" data-panel-jump="panel-metrics">Metrics</a>
+    <span class="eff-palette-hint" id="palette-hint"></span>
+  </nav>
+
+  <main class="main" id="main-content" tabindex="-1">
 
     <!-- Row 1: summary cards -->
-    <section class="row cards" id="summary-cards" aria-label="Summary metrics">
+    <section class="row cards" id="summary-cards" tabindex="-1" aria-label="Summary metrics">
       <div class="card" id="card-requests">
         <div class="card-label">Total Requests</div>
         <div class="card-value" id="val-requests" aria-live="polite">—</div>
@@ -63,7 +87,7 @@
 
     <!-- Row 2: SLO burn rates + Latency chart -->
     <section class="row two-col">
-      <div class="panel" id="panel-slo">
+      <div class="panel" id="panel-slo" tabindex="-1">
         <h2>SLO Burn Rates</h2>
         <div id="slo-list">
           <div class="slo-row">
@@ -91,7 +115,7 @@
         <div class="slo-detail" id="slo-detail" aria-live="polite"></div>
       </div>
 
-      <div class="panel" id="panel-latency-chart">
+      <div class="panel" id="panel-latency-chart" tabindex="-1">
         <h2>Request Latency (recent)</h2>
         <div class="chart-wrap">
           <canvas id="latency-chart" height="150" role="img"
@@ -102,7 +126,7 @@
     </section>
 
     <!-- Row 3: per-model breakdown -->
-    <section class="panel" id="panel-by-model">
+    <section class="panel" id="panel-by-model" tabindex="-1">
       <h2>By Model</h2>
       <div class="table-wrapper">
         <table id="by-model-table">
@@ -125,7 +149,7 @@
     </section>
 
     <!-- Row 4: HTTP responses by status -->
-    <section class="panel" id="panel-by-status">
+    <section class="panel" id="panel-by-status" tabindex="-1">
       <h2>HTTP Responses by Status</h2>
       <div class="status-chips" id="status-chips">
         <span class="empty-row">Loading…</span>
@@ -133,7 +157,7 @@
     </section>
 
     <!-- Row 5: recent agent runs -->
-    <section class="panel" id="panel-agent-runs">
+    <section class="panel" id="panel-agent-runs" tabindex="-1">
       <h2>Recent Agent Runs</h2>
       <div class="table-wrapper">
         <table id="runs-table">
@@ -155,7 +179,7 @@
     </section>
 
     <!-- Run & session history -->
-    <section class="panel" id="panel-history">
+    <section class="panel" id="panel-history" tabindex="-1">
       <h2>History</h2>
       <p class="panel-sub" id="history-sub">Loading stored runs…</p>
       <div class="catalog-toolbar" role="group" aria-label="History filters">
@@ -211,7 +235,7 @@
     </section>
 
     <!-- Row 6: live span stream -->
-    <section class="panel" id="panel-spans">
+    <section class="panel" id="panel-spans" tabindex="-1">
       <h2>Live Span Stream</h2>
       <div class="span-toolbar">
         <button id="span-clear-btn" type="button">Clear</button>
@@ -223,7 +247,7 @@
       <div id="span-stream" class="span-stream" role="log" aria-label="Live span stream"></div>
     </section>
 
-    <section class="panel" id="panel-waterfall">
+    <section class="panel" id="panel-waterfall" tabindex="-1">
       <h2>Run Timeline</h2>
       <p class="panel-sub">Spans grouped by run — bars positioned by start offset, width by duration.</p>
       <div id="waterfall" class="waterfall" aria-label="Per-run span waterfall">
@@ -232,7 +256,7 @@
     </section>
 
     <!-- Multi-agent topology graph -->
-    <section class="panel" id="panel-topology">
+    <section class="panel" id="panel-topology" tabindex="-1">
       <h2>Agent Topology</h2>
       <p class="panel-sub" id="topology-sub">Loading recorded executions…</p>
       <div class="catalog-toolbar" role="group" aria-label="Topology controls">
@@ -260,7 +284,7 @@
     </section>
 
     <!-- Model catalog browser -->
-    <section class="panel" id="panel-catalog">
+    <section class="panel" id="panel-catalog" tabindex="-1">
       <h2>Model Catalog</h2>
       <p class="panel-sub" id="catalog-sub">Loading catalog…</p>
       <div class="catalog-toolbar" role="group" aria-label="Catalog filters">
@@ -324,7 +348,7 @@
     </section>
 
     <!-- Row 7: raw metrics -->
-    <section class="panel" id="panel-metrics">
+    <section class="panel" id="panel-metrics" tabindex="-1">
       <h2>Prometheus Metrics (raw)</h2>
       <div class="table-wrapper">
         <table id="metrics-table">
@@ -338,6 +362,7 @@
 
   </main>
 
+  <script src="webui.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

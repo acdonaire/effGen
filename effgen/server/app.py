@@ -1019,6 +1019,30 @@ def _mount_existing_routers(
         logger.debug("Embeddings router not mounted: %s", exc)
 
 
+def _resolve_web_asset(asset_path: str, *roots: Any) -> Any:
+    """Resolve a static asset request against the given directories in order.
+
+    The first directory holding the file wins, so a surface can override a
+    shared asset with its own copy. The resolved path must stay inside the
+    directory it was found in; a request that escapes it (``..`` segments, an
+    absolute path, a symlink out of the tree) resolves to ``None``.
+    """
+    from pathlib import Path as _Path
+
+    if not asset_path or asset_path.startswith("/"):
+        return None
+    for root in roots:
+        base = _Path(root).resolve()
+        try:
+            candidate = (base / asset_path).resolve()
+            candidate.relative_to(base)
+        except (ValueError, OSError):
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _mount_dashboard(app: Any) -> None:
     """Mount the local dashboard SPA at /dashboard.
 
@@ -1026,7 +1050,8 @@ def _mount_dashboard(app: Any) -> None:
     - ``GET /dashboard``           — the SPA index.html
     - ``GET /dashboard/data.json`` — live metrics + run data as JSON
     - ``GET /dashboard/spans``     — SSE stream of recent span events
-    - ``GET /dashboard/{path}``    — other static assets (JS, CSS)
+    - ``GET /dashboard/{path}``    — other static assets (JS, CSS, and the
+      files shared with the playground)
     """
     try:
         from pathlib import Path as _Path
@@ -1037,6 +1062,8 @@ def _mount_dashboard(app: Any) -> None:
         router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
         static_dir = _Path(__file__).parent.parent / "dashboard" / "static"
+        # Assets both web surfaces load (command palette, keyboard layer).
+        shared_dir = _Path(__file__).parent.parent / "webui" / "static"
 
         # ---- /dashboard → index.html ----------------------------------------
         @router.get("", include_in_schema=False)
@@ -1140,9 +1167,9 @@ def _mount_dashboard(app: Any) -> None:
         # ---- /dashboard/{file} (static assets) ------------------------------
         @router.get("/{asset_path:path}", include_in_schema=False)
         async def dashboard_static(asset_path: str) -> Any:
-            """Serve static assets (app.js, style.css, …)."""
-            asset = static_dir / asset_path
-            if asset.exists() and asset.is_file():
+            """Serve static assets (app.js, style.css, the shared webui files)."""
+            asset = _resolve_web_asset(asset_path, static_dir, shared_dir)
+            if asset is not None:
                 return FileResponse(str(asset))
             return JSONResponse({"detail": "not found"}, status_code=404)
 
@@ -1160,7 +1187,8 @@ def _mount_playground(app: Any) -> None:
     - ``GET /playground``            — the SPA index.html
     - ``GET /playground/bootstrap``  — presets, tool options, defaults, and (in
       local-view mode) a session key, as JSON
-    - ``GET /playground/{path}``     — other static assets (JS, CSS)
+    - ``GET /playground/{path}``     — other static assets (JS, CSS, and the
+      files shared with the dashboard)
 
     The Run button drives the existing ``POST /v1/chat/completions`` endpoint;
     the playground adds no new model-execution path.
@@ -1173,6 +1201,7 @@ def _mount_playground(app: Any) -> None:
 
         router = APIRouter(prefix="/playground", tags=["playground"])
         static_dir = _Path(__file__).parent.parent / "playground" / "static"
+        shared_dir = _Path(__file__).parent.parent / "webui" / "static"
 
         @router.get("", include_in_schema=False)
         @router.get("/", include_in_schema=False)
@@ -1189,8 +1218,8 @@ def _mount_playground(app: Any) -> None:
 
         @router.get("/{asset_path:path}", include_in_schema=False)
         async def playground_static(asset_path: str) -> Any:
-            asset = static_dir / asset_path
-            if asset.exists() and asset.is_file():
+            asset = _resolve_web_asset(asset_path, static_dir, shared_dir)
+            if asset is not None:
                 return FileResponse(str(asset))
             return JSONResponse({"detail": "not found"}, status_code=404)
 

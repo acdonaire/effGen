@@ -10,6 +10,10 @@
  *    stats, and the tool step trace
  *  - generates copy-as-curl / CLI / Python snippets from the form state
  *
+ * Keyboard navigation — the Cmd/Ctrl-K command palette and the "?" shortcut
+ * list — comes from webui.js, which the dashboard loads as well. This file
+ * supplies the playground's own palette commands.
+ *
  * All assets are served locally; the page has no external network dependency.
  * The API key, when the user pastes one, is held in memory for the tab only and
  * is never written to disk.
@@ -17,7 +21,9 @@
 (function () {
   "use strict";
 
-  const THEME_KEY = "effgen-playground-theme";
+  // The keyboard layer shared with the dashboard. Absent only if webui.js
+  // failed to load, in which case the page keeps working without shortcuts.
+  const webui = window.effgenWebUI || null;
 
   // In-memory config/state (no persistence of the key to disk).
   let apiKey = "";
@@ -43,18 +49,27 @@
       && window.matchMedia("(prefers-color-scheme: light)").matches;
     return prefersLight ? "light" : "dark";
   }
-  function syncThemeButton() {
+  function syncThemeButton(announce) {
+    const theme = currentTheme();
     const icon = $("theme-icon");
-    if (icon) icon.textContent = currentTheme() === "dark" ? "☾" : "☀";
+    if (icon) icon.textContent = theme === "dark" ? "☾" : "☀";
+    const btn = $("theme-btn");
+    if (btn) btn.setAttribute("aria-label",
+      theme === "dark" ? "Dark theme active. Switch to light theme."
+                       : "Light theme active. Switch to dark theme.");
+    const live = $("theme-status");
+    // A change the viewer made is announced; the initial sync stays silent.
+    if (announce && live) live.textContent = theme === "dark" ? "Dark theme" : "Light theme";
   }
   function applyTheme(theme, persist) {
     document.documentElement.setAttribute("data-theme", theme);
-    if (persist) { try { localStorage.setItem(THEME_KEY, theme); } catch { /* blocked */ } }
-    syncThemeButton();
+    if (persist && webui) webui.storeTheme(theme);
+    syncThemeButton(persist);
   }
   function initTheme() {
-    let stored = null;
-    try { stored = localStorage.getItem(THEME_KEY); } catch { /* blocked */ }
+    // One preference key is shared by every effGen web surface, so a choice
+    // made here also applies on the dashboard.
+    const stored = webui ? webui.readStoredTheme() : null;
     if (stored === "dark" || stored === "light") applyTheme(stored, false);
     else syncThemeButton();
     const btn = $("theme-btn");
@@ -543,31 +558,196 @@
     return lines.join("\n");
   }
 
+  // The three snippet tabs are one tab stop: the selected tab holds it and the
+  // arrow keys move between them, per the ARIA tabs pattern.
+  function selectSnippetTab(kind, moveFocus) {
+    const tabs = Array.from(document.querySelectorAll(".snippet-tab"));
+    const chosen = tabs.find((t) => t.dataset.kind === kind) || tabs[0];
+    if (!chosen) return;
+    tabs.forEach((t) => {
+      const on = t === chosen;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      t.setAttribute("tabindex", on ? "0" : "-1");
+    });
+    const panel = $("snippet-panel");
+    if (panel) panel.setAttribute("aria-labelledby", chosen.id);
+    snippetKind = chosen.dataset.kind;
+    renderSnippet();
+    if (moveFocus) chosen.focus();
+  }
+
   function initSnippetTabs() {
-    document.querySelectorAll(".snippet-tab").forEach((tab) => {
-      tab.addEventListener("click", () => {
-        document.querySelectorAll(".snippet-tab").forEach((t) => t.classList.remove("active"));
-        tab.classList.add("active");
-        snippetKind = tab.dataset.kind;
-        renderSnippet();
+    const tabs = Array.from(document.querySelectorAll(".snippet-tab"));
+    tabs.forEach((tab, i) => {
+      tab.addEventListener("click", () => selectSnippetTab(tab.dataset.kind, false));
+      tab.addEventListener("keydown", (e) => {
+        const delta = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (delta) {
+          e.preventDefault();
+          const next = tabs[(i + delta + tabs.length) % tabs.length];
+          selectSnippetTab(next.dataset.kind, true);
+        } else if (e.key === "Home" || e.key === "End") {
+          e.preventDefault();
+          selectSnippetTab(tabs[e.key === "Home" ? 0 : tabs.length - 1].dataset.kind, true);
+        }
       });
     });
     const copy = $("copy-btn");
-    if (copy) copy.addEventListener("click", async () => {
-      const text = $("snippet-code").textContent;
-      try {
-        await navigator.clipboard.writeText(text);
+    if (copy) copy.addEventListener("click", () => copySnippet());
+  }
+
+  async function copySnippet() {
+    const box = $("snippet-code");
+    const copy = $("copy-btn");
+    if (!box) return;
+    try {
+      await navigator.clipboard.writeText(box.textContent);
+      if (copy) {
         copy.textContent = "Copied";
         setTimeout(() => { copy.textContent = "Copy"; }, 1500);
-      } catch {
-        // Clipboard blocked (non-secure context): select the text as a fallback.
-        const range = document.createRange();
-        range.selectNodeContents($("snippet-code"));
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
       }
+    } catch {
+      // Clipboard blocked (non-secure context): select the text as a fallback.
+      const range = document.createRange();
+      range.selectNodeContents(box);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Keyboard navigation: command palette + document-level submit
+  //
+  // Commands are rebuilt each time the palette opens, so the model list
+  // reflects whatever the catalog fetch has loaded by then.
+  // ------------------------------------------------------------------
+  function focusControl(id) {
+    const el = $(id);
+    if (!el) return;
+    if (webui) webui.jumpTo("main-content");
+    el.focus();
+  }
+
+  function snippetCommands() {
+    return [
+      ["curl", "Copy this run as a curl command"],
+      ["cli", "Copy this run as an effgen CLI command"],
+      ["python", "Copy this run as Python"],
+    ].map(([kind, label]) => ({
+      id: "snippet:" + kind,
+      group: "Copy",
+      label: label,
+      keywords: "snippet copy clipboard " + kind,
+      hint: kind,
+      run: () => {
+        if (!lastRun) { showError("Run a prompt first — the snippet copies that request."); return; }
+        selectSnippetTab(kind, false);
+        copySnippet();
+      },
+    }));
+  }
+
+  function modelCommands() {
+    const sel = $("model-select");
+    if (!sel) return [];
+    return Array.from(sel.options).slice(0, 400).map((opt) => ({
+      id: "model:" + opt.value,
+      group: "Models",
+      label: opt.value || opt.textContent,
+      keywords: opt.textContent + " " + (opt.parentNode && opt.parentNode.label || ""),
+      hint: (opt.parentNode && opt.parentNode.label) || "",
+      run: () => {
+        sel.value = opt.value;
+        onModelChange();
+        sel.focus();
+      },
+    }));
+  }
+
+  function presetCommands() {
+    const sel = $("preset-select");
+    if (!sel) return [];
+    return Array.from(sel.options).map((opt) => ({
+      id: "preset:" + (opt.value || "none"),
+      group: "Presets",
+      label: opt.value ? "Use the " + opt.value + " preset" : "Clear the preset",
+      keywords: opt.textContent,
+      run: () => {
+        sel.value = opt.value;
+        onPresetChange();
+        sel.focus();
+      },
+    }));
+  }
+
+  function actionCommands() {
+    const stream = $("stream-toggle");
+    return [
+      {
+        id: "action:run",
+        group: "Actions",
+        label: "Run the request",
+        keywords: "submit send prompt execute",
+        hint: webui ? webui.chord("Enter") : "",
+        run: run,
+      },
+      {
+        id: "action:focus-prompt",
+        group: "Actions",
+        label: "Edit the prompt",
+        keywords: "prompt compose write task",
+        run: () => focusControl("prompt"),
+      },
+      {
+        id: "action:stream",
+        group: "Actions",
+        label: (stream && stream.checked ? "Turn off" : "Turn on") + " token streaming",
+        keywords: "stream live tokens",
+        run: () => { if (stream) stream.checked = !stream.checked; },
+      },
+      {
+        id: "action:theme",
+        group: "Actions",
+        label: "Switch color theme",
+        keywords: "dark light appearance",
+        run: () => applyTheme(currentTheme() === "dark" ? "light" : "dark", true),
+      },
+      {
+        id: "nav:dashboard",
+        group: "Navigate",
+        label: "Open the dashboard",
+        keywords: "metrics runs history catalog topology",
+        hint: "/dashboard",
+        run: () => { window.location.href = "/dashboard"; },
+      },
+    ];
+  }
+
+  function initKeyboard() {
+    // The submit shortcut lives on the document, so it works from the
+    // temperature and max-token fields as well as the prompt box. An open
+    // overlay owns Enter, so the shortcut stays out of the way there —
+    // otherwise it would send a request alongside the chosen command.
+    document.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== "Enter") return;
+      if (e.target && e.target.closest && e.target.closest(".eff-overlay")) return;
+      e.preventDefault();
+      run();
     });
+    if (!webui) return;
+    const palette = webui.init({
+      surface: "playground",
+      actions: () => actionCommands()
+        .concat(presetCommands(), snippetCommands(), modelCommands()),
+      shortcuts: [
+        { keys: webui.chord("Enter"), label: "Run the request from anywhere on the page" },
+        { keys: "← →", label: "Move between the snippet tabs" },
+      ],
+    });
+    const btn = $("palette-btn");
+    if (btn) btn.addEventListener("click", palette.open);
   }
 
   // ------------------------------------------------------------------
@@ -576,10 +756,8 @@
   async function init() {
     initTheme();
     initSnippetTabs();
+    initKeyboard();
     $("run-btn").addEventListener("click", run);
-    $("prompt").addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run();
-    });
     await loadBootstrap();
     await loadCatalog();
   }

@@ -108,7 +108,7 @@ textarea:focus-visible,
   padding: 0.2rem 0.55rem;
 }
 .nav-link:hover { color: var(--accent2); }
-#theme-btn {
+#theme-btn, #palette-btn {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-muted);
@@ -117,7 +117,7 @@ textarea:focus-visible,
   cursor: pointer;
   font-size: 1rem;
 }
-#theme-btn:hover { color: var(--accent2); }
+#theme-btn:hover, #palette-btn:hover { color: var(--accent2); }
 
 /* ---- Banners ---- */
 .banner {

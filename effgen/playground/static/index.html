@@ -7,10 +7,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark light" />
   <title>effGen Playground</title>
+  <link rel="stylesheet" href="webui.css" />
   <link rel="stylesheet" href="style.css" />
   <!-- All assets are served locally; the page renders with no external network. -->
 </head>
 <body>
+  <a class="eff-skip-link" href="#main-content">Skip to content</a>
   <header class="header">
     <div class="header-left">
       <h1 class="logo"><span aria-hidden="true">⚡</span> effGen</h1>
@@ -18,6 +20,11 @@
     </div>
     <div class="header-right">
       <a class="nav-link" href="/dashboard">Dashboard</a>
+      <span class="eff-sr-only" id="theme-status" role="status" aria-live="polite"></span>
+      <button id="palette-btn" type="button" aria-label="Open the command palette"
+              title="Open the command palette">
+        <span aria-hidden="true">⌕</span>
+      </button>
       <button id="theme-btn" type="button" aria-label="Switch color theme" title="Switch color theme">
         <span aria-hidden="true" id="theme-icon">◐</span>
       </button>
@@ -27,7 +34,7 @@
   <div id="auth-banner" class="banner banner-warn" role="alert" hidden></div>
   <div id="error-banner" class="banner banner-err" role="alert" hidden></div>
 
-  <main class="main">
+  <main class="main" id="main-content" tabindex="-1">
     <!-- Controls -->
     <section class="panel" aria-label="Request controls">
       <h2>Compose</h2>
@@ -107,12 +114,16 @@
 
       <div id="snippets" hidden>
         <h2>Copy this run</h2>
-        <div class="snippet-tabs" role="tablist">
-          <button class="snippet-tab active" data-kind="curl" role="tab">curl</button>
-          <button class="snippet-tab" data-kind="cli" role="tab">CLI</button>
-          <button class="snippet-tab" data-kind="python" role="tab">Python</button>
+        <div class="snippet-tabs" role="tablist" aria-label="Snippet language">
+          <button class="snippet-tab active" data-kind="curl" role="tab" id="snippet-tab-curl"
+                  aria-controls="snippet-panel" aria-selected="true" tabindex="0">curl</button>
+          <button class="snippet-tab" data-kind="cli" role="tab" id="snippet-tab-cli"
+                  aria-controls="snippet-panel" aria-selected="false" tabindex="-1">CLI</button>
+          <button class="snippet-tab" data-kind="python" role="tab" id="snippet-tab-python"
+                  aria-controls="snippet-panel" aria-selected="false" tabindex="-1">Python</button>
         </div>
-        <div class="snippet-box">
+        <div class="snippet-box" id="snippet-panel" role="tabpanel"
+             aria-labelledby="snippet-tab-curl" tabindex="0">
           <button class="copy-btn" id="copy-btn" type="button">Copy</button>
           <pre id="snippet-code">—</pre>
         </div>
@@ -120,6 +131,7 @@
     </section>
   </main>
 
+  <script src="webui.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
