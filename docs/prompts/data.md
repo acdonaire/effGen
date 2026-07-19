@@ -1,6 +1,6 @@
 # Data / SQL Prompts
 
-Five production-ready prompt templates for SQL generation, explanation, optimization, data profiling, and ETL design.
+Five prompt templates for SQL generation, explanation, optimization, data profiling, and ETL design.
 
 Install the optional dependency:
 
@@ -122,7 +122,7 @@ rendered = data_profile_v1.render(
 
 ### `data.etl_plan.v1` — ETL Pipeline Design (few-shot)
 
-Designs a production-ready ETL pipeline. Two exemplar ETL designs guide output style. Covers Extract → Transform → Load → Validate → Cleanup with technology choices and error-handling guidance.
+Designs an end-to-end ETL pipeline. Two exemplar ETL designs guide output style. Covers Extract → Transform → Load → Validate → Cleanup with technology choices and error-handling guidance.
 
 **Inputs:**
 

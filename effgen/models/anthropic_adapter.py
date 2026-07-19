@@ -599,7 +599,7 @@ class AnthropicAdapter(FunctionCallingModel):
         tool calls emitted in one response) are each yielded as separate ``"tool_use"``
         chunks after the text stream ends.
 
-        This method correctly handles Claude 4.x streaming which can intermix
+        This method handles Claude 4.x streaming, which can intermix
         thinking blocks, text blocks, and multiple parallel tool_use blocks.
 
         Example::

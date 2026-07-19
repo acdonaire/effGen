@@ -1,6 +1,6 @@
 # RAG Pipeline
 
-effGen v0.2.0 includes a production-grade RAG (Retrieval Augmented Generation) pipeline with document ingestion, advanced chunking, hybrid search, reranking, and source attribution.
+effGen v0.2.0 includes a RAG (Retrieval Augmented Generation) pipeline with document ingestion, advanced chunking, hybrid search, reranking, and source attribution.
 
 ## Quick Start — RAG Preset
 

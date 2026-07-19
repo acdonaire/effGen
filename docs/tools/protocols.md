@@ -5,7 +5,7 @@ implementations live under `effgen.tools.protocols`.
 
 | Protocol | Status | What ships | Recommended entry point |
 |----------|--------|------------|-------------------------|
-| **MCP** (Model Context Protocol) | Production-ready | Server **and** client | `effgen.tools.protocols.mcp_official` |
+| **MCP** (Model Context Protocol) | Stable | Server **and** client | `effgen.tools.protocols.mcp_official` |
 | **A2A** (Agent-to-Agent) | Experimental | Client + protocol model | `effgen.tools.protocols.a2a` |
 | **ACP** (Agent Communication Protocol) | Experimental | Server + client | `effgen.tools.protocols.acp` |
 

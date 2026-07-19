@@ -4,7 +4,7 @@ Protocol integrations for effGen.
 This package provides implementations for various agent communication protocols:
 
 - **MCP (Model Context Protocol)** — Anthropic's protocol for context and tool sharing.
-  Round-tripped against the official MCP client (stdio + HTTP); production-ready.
+  Round-tripped against the official MCP client (stdio + HTTP).
 
   - ``mcp_official``: built on the official MCP SDK (FastMCP). **Recommended** —
     use it whenever ``pip install "mcp[cli]"`` is available.

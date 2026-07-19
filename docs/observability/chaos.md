@@ -94,7 +94,7 @@ guarded = apply_timeout(call_primary, 60.0, operation="model_call")
 
 * `NetworkTimeout` raises `ChaosNetworkTimeout` (a subclass of `TimeoutError`).
 * A `SlowResponse` longer than the timeout, wrapped by `apply_timeout`, raises
-  effGen's `TimeoutError` and **fails cleanly** — the guarded call returns within
+  effGen's `TimeoutError` — the guarded call returns within
   `timeout + 1 s`, so a stalled provider never hangs the agent.
 * `is_transient_error()` returns `True` for both → retry / circuit breaker
   handle them.

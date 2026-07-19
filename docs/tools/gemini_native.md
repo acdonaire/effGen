@@ -1,6 +1,6 @@
 # Gemini Native Tools
 
-effGen exposes Gemini's three built-in server-side tools as first-class
+effGen exposes Gemini's three built-in server-side tools as
 `BaseTool` subclasses:
 
 | Class | Tool name | What it does |

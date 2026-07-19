@@ -3,8 +3,8 @@
 effGen supports the full Anthropic Claude family through `AnthropicAdapter`.
 
 > **Note:** Anthropic features in v0.2.2 are implemented and unit-tested but not live-tested
-> (no Anthropic API key available in the development environment). The adapter is production-ready;
-> validate with your own key before deploying.
+> (no Anthropic API key available in the development environment). Validate the adapter with your
+> own key before deploying.
 
 ## Supported models
 

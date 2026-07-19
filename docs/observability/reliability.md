@@ -1,6 +1,6 @@
 # Reliability Primitives
 
-effGen ships four production-grade reliability patterns under
+effGen ships four reliability primitives under
 `effgen.reliability`:
 
 | Primitive | Module | Purpose |

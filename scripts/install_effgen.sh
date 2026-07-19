@@ -116,7 +116,7 @@ print_banner() {
     line_delay
     echo -e "  ${GREEN}▸${NC} Automatic Configuration"
     line_delay
-    echo -e "  ${GREEN}▸${NC} Production-Ready Setup"
+    echo -e "  ${GREEN}▸${NC} Post-Install Verification"
     echo ""
     section_delay
 }

@@ -1,6 +1,6 @@
 # Kubernetes / Helm Deployment
 
-effGen includes a production-ready Helm chart at `deploy/k8s/helm/effgen/`.
+effGen includes a Helm chart at `deploy/k8s/helm/effgen/`.
 
 ## Prerequisites
 

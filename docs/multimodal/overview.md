@@ -1,6 +1,6 @@
 # Multimodal Input — Overview
 
-effGen v0.2.8 makes image, audio, and video first-class input types. Every part of the stack — message schema, adapter translation, preprocessing, capability gating, and the agent preset — is designed around a single principle: **the adapter translates to the provider's format; your code only speaks effGen**.
+effGen v0.2.8 accepts image, audio, and video as input types. Every part of the stack — message schema, adapter translation, preprocessing, capability gating, and the agent preset — is designed around a single principle: **the adapter translates to the provider's format; your code only speaks effGen**.
 
 ---
 
