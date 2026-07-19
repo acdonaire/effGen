@@ -169,6 +169,10 @@ paths = [
     '''(^|\/)\.pytest_cache\/''',
     '''(^|\/)\.ruff_cache\/''',
     '''(^|\/)\.mypy_cache\/''',
+    # Internal planning scaffolding: gitignored, never committed and never
+    # packaged, but the working-tree `dir` scan sees it. Its transcripts record
+    # redaction runs whose inputs are deliberately key-shaped test strings.
+    '''(^|\/)build_plan\/''',
     # Compiled VSCode extension output (gitignored; produced by `npm run compile`).
     '''tools\/vscode-effgen\/out\/''',
     # Vendored third-party dependencies (never our secrets; some were committed
