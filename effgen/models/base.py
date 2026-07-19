@@ -159,8 +159,150 @@ def _stamp_cost(model: "BaseModel", result: Any) -> None:
     meta["total_cost"] = model.total_cost
 
 
+def clear_stream_usage(model: "BaseModel") -> None:
+    """Drop any usage recorded by a previous streaming call on *model*.
+
+    Called by a consumer immediately before it starts a stream, so that reading
+    the usage afterwards returns this call's numbers or ``None`` — never the
+    previous call's numbers for a stream that reported none.
+    """
+    try:
+        model._last_stream_usage = None  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - a model that rejects attributes still streams
+        logger.debug("Could not clear stream usage", exc_info=True)
+
+
+def get_stream_usage(model: "BaseModel") -> dict[str, Any] | None:
+    """Return the usage of the most recent streaming call on *model*.
+
+    The dict carries ``prompt_tokens``, ``completion_tokens``, ``total_tokens``
+    and ``cost_usd`` (``None`` when the model publishes no per-token price).
+    Returns ``None`` when the call reported no usage — local engines and
+    providers that omit usage from their stream.
+    """
+    usage = getattr(model, "_last_stream_usage", None)
+    return usage if isinstance(usage, dict) else None
+
+
+def record_stream_usage(
+    model: "BaseModel",
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    cost_usd: float | None = None,
+) -> None:
+    """Record the token counts and cost of the streaming call that just ended.
+
+    ``generate()`` returns a ``GenerationResult`` whose metadata carries this
+    data; ``generate_stream()`` has no return value, so an adapter that learns
+    the real usage after the stream is exhausted records it here. The consumer
+    reads it back with :func:`get_stream_usage`, which is what lets a streamed
+    turn report its tokens and cost without a second billed call.
+    """
+    if prompt_tokens is None and completion_tokens is None and cost_usd is None:
+        return
+    total: int | None = None
+    if prompt_tokens is not None or completion_tokens is not None:
+        total = int(prompt_tokens or 0) + int(completion_tokens or 0)
+    try:
+        model._last_stream_usage = {  # type: ignore[attr-defined]
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total,
+            "cost_usd": cost_usd,
+        }
+    except Exception:  # noqa: BLE001 - usage accounting must not break streaming
+        logger.debug("Could not record stream usage", exc_info=True)
+
+
+#: Engine types whose ``count_tokens`` runs against a local tokenizer — no
+#: network call, so it is cheap enough to use for an after-the-fact estimate.
+_LOCAL_ENGINE_TYPES = frozenset(
+    {ModelType.TRANSFORMERS, ModelType.VLLM, ModelType.MLX, ModelType.MLX_VLM}
+)
+
+
+def _provider_of(model: "BaseModel") -> str | None:
+    """Resolve the pricing-catalog provider name for *model*, or ``None``.
+
+    Adapters name their provider either in ``get_metadata()`` or through their
+    ``model_type``; local engines have no provider and return ``None``.
+    """
+    try:
+        provider = (model.get_metadata() or {}).get("provider")
+        if isinstance(provider, str) and provider:
+            return provider
+    except Exception:  # noqa: BLE001 - metadata is optional
+        pass
+    model_type = getattr(model, "model_type", None)
+    value = getattr(model_type, "value", None)
+    if isinstance(value, str) and value not in {t.value for t in _LOCAL_ENGINE_TYPES}:
+        return value
+    return None
+
+
+def _price_estimate(
+    model: "BaseModel", prompt_tokens: int, completion_tokens: int
+) -> float | None:
+    """Price locally counted tokens, or return ``None`` for an unpriced model.
+
+    Uses the same rate table the adapters bill against, and only when the
+    catalog reports the model as priced — a free-tier or unpriced model returns
+    ``None`` rather than a fabricated ``$0``.
+    """
+    provider = _provider_of(model)
+    name = getattr(model, "model_name", None)
+    if not provider or not name:
+        return None
+    try:
+        from effgen.models._cost import _rate, pricing_status
+
+        if pricing_status(provider, name) != "priced":
+            return None
+        input_rate, output_rate = _rate(provider, name)
+    except Exception:  # noqa: BLE001 - pricing is optional; report unpriced
+        return None
+    return (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000
+
+
+def estimate_stream_usage(
+    model: "BaseModel", prompt_text: str, completion_text: str
+) -> dict[str, Any]:
+    """Estimate token counts for a stream whose backend reported no usage.
+
+    Local engines are counted with their own tokenizer (offline and exact);
+    anything else falls back to a four-characters-per-token approximation. The
+    counts are priced at the model's catalog rate when it has one, so a stream
+    the caller stopped reading early still reports a cost rather than nothing.
+    The returned dict is shaped like :func:`get_stream_usage`'s and carries
+    ``estimated: True`` so a caller can label the numbers as counted locally
+    rather than reported by the provider.
+    """
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    if getattr(model, "model_type", None) in _LOCAL_ENGINE_TYPES:
+        try:
+            prompt_tokens = int(model.count_tokens(prompt_text).count)
+            completion_tokens = int(model.count_tokens(completion_text).count)
+        except Exception:  # noqa: BLE001 - fall through to the approximation
+            prompt_tokens = completion_tokens = None
+    if prompt_tokens is None or completion_tokens is None:
+        prompt_tokens = max(1, len(prompt_text) // 4) if prompt_text else 0
+        completion_tokens = max(1, len(completion_text) // 4) if completion_text else 0
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "cost_usd": _price_estimate(model, prompt_tokens, completion_tokens),
+        "estimated": True,
+    }
+
+
 def accumulate_stream_cost(
-    model: "BaseModel", cost: float | None, tokens: int | None = None
+    model: "BaseModel",
+    cost: float | None,
+    tokens: int | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
 ) -> None:
     """Fold a completed streaming call's cost and token count onto the model's
     cumulative totals.
@@ -179,12 +321,17 @@ def accumulate_stream_cost(
     the attribute unset after a real, tracked call. ``tokens`` (the call's
     total prompt+completion tokens) folds onto ``total_tokens`` the same way a
     non-streaming call updates it, so a streamed turn's token count reaches the
-    per-turn footer instead of reading zero.
+    per-turn footer instead of reading zero. ``prompt_tokens``/
+    ``completion_tokens``, when supplied, are also recorded as this call's own
+    usage (see :func:`record_stream_usage`) so the caller can read the split and
+    the cost for the turn it just streamed, not only the running totals.
     """
     if cost is not None:
         model.total_cost = getattr(model, "total_cost", 0.0) + cost
     if tokens:
         model.total_tokens = getattr(model, "total_tokens", 0) + tokens
+    if prompt_tokens is not None or completion_tokens is not None:
+        record_stream_usage(model, prompt_tokens, completion_tokens, cost)
 
 
 def _warn_if_silently_empty(model: "BaseModel", result: Any) -> None:

@@ -31,6 +31,7 @@ from effgen.models.base import (
     GenerationResult,
     ModelType,
     TokenCount,
+    record_stream_usage,
 )
 from effgen.models.errors import InvalidRequestError, ModelAuthError, ModelNotFoundError
 from effgen.models.gemini_files import FileRef
@@ -954,6 +955,7 @@ class GeminiAdapter(FunctionCallingModel):
                     cost = self._calculate_cost(prompt_tokens, completion_tokens)
                 self.total_cost += cost
                 self.total_tokens += total_tokens
+                record_stream_usage(self, prompt_tokens, completion_tokens, cost)
             except Exception:
                 logger.debug("Failed to record streaming usage for Gemini", exc_info=True)
 

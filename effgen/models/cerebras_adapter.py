@@ -610,7 +610,13 @@ class CerebrasAdapter(BaseModel):
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
-                accumulate_stream_cost(self, cost, prompt_tokens + completion_tokens)
+                accumulate_stream_cost(
+                    self,
+                    cost,
+                    prompt_tokens + completion_tokens,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
 
             if self._rate_limiter is not None:
                 self._rate_limiter.record(prompt_tokens + completion_tokens)

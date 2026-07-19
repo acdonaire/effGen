@@ -137,12 +137,18 @@ class StreamEvent:
     - ``"tool_call"``— a tool invocation (``tool`` + ``tool_input``).
     - ``"observation"`` — a tool result (``text`` + ``tool``).
     - ``"status"``   — a terminal/limit notice (``text``), e.g. step-limit hit.
+    - ``"usage"``    — the last event of the stream, carrying the run's token
+      counts, cost and timings in ``usage`` (see
+      :attr:`Agent.last_stream_usage` for the keys). Emitted once the answer is
+      complete, so a caller can report what a streamed turn cost without
+      running the prompt again.
     """
 
     kind: str
     text: str = ""
     tool: str | None = None
     tool_input: str | None = None
+    usage: dict[str, Any] | None = None
 
 
 def _chunk_answer_text(answer: str) -> Iterator[str]:
@@ -2029,8 +2035,41 @@ Provide a well-structured, comprehensive response that integrates all findings."
         except Exception:
             pass
 
+    def _fold_stream_usage(
+        self, acc: dict[str, Any], prompt_text: str, completion_text: str
+    ) -> None:
+        """Fold the model call that just finished streaming into *acc*.
+
+        Reads the usage the adapter recorded for that call; when the backend
+        reported none (a local engine, or a provider that omits usage from its
+        stream) the counts are estimated from the prompt and completion text and
+        the accumulator is marked estimated. Summing across calls means a
+        tool-using stream reports the whole run, not just its last model call.
+        """
+        from ..models.base import (
+            clear_stream_usage,
+            estimate_stream_usage,
+            get_stream_usage,
+        )
+
+        usage = get_stream_usage(self.model)
+        clear_stream_usage(self.model)
+        if usage is None:
+            usage = estimate_stream_usage(self.model, prompt_text, completion_text)
+        if usage.get("estimated"):
+            acc["estimated"] = True
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = usage.get(key)
+            if value is not None:
+                acc[key] = (acc.get(key) or 0) + int(value)
+        cost = usage.get("cost_usd")
+        if cost is not None:
+            acc["cost_usd"] = (acc.get("cost_usd") or 0.0) + float(cost)
+        acc["model_calls"] = acc.get("model_calls", 0) + 1
+
     def _stream_direct(self, task: str, on_answer: Callable[[str], None] | None = None,
                        include_events: bool = False,
+                       _usage_acc: dict[str, Any] | None = None,
                        **kwargs) -> "Iterator[str] | Iterator[StreamEvent]":
         """Stream a model answer directly, without the ReAct scaffold.
 
@@ -2061,7 +2100,10 @@ Provide a well-structured, comprehensive response that integrates all findings."
             reasoning_effort=kwargs.get("reasoning_effort"),
         )
 
+        from ..models.base import clear_stream_usage
+
         accumulated = ""
+        clear_stream_usage(self.model)
         stream_iter = self.model.generate_stream(prompt, config=gen_config)
         try:
             for token in stream_iter:
@@ -2075,6 +2117,9 @@ Provide a well-structured, comprehensive response that integrates all findings."
             close_stream = getattr(stream_iter, "close", None)
             if close_stream is not None:
                 close_stream()
+
+        if _usage_acc is not None:
+            self._fold_stream_usage(_usage_acc, prompt, accumulated)
 
         answer = sanitize_final_answer(accumulated) or accumulated.strip()
         if answer:
@@ -2114,6 +2159,13 @@ Provide a well-structured, comprehensive response that integrates all findings."
           — so a presentation layer can render live progress without parsing the
           text stream. Concatenating the ``text`` of the ``answer`` events still
           reconstructs the sanitized final answer.
+        - **Usage (event mode only).** The final event of an
+          ``include_events=True`` stream is a ``usage`` event whose ``usage``
+          dict carries the run's token counts, cost and timings — see
+          :attr:`last_stream_usage`, which holds the same dict after any
+          stream (text mode included) so a text-mode consumer can read it
+          without a second billed call. Text mode still yields answer text
+          only, so ``"".join(agent.stream(task))`` is unchanged.
         - The iterator simply **ending** is the terminal "done" signal; there is
           no sentinel value to test for.
         - A provider/model failure raises a typed error from the iterator (it is
@@ -2138,6 +2190,73 @@ Provide a well-structured, comprehensive response that integrates all findings."
             ``str`` answer-text deltas by default, or :class:`StreamEvent`
             objects when ``include_events=True`` (see the streaming contract).
         """
+        usage_acc: dict[str, Any] = {}
+        started = time.perf_counter()
+        ttft: float | None = None
+        for item in self._stream_impl(
+            task,
+            mode=mode,
+            context=context,
+            on_thought=on_thought,
+            on_tool_call=on_tool_call,
+            on_observation=on_observation,
+            on_answer=on_answer,
+            inputs=inputs,
+            include_events=include_events,
+            _usage_acc=usage_acc,
+            **kwargs,
+        ):
+            if ttft is None:
+                is_answer_text = (
+                    bool(item.text) and item.kind == "answer"
+                    if isinstance(item, StreamEvent)
+                    else bool(item)
+                )
+                if is_answer_text:
+                    ttft = time.perf_counter() - started
+            yield item
+
+        usage = dict(usage_acc)
+        # Every key is always present so a consumer can read the dict without
+        # probing for optional fields; an unpriced model reports cost as None.
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cost_usd"):
+            usage.setdefault(key, None)
+        usage.setdefault("model_calls", 0)
+        usage.setdefault("estimated", False)
+        usage["latency_ms"] = round((time.perf_counter() - started) * 1000.0, 1)
+        usage["ttft_ms"] = round(ttft * 1000.0, 1) if ttft is not None else None
+        self._last_stream_usage = usage
+        if include_events:
+            yield StreamEvent(kind="usage", usage=usage)
+
+    @property
+    def last_stream_usage(self) -> dict[str, Any] | None:
+        """Usage of the most recent completed :meth:`stream` call, or ``None``.
+
+        Set once the stream iterator is exhausted (it is unknown before that).
+        Keys: ``prompt_tokens``, ``completion_tokens``, ``total_tokens``,
+        ``cost_usd`` (``None`` for a model with no published price),
+        ``latency_ms``, ``ttft_ms`` (time to the first answer token),
+        ``model_calls`` (more than one on a tool-using run) and ``estimated``
+        (``True`` when the token counts were counted locally because the
+        backend reported none). This is the same dict the terminal ``usage``
+        :class:`StreamEvent` carries.
+        """
+        return getattr(self, "_last_stream_usage", None)
+
+    def _stream_impl(self,
+                     task: "str | Message | list[Any]",
+                     mode: AgentMode | None = None,
+                     context: dict[str, Any] | None = None,
+                     on_thought: Callable[[str], None] | None = None,
+                     on_tool_call: Callable[[str, str], None] | None = None,
+                     on_observation: Callable[[str], None] | None = None,
+                     on_answer: Callable[[str], None] | None = None,
+                     inputs: list[Any] | None = None,
+                     include_events: bool = False,
+                     _usage_acc: dict[str, Any] | None = None,
+                     **kwargs) -> "Iterator[str] | Iterator[StreamEvent]":
+        """Produce the stream payload; :meth:`stream` adds the usage accounting."""
         # Accept str | Message | list[ContentPart]; streaming is text-only, so
         # surface a clear error if media is supplied rather than dropping it.
         task, _stream_inputs = self._coerce_task_input(task, inputs)
@@ -2179,7 +2298,8 @@ Provide a well-structured, comprehensive response that integrates all findings."
         # "Final Answer:" loop to max-iterations and never surface an answer.
         if not self.tools:
             yield from self._stream_direct(
-                task, on_answer=on_answer, include_events=include_events, **kwargs
+                task, on_answer=on_answer, include_events=include_events,
+                _usage_acc=_usage_acc, **kwargs
             )
             return
 
@@ -2234,6 +2354,8 @@ Provide a well-structured, comprehensive response that integrates all findings."
             # early Final-Answer break still bound generation so a small model
             # that ignores `stop` cannot run away.
             accumulated = ""
+            from ..models.base import clear_stream_usage
+            clear_stream_usage(self.model)
             stream_iter = self.model.generate_stream(prompt, config=gen_config)
             try:
                 for token in stream_iter:
@@ -2278,6 +2400,9 @@ Provide a well-structured, comprehensive response that integrates all findings."
                 close_stream = getattr(stream_iter, "close", None)
                 if close_stream is not None:
                     close_stream()
+
+            if _usage_acc is not None:
+                self._fold_stream_usage(_usage_acc, prompt, accumulated)
 
             # Parse the accumulated response
             parsed = self._parse_react_response(accumulated)

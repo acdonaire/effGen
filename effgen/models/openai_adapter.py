@@ -33,6 +33,7 @@ from effgen.models.base import (
     GenerationResult,
     ModelType,
     TokenCount,
+    record_stream_usage,
 )
 from effgen.models.errors import (
     BudgetExceededError,
@@ -756,11 +757,14 @@ class OpenAIAdapter(FunctionCallingModel):
                 details = getattr(_usage, "prompt_tokens_details", None)
                 if details:
                     cached_tokens = getattr(details, "cached_tokens", 0) or 0
-                self._record_cost(
+                cost = self._record_cost(
                     _usage.prompt_tokens,
                     _usage.completion_tokens,
                     _usage.total_tokens,
                     cached_tokens,
+                )
+                record_stream_usage(
+                    self, _usage.prompt_tokens, _usage.completion_tokens, cost
                 )
             except Exception:  # noqa: BLE001 - usage accounting must not break streaming
                 logger.debug("OpenAI stream usage recording failed", exc_info=True)

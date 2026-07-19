@@ -615,7 +615,13 @@ class FireworksAdapter(BaseModel):
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
-                accumulate_stream_cost(self, cost, prompt_tokens + completion_tokens)
+                accumulate_stream_cost(
+                    self,
+                    cost,
+                    prompt_tokens + completion_tokens,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
 
         except Exception as exc:
             msg = str(exc)

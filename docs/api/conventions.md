@@ -96,10 +96,33 @@ for event in agent.stream(task, include_events=True):
 ```
 
 `include_events=True` yields `StreamEvent` objects with a `kind` of `answer`,
-`thought`, `tool_call`, `observation`, or `status`; concatenating the `answer`
-events still reconstructs the final answer. For the best tool-use quality on
-capable models, `agent.run(task)` (which uses native function-calling where
-available) is recommended over streaming.
+`thought`, `tool_call`, `observation`, `status`, or `usage`; concatenating the
+`answer` events still reconstructs the final answer. For the best tool-use
+quality on capable models, `agent.run(task)` (which uses native function-calling
+where available) is recommended over streaming.
+
+### Usage after a stream
+
+The last event of an `include_events=True` stream is a `usage` event carrying
+what the run cost, and the same dict is on `agent.last_stream_usage` after any
+stream — including text mode — so a streamed turn can be tallied without running
+the prompt a second time:
+
+```python
+chunks = list(agent.stream(task))
+usage = agent.last_stream_usage
+print(usage["total_tokens"], usage["cost_usd"], usage["ttft_ms"])
+```
+
+The keys are `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`
+(`None` for a model with no published price), `latency_ms`, `ttft_ms` (time to
+the first answer token), `model_calls` (above one on a tool-using run), and
+`estimated` — `True` when the token counts were counted locally because the
+backend reported none, as local engines do.
+
+Over the OpenAI-compatible server the same numbers arrive on the final
+`stream_options.include_usage` chunk, whose `effgen` object carries `cost_usd`
+alongside the standard `usage` block.
 
 ## Tools
 
