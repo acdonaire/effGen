@@ -18,9 +18,30 @@ from .evaluator import AgentEvaluator, ScoringMode, SuiteResults
 logger = logging.getLogger(__name__)
 
 
+def _judge_note(judge_model: str | None, self_judged: bool) -> str:
+    """State what graded the answers, so the scores can be weighed."""
+    if self_judged:
+        return (
+            "Scored by each model grading its own answers. "
+            "Name a judge (`--judge MODEL`) to have one model grade the field."
+        )
+    return f"Scored by {judge_model or 'a named judge'}, which is not one of the compared models."
+
+
 @dataclass
 class ModelScore:
-    """Per-model results for a single suite."""
+    """Per-model results for a single suite.
+
+    Attributes:
+        error: Set when the model could not be run at all (unknown id, rejected
+            key, unreachable provider). Such a model is reported as failed and
+            is never eligible to win a recommendation — its zeroed metrics are
+            not a measurement of the model.
+        error_count: Cases that failed to run, when only some of them did.
+        responses: What the model actually answered, one entry per case —
+            ``{"query", "output", "score", "passed", "error"}`` — so a bake-off
+            can show its work rather than only the aggregate percentages.
+    """
     model_name: str
     suite_name: str
     accuracy: float = 0.0
@@ -29,6 +50,8 @@ class ModelScore:
     avg_cost_usd: float | None = None
     avg_tool_accuracy: float = 0.0
     error: str | None = None
+    error_count: int = 0
+    responses: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _recommendation_key(score: "ModelScore", optimize: str = "accuracy") -> tuple[float, ...]:
@@ -68,6 +91,10 @@ class ComparisonMatrix:
         scoring: Scoring mode the comparison used (e.g. ``"contains"``).
         suite_sizes: ``{suite: case_count}`` for every compared suite.
         generated_at: ISO-8601 UTC timestamp of when the run completed.
+        judge_model: Model that graded the answers under ``llm_judge`` scoring,
+            or ``None`` for a scoring mode that needs no model.
+        self_judged: ``True`` when each model graded its own answers, which is
+            the default when no judge was named.
     """
     scores: list[ModelScore] = field(default_factory=list)
     recommendations: dict[str, str] = field(default_factory=dict)
@@ -77,6 +104,8 @@ class ComparisonMatrix:
     scoring: str | None = None
     suite_sizes: dict[str, int] = field(default_factory=dict)
     generated_at: str | None = None
+    judge_model: str | None = None
+    self_judged: bool | None = None
 
     def to_markdown(self) -> str:
         """Render the matrix as a Markdown table."""
@@ -140,6 +169,24 @@ class ComparisonMatrix:
                     cells.append("—")
             lines.append(f"| {m} | " + " | ".join(cells) + " |")
 
+        # Name every model that could not be run, and every model whose score
+        # is based on fewer cases than it was given, so neither reads as a
+        # measured result.
+        failures = [s for s in self.scores if s.error or s.error_count]
+        if failures:
+            lines.extend(["", "## Failures", ""])
+            for s in sorted(failures, key=lambda x: (x.model_name, x.suite_name)):
+                if s.error:
+                    lines.append(f"- **{s.model_name}** ({s.suite_name}): did not run — {s.error}")
+                else:
+                    lines.append(
+                        f"- **{s.model_name}** ({s.suite_name}): {s.error_count} "
+                        "case(s) failed to run and scored zero"
+                    )
+
+        if self.self_judged is not None:
+            lines.extend(["", _judge_note(self.judge_model, self.self_judged)])
+
         # Recommendations
         if self.recommendations:
             lines.extend(["", f"## Recommendations (optimized for {self.optimize})", ""])
@@ -161,6 +208,8 @@ class ComparisonMatrix:
                     "avg_cost_usd": s.avg_cost_usd,
                     "avg_tool_accuracy": s.avg_tool_accuracy,
                     "error": s.error,
+                    "error_count": s.error_count,
+                    "responses": s.responses,
                 }
                 for s in self.scores
             ],
@@ -171,6 +220,8 @@ class ComparisonMatrix:
             "num_cases": self.num_cases,
             "suite_sizes": self.suite_sizes,
             "generated_at": self.generated_at,
+            "judge_model": self.judge_model,
+            "self_judged": self.self_judged,
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -194,9 +245,20 @@ class ModelComparison:
         self,
         scoring: ScoringMode = ScoringMode.CONTAINS,
         pass_threshold: float = 0.5,
+        judge_agent: Any = None,
     ) -> None:
+        """
+        Args:
+            scoring: How answers are scored.
+            pass_threshold: Score at or above which a case passes.
+            judge_agent: Agent that grades answers under
+                ``ScoringMode.LLM_JUDGE``. Without it each contender grades its
+                own answers; supplying one has a single model with no stake in
+                the outcome grade every contender.
+        """
         self.scoring = scoring
         self.pass_threshold = pass_threshold
+        self.judge_agent = judge_agent
 
     def run(
         self,
@@ -236,6 +298,7 @@ class ModelComparison:
                 agent,
                 scoring=self.scoring,
                 pass_threshold=self.pass_threshold,
+                judge_agent=self.judge_agent,
             )
             for suite in suites:
                 suite_name = suite.name if hasattr(suite, "name") else "custom"
@@ -256,6 +319,20 @@ class ModelComparison:
                         total_tokens=results.total_tokens,
                         avg_cost_usd=avg_cost_usd,
                         avg_tool_accuracy=results.avg_tool_accuracy,
+                        # Every case failing means the model never ran; report
+                        # that instead of a 0% score it did not earn.
+                        error=results.error,
+                        error_count=results.error_count,
+                        responses=[
+                            {
+                                "query": r.test_case.query,
+                                "output": r.agent_output,
+                                "score": round(r.score, 4),
+                                "passed": r.passed,
+                                "error": r.error,
+                            }
+                            for r in results.results
+                        ],
                     ))
                 except Exception as exc:
                     logger.error("Error evaluating %s on %s: %s", model_name, suite_name, exc)
@@ -286,6 +363,15 @@ class ModelComparison:
         matrix.recommendations = recommendations
         matrix.recommendation_rationale = rationale
         matrix.generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        # Name what graded the answers, so a reader knows whether the scores
+        # came from a model with a stake in them.
+        if self.scoring == ScoringMode.LLM_JUDGE:
+            from .evaluator import _agent_model_id
+
+            matrix.self_judged = self.judge_agent is None
+            matrix.judge_model = (
+                _agent_model_id(self.judge_agent) if self.judge_agent is not None else None
+            )
 
         return matrix
 

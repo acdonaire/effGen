@@ -357,6 +357,71 @@ class TestAgentEvaluator:
         assert result.passed is False
         assert result.score == 0.0
 
+    def test_a_run_that_failed_is_reported_as_failed_not_scored(self, monkeypatch):
+        """A run that could not reach the model records the failure instead of
+        scoring its error text, which could otherwise contain the expected
+        string by coincidence and read as a partly-correct model."""
+        agent = self._make_agent(["Thought: done\nFinal Answer: ok"])
+
+        class _Failed:
+            output = "Generation failed: model `x-4` does not exist. Did you mean 42?"
+            success = False
+            tokens_used = 0
+            metadata = {"error": {"type": "ModelNotFoundError",
+                                  "message": "model `x-4` does not exist"}}
+
+        monkeypatch.setattr(agent, "run", lambda *a, **kw: _Failed())
+        evaluator = AgentEvaluator(agent)
+        # The expected answer appears inside the failure text.
+        result = evaluator.run_case(TestCase(query="q", expected_output="42"))
+        assert result.passed is False
+        assert result.score == 0.0
+        assert result.error is not None
+        # The message is the classified sentence, not the raw error dict.
+        assert "does not exist" in result.error
+        assert "{" not in result.error
+
+    def test_a_suite_where_nothing_ran_carries_the_failure(self, monkeypatch):
+        agent = self._make_agent(["Thought: done\nFinal Answer: ok"])
+
+        def _boom(*a, **kw):
+            raise RuntimeError("provider unreachable")
+
+        monkeypatch.setattr(agent, "run", _boom)
+        evaluator = AgentEvaluator(agent)
+
+        class FakeSuite:
+            name = "fake"
+            test_cases = [TestCase(query="a", expected_output="1"),
+                          TestCase(query="b", expected_output="2")]
+
+        results = evaluator.run_suite(FakeSuite())
+        assert results.error_count == 2
+        assert results.error is not None and "unreachable" in results.error
+        assert "ERROR" in results.to_markdown()
+        assert results.summary()["error"] is not None
+
+    def test_a_named_judge_grades_instead_of_the_model_itself(self):
+        """Under llm_judge the caller's judge does the grading, and the output
+        names it so a reader can weigh the score."""
+        agent = self._make_agent(["Thought: done\nFinal Answer: blue"])
+        judge = self._make_agent(
+            ['Thought: done\nFinal Answer: {"score": 0.25, "reasoning": "incomplete"}']
+        )
+        evaluator = AgentEvaluator(agent, scoring=ScoringMode.LLM_JUDGE, judge_agent=judge)
+        result = evaluator.run_case(TestCase(query="color?", expected_output="blue"))
+        assert result.score == 0.25, "the judge's score, not the model's own"
+        assert result.details["self_judged"] is False
+        assert result.details["judge_model"]
+
+    def test_without_a_judge_the_model_grades_itself_and_says_so(self):
+        agent = self._make_agent(
+            ['Thought: done\nFinal Answer: {"score": 1.0, "reasoning": "perfect"}']
+        )
+        evaluator = AgentEvaluator(agent, scoring=ScoringMode.LLM_JUDGE)
+        result = evaluator.run_case(TestCase(query="color?", expected_output="blue"))
+        assert result.details["self_judged"] is True
+
     def test_run_case_cost_usd_is_none_for_a_model_with_no_price_data(self):
         """MockModel reports no cost_usd metadata — the same shape a real
         local-model run reports — and that must read as None, not $0."""
@@ -761,6 +826,46 @@ class TestModelComparison:
         assert len(matrix.scores) == 2
         assert matrix.recommendations.get("mini") == "model-a"
 
+    def test_scores_carry_what_each_model_answered(self):
+        """A bake-off can show its work: the answers are in the result, not
+        only the aggregate percentages."""
+        agent = self._make_agent(["Thought: done\nFinal Answer: 5"] * 4)
+
+        class FakeSuite:
+            name = "mini"
+            test_cases = [TestCase(query="2+3?", expected_output="5")]
+
+        matrix = ModelComparison().run({"model-a": agent}, [FakeSuite()])
+        responses = matrix.scores[0].responses
+        assert [r["query"] for r in responses] == ["2+3?"]
+        assert "5" in responses[0]["output"]
+        assert responses[0]["passed"] is True
+        assert matrix.to_dict()["scores"][0]["responses"] == responses
+
+    def test_a_model_that_never_ran_is_reported_as_failed_not_zero(self, monkeypatch):
+        """An unreachable model reads as failed everywhere, and cannot be
+        recommended over a model that actually answered."""
+        good = self._make_agent(["Thought: done\nFinal Answer: 5"] * 4)
+        broken = self._make_agent(["Thought: done\nFinal Answer: 5"] * 4)
+        monkeypatch.setattr(
+            broken, "run",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("model not found")),
+        )
+
+        class FakeSuite:
+            name = "mini"
+            test_cases = [TestCase(query="2+3?", expected_output="5")]
+
+        matrix = ModelComparison().run({"good": good, "broken": broken}, [FakeSuite()])
+        by_model = {s.model_name: s for s in matrix.scores}
+        assert by_model["broken"].error is not None
+        assert by_model["broken"].error_count == 1
+        assert matrix.recommendations["mini"] == "good"
+        markdown = matrix.to_markdown()
+        assert "ERROR" in markdown
+        assert "## Failures" in markdown
+        assert "did not run" in markdown
+
     def test_recommendation_breaks_accuracy_tie_on_latency(self):
         # Both agents always answer correctly -> tied accuracy. The recommendation
         # must pick the lower-latency model, not whichever was listed first.
@@ -949,3 +1054,51 @@ class TestImports:
     def test_effgen_level_import(self):
         from effgen import AgentEvaluator
         assert AgentEvaluator is not None
+
+
+class TestJudgeReporting:
+    """Whatever graded the answers is named in the result."""
+
+    def _agent(self, responses):
+        model = MockModel(responses=responses)
+        return Agent(config=AgentConfig(
+            name="judge-report", model=model, tools=[], max_iterations=3,
+            enable_memory=False, enable_sub_agents=False,
+        ))
+
+    class _Suite:
+        name = "mini"
+        test_cases = [TestCase(query="color?", expected_output="blue")]
+
+    def test_a_named_judge_is_recorded_in_the_result(self):
+        judge = self._agent(
+            ['Thought: done\nFinal Answer: {"score": 0.5, "reasoning": "partial"}'] * 4
+        )
+        matrix = ModelComparison(
+            scoring=ScoringMode.LLM_JUDGE, judge_agent=judge,
+        ).run({"model-a": self._agent(["Thought: done\nFinal Answer: blue"] * 4)},
+              [self._Suite()])
+        assert matrix.self_judged is False
+        assert matrix.judge_model
+        doc = matrix.to_dict()
+        assert doc["self_judged"] is False and doc["judge_model"] == matrix.judge_model
+        assert matrix.judge_model in matrix.to_markdown()
+
+    def test_self_grading_is_stated_when_no_judge_was_named(self):
+        matrix = ModelComparison(scoring=ScoringMode.LLM_JUDGE).run(
+            {"model-a": self._agent(
+                ['Thought: done\nFinal Answer: {"score": 1.0, "reasoning": "perfect"}'] * 4
+            )},
+            [self._Suite()],
+        )
+        assert matrix.self_judged is True
+        assert matrix.judge_model is None
+        assert "grading its own answers" in matrix.to_markdown()
+
+    def test_a_scoring_mode_without_a_model_says_nothing_about_a_judge(self):
+        matrix = ModelComparison().run(
+            {"model-a": self._agent(["Thought: done\nFinal Answer: blue"] * 4)},
+            [self._Suite()],
+        )
+        assert matrix.self_judged is None and matrix.judge_model is None
+        assert "judge" not in matrix.to_markdown().lower()
