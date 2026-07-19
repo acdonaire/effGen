@@ -590,7 +590,10 @@ def _build_default_runner() -> Any:
         pooled_model = _get_pooled_model(resolved_model)
         resolved_tools = _resolve_tools(tools)
         config = AgentConfig(
-            name="api",
+            # Name the served model in the agent's identity so a server-driven
+            # run is distinguishable in traces and run history instead of every
+            # request reading as the same "api" agent.
+            name=f"api:{resolved_model}",
             model=pooled_model,  # pre-loaded instance → no per-request reload
             tools=resolved_tools,
             temperature=temperature if temperature is not None else 0.7,
@@ -1083,6 +1086,20 @@ def _mount_dashboard(app: Any) -> None:
             return JSONResponse(_build_dashboard_history(
                 limit=limit, status=status, search=search, run_id=run_id,
             ))
+
+        # ---- /dashboard/topology.json ---------------------------------------
+        @router.get("/topology.json", include_in_schema=False)
+        async def dashboard_topology(limit: int = 6) -> Any:
+            """Recent team and workflow executions as node-link graphs.
+
+            Built from the durable run store plus the buffered spans, so a team
+            or workflow run from a script or the CLI is included, not only work
+            done inside this server process. Served under the dashboard's own
+            access rule.
+            """
+            from effgen.observability.topology import build_topology
+
+            return JSONResponse(build_topology(limit=max(1, min(int(limit or 6), 20))))
 
         # ---- /dashboard/spans (SSE) ----------------------------------------
         @router.get("/spans", include_in_schema=False)

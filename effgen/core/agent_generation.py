@@ -28,6 +28,8 @@ from ..models.errors import (
     simplify_embedded_provider_error,
 )
 from ..observability import get_logger as _get_obs_logger
+from ..observability.spans import ModelAttrs
+from ..observability.tracing import mark_span_error, start_model_call
 from ..utils.structured_logging import (
     get_structured_logger,
 )
@@ -57,7 +59,10 @@ _reasoning_budget_warned: set[tuple[str, str]] = set()
 _obs_log = _get_obs_logger(__name__)
 
 from .agent import AgentMode, AgentResponse  # noqa: E402
-from .agent_runtime import sanitize_final_answer  # noqa: E402
+from .agent_runtime import (  # noqa: E402
+    _infer_provider_from_model,
+    sanitize_final_answer,
+)
 
 
 class AgentGenerationMixin:
@@ -861,16 +866,36 @@ class AgentGenerationMixin:
             prompt = self._direct_prompt(task, conversation_history)
 
         try:
-            response = self._generate(prompt, _task_hint=task, **kwargs)
-            tokens_used = response.get("tokens_used", 0)
+            # Time the call as a model span so a tool-free run still shows its
+            # inner structure (the ReAct path already does this).
+            model_name = getattr(self, "model_name", None) or "unknown"
+            with start_model_call(
+                provider=_infer_provider_from_model(self.model, model_name),
+                model=model_name,
+            ) as _mspan:
+                response = self._generate(prompt, _task_hint=task, **kwargs)
+                tokens_used = response.get("tokens_used", 0)
+                _meta = response.get("metadata") or {}
+                try:
+                    _mspan.set_attribute(
+                        ModelAttrs.INPUT_TOKENS, int(_meta.get("prompt_tokens", 0) or 0)
+                    )
+                    _mspan.set_attribute(ModelAttrs.OUTPUT_TOKENS, int(tokens_used or 0))
+                except Exception:  # noqa: BLE001 - telemetry is best-effort
+                    logger.debug("Failed to set model span token attributes", exc_info=True)
 
-            # Mirror the tool-loop's check: a generation error must NOT be
-            # reported as success=True with empty output. Both paths
-            # return the identical failure shape via _generation_failure_response.
-            if response.get("finish_reason") == "error":
-                return self._generation_failure_response(
-                    response, iterations=1, tool_calls=0, tokens=tokens_used,
-                )
+                # Mirror the tool-loop's check: a generation error must NOT be
+                # reported as success=True with empty output. Both paths
+                # return the identical failure shape via
+                # _generation_failure_response.
+                if response.get("finish_reason") == "error":
+                    failure = self._generation_failure_response(
+                        response, iterations=1, tool_calls=0, tokens=tokens_used,
+                    )
+                    # The adapter reports this failure by returning, not by
+                    # raising, so record it on the span explicitly.
+                    mark_span_error(str(failure.output)[:300])
+                    return failure
 
             answer = response["text"].strip()
             answer = sanitize_final_answer(answer) or answer

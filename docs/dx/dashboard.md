@@ -8,8 +8,9 @@ The effGen local dashboard is a lightweight single-page web app served by the AP
 |-------|-------------|
 | **Summary cards** | Total requests, errors, average latency, estimated daily cost, and total tokens used. |
 | **SLO burn rates** | Visual progress bars showing how close p99 latency, error rate, and availability are to their SLO thresholds. |
-| **Request latency chart** | Rolling Chart.js line chart of average latency over recent polling intervals. |
+| **Request latency chart** | Rolling line chart of average latency over recent polling intervals, drawn on a canvas. |
 | **Recent agent runs** | Table of the last 50 agent runs with model, token counts, cost, duration, and success/error badge. |
+| **Agent topology** | Team and workflow executions as a node-link graph: agents (the manager marked apart) and the tools they reached as nodes, delegation, handoff and tool use as edges. Status is carried by a glyph and a text label as well as color; nodes are keyboard-focusable and open a detail panel. |
 | **Live span stream** | Real-time feed of trace spans via Server-Sent Events (SSE).  Includes a pause toggle and clear button. |
 | **Prometheus metrics (raw)** | Sortable table of all registered Prometheus metric names and their current values. |
 
@@ -71,16 +72,69 @@ Trace spans are pushed over SSE at `/dashboard/spans`.  Each event is a JSON obj
 {
   "ts": "12:00:01",
   "name": "effgen.model.call cerebras:gpt-oss-120b",
+  "kind": "model",
+  "agent": null,
+  "tool": null,
+  "model": "cerebras:gpt-oss-120b",
   "duration_ms": 543.2,
-  "error": null
+  "status": "ok",
+  "error": null,
+  "run_id": "9f2c1d40ab77",
+  "offset_ms": 12.4,
+  "execution_id": "b25fed1b57d3",
+  "execution_kind": "team",
+  "execution_name": "newsroom",
+  "parent_agent": "lead",
+  "role": "worker"
 }
 ```
 
+`kind` is one of `agent`, `model`, `tool` or `router`, and the matching
+`agent`/`tool`/`model` field names what the span timed — read those rather than
+parsing `name`, which is the display label. `status` is `ok`, `error` or
+`skipped`; a run that reports a failure without raising still records it here.
+The `execution_*` fields group the spans of one team or workflow run.
+
+## Topology endpoint
+
+`GET /dashboard/topology.json?limit=6` returns recent team and workflow
+executions as node-link graphs:
+
+```json
+{
+  "executions": [
+    {
+      "id": "b25fed1b57d3",
+      "kind": "team",
+      "name": "newsroom",
+      "status": "ok",
+      "cost_usd": 0.000042,
+      "tokens": 1234,
+      "nodes": [
+        {"id": "lead", "type": "manager", "status": "ok", "model": "llama-3.1-8b-instant",
+         "runs": 2, "cost_usd": 0.00002, "tokens": 800, "duration_s": 1.2}
+      ],
+      "edges": [{"source": "lead", "target": "researcher", "kind": "delegation", "count": 1}]
+    }
+  ],
+  "count": 1
+}
+```
+
+It is built from the durable run store plus the buffered spans, so a team or
+workflow run from a script or the CLI appears here too, not only work done
+inside the server process. `executions` is empty when nothing multi-agent has
+run yet.
+
 ## Authentication
 
-By default the dashboard is **public** (no JWT required) — this is intentional for local developer use.  The dashboard itself contains no secrets; it reads only aggregated metrics.
-
-In production, restrict access at the network/ingress level rather than adding JWT requirements to the dashboard.
+The static SPA shell (HTML/JS/CSS) is public so the page can load and prompt for
+a key. The data endpoints — `/dashboard/data.json`, `/dashboard/spans`,
+`/dashboard/catalog.json`, `/dashboard/history.json` and
+`/dashboard/topology.json` — require authentication by default and return a
+typed `invalid_api_key` envelope without one. Set `EFFGEN_PUBLIC_DASHBOARD=1` to
+open them for local viewing, and restrict access at the network/ingress level in
+a shared deployment.
 
 ## Static files
 
@@ -90,9 +144,12 @@ The SPA consists of three files shipped with the `effgen` package:
 |------|---------|
 | `effgen/dashboard/static/index.html` | Dashboard HTML shell |
 | `effgen/dashboard/static/app.js` | All dashboard JavaScript (polling, charts, SSE) |
-| `effgen/dashboard/static/style.css` | Dark-mode styles |
+| `effgen/dashboard/static/style.css` | Dark and light theme styles |
 
-Chart.js is loaded from a CDN (`cdn.jsdelivr.net`).  For air-gapped deployments, download `chart.umd.min.js` and serve it locally, updating the `<script>` src in `index.html`.
+Every asset is served from the package: the page references no external host, so
+it renders the same in an air-gapped deployment. The charts are drawn on a
+canvas and the topology graph is inline SVG built in `app.js` — no chart or
+graph library is involved.
 
 ## Adding run records
 

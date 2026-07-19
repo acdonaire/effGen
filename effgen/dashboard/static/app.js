@@ -9,6 +9,7 @@
  *  - HTTP responses by status code
  *  - recent agent runs table
  *  - history of stored runs and saved sessions, with per-run drill-in
+ *  - multi-agent topology graph (hand-drawn SVG, no graph library)
  *  - live span stream (SSE from /dashboard/spans if available)
  *  - raw Prometheus metrics table
  *
@@ -70,11 +71,23 @@
     if (el) el.hidden = true;
   }
 
+  // Escapes for both text and attribute positions: names reaching the page come
+  // from agent configs and model output, so quotes must not end an attribute.
   function esc(s) {
     return String(s)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  // Quote a value for use inside a CSS attribute selector.
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return window.CSS.escape(String(value));
+    }
+    return String(value).replace(/["\\]/g, "\\$&");
   }
 
   function fmt(v) {
@@ -826,6 +839,253 @@
   }
 
   // ------------------------------------------------------------------
+  // Multi-agent topology graph
+  //
+  // Draws one team or workflow execution as a node-link graph: agents (the
+  // manager marked apart) and the tools they reached as nodes, delegation,
+  // handoff, peer and tool-use links as edges. The SVG is built here — no
+  // graph library and no external asset. Status is carried by a glyph and a
+  // text label as well as color, and the layout is derived from the edges, so
+  // the same execution draws the same way on every refresh.
+  // ------------------------------------------------------------------
+  let topologyData = [];
+  let topoSelected = "";
+  let topoNodeId = null;
+
+  const TOPO_GLYPH = { ok: "●", running: "◐", skipped: "⊘", error: "✗" };
+  const TOPO_COL_W = 220;
+  const TOPO_ROW_H = 78;
+  const TOPO_NODE_W = 158;
+  const TOPO_NODE_H = 46;
+
+  function reducedMotion() {
+    try {
+      return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      return false;
+    }
+  }
+
+  function topoColumns(nodes, edges) {
+    // Longest-path depth from any node with no incoming edge. Cycles (peer
+    // edges in a collaborative team) are bounded by the node count.
+    const depth = new Map();
+    nodes.forEach((n) => depth.set(n.id, 0));
+    for (let pass = 0; pass < nodes.length; pass++) {
+      let moved = false;
+      edges.forEach((e) => {
+        if (!depth.has(e.source) || !depth.has(e.target)) return;
+        const next = depth.get(e.source) + 1;
+        if (next > depth.get(e.target)) { depth.set(e.target, next); moved = true; }
+      });
+      if (!moved) break;
+    }
+    // Tools always sit one column right of the agent that called them.
+    nodes.forEach((n) => { if (n.type === "tool") depth.set(n.id, depth.get(n.id) || 1); });
+    return depth;
+  }
+
+  function topoLayout(execution) {
+    const nodes = execution.nodes || [];
+    const edges = execution.edges || [];
+    const depth = topoColumns(nodes, edges);
+    const byColumn = new Map();
+    nodes.forEach((n) => {
+      const col = depth.get(n.id) || 0;
+      if (!byColumn.has(col)) byColumn.set(col, []);
+      byColumn.get(col).push(n);
+    });
+    const placed = new Map();
+    let rows = 1;
+    Array.from(byColumn.keys()).sort((a, b) => a - b).forEach((col) => {
+      const column = byColumn.get(col);
+      rows = Math.max(rows, column.length);
+      column.forEach((n, row) => {
+        placed.set(n.id, {
+          node: n,
+          x: 20 + col * TOPO_COL_W,
+          y: 16 + row * TOPO_ROW_H,
+        });
+      });
+    });
+    const cols = Math.max(...Array.from(byColumn.keys())) + 1;
+    return {
+      placed,
+      width: 20 + cols * TOPO_COL_W,
+      height: 16 + rows * TOPO_ROW_H,
+    };
+  }
+
+  function topoNodeSvg(entry, selectedId) {
+    const n = entry.node;
+    const status = n.status || "ok";
+    const glyph = TOPO_GLYPH[status] || TOPO_GLYPH.ok;
+    const shape = n.type === "tool"
+      ? `<ellipse cx="${TOPO_NODE_W / 2}" cy="${TOPO_NODE_H / 2}" `
+        + `rx="${TOPO_NODE_W / 2}" ry="${TOPO_NODE_H / 2}"></ellipse>`
+      : `<rect width="${TOPO_NODE_W}" height="${TOPO_NODE_H}" rx="${n.type === "manager" ? 4 : 10}"></rect>`;
+    const kindLabel = n.type === "manager" ? "manager" : n.type;
+    const meta = n.type === "tool"
+      ? `${n.calls || 0} call${n.calls === 1 ? "" : "s"}`
+      : (n.model || kindLabel);
+    // The label repeats the status as text so it never depends on color alone.
+    const label = `${kindLabel} ${n.label}, status ${status}`
+      + (n.model ? `, model ${n.model}` : "")
+      + (n.error ? ", failed" : "");
+    const selected = n.id === selectedId ? " is-selected" : "";
+    return `<g class="topo-node status-${esc(status)}${selected}" transform="translate(${entry.x},${entry.y})" `
+      + `tabindex="0" role="button" data-node="${esc(n.id)}" aria-label="${esc(label)}">`
+      + shape
+      + `<text class="topo-glyph" x="12" y="20">${glyph}</text>`
+      + `<text class="topo-name" x="28" y="20">${esc(clip(n.label, 16))}</text>`
+      + `<text class="topo-meta" x="28" y="34">${esc(clip(meta, 20))} · ${esc(status)}</text>`
+      + `</g>`;
+  }
+
+  function topoEdgeSvg(edge, layout, animate) {
+    const from = layout.placed.get(edge.source);
+    const to = layout.placed.get(edge.target);
+    if (!from || !to) return "";
+    const x1 = from.x + TOPO_NODE_W;
+    const y1 = from.y + TOPO_NODE_H / 2;
+    const x2 = to.x;
+    const y2 = to.y + TOPO_NODE_H / 2;
+    const mid = (x1 + x2) / 2;
+    const active = edge.count > 0 ? " is-active" : "";
+    const pulse = edge.count > 0 && animate ? " topo-pulse" : "";
+    return `<path class="topo-edge kind-${esc(edge.kind)}${active}${pulse}" `
+      + `d="M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}" `
+      + `marker-end="url(#topo-arrow)"><title>${esc(edge.kind)}</title></path>`;
+  }
+
+  function renderTopology() {
+    const svg = $("topo-svg");
+    const empty = $("topo-empty");
+    const sub = $("topology-sub");
+    if (!svg || !empty) return;
+
+    const execution = topologyData.find((e) => e.id === topoSelected) || topologyData[0];
+    if (!execution || !(execution.nodes || []).length) {
+      svg.innerHTML = "";
+      svg.removeAttribute("viewBox");
+      empty.hidden = false;
+      if (sub) {
+        sub.textContent = topologyData.length
+          ? "This execution recorded no agents yet."
+          : "No multi-agent activity recorded yet. Run a team or a workflow to populate this view.";
+      }
+      return;
+    }
+    empty.hidden = true;
+    if (sub) {
+      sub.textContent = `${execution.kind} "${execution.name}" — `
+        + `${execution.nodes.length} node(s), ${execution.edges.length} edge(s), `
+        + `${fmtCost(execution.cost_usd)}, ${fmt(execution.tokens)} tokens`;
+    }
+
+    const layout = topoLayout(execution);
+    const animate = !reducedMotion();
+    // The arrowhead needs its own class: .topo-edge sets fill:none for the
+    // connector line, and a CSS rule outranks a fill presentation attribute.
+    const defs = '<defs><marker id="topo-arrow" viewBox="0 0 10 10" refX="9" refY="5" '
+      + 'markerWidth="6" markerHeight="6" orient="auto-start-reverse">'
+      + '<path d="M0,0 L10,5 L0,10 z" class="topo-arrowhead"></path></marker></defs>';
+    // Re-rendering replaces the SVG, so remember which node held focus and give
+    // it back afterwards — otherwise a poll or a click drops a keyboard user
+    // back to the top of the page mid-interaction.
+    const focusedId = document.activeElement
+      && document.activeElement.closest
+      && document.activeElement.closest("g.topo-node")
+      ? document.activeElement.closest("g.topo-node").getAttribute("data-node")
+      : null;
+    svg.setAttribute("viewBox", `0 0 ${layout.width} ${layout.height}`);
+    svg.setAttribute("height", String(layout.height));
+    svg.innerHTML = defs
+      + execution.edges.map((e) => topoEdgeSvg(e, layout, animate)).join("")
+      + Array.from(layout.placed.values()).map((entry) => topoNodeSvg(entry, topoNodeId)).join("");
+
+    svg.querySelectorAll("g.topo-node").forEach((g) => {
+      const open = () => {
+        topoNodeId = g.getAttribute("data-node");
+        renderTopology();
+      };
+      g.addEventListener("click", open);
+      g.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
+      });
+    });
+
+    if (focusedId) {
+      const restore = svg.querySelector(`g.topo-node[data-node="${cssEscape(focusedId)}"]`);
+      if (restore) restore.focus();
+    }
+
+    renderTopoDetail(execution);
+  }
+
+  function renderTopoDetail(execution) {
+    const host = $("topo-detail");
+    if (!host) return;
+    const node = (execution.nodes || []).find((n) => n.id === topoNodeId);
+    if (!node) { host.hidden = true; host.innerHTML = ""; return; }
+    const rows = [
+      ["Type", node.type],
+      ["Status", node.status],
+      ["Role", node.role || "—"],
+      ["Model", node.model || "—"],
+      ["Runs", node.type === "tool" ? node.calls : node.runs],
+      ["Cost", fmtCost(node.cost_usd)],
+      ["Tokens", fmt(node.tokens)],
+      ["Duration", fmtSeconds(node.duration_s)],
+    ];
+    host.hidden = false;
+    host.innerHTML = `<h4>${esc(node.label)}</h4><dl class="run-detail">`
+      + rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v == null ? "—" : v))}</dd>`).join("")
+      + `</dl>`
+      + (node.task ? `<h4>Task</h4><pre class="run-text">${esc(node.task)}</pre>` : "")
+      + (node.output ? `<h4>Output</h4><pre class="run-text">${esc(node.output)}</pre>` : "")
+      + (node.error ? `<h4>Error</h4><pre class="run-text run-error">${esc(node.error)}</pre>` : "");
+  }
+
+  async function loadTopology() {
+    try {
+      const resp = await fetch("/dashboard/topology.json", { cache: "no-store" });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      topologyData = data.executions || [];
+      const select = $("topo-select");
+      if (select) {
+        const options = topologyData.map((e) =>
+          `<option value="${esc(e.id)}">${esc(e.kind || "run")} · ${esc(e.name || e.id)}</option>`
+        ).join("");
+        // Rebuilt only when the set of executions actually changed, so polling
+        // does not close an open dropdown or reset the reader's choice.
+        if (select.innerHTML !== options) {
+          select.innerHTML = options || '<option value="">—</option>';
+        }
+        if (topologyData.length && !topologyData.some((e) => e.id === topoSelected)) {
+          topoSelected = topologyData[0].id;
+        }
+        select.value = topoSelected;
+      }
+      renderTopology();
+    } catch (err) {
+      console.warn("[effGen dashboard] topology fetch failed:", err);
+    }
+  }
+
+  function initTopology() {
+    const select = $("topo-select");
+    if (select) {
+      select.addEventListener("change", () => {
+        topoSelected = select.value;
+        topoNodeId = null;
+        renderTopology();
+      });
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Data polling
   // ------------------------------------------------------------------
   async function fetchData() {
@@ -850,6 +1110,7 @@
       renderRuns(data);
       renderMetrics(data);
       loadHistory();
+      loadTopology();
       // Seed the span stream from the payload if SSE has not connected.
       if (!eventSource && data.recent_spans) {
         data.recent_spans.forEach(appendSpan);
@@ -867,6 +1128,7 @@
     initTheme();
     initCatalog();
     initHistory();
+    initTopology();
 
     // Wire up buttons
     const refreshBtn = $("refresh-btn");

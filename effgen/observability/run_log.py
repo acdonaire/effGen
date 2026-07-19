@@ -98,6 +98,11 @@ def record_run(
     provider: str | None = None,
     session_id: str | None = None,
     agent: str | None = None,
+    execution_id: str | None = None,
+    execution_kind: str | None = None,
+    execution_name: str | None = None,
+    parent_agent: str | None = None,
+    role: str | None = None,
 ) -> dict[str, Any]:
     """Append a run record to the ring buffer and the daily history file.
 
@@ -128,9 +133,30 @@ def record_run(
         Session the run belongs to, when it was run with one.
     agent:
         Name of the agent that performed the run.
+    execution_id:
+        Identifier shared by every run of one team or workflow execution.
+        Defaults to the execution the caller is running inside, so a sub-agent
+        run is grouped with its siblings without the caller passing anything.
+    execution_kind:
+        ``"team"`` or ``"workflow"``; defaults from the current execution.
+    execution_name:
+        Team or workflow name; defaults from the current execution.
+    parent_agent:
+        Agent that delegated this run; defaults from the current execution.
+    role:
+        Role the agent played in the execution (``"manager"``, ``"worker"``,
+        ``"node"``, …); defaults from the current execution.
 
     Returns the record that was stored.
     """
+    # Each field falls back to the execution in force, so a caller that names
+    # only one of them keeps the rest of the correlation instead of dropping it.
+    try:
+        from .tracing import current_execution
+
+        execution = current_execution() or {}
+    except Exception:  # noqa: BLE001 - correlation is best-effort
+        execution = {}
     record: dict[str, Any] = {
         "ts": _now_iso(),
         "run_id": run_id,
@@ -139,6 +165,11 @@ def record_run(
         "provider": provider,
         "agent": agent,
         "session_id": session_id,
+        "execution_id": execution_id or execution.get("execution_id"),
+        "execution_kind": execution_kind or execution.get("execution_kind"),
+        "execution_name": execution_name or execution.get("execution_name"),
+        "parent_agent": parent_agent or execution.get("parent_agent"),
+        "role": role or execution.get("role"),
         "task": _preview(task),
         "output": _preview(output),
         "input_tokens": input_tokens,
@@ -253,6 +284,7 @@ def read_runs(
     since: str | None = None,
     until: str | None = None,
     session_id: str | None = None,
+    execution_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return stored run records, newest first, after applying filters.
 
@@ -260,6 +292,7 @@ def read_runs(
     ``run_id``. ``since``/``until`` accept a date (``2026-07-18``) or any
     ISO-8601 prefix and are compared against the record timestamp. ``search``
     matches the task, output, model, run id, session id, or error text.
+    ``execution_id`` narrows to the runs of one team or workflow execution.
     """
     with _lock:
         merged = list(_runs)
@@ -283,6 +316,8 @@ def read_runs(
             continue
         if session_id and str(record.get("session_id") or "") != session_id:
             continue
+        if execution_id and str(record.get("execution_id") or "") != execution_id:
+            continue
         ts = str(record.get("ts") or "")
         if since and ts < since:
             continue
@@ -291,7 +326,10 @@ def read_runs(
         if needle:
             haystack = " ".join(
                 str(record.get(f) or "")
-                for f in ("task", "output", "model", "run_id", "session_id", "error", "agent")
+                for f in (
+                    "task", "output", "model", "run_id", "session_id", "error",
+                    "agent", "execution_id", "execution_name",
+                )
             ).lower()
             if needle not in haystack:
                 continue
@@ -307,6 +345,63 @@ def get_run(run_id: str) -> dict[str, Any] | None:
         if str(record.get("run_id")) == run_id:
             return record
     return None
+
+
+def read_executions(*, limit: int = 10, scan: int = 400) -> list[dict[str, Any]]:
+    """Return recent multi-agent executions reconstructed from stored runs.
+
+    Each entry carries the execution ``id``, ``kind`` (``team``/``workflow``),
+    ``name``, first/last timestamps, totals, and the member runs in the order
+    they were recorded. Because it reads the durable history rather than a
+    process-local buffer, a team or workflow run from a script or the CLI is
+    visible to a reader in another process.
+    """
+    grouped: dict[str, dict[str, Any]] = {}
+    for record in read_runs(limit=scan):
+        execution_id = record.get("execution_id")
+        if not execution_id:
+            continue
+        entry = grouped.setdefault(str(execution_id), {
+            "id": str(execution_id),
+            "kind": record.get("execution_kind"),
+            "name": record.get("execution_name"),
+            "started": record.get("ts"),
+            "updated": record.get("ts"),
+            "runs": [],
+            "cost_usd": 0.0,
+            "tokens": 0,
+            "failed": 0,
+        })
+        entry["runs"].append(record)
+        ts = str(record.get("ts") or "")
+        if ts and ts < str(entry["started"] or ts):
+            entry["started"] = ts
+        if ts and ts > str(entry["updated"] or ""):
+            entry["updated"] = ts
+        try:
+            entry["cost_usd"] += float(record.get("cost_usd") or 0.0)
+        except (TypeError, ValueError):
+            # A record with an unusable cost contributes nothing to the total
+            # rather than failing the whole grouping.
+            pass
+        for field in ("input_tokens", "output_tokens"):
+            try:
+                entry["tokens"] += int(record.get(field) or 0)
+            except (TypeError, ValueError):
+                # As above: an unusable token count is left out of the sum.
+                pass
+        if record.get("status") == "error":
+            entry["failed"] += 1
+        if entry["kind"] is None:
+            entry["kind"] = record.get("execution_kind")
+        if entry["name"] is None:
+            entry["name"] = record.get("execution_name")
+
+    executions = sorted(grouped.values(), key=lambda e: str(e["updated"] or ""), reverse=True)
+    for entry in executions:
+        entry["runs"].reverse()  # oldest first, the order they ran in
+        entry["cost_usd"] = round(entry["cost_usd"], 6)
+    return executions[:limit]
 
 
 def get_recent_runs(*, limit: int = 50) -> list[dict[str, Any]]:

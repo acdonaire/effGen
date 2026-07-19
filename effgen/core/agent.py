@@ -40,6 +40,7 @@ from ..models.model_loader import ModelLoader
 from ..observability import get_logger as _get_obs_logger
 from ..observability.spans import AgentAttrs
 from ..observability.tracing import (
+    mark_run_error,
     set_span_attribute,
     set_span_error,
     start_agent_run,
@@ -1369,6 +1370,20 @@ Question: {task}
                         completion_tokens=response.metadata.get("completion_tokens"),
                     )
 
+                # A run that reports failure without raising still records the
+                # failure on its span, so a consumer reading spans sees the same
+                # outcome the response carries.
+                if not response.success:
+                    detail = response.metadata.get("error")
+                    if isinstance(detail, dict):
+                        message = (
+                            f"{detail.get('type', 'AgentError')}: "
+                            f"{detail.get('message', response.output)}"
+                        )
+                    else:
+                        message = str(detail or response.output)
+                    mark_run_error(message)
+
                 # Tracing span attributes (using span constants)
                 set_span_attribute(AgentAttrs.RUN_ID, run_id or "")
                 set_span_attribute("effgen.tokens_used", response.tokens_used)
@@ -1879,6 +1894,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
         Returns:
             AgentResponse
         """
+        import contextvars
         import functools
         loop = asyncio.get_running_loop()
         func = functools.partial(
@@ -1886,7 +1902,12 @@ Provide a well-structured, comprehensive response that integrates all findings."
             output_schema=output_schema, output_model=output_model,
             inputs=inputs, **kwargs,
         )
-        return await loop.run_in_executor(None, func)
+        # A worker thread starts with an empty context, so the caller's context
+        # is copied into it: without this the run loses the ambient state it
+        # would have had synchronously, including the team/workflow execution it
+        # belongs to.
+        ctx = contextvars.copy_context()
+        return await loop.run_in_executor(None, functools.partial(ctx.run, func))
 
     # ── Resource management ─────────────────────────────────────────────
 

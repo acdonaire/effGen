@@ -12,6 +12,8 @@ Manages the lifecycle of specialized sub-agents including:
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import logging
 import time
 import traceback
@@ -20,6 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from ..observability.tracing import execution_scope
 from .execution_tracker import EventType, ExecutionEvent, ExecutionTracker
 from .router import RoutingStrategy
 from .task import SubTask, TaskStatus
@@ -204,6 +207,16 @@ class SubAgentManager:
         self.sub_agent_results: dict[str, SubAgentResult] = {}
         self.max_parallel = self.config.get("max_parallel_agents", 5)
 
+    def _decomposition_scope(self):
+        """Scope one decomposition as a single execution.
+
+        Inside a team or workflow the surrounding execution is kept, so the
+        sub-agents join it. Standalone, the whole decomposition becomes one
+        execution rather than one per sub-agent.
+        """
+        parent_name = str(getattr(self.parent_agent, "name", "") or "") or None
+        return execution_scope(kind="delegation", name=parent_name or "sub-agents")
+
     def spawn_sub_agent(self,
                        subtask: SubTask,
                        specialization: str | None = None) -> Any:
@@ -279,14 +292,15 @@ class SubAgentManager:
             async with semaphore:
                 return await self._execute_sub_agent_async(agent_info, subtask, progress_callback)
 
-        # Create tasks
-        tasks = [
-            execute_with_semaphore(agent, subtask)
-            for agent, subtask in zip(sub_agents, subtasks)
-        ]
+        with self._decomposition_scope():
+            # Create tasks
+            tasks = [
+                execute_with_semaphore(agent, subtask)
+                for agent, subtask in zip(sub_agents, subtasks)
+            ]
 
-        # Wait for all to complete
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Wait for all to complete
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Handle exceptions
         final_results = []
@@ -319,25 +333,26 @@ class SubAgentManager:
         """
         results = []
 
-        for subtask in subtasks:
-            # Spawn sub-agent
-            agent_info = self.spawn_sub_agent(subtask)
+        with self._decomposition_scope():
+            for subtask in subtasks:
+                # Spawn sub-agent
+                agent_info = self.spawn_sub_agent(subtask)
 
-            # Execute synchronously
-            result = self._execute_sub_agent(agent_info, subtask, progress_callback)
-            results.append(result)
+                # Execute synchronously
+                result = self._execute_sub_agent(agent_info, subtask, progress_callback)
+                results.append(result)
 
-            # Check if failed and should stop
-            if not result.success and self.config.get("stop_on_failure", False):
-                # Mark remaining as cancelled
-                for remaining in subtasks[len(results):]:
-                    results.append(SubAgentResult(
-                        subtask_id=remaining.id,
-                        agent_id="cancelled",
-                        success=False,
-                        error="Cancelled due to previous failure"
-                    ))
-                break
+                # Check if failed and should stop
+                if not result.success and self.config.get("stop_on_failure", False):
+                    # Mark remaining as cancelled
+                    for remaining in subtasks[len(results):]:
+                        results.append(SubAgentResult(
+                            subtask_id=remaining.id,
+                            agent_id="cancelled",
+                            success=False,
+                            error="Cancelled due to previous failure"
+                        ))
+                    break
 
         return results
 
@@ -406,14 +421,21 @@ class SubAgentManager:
                                       subtask: SubTask,
                                       progress_callback: Callable | None = None) -> SubAgentResult:
         """Execute sub-agent asynchronously."""
-        # Run in executor to avoid blocking
+        # Run in executor to avoid blocking. A worker thread starts with an
+        # empty context, so the caller's is copied in — without it the sub-agent
+        # loses the team or workflow execution it belongs to and its telemetry
+        # reads as an unrelated run.
         loop = asyncio.get_event_loop()
+        ctx = contextvars.copy_context()
         return await loop.run_in_executor(
             None,
-            self._execute_sub_agent,
-            agent_info,
-            subtask,
-            progress_callback
+            functools.partial(
+                ctx.run,
+                self._execute_sub_agent,
+                agent_info,
+                subtask,
+                progress_callback,
+            ),
         )
 
     def _execute_sub_agent(self,
@@ -564,8 +586,13 @@ class SubAgentManager:
             require_model=False,               # model is already an instance
         )
         child = Agent(child_cfg)
+        parent_name = str(getattr(parent, "name", "") or "") or None
         try:
-            response = child.run(subtask.description)
+            # The child's telemetry names the agent that spawned it, so a
+            # decomposed run reads as work under its parent rather than as a
+            # peer of it.
+            with execution_scope(role="sub-agent", parent_agent=parent_name):
+                response = child.run(subtask.description)
             return {
                 "output": response.output,
                 "summary": f"{config.specialization.value} sub-agent result",

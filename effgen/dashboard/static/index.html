@@ -231,6 +231,34 @@
       </div>
     </section>
 
+    <!-- Multi-agent topology graph -->
+    <section class="panel" id="panel-topology">
+      <h2>Agent Topology</h2>
+      <p class="panel-sub" id="topology-sub">Loading recorded executions…</p>
+      <div class="catalog-toolbar" role="group" aria-label="Topology controls">
+        <label class="cat-field">
+          <span class="cat-label">Execution</span>
+          <select id="topo-select" aria-label="Choose a team or workflow execution">
+            <option value="">—</option>
+          </select>
+        </label>
+      </div>
+      <ul class="topo-legend" aria-label="Node status key">
+        <li><span class="topo-key topo-ok" aria-hidden="true">●</span> ok</li>
+        <li><span class="topo-key topo-running" aria-hidden="true">◐</span> running</li>
+        <li><span class="topo-key topo-skipped" aria-hidden="true">⊘</span> skipped</li>
+        <li><span class="topo-key topo-error" aria-hidden="true">✗</span> failed</li>
+        <li><span class="topo-key" aria-hidden="true">▭</span> agent</li>
+        <li><span class="topo-key" aria-hidden="true">⬭</span> tool</li>
+      </ul>
+      <div class="topo-wrap">
+        <svg id="topo-svg" class="topo-svg" role="group"
+             aria-label="Multi-agent topology graph: agents, tools, and the edges between them"></svg>
+        <p class="empty-row" id="topo-empty">No multi-agent activity recorded yet.</p>
+      </div>
+      <div id="topo-detail" class="history-detail" aria-live="polite" hidden></div>
+    </section>
+
     <!-- Model catalog browser -->
     <section class="panel" id="panel-catalog">
       <h2>Model Catalog</h2>

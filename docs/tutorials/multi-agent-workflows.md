@@ -100,6 +100,63 @@ specialist = {"billing": team[0], "tech": team[1]}.get(choice, team[0])
 answer = specialist.run(ticket)
 ```
 
+## Seeing the shape of a team
+
+`TeamConfig.to_dict()` serializes the team's topology — its members, their
+models and tools, and the edges the pattern implies — before anything runs, so a
+team can be reviewed or drawn without spending on a run:
+
+```python
+team = orch.create_team("desk", [researcher, writer],
+                        pattern=OrchestrationPattern.HIERARCHICAL, manager_agent=lead)
+shape = team.to_dict()
+# {'name': 'desk', 'pattern': 'hierarchical', 'manager': {...},
+#  'agents': [{'name': 'researcher', 'model': 'gpt-5-nano', 'tools': ['wikipedia'], ...}],
+#  'edges': [{'source': 'lead', 'target': 'researcher', 'kind': 'delegation'}, ...]}
+
+print(team.diagram())                       # the shape, in the terminal
+response = orch.assign_task("Draft the brief.", team)
+print(team.diagram(response))               # the same shape, annotated with the run
+```
+
+The same structure is on `response.metadata["topology"]`, next to
+`response.metadata["execution_id"]`.
+
+## Grouping one execution's runs
+
+Each team or workflow run issues an execution id, and every member run carries
+it along with the agent that delegated the work and the role it played. Spans
+and stored run records both carry these fields, so N sub-agent traces regroup
+into the one execution they came from:
+
+```python
+from effgen.observability import run_log
+
+response = orch.assign_task("Draft the brief.", team)
+members = run_log.read_runs(execution_id=response.metadata["execution_id"])
+for row in members:
+    print(row["agent"], row["role"], "←", row["parent_agent"], row["status"])
+
+# Or read the whole execution as a graph:
+from effgen.observability.topology import build_topology
+graph = build_topology(limit=1)["executions"][0]
+```
+
+The dashboard's Agent Topology panel draws exactly this, and because the records
+are durable it shows teams and workflows run from a script or the CLI, not only
+work done inside the server process.
+
+## Running a team from async code
+
+`assign_task_async` awaits the same run and returns the same `TeamResponse`:
+
+```python
+response = await orch.assign_task_async("Draft the brief.", team)
+```
+
+Workflows pair the same way: `dag.run()` / `dag.execute()` synchronously,
+`await dag.run_async()` / `await dag.execute_async()` from async code.
+
 ## MessageBus — Agent Communication
 
 ```python

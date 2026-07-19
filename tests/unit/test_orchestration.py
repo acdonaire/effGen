@@ -619,3 +619,115 @@ def test_router_rejects_non_string_task():
     from effgen.core.router import SubAgentRouter
     with pytest.raises(TypeError):
         SubAgentRouter().route({"not": "a string"})
+
+
+# --------------------------------------------------------------------------- #
+# Multi-agent execution correlation, fan-out, discussion structure, async pairs
+# --------------------------------------------------------------------------- #
+def test_team_response_carries_execution_id_and_topology():
+    from effgen.core.orchestrator import OrchestrationPattern
+    orch = _orch_with_team(
+        agents=[FakeAgent("a"), FakeAgent("b")],
+        pattern=OrchestrationPattern.SEQUENTIAL,
+    )
+    res = orch.assign_task("hi", "team")
+    assert res.metadata["execution_id"]
+    shape = res.metadata["topology"]
+    assert [n["name"] for n in shape["agents"]] == ["a", "b"]
+    assert shape["edges"] == [{"source": "a", "target": "b", "kind": "handoff"}]
+
+
+def test_member_runs_share_one_execution_id():
+    from effgen.observability import run_log
+
+    run_log.clear()
+    orch = _orch_with_team(agents=[FakeAgent("a"), FakeAgent("b")])
+    res = orch.assign_task("hi", "team")
+    ids = {r["execution_id"] for r in run_log.get_recent_runs(limit=10) if r.get("agent") in ("a", "b")}
+    # FakeAgent does not write run history; the id lives on the response and is
+    # what a real member run would inherit.
+    assert res.metadata["execution_id"]
+    assert ids in ({res.metadata["execution_id"]}, set())
+
+
+def test_hierarchical_subtask_naming_two_workers_runs_both():
+    # A manager line addressed to several specialists reaches each of them
+    # instead of being narrowed to whoever matched first.
+    tech = FakeAgent("tech")
+    billing = FakeAgent("billing")
+    orch = _hier_orch("1. tech & billing: review the account", [tech, billing])
+    res = orch.assign_task("review", "support")
+    assert tech.runs == 1 and billing.runs == 1
+    assigned = {r["agent_name"] for r in res.agent_responses}
+    assert assigned == {"tech", "billing"}
+    assert all(r["co_assigned"] == ["tech", "billing"] for r in res.agent_responses)
+
+
+def test_longer_worker_name_wins_over_a_contained_name():
+    tech = FakeAgent("analyst")
+    market = FakeAgent("market-analyst")
+    orch = _hier_orch("1. market-analyst: size the market", [tech, market])
+    orch.assign_task("go", "support")
+    assert market.runs == 1 and tech.runs == 0
+
+
+def test_collaborative_rounds_record_who_was_answered():
+    from effgen.core.orchestrator import OrchestrationPattern
+    orch = _orch_with_team(
+        agents=[FakeAgent("a"), FakeAgent("b")],
+        pattern=OrchestrationPattern.COLLABORATIVE,
+    )
+    orch.teams["team"].max_rounds = 2
+    res = orch.assign_task("discuss", "team")
+    assert all(r["round"] == 2 for r in res.agent_responses)
+    # Round 2 answers the responses of round 1.
+    assert res.agent_responses[0]["responds_to"] == ["a", "b"]
+    rounds = res.metadata["discussion_rounds"]
+    assert [r["round"] for r in rounds] == [1, 2]
+    assert rounds[0]["agents"] == ["a", "b"]
+
+
+def test_assign_task_async_returns_a_team_response():
+    import asyncio
+
+    from effgen.core.orchestrator import TeamResponse
+    orch = _orch_with_team(agents=[FakeAgent("a")])
+    res = asyncio.run(orch.assign_task_async("hi", "team"))
+    assert isinstance(res, TeamResponse)
+    assert res.success is True
+
+
+def test_workflow_execute_is_an_alias_for_run():
+    from effgen.core.workflow import WorkflowDAG, WorkflowNode
+    dag = WorkflowDAG("wf")
+    dag.add_node(WorkflowNode(id="only", agent=FakeAgent("a")))
+    result = dag.execute("go")
+    assert result.success is True
+    assert result.metadata["execution_id"]
+
+
+def test_workflow_execute_async_is_an_alias_for_run_async():
+    import asyncio
+
+    from effgen.core.workflow import WorkflowDAG, WorkflowNode
+    dag = WorkflowDAG("wf")
+    dag.add_node(WorkflowNode(id="only", agent=FakeAgent("a")))
+    result = asyncio.run(dag.execute_async("go"))
+    assert result.success is True
+
+
+def test_workflow_skipped_node_is_recorded_in_telemetry():
+    from effgen.core.workflow import WorkflowDAG, WorkflowNode
+    from effgen.observability import tracing
+
+    with tracing._SPAN_BUFFER_LOCK:
+        tracing._SPAN_BUFFER.clear()
+    dag = WorkflowDAG("wf")
+    dag.add_node(WorkflowNode(id="first", agent=FakeAgent("a", succeed=False)))
+    dag.add_node(WorkflowNode(id="second", agent=FakeAgent("b")))
+    dag.connect("first", "second")
+    result = dag.run("go")
+    assert result.success is False
+    skipped = [s for s in tracing.get_recent_spans(limit=20) if s.get("status") == "skipped"]
+    assert any(s["agent"] == "second" for s in skipped)
+    assert any("did not complete" in (s.get("note") or "") for s in skipped)

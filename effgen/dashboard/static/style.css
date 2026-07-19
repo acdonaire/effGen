@@ -526,3 +526,72 @@ td.num { text-align: right; }
   overflow: auto;
 }
 .run-text.run-error { color: var(--err); }
+
+/* ---- Multi-agent topology graph ---- */
+.topo-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.1rem;
+  list-style: none;
+  margin: 0 0 0.7rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.topo-legend li { display: flex; align-items: center; gap: 0.35rem; }
+.topo-key { font-size: 0.95rem; line-height: 1; }
+.topo-key.topo-ok { color: var(--ok); }
+.topo-key.topo-running { color: var(--accent); }
+.topo-key.topo-skipped { color: var(--warn); }
+.topo-key.topo-error { color: var(--err); }
+
+.topo-wrap {
+  position: relative;
+  overflow-x: auto;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+  min-height: 8rem;
+}
+.topo-svg { display: block; width: 100%; height: auto; }
+.topo-svg text { font-family: var(--font); fill: var(--text); }
+
+.topo-node rect,
+.topo-node ellipse {
+  fill: var(--bg-card);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+.topo-node .topo-name { font-size: 12px; font-weight: 600; }
+.topo-node .topo-meta { font-size: 10px; fill: var(--text-muted); }
+.topo-node .topo-glyph { font-size: 13px; }
+.topo-node:focus-visible { outline: none; }
+.topo-node:focus-visible rect,
+.topo-node:focus-visible ellipse { stroke: var(--focus); stroke-width: 3; }
+.topo-node:hover rect,
+.topo-node:hover ellipse { stroke: var(--accent); }
+.topo-node.is-selected rect,
+.topo-node.is-selected ellipse { stroke: var(--accent); stroke-width: 2.5; }
+
+.topo-node.status-ok rect, .topo-node.status-ok ellipse { stroke: var(--ok); }
+.topo-node.status-running rect, .topo-node.status-running ellipse { stroke: var(--accent); }
+.topo-node.status-skipped rect, .topo-node.status-skipped ellipse { stroke: var(--warn); }
+.topo-node.status-error rect, .topo-node.status-error ellipse { stroke: var(--err); }
+.topo-node.status-ok .topo-glyph { fill: var(--ok); }
+.topo-node.status-running .topo-glyph { fill: var(--accent); }
+.topo-node.status-skipped .topo-glyph { fill: var(--warn); }
+.topo-node.status-error .topo-glyph { fill: var(--err); }
+
+.topo-edge { stroke: var(--text-faint); stroke-width: 1.6; fill: none; }
+.topo-arrowhead { fill: var(--text-faint); stroke: none; }
+.topo-edge.kind-tool_use { stroke-dasharray: 4 3; }
+.topo-edge-label { font-size: 9px; fill: var(--text-faint); }
+
+/* Motion only marks where work flowed; the graph is complete without it, and
+   the global reduced-motion rule stops the animation for anyone who asks. */
+.topo-edge.is-active { stroke: var(--accent); stroke-width: 2.2; }
+.topo-edge.is-active.topo-pulse {
+  stroke-dasharray: 6 6;
+  animation: topo-flow 1.2s linear infinite;
+}
+@keyframes topo-flow { to { stroke-dashoffset: -12; } }

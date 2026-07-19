@@ -21,6 +21,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from ..observability.tracing import (
+    execution_scope,
+    new_execution_id,
+    record_skipped_step,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -313,6 +319,16 @@ class WorkflowDAG:
         else:
             return asyncio.run(self.run_async(initial_inputs, context))
 
+    def execute(self, initial_inputs: dict[str, Any] | str | None = None,
+                context: dict[str, Any] | None = None) -> WorkflowResult:
+        """Alias for :meth:`run` — executes the workflow synchronously."""
+        return self.run(initial_inputs, context)
+
+    async def execute_async(self, initial_inputs: dict[str, Any] | str | None = None,
+                            context: dict[str, Any] | None = None) -> WorkflowResult:
+        """Alias for :meth:`run_async` — executes the workflow asynchronously."""
+        return await self.run_async(initial_inputs, context)
+
     async def run_async(self, initial_inputs: dict[str, Any] | str | None = None,
                         context: dict[str, Any] | None = None) -> WorkflowResult:
         """
@@ -326,6 +342,7 @@ class WorkflowDAG:
         start = time.time()
         initial_inputs = self._normalize_initial_inputs(initial_inputs)
         context = context or {}
+        execution_id = new_execution_id()
 
         # A zero-node workflow has nothing to run: report it explicitly instead
         # of an empty success (all([]) is True). Mirrors the empty-team contract
@@ -394,6 +411,17 @@ class WorkflowDAG:
                     node.status = NodeStatus.SKIPPED
                     if skip_reason:
                         node.metadata = {**node.metadata, "skip_reason": skip_reason}
+                    # Record the skip against the workflow so a consumer reading
+                    # telemetry sees a skipped node, not a missing one.
+                    upstream_ids = [e.source for e in self._reverse.get(nid, [])]
+                    with execution_scope(
+                        kind="workflow", name=self.name,
+                        execution_id=execution_id, role=f"node:{node.id}",
+                        parent_agent=upstream_ids[0] if upstream_ids else None,
+                    ):
+                        record_skipped_step(
+                            node.id, reason=skip_reason or "upstream did not complete",
+                        )
                     continue
 
                 # Build input for this node from upstream outputs + initial
@@ -416,7 +444,10 @@ class WorkflowDAG:
                     else:
                         node_input = context_str
 
-                tasks.append(self._run_node(node, node_input, context))
+                tasks.append(self._run_node(
+                    node, node_input, context,
+                    execution_id=execution_id,
+                ))
 
             if tasks:
                 await asyncio.gather(*tasks)
@@ -465,11 +496,13 @@ class WorkflowDAG:
                 "edges": [e.to_dict() for e in self._edges],
                 "topological_order": order,
                 "levels": levels,
+                "execution_id": execution_id,
             },
         )
 
     async def _run_node(self, node: WorkflowNode, task: str,
-                        context: dict[str, Any]) -> None:
+                        context: dict[str, Any],
+                        *, execution_id: str | None = None) -> None:
         """Execute a single workflow node.
 
         A node is COMPLETED only when its agent returns a real, successful
@@ -477,6 +510,10 @@ class WorkflowDAG:
         an auth error inside the node) the node is marked FAILED and carries a
         typed, redacted error — never a silent success — matching the failure
         contract used everywhere else.
+
+        The node's run is tagged with the workflow's execution id and the node
+        id, so its spans and its stored run record group with the rest of the
+        workflow rather than standing alone.
         """
         node.status = NodeStatus.RUNNING
         t0 = time.time()
@@ -484,14 +521,29 @@ class WorkflowDAG:
             if node.agent is None:
                 raise ValueError(f"Node '{node.id}' has no agent assigned")
 
+            upstream = [e.source for e in self._reverse.get(node.id, [])]
+            scope_kwargs = {
+                "kind": "workflow",
+                "name": self.name,
+                "execution_id": execution_id,
+                "role": f"node:{node.id}",
+                "parent_agent": upstream[0] if upstream else None,
+            }
+
             # Use async if available, else run in executor
             if hasattr(node.agent, "run_async"):
-                response = await node.agent.run_async(task, context=context)
+                with execution_scope(**scope_kwargs):
+                    response = await node.agent.run_async(task, context=context)
             else:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None, lambda: node.agent.run(task, context=context)
-                )
+
+                def _call() -> Any:
+                    # A thread pool does not inherit the caller's context, so
+                    # the scope is entered inside the worker.
+                    with execution_scope(**scope_kwargs):
+                        return node.agent.run(task, context=context)
+
+                response = await loop.run_in_executor(None, _call)
 
             node.output = response.output if hasattr(response, "output") else str(response)
 

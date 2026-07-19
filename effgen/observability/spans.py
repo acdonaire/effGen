@@ -31,6 +31,7 @@ from __future__ import annotations
 __all__ = [
     "SpanName",
     "AgentAttrs",
+    "ExecutionAttrs",
     "ModelAttrs",
     "ToolAttrs",
     "RouterAttrs",
@@ -84,6 +85,36 @@ class AgentAttrs:
 
     #: Task text (truncated to ≤500 chars)
     TASK: str = "effgen.agent.task"
+
+    #: Failure message when the run reported a failure without raising (string)
+    ERROR: str = "effgen.agent.error"
+
+
+class ExecutionAttrs:
+    """Attributes that tie the runs of one multi-agent execution together.
+
+    A team run or a workflow run issues one execution id and every sub-agent
+    run inside it carries that id, the agent that delegated the work, and the
+    role the agent played. Spans and stored run records both carry these, so N
+    sub-agent traces can be grouped back into the single execution they came
+    from.
+    """
+
+    #: Identifier shared by every run in one team/workflow execution (string)
+    ID: str = "effgen.execution.id"
+
+    #: What issued the execution: ``"team"`` | ``"workflow"`` (string)
+    KIND: str = "effgen.execution.kind"
+
+    #: Name of the team or workflow (string)
+    NAME: str = "effgen.execution.name"
+
+    #: Name of the agent that delegated this work, when one did (string)
+    PARENT_AGENT: str = "effgen.execution.parent_agent"
+
+    #: The agent's role in the execution, e.g. ``"manager"`` | ``"worker"``
+    #: | ``"node"`` (string)
+    ROLE: str = "effgen.execution.role"
 
 
 class ModelAttrs:

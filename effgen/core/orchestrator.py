@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from ..observability.tracing import execution_scope, new_execution_id
 from .agent import Agent, AgentMode
 from .execution_tracker import EventType, ExecutionEvent, ExecutionTracker
 from .lifecycle import AgentRegistry
@@ -70,6 +71,23 @@ def _response_time(response: Any) -> float:
         return round(float(getattr(response, "execution_time", 0.0) or 0.0), 3)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _agent_node(agent: Any, *, role: str) -> dict[str, Any]:
+    """Describe one team member: its name, model, tools and role."""
+    tools = getattr(agent, "tools", None)
+    if isinstance(tools, dict):
+        tool_names = sorted(str(t) for t in tools)
+    elif isinstance(tools, list | tuple | set):
+        tool_names = sorted(str(getattr(t, "name", t)) for t in tools)
+    else:
+        tool_names = []
+    return {
+        "name": str(getattr(agent, "name", "agent")),
+        "model": str(getattr(agent, "model_name", None) or "unknown"),
+        "tools": tool_names,
+        "role": role,
+    }
 
 
 def _aggregate_usage(responses: list[dict[str, Any]]) -> dict[str, Any]:
@@ -126,6 +144,82 @@ class TeamConfig:
     timeout: int = 600
     max_rounds: int = 3
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the team's topology — members, their tools, and the edges.
+
+        Mirrors :meth:`~effgen.core.workflow.WorkflowDAG.to_dict`: the shape is
+        available before the team runs, so a team can be drawn or reviewed
+        without spending anything on a run.
+
+        Returns a dict with ``name``, ``pattern``, ``manager`` (or ``None``),
+        ``agents`` — each with its ``name``, ``model`` and ``tools`` — and
+        ``edges``. The edges the pattern implies are ``delegation``
+        (manager → worker, hierarchical), ``peer`` (worker ↔ worker,
+        collaborative), and ``handoff`` (stage → next stage, sequential and
+        pipeline). Parallel and competitive teams run every member on the same
+        task, so they carry no inter-agent edges.
+
+        Example::
+
+            team = orch.create_team("desk", [a, b], pattern=OrchestrationPattern.SEQUENTIAL)
+            shape = team.to_dict()
+            print(shape["edges"])   # [{'source': 'a', 'target': 'b', 'kind': 'handoff'}]
+        """
+        nodes = [_agent_node(a, role="worker") for a in self.agents]
+        manager = _agent_node(self.manager_agent, role="manager") if self.manager_agent else None
+
+        edges: list[dict[str, str]] = []
+        names = [n["name"] for n in nodes]
+        if self.pattern == OrchestrationPattern.HIERARCHICAL and manager is not None:
+            edges = [
+                {"source": manager["name"], "target": n, "kind": "delegation"}
+                for n in names
+            ]
+        elif self.pattern == OrchestrationPattern.COLLABORATIVE:
+            edges = [
+                {"source": a, "target": b, "kind": "peer"}
+                for i, a in enumerate(names)
+                for b in names[i + 1:]
+            ]
+        elif self.pattern in (
+            OrchestrationPattern.SEQUENTIAL, OrchestrationPattern.PIPELINE,
+        ):
+            edges = [
+                {"source": a, "target": b, "kind": "handoff"}
+                for a, b in zip(names, names[1:], strict=False)
+            ]
+
+        return {
+            "name": self.name,
+            "pattern": self.pattern.value,
+            "manager": manager,
+            "agents": nodes,
+            "edges": edges,
+        }
+
+    def diagram(self, response: TeamResponse | None = None) -> str:
+        """Return the team's shape as plain text, one line per member.
+
+        Pass the :class:`TeamResponse` from a run to annotate each member with
+        its status, duration, cost and tokens; without one the shape renders as
+        pending structure. Status glyphs carry the meaning, so the output stays
+        readable when it is piped or captured::
+
+            print(team.diagram(orch.assign_task("Draft the brief.", team)))
+        """
+        from ..ui.team_viz import team_diagram_lines
+
+        results = list(response.agent_responses) if response is not None else None
+        if response is not None and self.manager_agent is not None and not any(
+            r.get("agent_name") == self.manager_agent.name for r in (results or [])
+        ):
+            # A manager coordinates rather than answering a subtask, so it has no
+            # entry in agent_responses; its status comes from the team's own
+            # outcome, and a worker failure does not mark the manager failed.
+            manager_ok = response.success or response.metadata.get("reason") == "sub_agent_failed"
+            results.append({"agent_name": self.manager_agent.name, "success": manager_ok})
+        return "\n".join(text for _style, text in team_diagram_lines(self.to_dict(), results))
 
 
 @dataclass
@@ -322,6 +416,8 @@ class MultiAgentOrchestrator:
                 metadata={"reason": "empty_team", "error": "Team has no agents."},
             )
 
+        execution_id = new_execution_id()
+
         # Arm a fresh cancellation flag for this run.
         cancel_event = threading.Event()
         self._cancel_events[team.name] = cancel_event
@@ -339,22 +435,30 @@ class MultiAgentOrchestrator:
         ))
 
         try:
-            # Execute based on pattern
-            if team.pattern == OrchestrationPattern.SEQUENTIAL:
-                response = self._execute_sequential(task, team, context)
-            elif team.pattern == OrchestrationPattern.PARALLEL:
-                response = self._execute_parallel(task, team, context)
-            elif team.pattern == OrchestrationPattern.HIERARCHICAL:
-                response = self._execute_hierarchical(task, team, context)
-            elif team.pattern == OrchestrationPattern.COLLABORATIVE:
-                response = self._execute_collaborative(task, team, context)
-            elif team.pattern == OrchestrationPattern.COMPETITIVE:
-                response = self._execute_competitive(task, team, context)
-            elif team.pattern == OrchestrationPattern.PIPELINE:
-                response = self._execute_pipeline(task, team, context)
-            else:
-                raise ValueError(f"Unknown pattern: {team.pattern}")
+            # One id for the whole team run: every member's spans and stored run
+            # records carry it, so the runs regroup into the execution they
+            # belong to instead of reading as unrelated traces.
+            with execution_scope(
+                kind="team", name=team.name, execution_id=execution_id,
+            ) as execution:
+                # Execute based on pattern
+                if team.pattern == OrchestrationPattern.SEQUENTIAL:
+                    response = self._execute_sequential(task, team, context)
+                elif team.pattern == OrchestrationPattern.PARALLEL:
+                    response = self._execute_parallel(task, team, context)
+                elif team.pattern == OrchestrationPattern.HIERARCHICAL:
+                    response = self._execute_hierarchical(task, team, context)
+                elif team.pattern == OrchestrationPattern.COLLABORATIVE:
+                    response = self._execute_collaborative(task, team, context)
+                elif team.pattern == OrchestrationPattern.COMPETITIVE:
+                    response = self._execute_competitive(task, team, context)
+                elif team.pattern == OrchestrationPattern.PIPELINE:
+                    response = self._execute_pipeline(task, team, context)
+                else:
+                    raise ValueError(f"Unknown pattern: {team.pattern}")
 
+            response.metadata.setdefault("execution_id", execution["execution_id"])
+            response.metadata.setdefault("topology", team.to_dict())
             response.execution_time = time.time() - start_time
 
             # Track completion
@@ -385,7 +489,12 @@ class MultiAgentOrchestrator:
                 success=False,
                 pattern=team.pattern,
                 execution_time=time.time() - start_time,
-                metadata={"reason": "team_error", "error": safe}
+                metadata={
+                    "reason": "team_error",
+                    "error": safe,
+                    "execution_id": execution_id,
+                    "topology": team.to_dict(),
+                },
             )
 
     def _execute_sequential(self,
@@ -402,6 +511,7 @@ class MultiAgentOrchestrator:
         responses = []
         cancel_event = self._cancel_events.get(team.name)
         cancelled = False
+        parent: str | None = None  # the stage that handed work to this one
 
         for i, agent in enumerate(team.agents):
             # Cooperative cancellation: stop before launching the next agent.
@@ -427,7 +537,9 @@ class MultiAgentOrchestrator:
             ))
 
             # Execute agent
-            response = agent.run(current_task, mode=AgentMode.AUTO, context=context)
+            with execution_scope(role="stage", parent_agent=parent):
+                response = agent.run(current_task, mode=AgentMode.AUTO, context=context)
+            parent = agent.name
 
             # Track completion
             self.execution_tracker.track_event(ExecutionEvent(
@@ -549,6 +661,8 @@ class MultiAgentOrchestrator:
                                   cancel_event: threading.Event | None = None,
                                   ) -> list[dict[str, Any]]:
         """Execute agents in parallel."""
+        role = "member"  # parallel and competitive members are peers
+
         async def run_agent(agent: Agent):
             # Skip not-yet-started work if the run was cancelled.
             if cancel_event is not None and cancel_event.is_set():
@@ -567,7 +681,8 @@ class MultiAgentOrchestrator:
             ))
 
             # Run agent
-            response = await agent.run_async(task, mode=AgentMode.AUTO, context=context)
+            with execution_scope(role=role):
+                response = await agent.run_async(task, mode=AgentMode.AUTO, context=context)
 
             # Track completion
             self.execution_tracker.track_event(ExecutionEvent(
@@ -606,6 +721,7 @@ class MultiAgentOrchestrator:
             raise ValueError("Hierarchical pattern requires manager_agent")
 
         worker_names = [agent.name for agent in team.agents]
+        manager_name = team.manager_agent.name
 
         # Manager decomposes task. Ask it to *name the worker* on each subtask
         # line ("<worker>: <what to do>") so subtasks are routed to the specialist
@@ -620,39 +736,49 @@ Provide subtasks as a numbered list. Start EACH line with the name of the worker
 who should handle it, followed by a colon — for example "{worker_names[0]}: <subtask>". \
 Use only the worker names listed above."""
 
-        manager_response = team.manager_agent.run(
-            decomposition_prompt,
-            mode=AgentMode.SINGLE,
-            context=context
-        )
+        with execution_scope(role="manager"):
+            manager_response = team.manager_agent.run(
+                decomposition_prompt,
+                mode=AgentMode.SINGLE,
+                context=context
+            )
 
         # Parse subtasks (simple heuristic)
         subtasks = self._parse_subtasks(manager_response.output)
 
-        # Route each subtask to the worker the manager named (by label), falling
-        # back to round-robin only when a line carries no recognizable worker
-        # name. Every subtask runs — none are dropped because there are more
-        # subtasks than agents.
+        # Route each subtask to the worker(s) the manager named (by label),
+        # falling back to round-robin only when a line carries no recognizable
+        # worker name. A subtask addressed to several workers runs on each of
+        # them rather than being narrowed to one. Every subtask runs — none are
+        # dropped because there are more subtasks than agents.
         responses = []
         rr = 0  # round-robin cursor for unlabeled subtasks
         for subtask in subtasks:
-            agent = self._route_subtask(subtask, team.agents)
-            if agent is None:
-                agent = team.agents[rr % len(team.agents)]
+            targets = self._route_subtask_all(subtask, team.agents)
+            if not targets:
+                targets = [team.agents[rr % len(team.agents)]]
                 rr += 1
-            response = agent.run(subtask, mode=AgentMode.AUTO, context=context)
-            responses.append({
-                "agent_name": agent.name,
-                "subtask": subtask,
-                "output": response.output,
-                "success": response.success,
-                "tokens_used": response.tokens_used,
-                "cost_usd": _response_cost(response),
-                "execution_time": _response_time(response),
-            })
-            if not response.success:
-                detail = (getattr(response, "metadata", None) or {}).get("error")
-                responses[-1]["error"] = detail or _redact(str(response.output))
+            co_assigned = [a.name for a in targets] if len(targets) > 1 else []
+            for agent in targets:
+                with execution_scope(role="worker", parent_agent=manager_name):
+                    response = agent.run(subtask, mode=AgentMode.AUTO, context=context)
+                entry: dict[str, Any] = {
+                    "agent_name": agent.name,
+                    "subtask": subtask,
+                    "output": response.output,
+                    "success": response.success,
+                    "tokens_used": response.tokens_used,
+                    "cost_usd": _response_cost(response),
+                    "execution_time": _response_time(response),
+                }
+                if co_assigned:
+                    # The subtask named more than one worker; record who else
+                    # received it so the split is visible in the result.
+                    entry["co_assigned"] = co_assigned
+                responses.append(entry)
+                if not response.success:
+                    detail = (getattr(response, "metadata", None) or {}).get("error")
+                    entry["error"] = detail or _redact(str(response.output))
 
         # Manager synthesizes
         synthesis_prompt = f"""Synthesize the results from your team into a final answer for: {task}
@@ -662,11 +788,12 @@ Team results:
 
 Provide a comprehensive final answer."""
 
-        final_response = team.manager_agent.run(
-            synthesis_prompt,
-            mode=AgentMode.SINGLE,
-            context=context
-        )
+        with execution_scope(role="manager"):
+            final_response = team.manager_agent.run(
+                synthesis_prompt,
+                mode=AgentMode.SINGLE,
+                context=context
+            )
 
         # Success requires the manager's synthesis to succeed AND no worker to
         # have failed (a dropped/failed specialist must not pass silently).
@@ -713,6 +840,8 @@ Provide a comprehensive final answer."""
         current_responses = []
         any_failure = False
         first_error: str | None = None
+        discussion_rounds: list[dict[str, Any]] = []
+        previous_speaker: str | None = None
 
         for round_num in range(1, max_rounds + 1):
             round_responses = []
@@ -733,13 +862,20 @@ Consider the above viewpoints and provide your perspective or refined answer."""
                 else:
                     prompt = task
 
-                response = agent.run(prompt, mode=AgentMode.AUTO, context=context)
+                # The previous round's last speaker is the response this one was
+                # shown most recently, so the discussion links up in telemetry
+                # instead of reading as unconnected runs.
+                with execution_scope(role="collaborator", parent_agent=previous_speaker):
+                    response = agent.run(prompt, mode=AgentMode.AUTO, context=context)
                 # Capture per-agent success/error like the other patterns — a
                 # failed agent must be visible, never an invisible silent pass.
                 entry = {
                     "agent_name": agent.name,
                     "output": response.output,
                     "round": round_num,
+                    # The responses this one was shown, so the discussion can be
+                    # read (and drawn) as who answered whom.
+                    "responds_to": [r["agent_name"] for r in current_responses],
                     "success": response.success,
                     "tokens_used": response.tokens_used,
                     "cost_usd": _response_cost(response),
@@ -753,7 +889,12 @@ Consider the above viewpoints and provide your perspective or refined answer."""
                         first_error = entry["error"]
                 round_responses.append(entry)
 
+            discussion_rounds.append({
+                "round": round_num,
+                "agents": [r["agent_name"] for r in round_responses],
+            })
             current_responses = round_responses
+            previous_speaker = round_responses[-1]["agent_name"] if round_responses else None
 
             # Check for consensus
             consensus_score = self._calculate_consensus(round_responses)
@@ -764,6 +905,7 @@ Consider the above viewpoints and provide your perspective or refined answer."""
         # (fail-closed — a failing collaborator must not be hidden by a True).
         success = bool(current_responses) and not any_failure
         meta: dict[str, Any] = dict(_aggregate_usage(current_responses))
+        meta["discussion_rounds"] = discussion_rounds
         if not success:
             meta["reason"] = "sub_agent_failed" if any_failure else "empty_team"
             meta["error"] = first_error or "A collaborating agent failed."
@@ -928,29 +1070,37 @@ Consider the above viewpoints and provide your perspective or refined answer."""
         happens to sit at the same list index. Returns ``None`` when no worker is
         recognizable so the caller can fall back to round-robin.
         """
+        named = self._route_subtask_all(subtask, agents)
+        return named[0] if named else None
+
+    def _route_subtask_all(self, subtask: str, agents: list[Agent]) -> list[Agent]:
+        """Return every worker a subtask names, in the order they are named.
+
+        A manager sometimes addresses one line to several specialists
+        ("research & writing: draft the brief"). Each named worker is returned
+        so the caller can give all of them the work instead of narrowing to one
+        and leaving the others out. A name that is contained in another matched
+        name (``analyst`` inside ``market-analyst``) is dropped, so the longer
+        specific name wins. Returns an empty list when no worker is recognizable.
+        """
         text = subtask.strip()
         lowered = text.lower()
-        by_name = {a.name.lower(): a for a in agents}
+        by_name = {a.name.lower(): a for a in agents if a.name}
 
-        # Prefer an explicit "<worker>:" label at the start of the line.
-        if ":" in text:
-            label = text.split(":", 1)[0].strip().lower()
-            if label in by_name:
-                return by_name[label]
-            # Tolerate decorations like "Billing agent" or "**billing**".
-            for name, agent in by_name.items():
-                if name and name in label:
-                    return agent
+        # Prefer the explicit "<worker>:" label at the start of the line, and
+        # only fall back to the whole line when the label names nobody.
+        scope = text.split(":", 1)[0].strip().lower() if ":" in text else lowered
+        matches = [(scope.find(n), n, a) for n, a in by_name.items() if n in scope]
+        if not matches:
+            matches = [(lowered.find(n), n, a) for n, a in by_name.items() if n in lowered]
 
-        # Otherwise, the first worker name mentioned anywhere in the line wins.
-        best: tuple[int, Agent] | None = None
-        for name, agent in by_name.items():
-            if not name:
-                continue
-            pos = lowered.find(name)
-            if pos != -1 and (best is None or pos < best[0]):
-                best = (pos, agent)
-        return best[1] if best is not None else None
+        matched_names = {n for _pos, n, _a in matches}
+        keep = [
+            (pos, agent)
+            for pos, name, agent in matches
+            if not any(name != other and name in other for other in matched_names)
+        ]
+        return [agent for _pos, agent in sorted(keep, key=lambda pair: pair[0])]
 
     def _parse_subtasks(self, text: str) -> list[str]:
         """Parse subtasks from numbered list."""
@@ -968,6 +1118,28 @@ Consider the above viewpoints and provide your perspective or refined answer."""
             formatted.append(f"   Subtask: {response.get('subtask', 'N/A')}")
             formatted.append(f"   Result: {response['output']}")
         return "\n".join(formatted)
+
+    async def assign_task_async(self,
+                                task: str,
+                                team: TeamConfig | str,
+                                context: dict[str, Any] | None = None) -> TeamResponse:
+        """Await :meth:`assign_task` from async code.
+
+        Takes the same arguments and returns the same :class:`TeamResponse`.
+        The team runs in a worker thread, so an event loop already running in
+        the caller keeps serving while the team works::
+
+            response = await orch.assign_task_async("Draft the brief.", team)
+
+        Args:
+            task: Task description (a plain string).
+            team: A ``TeamConfig`` or the name of a registered team.
+            context: Optional context.
+
+        Returns:
+            TeamResponse with results.
+        """
+        return await asyncio.to_thread(self.assign_task, task, team, context)
 
     def get_team(self, name: str) -> TeamConfig | None:
         """Get team by name."""

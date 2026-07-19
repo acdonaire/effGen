@@ -68,6 +68,20 @@ _RUN_CONTEXT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.Contex
     "effgen_span_run_context", default=None
 )
 
+# The team/workflow execution the current work belongs to. Set by the
+# orchestrator and the workflow runner around each sub-agent call so every span
+# and every stored run record of one execution shares an id.
+_EXECUTION_CONTEXT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "effgen_execution_context", default=None
+)
+
+# Stack of in-flight buffered spans, innermost last. A span's outcome can be
+# recorded on it while it is open (for work that reports failure by returning a
+# result rather than raising).
+_SPAN_OUTCOMES: contextvars.ContextVar[tuple[dict[str, Any], ...]] = contextvars.ContextVar(
+    "effgen_span_outcomes", default=()
+)
+
 # ---------------------------------------------------------------------------
 # Optional OTel imports — graceful no-op when SDK is not installed
 # ---------------------------------------------------------------------------
@@ -94,6 +108,7 @@ except ImportError:
 
 from .spans import (  # noqa: E402  (must come after optional OTel imports)
     AgentAttrs,
+    ExecutionAttrs,
     ModelAttrs,
     RetryAttrs,
     RouterAttrs,
@@ -123,6 +138,13 @@ __all__ = [
     "set_span_ok",
     "set_span_error",
     "set_span_attribute",
+    "mark_span_error",
+    "mark_run_error",
+    "record_skipped_step",
+    # Multi-agent execution correlation
+    "execution_scope",
+    "current_execution",
+    "new_execution_id",
     # Legacy compat shims (for existing agent.py / utils/tracing.py callers)
     "trace_agent_run",
     "trace_agent_iterate",
@@ -588,17 +610,34 @@ def start_agent_run(
     }
     if run_id:
         attrs[AgentAttrs.RUN_ID] = run_id
+    execution = current_execution()
+    if execution and execution.get("execution_id"):
+        attrs[ExecutionAttrs.ID] = execution["execution_id"]
+        for attr_key, ctx_key in (
+            (ExecutionAttrs.KIND, "execution_kind"),
+            (ExecutionAttrs.NAME, "execution_name"),
+            (ExecutionAttrs.PARENT_AGENT, "parent_agent"),
+            (ExecutionAttrs.ROLE, "role"),
+        ):
+            if execution.get(ctx_key):
+                attrs[attr_key] = execution[ctx_key]
     start = time.monotonic()
     # Correlate every span nested in this run so the dashboard can group them.
     _ctx_token = _RUN_CONTEXT.set({"run_id": run_id or uuid.uuid4().hex[:12], "start": start})
     try:
-        with tracer.start_as_current_span(SpanName.AGENT_RUN, attributes=attrs) as span:
+        with tracer.start_as_current_span(SpanName.AGENT_RUN, attributes=attrs) as span, \
+                _outcome_scope("agent") as outcome:
             try:
                 yield span
+                if outcome["error"]:
+                    _set_safe(span, AgentAttrs.ERROR, outcome["error"])
                 _buffer_span(
                     f"{SpanName.AGENT_RUN} {preset}",
                     (time.monotonic() - start) * 1000,
+                    error=outcome["error"],
                     start_monotonic=start,
+                    kind="agent",
+                    agent=preset,
                 )
             except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _mark_error(span, exc)
@@ -607,6 +646,8 @@ def start_agent_run(
                     (time.monotonic() - start) * 1000,
                     error=str(exc),
                     start_monotonic=start,
+                    kind="agent",
+                    agent=preset,
                 )
                 raise
     except Exception:
@@ -695,18 +736,26 @@ def start_model_call(
 
     start = time.monotonic()
     try:
-        with tracer.start_as_current_span(SpanName.MODEL_CALL, attributes=attrs) as span:
+        with tracer.start_as_current_span(SpanName.MODEL_CALL, attributes=attrs) as span, \
+                _outcome_scope("model") as outcome:
             try:
                 yield span
                 # Set latency on the way out (only if span is still recording)
                 _set_safe(span, ModelAttrs.LATENCY_MS, round((time.monotonic() - start) * 1000, 1))
-                if not _has_outcome(span):
-                    _set_safe(span, ModelAttrs.OUTCOME, "ok")
-                _mark_ok(span)
+                if outcome["error"]:
+                    _set_safe(span, ModelAttrs.OUTCOME, "error")
+                    _mark_error_message(span, outcome["error"])
+                else:
+                    if not _has_outcome(span):
+                        _set_safe(span, ModelAttrs.OUTCOME, "ok")
+                    _mark_ok(span)
                 _buffer_span(
                     f"{SpanName.MODEL_CALL} {_model_label}",
                     (time.monotonic() - start) * 1000,
+                    error=outcome["error"],
                     start_monotonic=start,
+                    kind="model",
+                    model=_model_label,
                 )
             except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _set_safe(span, ModelAttrs.OUTCOME, "error")
@@ -717,6 +766,8 @@ def start_model_call(
                     (time.monotonic() - start) * 1000,
                     error=str(exc),
                     start_monotonic=start,
+                    kind="model",
+                    model=_model_label,
                 )
                 raise
     except Exception:
@@ -745,17 +796,25 @@ def start_tool_call(
     }
     start = time.monotonic()
     try:
-        with tracer.start_as_current_span(SpanName.TOOL_CALL, attributes=attrs) as span:
+        with tracer.start_as_current_span(SpanName.TOOL_CALL, attributes=attrs) as span, \
+                _outcome_scope("tool") as outcome:
             try:
                 yield span
                 _set_safe(span, ToolAttrs.LATENCY_MS, round((time.monotonic() - start) * 1000, 1))
-                if not _has_tool_status(span):
-                    _set_safe(span, ToolAttrs.STATUS, "ok")
-                _mark_ok(span)
+                if outcome["error"]:
+                    _set_safe(span, ToolAttrs.STATUS, "error")
+                    _mark_error_message(span, outcome["error"])
+                else:
+                    if not _has_tool_status(span):
+                        _set_safe(span, ToolAttrs.STATUS, "ok")
+                    _mark_ok(span)
                 _buffer_span(
                     f"{SpanName.TOOL_CALL} {tool_name}",
                     (time.monotonic() - start) * 1000,
+                    error=outcome["error"],
                     start_monotonic=start,
+                    kind="tool",
+                    tool=tool_name,
                 )
             except Exception as exc:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
                 _set_safe(span, ToolAttrs.STATUS, "error")
@@ -766,6 +825,8 @@ def start_tool_call(
                     (time.monotonic() - start) * 1000,
                     error=str(exc),
                     start_monotonic=start,
+                    kind="tool",
+                    tool=tool_name,
                 )
                 raise
     except Exception:
@@ -909,6 +970,15 @@ def _mark_ok(span: Any) -> None:
         pass
 
 
+def _mark_error_message(span: Any, message: str) -> None:
+    """Set span status to ERROR from a message (no exception object)."""
+    try:
+        if _OTEL_AVAILABLE and span is not None and hasattr(span, "set_status"):
+            span.set_status(StatusCode.ERROR, str(message))
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort; never break the caller
+        pass
+
+
 def _mark_error(span: Any, exc: Exception) -> None:
     """Set span status to ERROR and record exception without raising."""
     try:
@@ -990,19 +1060,150 @@ _SPAN_BUFFER_LOCK: threading.Lock = threading.Lock()
 _SPAN_BUFFER: deque[dict] = deque(maxlen=500)  # type: ignore[type-arg]
 
 
+def new_execution_id() -> str:
+    """Return a fresh identifier for one team or workflow execution."""
+    return uuid.uuid4().hex[:12]
+
+
+def current_execution() -> dict[str, Any] | None:
+    """Return the team/workflow execution the caller is running inside.
+
+    The dict carries ``execution_id``, ``execution_kind`` (``"team"`` or
+    ``"workflow"``), ``execution_name``, ``parent_agent`` and ``role``.
+    Returns ``None`` outside any execution.
+    """
+    ctx = _EXECUTION_CONTEXT.get()
+    return dict(ctx) if ctx else None
+
+
+@contextmanager
+def execution_scope(
+    *,
+    kind: str | None = None,
+    name: str | None = None,
+    execution_id: str | None = None,
+    parent_agent: str | None = None,
+    role: str | None = None,
+) -> Generator[dict[str, Any]]:
+    """Tag everything run inside the block as part of one multi-agent execution.
+
+    Spans buffered inside the block, and run records written from it, carry the
+    execution id, kind, name, delegating agent and role. Nesting inherits: an
+    inner scope that omits ``execution_id`` keeps the outer id (and its kind and
+    name), so a per-agent scope adds ``role``/``parent_agent`` without starting a
+    new execution.
+
+    Args:
+        kind: What issued the execution — ``"team"`` or ``"workflow"``. Applied
+            only when this scope starts the execution.
+        name: Team or workflow name. Applied only when this scope starts the
+            execution.
+        execution_id: Reuse an existing id; a new one is issued when the scope
+            is outermost and none is given.
+        parent_agent: The agent that delegated this work, when one did.
+        role: The role played inside the execution (``"manager"``, ``"worker"``,
+            ``"node"``, …).
+
+    Yields:
+        The execution context dict that is in force inside the block.
+    """
+    outer = _EXECUTION_CONTEXT.get() or {}
+    # ``kind`` and ``name`` identify the execution as a whole, so they are taken
+    # only from the scope that starts one. A nested scope joining an execution
+    # already in flight contributes its ``role``/``parent_agent`` and leaves the
+    # execution's own identity alone.
+    starts_execution = execution_id is not None or not outer.get("execution_id")
+    ctx: dict[str, Any] = {
+        "execution_id": execution_id or outer.get("execution_id") or new_execution_id(),
+        "execution_kind": (kind or outer.get("execution_kind")) if starts_execution
+        else outer.get("execution_kind"),
+        "execution_name": (name or outer.get("execution_name")) if starts_execution
+        else outer.get("execution_name"),
+        "parent_agent": parent_agent if parent_agent is not None else outer.get("parent_agent"),
+        "role": role if role is not None else outer.get("role"),
+    }
+    token = _EXECUTION_CONTEXT.set(ctx)
+    try:
+        yield ctx
+    finally:
+        _EXECUTION_CONTEXT.reset(token)
+
+
+@contextmanager
+def _outcome_scope(kind: str) -> Generator[dict[str, Any]]:
+    """Push a record for the span being timed so its outcome can be set."""
+    scope: dict[str, Any] = {"span_kind": kind, "error": None}
+    token = _SPAN_OUTCOMES.set((*_SPAN_OUTCOMES.get(), scope))
+    try:
+        yield scope
+    finally:
+        _SPAN_OUTCOMES.reset(token)
+
+
+def mark_span_error(error: str) -> None:
+    """Record *error* as the outcome of the innermost span being timed.
+
+    Use this when work reports failure by returning a result instead of raising,
+    so the buffered span still reflects what happened. No-op outside a span.
+    """
+    stack = _SPAN_OUTCOMES.get()
+    if stack:
+        stack[-1]["error"] = str(error)[:300]
+
+
+def mark_run_error(error: str) -> None:
+    """Record *error* as the outcome of the enclosing agent-run span.
+
+    No-op outside an agent run.
+    """
+    for scope in _SPAN_OUTCOMES.get():
+        if scope.get("span_kind") == "agent":
+            scope["error"] = str(error)[:300]
+            return
+
+
+def record_skipped_step(name: str, *, reason: str) -> None:
+    """Record a step that was not run, with the reason it was skipped.
+
+    A skipped step times nothing, so it has no span of its own; recording it
+    keeps it visible to a consumer reading the buffer, which would otherwise
+    show the step as absent rather than deliberately skipped.
+    """
+    _buffer_span(
+        f"{SpanName.AGENT_RUN} {name}",
+        0.0,
+        kind="agent",
+        agent=name,
+        status="skipped",
+        note=reason,
+    )
+
+
 def _buffer_span(
     name: str,
     duration_ms: float,
     error: str | None = None,
     *,
     start_monotonic: float | None = None,
+    kind: str | None = None,
+    agent: str | None = None,
+    tool: str | None = None,
+    model: str | None = None,
+    status: str | None = None,
+    note: str | None = None,
 ) -> None:
     """Append a span dict to the in-memory ring buffer (best-effort, never raises).
+
+    Alongside the display ``name``, the record carries the span's ``kind``
+    (``agent`` / ``model`` / ``tool`` / ``router``) and the identity of what it
+    timed (``agent``, ``tool``, ``model``) as fields, so a consumer reads a field
+    instead of parsing the name.
 
     When called within an agent run the record also carries the run's id and the
     span's start offset (ms from the run's start), so a consumer can group spans
     by run and lay them out on a timeline. Both default to ``None``/``0`` for a
-    span recorded outside any run.
+    span recorded outside any run. Inside a team or workflow execution the record
+    additionally carries the execution id, kind, name, delegating agent and role.
     """
     try:
         ctx = _RUN_CONTEXT.get()
@@ -1013,11 +1214,24 @@ def _buffer_span(
         record = {
             "ts": time.strftime("%H:%M:%S", time.gmtime()),
             "name": name,
+            "kind": kind,
+            "agent": agent,
+            "tool": tool,
+            "model": model,
             "duration_ms": round(duration_ms, 1),
+            "status": status or ("error" if error else "ok"),
             "error": error,
+            "note": note,
             "run_id": run_id,
             "offset_ms": offset_ms,
         }
+        record.update(current_execution() or {
+            "execution_id": None,
+            "execution_kind": None,
+            "execution_name": None,
+            "parent_agent": None,
+            "role": None,
+        })
         with _SPAN_BUFFER_LOCK:
             _SPAN_BUFFER.append(record)
     except Exception:  # noqa: BLE001 - telemetry must never break inference
