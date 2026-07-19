@@ -21,7 +21,7 @@ effgen --completion fish | source
 ```
 
 The generated scripts complete the current subcommands (`run`, `chat`, `serve`,
-`models`, `tools`, `doctor`, `compare`, `debug`, `cost`, `eval`, …), the
+`models`, `tools`, `doctor`, `compare`, `battle`, `debug`, `cost`, `eval`, …), the
 `--preset` choices (from the preset registry), and `--tools` names (from the
 tool registry). Because they are generated, they cannot drift out of date the
 way a hardcoded list does.
@@ -59,12 +59,68 @@ effgen compare \
 - `-o/--output` writes the matrix in the format the extension names: `.html`
   renders the shareable report, `.md` writes Markdown, anything else JSON.
 - `--report out.html` writes the shareable report alongside the usual output.
+- `--judge MODEL` applies to `--scoring llm_judge`: without it every model
+  grades its own answers, which is exactly the bias a bake-off is meant to
+  remove. Naming a judge has one model grade the whole field. What did the
+  grading is stated under the tables and recorded in the JSON as `judge_model`
+  and `self_judged`.
 - Exit code: `0` on success, `1` if no model loaded, `2` for an unknown suite.
+
+Each score carries `responses` — what the model actually answered on every case
+— so the JSON and the HTML report show the work behind the percentages. A model
+that could not be run at all is reported as failed (`error`) rather than scored
+`0%`, and is never recommended.
+
+## `effgen battle`
+
+Race several models on one ad-hoc prompt and watch the answers arrive side by
+side. Where `compare` scores a suite against expected answers, `battle` answers
+"which of these models should I use for this?" in one shot.
+
+```bash
+effgen battle "Explain a B-tree in two sentences." \
+  -m openai:gpt-5-nano,groq:llama-3.1-8b-instant,gemini:gemini-3.1-flash-lite
+```
+
+On a terminal each model gets a column that fills in as its answer streams,
+headed by the model id and footed with its time to first token, elapsed time,
+tokens and cost. A verdict panel closes the race.
+
+- `--judge MODEL` asks a separate model to pick the best answer. It is optional:
+  the measured outcomes (fastest, cheapest, longest) need no judge, and a judged
+  pick is reported apart from them, naming the judge.
+- `--temperature`, `--max-tokens` and `--system-prompt` apply to every model.
+- `-o out.json` / `-o out.md` saves the battle; `--report out.html` writes the
+  self-contained report, with each model's full answer.
+- A model that fails is reported as failed, does not end the race, and cannot
+  win the verdict. Exit code `1` only when no model answered at all.
+
+Loading and generating are timed separately, so a local model's start-up time is
+visible as loading rather than counted as slow generation:
+
+```
+| Model                          | TTFT  | Latency | Cost      |
+| groq:llama-3.1-8b-instant      | 0.42s | 1.87s   | $0.000008 |
+| transformers:Qwen2.5-1.5B      | 0.48s | 1.23s   | unpriced  |   (load 12.7s)
+```
+
+Piped output, `--json`, `--no-animation` and `NO_COLOR` skip the live view and
+print one structured result carrying every model's full answer, the tally and
+the verdict:
+
+```bash
+effgen battle "..." -m a,b --json | jq '.contenders[] | {model, cost_usd, latency_s}'
+```
+
+The same race is available in the browser: open `/playground`, switch to
+**Battle**, and pick contenders from the model catalog. Each column streams from
+`POST /v1/chat/completions`, so the page inherits the endpoint's auth and spend
+controls and adds no new model-execution path.
 
 ## Shareable HTML reports
 
-`compare`, `eval`, `cost`, and `loadtest` each take `--report out.html`, which
-renders that run's result as a single HTML file: a headline verdict, the
+`compare`, `battle`, `eval`, `cost`, and `loadtest` each take `--report out.html`,
+which renders that run's result as a single HTML file: a headline verdict, the
 tables the terminal shows, and inline charts.
 
 ```bash

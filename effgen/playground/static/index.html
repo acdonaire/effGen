@@ -54,12 +54,33 @@
         <p class="hint" id="preset-hint"></p>
       </div>
 
-      <div class="field">
+      <fieldset class="field mode-field">
+        <legend>Mode</legend>
+        <label class="radio-row">
+          <input type="radio" name="mode" value="single" id="mode-single" checked />
+          Single run — one model answers
+        </label>
+        <label class="radio-row">
+          <input type="radio" name="mode" value="battle" id="mode-battle" />
+          Battle — several models answer the same prompt, side by side
+        </label>
+      </fieldset>
+
+      <div class="field" id="model-field">
         <label for="model-select">Model</label>
         <select id="model-select">
           <option value="">Loading catalog…</option>
         </select>
         <p class="hint" id="model-hint"></p>
+      </div>
+
+      <div class="field" id="battle-field" hidden>
+        <label for="battle-models">Contenders (pick two or more)</label>
+        <select id="battle-models" multiple size="8"></select>
+        <p class="hint" id="battle-hint">
+          Every contender answers the same prompt at once, so a battle spends
+          once per model.
+        </p>
       </div>
 
       <div class="field">
@@ -92,8 +113,15 @@
       <button class="run-btn" id="run-btn" type="button">Run</button>
     </section>
 
+    <!-- Battle results -->
+    <section class="panel results" id="battle-results" aria-label="Battle results" hidden>
+      <h2>Battle</h2>
+      <div class="battle-grid" id="battle-grid" aria-live="polite"></div>
+      <div class="battle-verdict" id="battle-verdict" hidden></div>
+    </section>
+
     <!-- Results -->
-    <section class="panel results" aria-label="Results">
+    <section class="panel results" id="single-results" aria-label="Results">
       <h2>Result</h2>
       <div class="answer placeholder" id="answer" aria-live="polite">
         The answer appears here after you Run.

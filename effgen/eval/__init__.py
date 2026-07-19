@@ -7,6 +7,7 @@ models/configurations.
 
 from __future__ import annotations
 
+from .battle import BattleResult, Contender, run_battle
 from .comparison import ModelComparison
 from .evaluator import (
     AgentEvaluator,
@@ -45,4 +46,7 @@ __all__ = [
     "list_suites",
     "RegressionTracker",
     "ModelComparison",
+    "BattleResult",
+    "Contender",
+    "run_battle",
 ]

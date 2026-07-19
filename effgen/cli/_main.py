@@ -4068,6 +4068,59 @@ Model id formats:
                                       "higher accuracy.")
     compare_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
                                  help='Disable the live progress bar (plain output)')
+    compare_parser.add_argument('--judge', metavar='MODEL',
+                                 help='Model that grades answers under --scoring llm_judge. '
+                                      'Without it each model grades its own answers; naming a '
+                                      'judge has one model grade the whole field. The judge is '
+                                      'named in the output.')
+
+    # Battle command — several models racing one prompt
+    battle_parser = subparsers.add_parser(
+        'battle', help='Race several models on one prompt, side by side',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  effgen battle \"Explain a B-tree in two sentences.\" \\\n"
+            "      -m openai:gpt-5-nano,groq:llama-3.1-8b-instant\n"
+            "  effgen battle \"Write a haiku about caching.\" -m a,b,c --judge openai:gpt-5-mini\n"
+            "  effgen battle \"...\" -m a,b --json | jq '.contenders[].cost_usd'\n"
+            "  effgen battle \"...\" -m a,b --report battle.html\n"
+            "\n"
+            "Every model answers the same prompt at once. On a terminal the answers\n"
+            "stream side by side, each column showing its own time to first token,\n"
+            "elapsed time, tokens and cost, and a verdict panel closes the race.\n"
+            "\n"
+            "The verdict reports what was measured — fastest, cheapest, longest —\n"
+            "and needs no judge. --judge names a separate model to pick a winner on\n"
+            "quality; that pick is reported apart from the measurements and names\n"
+            "the judge. A model that fails is reported as failed and cannot win.\n"
+            "\n"
+            "Piped output, --json, --no-animation and NO_COLOR skip the live view\n"
+            "and print one structured result carrying every model's full answer.\n"
+        ),
+    )
+    battle_parser.add_argument('prompt', help='The prompt every model answers')
+    battle_parser.add_argument('-m', '--models', required=True, metavar='A,B[,C]',
+                                help='Comma-separated model ids to race (at least two), '
+                                     'e.g. openai:gpt-5-nano,groq:llama-3.1-8b-instant')
+    battle_parser.add_argument('--judge', metavar='MODEL',
+                                help='Model asked to pick the best answer. Optional — the '
+                                     'measured outcomes need no judge.')
+    battle_parser.add_argument('--temperature', type=float, default=None,
+                                help='Sampling temperature applied to every model')
+    battle_parser.add_argument('--max-tokens', type=int, default=None, dest='max_tokens',
+                                help='Output token cap applied to every model')
+    battle_parser.add_argument('--system-prompt', dest='system_prompt', metavar='TEXT',
+                                help='System prompt applied to every model')
+    battle_parser.add_argument('-o', '--output', metavar='PATH',
+                                help='Save the battle. The extension chooses the format: '
+                                     '.md writes Markdown, anything else writes JSON.')
+    battle_parser.add_argument('--report', metavar='PATH.html',
+                                help='Write a self-contained HTML report of the battle')
+    battle_parser.add_argument('--json', dest='output_json', action='store_true',
+                                help='Print the battle as JSON to stdout (no live view)')
+    battle_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
+                                help='Skip the live side-by-side view and print the result')
 
     # Debug command
     debug_parser = subparsers.add_parser('debug', help='Run an agent in interactive debug mode')
@@ -5720,6 +5773,22 @@ def _render_comparison_tables(cli, matrix) -> None:
             justify=["left", *(["right"] * len(suites))],
             styles=["cyan", *([None] * len(suites))],
         )
+    if matrix.self_judged is not None:
+        from effgen.eval.comparison import _judge_note
+        cli.print("\n" + _judge_note(matrix.judge_model, matrix.self_judged))
+    # Say why a row reads ERROR, and flag a partial run, so the terminal
+    # explains a failure instead of leaving the reader with a bare label.
+    failures = [s for s in matrix.scores if s.error or s.error_count]
+    if failures:
+        cli.print("\nFailures:")
+        for s in sorted(failures, key=lambda x: (x.model_name, x.suite_name)):
+            if s.error:
+                cli.print(f"  {s.model_name} ({s.suite_name}): did not run — {s.error}")
+            else:
+                cli.print(
+                    f"  {s.model_name} ({s.suite_name}): {s.error_count} "
+                    "case(s) failed to run and scored zero"
+                )
     if matrix.recommendations:
         cli.print(f"\nRecommendations (optimized for {matrix.optimize}):")
         for su, model in sorted(matrix.recommendations.items()):
@@ -5765,6 +5834,7 @@ def _handle_compare_command(args, cli) -> int:
         return 2
 
     agents: dict = {}
+    judge_agent = None
     try:
         # Load all models and create agents
         from effgen.models import load_model
@@ -5799,8 +5869,36 @@ def _handle_compare_command(args, cli) -> int:
             )
             return 1
 
+        # A named judge grades every contender, so no model grades its own
+        # answers. It is loaded once and reused across the field.
+        judge_model = getattr(args, 'judge', None)
+        if judge_model:
+            if scoring is not ScoringMode.LLM_JUDGE:
+                cli.print(
+                    f"Ignoring --judge {judge_model}: it applies to "
+                    "--scoring llm_judge, and this run scores with "
+                    f"'{scoring.value}'."
+                )
+            else:
+                try:
+                    from effgen.core.agent import Agent, AgentConfig
+                    judge_agent = Agent(AgentConfig(
+                        name=f"judge-{judge_model}",
+                        model=load_model(judge_model),
+                        max_iterations=1,
+                    ))
+                    cli.print(f"Grading every model's answers with {judge_model}.")
+                except Exception as e:
+                    cli.print_error(
+                        f"Could not load the judge model '{judge_model}': {e}. "
+                        "Check the id with `effgen models list`."
+                    )
+                    return 2
+
         cli.print(f"\nComparing {len(agents)} models on {suite_name} ({len(suite)} cases)...")
-        comparison = ModelComparison(scoring=scoring, pass_threshold=threshold)
+        comparison = ModelComparison(
+            scoring=scoring, pass_threshold=threshold, judge_agent=judge_agent
+        )
         matrix = comparison.run(agents, [suite], optimize=optimize)
 
         # Display: rich per-metric tables on a terminal, copy-pasteable Markdown
@@ -5837,8 +5935,9 @@ def _handle_compare_command(args, cli) -> int:
             traceback.print_exc()
         return 1
     finally:
-        # Release agent resources so the run leaves no GC-close warnings.
-        for agent in agents.values():
+        # Release agent resources so the run leaves no GC-close warnings. The
+        # judge is closed alongside the contenders it graded.
+        for agent in [*agents.values(), judge_agent]:
             close = getattr(agent, "close", None)
             if callable(close):
                 try:
@@ -6893,6 +6992,9 @@ def main():
             exit_code = _handle_eval_command(args, cli)
         elif args.command == 'compare':
             exit_code = _handle_compare_command(args, cli)
+        elif args.command == 'battle':
+            from effgen.cli.battle import run_battle_command
+            exit_code = run_battle_command(args)
         elif args.command in ('top', 'monitor'):
             from effgen.cli.monitor import run_monitor_command
             exit_code = run_monitor_command(args)

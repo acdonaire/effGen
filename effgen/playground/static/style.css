@@ -351,3 +351,111 @@ details.advanced > summary {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ------------------------------------------------------------------
+   Battle — several models answering one prompt side by side
+   ------------------------------------------------------------------ */
+.mode-field {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem 0.6rem;
+}
+.mode-field legend {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  padding: 0 0.3rem;
+}
+.radio-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  padding: 0.15rem 0;
+  cursor: pointer;
+}
+
+.battle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.7rem;
+}
+.battle-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+.battle-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.3rem;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.battle-model {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.battle-state {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.battle-state[data-state="streaming"] { color: var(--accent2); }
+.battle-state[data-state="done"] { color: var(--ok); }
+.battle-state[data-state="failed"] { color: var(--err); }
+.battle-answer {
+  flex: 1;
+  min-height: 9rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  padding: 0.6rem;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.battle-err { color: var(--err); }
+.battle-foot {
+  padding: 0.4rem 0.6rem;
+  border-top: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.battle-verdict {
+  margin-top: 0.9rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+.battle-verdict h3 { margin: 0 0 0.5rem; font-size: 0.9rem; }
+.verdict-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  font-size: 0.82rem;
+}
+.verdict-key {
+  flex: 0 0 7.5rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.verdict-val { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+#battle-models {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}

@@ -1104,3 +1104,57 @@ def test_run_stream_with_a_file_output_is_refused(tmp_path, capsys, flag):
     assert not target.exists()
     message = capsys.readouterr().out
     assert "--stream" in message and flag.lstrip("-") in message.replace("/", " ")
+
+
+# --------------------------------------------------------------------------- #
+# `compare` terminal view: a failed model is named, with why
+# --------------------------------------------------------------------------- #
+def test_comparison_tables_name_the_failure_behind_an_error_row(capsys):
+    """The terminal shows ERROR in the metric tables; the reason is printed
+    beneath them so a reader is not left with a bare label."""
+    from effgen.eval.comparison import ComparisonMatrix, ModelScore
+
+    matrix = ComparisonMatrix(
+        scores=[
+            ModelScore(model_name="good", suite_name="mini", accuracy=1.0,
+                       avg_latency=0.5, total_tokens=10, avg_cost_usd=0.001),
+            ModelScore(model_name="missing", suite_name="mini",
+                       error="ModelNotFoundError: no such model"),
+            ModelScore(model_name="flaky", suite_name="mini", accuracy=0.5,
+                       avg_latency=0.7, error_count=2),
+        ],
+        recommendations={"mini": "good"},
+    )
+
+    _main._render_comparison_tables(_cli(), matrix)
+
+    out = capsys.readouterr().out
+    assert "ERROR" in out
+    assert "missing" in out and "did not run" in out
+    assert "no such model" in out
+    assert "flaky" in out and "2 case(s) failed to run" in out
+
+
+def test_compare_counts_contenders_not_the_judge(monkeypatch, capsys, tmp_path):
+    """`--judge` names a grader, not a contender, so the run reports the number
+    of models being compared."""
+    suite = tmp_path / "suite.json"
+    suite.write_text('[{"query": "2+2?", "expected_output": "4"}]', encoding="utf-8")
+
+    from tests.fixtures.mock_models import MockModel
+
+    monkeypatch.setattr(
+        "effgen.models.load_model",
+        lambda name, **kw: MockModel(responses=["Thought: done\nFinal Answer: 4"] * 8),
+    )
+    parser = _main.create_parser()
+    args = parser.parse_args([
+        "compare", "--suite", str(suite), "--models", "a,b",
+        "--scoring", "llm_judge", "--judge", "c",
+    ])
+
+    _main._handle_compare_command(args, _cli())
+
+    out = capsys.readouterr().out
+    assert "Comparing 2 models" in out
+    assert "Grading every model's answers with c." in out

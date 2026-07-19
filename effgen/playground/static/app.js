@@ -501,6 +501,248 @@
   }
 
   // ------------------------------------------------------------------
+  // Battle — several models answering one prompt at once
+  //
+  // Each contender is one streamed POST /v1/chat/completions with
+  // stream_options.include_usage, so a battle adds no new model-execution path
+  // and inherits the endpoint's auth and spend controls. The per-run cost comes
+  // from the effgen extension on the usage chunk, which keeps one source of
+  // truth for pricing instead of re-deriving it here.
+  // ------------------------------------------------------------------
+  function currentMode() {
+    const battle = $("mode-battle");
+    return battle && battle.checked ? "battle" : "single";
+  }
+
+  function syncMode() {
+    const battle = currentMode() === "battle";
+    $("model-field").hidden = battle;
+    $("battle-field").hidden = !battle;
+    $("single-results").hidden = battle;
+    $("battle-results").hidden = !battle;
+    const btn = $("run-btn");
+    if (btn) btn.textContent = battle ? "Start battle" : "Run";
+  }
+
+  function populateBattleModels() {
+    // The same catalog entries the single-run picker uses, so contenders carry
+    // real ids, prices and local flags rather than served aliases.
+    const src = $("model-select");
+    const dst = $("battle-models");
+    if (!src || !dst) return;
+    dst.innerHTML = "";
+    const groups = src.querySelectorAll("optgroup");
+    if (!groups.length) {
+      // The catalog could not be read; offer whatever the picker fell back to.
+      for (const opt of src.querySelectorAll("option")) {
+        if (!opt.value) continue;
+        const clone = document.createElement("option");
+        clone.value = opt.value;
+        clone.textContent = opt.textContent;
+        dst.appendChild(clone);
+      }
+      return;
+    }
+    for (const group of groups) {
+      const grp = document.createElement("optgroup");
+      grp.label = group.label;
+      for (const opt of group.querySelectorAll("option")) {
+        const clone = document.createElement("option");
+        clone.value = opt.value;
+        clone.textContent = opt.textContent;
+        grp.appendChild(clone);
+      }
+      dst.appendChild(grp);
+    }
+  }
+
+  function selectedContenders() {
+    const sel = $("battle-models");
+    if (!sel) return [];
+    return Array.from(sel.selectedOptions).map((o) => o.value).filter(Boolean);
+  }
+
+  function renderBattleColumns(entries) {
+    const host = $("battle-grid");
+    if (!host) return;
+    host.innerHTML = entries.map((e, i) => (
+      `<div class="battle-col" data-i="${i}">`
+      + `<div class="battle-head"><span class="battle-model">${esc(e.model)}</span>`
+      + `<span class="battle-state" data-state="${esc(e.state)}">${esc(stateLabel(e))}</span></div>`
+      + `<div class="battle-answer">${e.error ? '<span class="battle-err">' + esc(e.error) + "</span>" : esc(e.text)}</div>`
+      + `<div class="battle-foot">${esc(battleFooter(e))}</div>`
+      + "</div>"
+    )).join("");
+  }
+
+  function stateLabel(e) {
+    if (e.state === "waiting") return "waiting for first token…";
+    if (e.state === "streaming") return "generating…";
+    if (e.state === "failed") return "failed";
+    if (e.state === "done") return "done";
+    return "queued";
+  }
+
+  function battleFooter(e) {
+    const bits = [];
+    if (e.ttft != null) bits.push("ttft " + (e.ttft / 1000).toFixed(2) + "s");
+    if (e.latency != null) bits.push("total " + (e.latency / 1000).toFixed(2) + "s");
+    if (e.usage && e.usage.total_tokens != null) bits.push(e.usage.total_tokens + " tok");
+    if (e.state === "done") bits.push(fmtCost(e.cost));
+    return bits.join("  ·  ") || stateLabel(e);
+  }
+
+  function renderBattleVerdict(entries, wallMs) {
+    const host = $("battle-verdict");
+    if (!host) return;
+    // A contender that failed never wins: it spent nothing and took no time,
+    // which would make it the trivial winner on both measures.
+    const finishers = entries.filter((e) => !e.error && e.text);
+    const rows = [];
+    const timed = finishers.filter((e) => e.latency != null);
+    if (timed.length) {
+      const fastest = timed.reduce((a, b) => (b.latency < a.latency ? b : a));
+      rows.push(["Fastest", esc(fastest.model) + " — answered in "
+        + (fastest.latency / 1000).toFixed(2) + "s"]);
+    }
+    const priced = finishers.filter((e) => e.cost != null);
+    if (priced.length) {
+      const cheapest = priced.reduce((a, b) => (b.cost < a.cost ? b : a));
+      const unpriced = finishers.length - priced.length;
+      rows.push(["Cheapest", esc(cheapest.model) + " — " + fmtCost(cheapest.cost)
+        + " for this run"
+        + (unpriced ? "; " + unpriced + " model(s) publish no price and were not ranked" : "")]);
+    }
+    if (finishers.length) {
+      const longest = finishers.reduce((a, b) => (b.text.length > a.text.length ? b : a));
+      rows.push(["Longest", esc(longest.model) + " — " + longest.text.length + " characters"]);
+    }
+    const failed = entries.filter((e) => e.error);
+    if (failed.length) {
+      rows.push(["Did not answer",
+        failed.map((e) => esc(e.model) + " (" + esc(e.error) + ")").join(", ")]);
+    }
+    const total = priced.length ? priced.reduce((s, e) => s + e.cost, 0) : null;
+    rows.push(["Race", finishers.length + "/" + entries.length + " answered in "
+      + (wallMs / 1000).toFixed(2) + "s  ·  total " + fmtCost(total)]);
+
+    host.innerHTML = "<h3>Verdict</h3>" + rows.map(
+      ([k, v]) => `<div class="verdict-row"><span class="verdict-key">${esc(k)}</span>`
+        + `<span class="verdict-val">${v}</span></div>`
+    ).join("");
+    host.hidden = false;
+  }
+
+  async function streamContender(entry, body, onTick) {
+    const started = performance.now();
+    entry.state = "waiting";
+    onTick();
+    const resp = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok || !resp.body) {
+      const data = await resp.json().catch(() => ({}));
+      if (resp.status === 401) { showAuthBanner(); revealKeyField(); }
+      throw new Error(data && data.error ? data.error.message : "HTTP " + resp.status);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop();
+      for (const evt of events) {
+        const line = evt.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") continue;
+        let obj;
+        try { obj = JSON.parse(payload); } catch { continue; }
+        if (obj.error) throw new Error(obj.error.message || "stream error");
+        if (obj.usage) {
+          entry.usage = obj.usage;
+          // The server prices the run and reports it here, so the tally never
+          // disagrees with the ledger.
+          if (obj.effgen && obj.effgen.cost_usd != null) entry.cost = obj.effgen.cost_usd;
+        }
+        const delta = (obj.choices && obj.choices[0] && obj.choices[0].delta) || {};
+        if (delta.content) {
+          if (entry.ttft == null) entry.ttft = performance.now() - started;
+          entry.state = "streaming";
+          entry.text += delta.content;
+          onTick();
+        }
+      }
+    }
+    entry.latency = performance.now() - started;
+    entry.state = "done";
+    onTick();
+  }
+
+  async function runBattle() {
+    hideError();
+    const prompt = $("prompt").value.trim();
+    if (!prompt) { showError("Enter a prompt first."); return; }
+    const models = selectedContenders();
+    if (models.length < 2) {
+      showError("Pick at least two contenders — a battle compares models against each other.");
+      return;
+    }
+    if (!apiKey && !bootstrap.dev_mode) { showAuthBanner(); revealKeyField(); return; }
+
+    const temperature = parseFloat($("temperature").value);
+    const maxTokens = parseInt($("max-tokens").value, 10);
+    const system = currentSystemPrompt();
+    const entries = models.map((m) => ({
+      model: m, text: "", state: "queued", ttft: null, latency: null,
+      usage: null, cost: null, error: null,
+    }));
+
+    const btn = $("run-btn");
+    btn.disabled = true;
+    btn.textContent = "Racing…";
+    $("battle-verdict").hidden = true;
+    renderBattleColumns(entries);
+
+    // One frame per animation tick rather than per token, so a fast model does
+    // not force a re-render of every column on every delta.
+    let dirty = false;
+    const tick = () => { dirty = true; };
+    const timer = setInterval(() => {
+      if (!dirty) return;
+      dirty = false;
+      renderBattleColumns(entries);
+    }, 100);
+
+    const started = performance.now();
+    await Promise.all(entries.map((entry) => {
+      const body = {
+        model: entry.model,
+        messages: buildMessages(system, prompt),
+        temperature: isNaN(temperature) ? undefined : temperature,
+        max_tokens: isNaN(maxTokens) ? undefined : maxTokens,
+        stream: true,
+        stream_options: { include_usage: true },
+      };
+      // One contender failing leaves the rest of the field racing.
+      return streamContender(entry, body, tick).catch((err) => {
+        entry.error = String(err && err.message ? err.message : err);
+        entry.state = "failed";
+      });
+    }));
+    clearInterval(timer);
+    renderBattleColumns(entries);
+    renderBattleVerdict(entries, performance.now() - started);
+    btn.disabled = false;
+    syncMode();
+  }
+
+  // ------------------------------------------------------------------
   // Snippets
   // ------------------------------------------------------------------
   function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
@@ -688,10 +930,23 @@
       {
         id: "action:run",
         group: "Actions",
-        label: "Run the request",
-        keywords: "submit send prompt execute",
+        label: currentMode() === "battle" ? "Start the battle" : "Run the request",
+        keywords: "submit send prompt execute race battle",
         hint: webui ? webui.chord("Enter") : "",
-        run: run,
+        run: () => { if (currentMode() === "battle") runBattle(); else run(); },
+      },
+      {
+        id: "action:mode",
+        group: "Actions",
+        label: currentMode() === "battle"
+          ? "Switch to a single run"
+          : "Switch to a battle — several models on one prompt",
+        keywords: "battle compare head to head race mode single",
+        run: () => {
+          const next = currentMode() === "battle" ? "mode-single" : "mode-battle";
+          const el = $(next);
+          if (el) { el.checked = true; syncMode(); }
+        },
       },
       {
         id: "action:focus-prompt",
@@ -734,7 +989,7 @@
       if (!(e.ctrlKey || e.metaKey) || e.key !== "Enter") return;
       if (e.target && e.target.closest && e.target.closest(".eff-overlay")) return;
       e.preventDefault();
-      run();
+      if (currentMode() === "battle") runBattle(); else run();
     });
     if (!webui) return;
     const palette = webui.init({
@@ -757,9 +1012,17 @@
     initTheme();
     initSnippetTabs();
     initKeyboard();
-    $("run-btn").addEventListener("click", run);
+    $("run-btn").addEventListener("click", () => {
+      if (currentMode() === "battle") runBattle(); else run();
+    });
+    ["mode-single", "mode-battle"].forEach((id) => {
+      const el = $(id);
+      if (el) el.addEventListener("change", syncMode);
+    });
+    syncMode();
     await loadBootstrap();
     await loadCatalog();
+    populateBattleModels();
   }
 
   if (document.readyState === "loading") {
