@@ -306,15 +306,19 @@ def build_usage_chunk(
     chat_id: str | None = None,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
+    effgen_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a final usage-only streaming chunk (OpenAI ``include_usage`` form).
 
     Per the OpenAI streaming spec, when ``stream_options.include_usage`` is set
     the server emits one extra chunk after the content chunks whose ``choices``
     is empty and which carries the ``usage`` totals so clients can reconcile
-    billing for streamed requests.
+    billing for streamed requests. ``effgen_meta`` adds the same non-standard
+    ``effgen`` object the non-streaming response carries — including
+    ``cost_usd`` — so a client tallying spend reads one number from the server
+    on both paths instead of re-deriving a price from the catalog itself.
     """
-    return {
+    chunk: dict[str, Any] = {
         "id": chat_id or _chat_id(),
         "object": "chat.completion.chunk",
         "created": _now(),
@@ -326,6 +330,9 @@ def build_usage_chunk(
             "total_tokens": prompt_tokens + completion_tokens,
         },
     }
+    if effgen_meta:
+        chunk["effgen"] = effgen_meta
+    return chunk
 
 
 def build_text_completion(
@@ -932,11 +939,18 @@ def create_openai_router(
                     yield f"data: {json.dumps(err_evt)}\n\n"
                     yield "data: [DONE]\n\n"
                     return
-                # A streaming runner may expose final provider/tokenizer usage
-                # once exhausted (e.g. as ``.usage`` on the iterator).
+                # A streaming runner may expose the completed call's real usage
+                # once exhausted (as ``.usage`` on the iterator), including the
+                # cost the provider's token counts price out to.
                 _stream_usage = getattr(result, "usage", None)
+                _stream_cost: float | None = None
+                _prompt_tokens = prompt_tokens
                 if isinstance(_stream_usage, dict):
                     provider_completion_tokens = _stream_usage.get("completion_tokens")
+                    _reported_prompt = _stream_usage.get("prompt_tokens")
+                    if _reported_prompt is not None:
+                        _prompt_tokens = int(_reported_prompt)
+                    _stream_cost = _stream_usage.get("cost_usd")
                 final = build_chat_chunk(
                     model, "", chat_id=chat_id, finish_reason="stop"
                 )
@@ -950,11 +964,15 @@ def create_openai_router(
                         if provider_completion_tokens is not None
                         else count_tokens("".join(completion_text_parts))
                     )
+                    usage_meta = dict(effgen_meta)
+                    if _stream_cost is not None:
+                        usage_meta["cost_usd"] = _stream_cost
                     usage_chunk = build_usage_chunk(
                         model,
                         chat_id=chat_id,
-                        prompt_tokens=prompt_tokens,
+                        prompt_tokens=_prompt_tokens,
                         completion_tokens=completion_tokens,
+                        effgen_meta=usage_meta,
                     )
                     yield f"data: {json.dumps(usage_chunk)}\n\n"
                 yield "data: [DONE]\n\n"

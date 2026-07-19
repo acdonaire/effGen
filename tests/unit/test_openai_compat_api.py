@@ -315,6 +315,57 @@ class TestStreamingThroughFullStack:
         assert usage is not None and usage["total_tokens"] > 0
         assert first_meta and first_meta["alias_applied"] is True
 
+    def test_usage_chunk_carries_cost_when_the_runner_reports_it(self):
+        """A streamed request reports the run's cost the same way a
+        non-streamed one does, so a client tallying spend reads one number from
+        the server instead of re-deriving a price from the catalog."""
+
+        class _Streamed:
+            usage = {"prompt_tokens": 11, "completion_tokens": 4, "cost_usd": 0.00042}
+
+            def __iter__(self):
+                yield from ("Hello", "!")
+
+        def runner(prompt, *, model, tools=None, stream=False, **kw):
+            return _Streamed() if stream else "Hello!"
+
+        c = _client(api_key="k", runner=runner)
+        usage_chunk = None
+        with c.stream("POST", "/v1/chat/completions", headers={"X-API-Key": "k"},
+                      json={"model": "gpt-4", "stream": True,
+                            "stream_options": {"include_usage": True},
+                            "messages": [{"role": "user", "content": "hi"}]}) as resp:
+            for line in resp.iter_lines():
+                if line.startswith("data: ") and "[DONE]" not in line:
+                    d = json.loads(line[6:])
+                    if d.get("usage"):
+                        usage_chunk = d
+        assert usage_chunk is not None
+        assert usage_chunk["effgen"]["cost_usd"] == 0.00042
+        # The provider's own prompt count wins over the server's estimate.
+        assert usage_chunk["usage"]["prompt_tokens"] == 11
+        assert usage_chunk["usage"]["completion_tokens"] == 4
+        assert usage_chunk["usage"]["total_tokens"] == 15
+        # The vendor extension is additive; the OpenAI shape is unchanged.
+        assert usage_chunk["choices"] == []
+        assert usage_chunk["object"] == "chat.completion.chunk"
+
+    def test_usage_chunk_omits_cost_for_an_unpriced_run(self):
+        """No fabricated price when the runner reports none."""
+        c = _client(api_key="k", runner=_ok_runner)
+        usage_chunk = None
+        with c.stream("POST", "/v1/chat/completions", headers={"X-API-Key": "k"},
+                      json={"model": "gpt-4", "stream": True,
+                            "stream_options": {"include_usage": True},
+                            "messages": [{"role": "user", "content": "hi"}]}) as resp:
+            for line in resp.iter_lines():
+                if line.startswith("data: ") and "[DONE]" not in line:
+                    d = json.loads(line[6:])
+                    if d.get("usage"):
+                        usage_chunk = d
+        assert usage_chunk is not None
+        assert "cost_usd" not in usage_chunk.get("effgen", {})
+
     def test_mid_stream_error_is_terminal_event(self):
         from effgen.api.openai_compat import RunnerResult  # noqa: F401
 

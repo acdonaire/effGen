@@ -564,6 +564,35 @@ def _extract_tool_trace(response: Any) -> list[dict[str, Any]]:
     return steps
 
 
+class _StreamWithUsage:
+    """Token iterator that publishes the run's usage once it is exhausted.
+
+    The OpenAI-compatible route reads ``usage`` after the last token to fill the
+    ``stream_options.include_usage`` chunk, so a streamed request reports the
+    same token counts and cost a non-streamed one does. Iterating closes the
+    ephemeral agent (releasing its memory handles and circuit breakers, but not
+    the pooled model, which is shared and stays loaded).
+    """
+
+    def __init__(self, agent: Any, prompt: str, resolved_model: str) -> None:
+        self._agent = agent
+        self._prompt = prompt
+        self._resolved_model = resolved_model
+        self.usage: dict[str, Any] | None = None
+
+    def __iter__(self) -> Any:
+        served = False
+        try:
+            for chunk in self._agent.stream(self._prompt):
+                served = True
+                yield chunk
+            self.usage = self._agent.last_stream_usage
+        finally:
+            self._agent.close()
+            if served:
+                _record_served_model(self._resolved_model)
+
+
 def _build_default_runner() -> Any:
     """Construct an agent-backed runner for the OpenAI-compatible endpoints.
 
@@ -613,18 +642,7 @@ def _build_default_runner() -> Any:
             # breakers) but NOT the pooled model, which is shared and stays
             # loaded — and it silences the "garbage-collected without close()"
             # warning that would otherwise fire per streamed request.
-            def _stream_then_close() -> Any:
-                served = False
-                try:
-                    for chunk in agent.stream(prompt):
-                        served = True
-                        yield chunk
-                finally:
-                    agent.close()
-                    if served:
-                        _record_served_model(resolved_model)
-
-            return _stream_then_close()
+            return _StreamWithUsage(agent, prompt, resolved_model)
 
         try:
             # A failure raises here (raise_on_error=True above), so a response
