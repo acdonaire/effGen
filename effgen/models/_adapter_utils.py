@@ -190,8 +190,26 @@ def default_max_output_tokens(
 
     Reasoning families get ``reasoning`` (they burn budget on internal
     reasoning); everything else keeps the historical ``base``.
+
+    This is the *first* budget the agent tries. A run truncated at this value
+    escalates once (see ``_TRUNCATION_MAX_TOKENS_CEILING`` in
+    ``effgen.core.agent_generation``) rather than starting high, so an ordinary
+    task is not charged for a budget it never needed. A direct
+    ``model.generate()`` call has no such escalation and should ask for more —
+    see ``DIRECT_CALL_REASONING_MAX_TOKENS``.
     """
     return reasoning if needs_reasoning_headroom(model) else base
+
+
+#: Output budget for a reasoning model on a *direct* ``generate()`` /
+#: ``generate_stream()`` call — one where no agent loop is watching for a
+#: truncated result, so there is no second attempt at a larger budget.
+#:
+#: Deliberately well above the agent's escalation ceiling: a one-word answer was
+#: measured consuming 4,285 output tokens, so a budget in the low thousands
+#: truncates mid-thought and returns empty, still-billed text. Unused budget is
+#: free — providers bill tokens generated, not the ceiling requested.
+DIRECT_CALL_REASONING_MAX_TOKENS = 16384
 
 
 # ---------------------------------------------------------------------------

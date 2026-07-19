@@ -20,7 +20,11 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
-from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
+from effgen.models._adapter_utils import (
+    DIRECT_CALL_REASONING_MAX_TOKENS,
+    normalize_finish_reason,
+    provider_runtime_error,
+)
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -73,7 +77,7 @@ class TogetherAdapter(BaseModel):
     Args:
         model_name: Together model ID. Must be a key in
             :data:`~effgen.models.together_models.TOGETHER_MODELS`.
-            Defaults to ``"meta-llama/Meta-Llama-3-8B-Instruct-Lite"``.
+            Defaults to ``"Qwen/Qwen3.5-9B"``.
         api_key: Together API key. If omitted, reads ``TOGETHER_API_KEY``
             from the environment.
         max_retries: Maximum number of SDK retry attempts.
@@ -138,6 +142,12 @@ class TogetherAdapter(BaseModel):
             model_type=_TogetherModelType(),  # type: ignore[arg-type]
             context_length=info.get("context", 131_072),
         )
+
+        # Together serves several families that emit reasoning tokens before any
+        # visible text. Flagging them here is what earns the larger default token
+        # budget from default_max_output_tokens() — without it they can spend the
+        # whole budget thinking and return an empty (but billed) result.
+        self._is_reasoning_model = bool(info.get("reasoning", False))
         self._api_key = api_key
         self.max_retries = max_retries
         self.timeout = timeout
@@ -370,6 +380,12 @@ class TogetherAdapter(BaseModel):
             request_params["top_p"] = config.top_p
         if config.max_tokens is not None:
             request_params["max_tokens"] = config.max_tokens
+        elif self._is_reasoning_model:
+            # Together's own default is small enough that a reasoning model can
+            # spend it all thinking and return empty text. Nothing retries a
+            # direct call at a larger budget, so ask for the generous one; only
+            # the tokens actually generated are billed.
+            request_params["max_tokens"] = DIRECT_CALL_REASONING_MAX_TOKENS
         if config.stop_sequences:
             request_params["stop"] = config.stop_sequences
         if config.seed is not None:
@@ -624,6 +640,12 @@ class TogetherAdapter(BaseModel):
             request_params["top_p"] = config.top_p
         if config.max_tokens is not None:
             request_params["max_tokens"] = config.max_tokens
+        elif self._is_reasoning_model:
+            # Together's own default is small enough that a reasoning model can
+            # spend it all thinking and return empty text. Nothing retries a
+            # direct call at a larger budget, so ask for the generous one; only
+            # the tokens actually generated are billed.
+            request_params["max_tokens"] = DIRECT_CALL_REASONING_MAX_TOKENS
         if config.stop_sequences:
             request_params["stop"] = config.stop_sequences
         if config.seed is not None:
