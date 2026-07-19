@@ -843,14 +843,46 @@
       ["Cost", fmtCost(run.cost_usd)],
       ["Duration", fmtSeconds(run.duration_s)],
     ];
+    // The history store keeps a truncated answer and no step trace, so the
+    // card this offers is a summary and says so. The full card — answer, tool
+    // trace, sources — comes from `effgen run --card` at run time.
+    const exportCmd = run.run_id
+      ? `effgen runs show ${run.run_id} --card run-${run.run_id}.html`
+      : "";
+    const exportBlock = exportCmd
+      ? '<div class="run-export">' +
+        `<button type="button" id="run-export-copy" data-cmd="${esc(exportCmd)}">` +
+        "Copy summary-card command</button>" +
+        '<span class="run-export-note">Writes a summary card from stored history ' +
+        "(truncated answer, no step trace). Use <code>effgen run --card</code> at " +
+        "run time for the full answer, trace and sources.</span></div>"
+      : "";
     box.innerHTML =
       '<dl class="run-detail">' +
       rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("") +
       "</dl>" +
+      exportBlock +
       (run.task ? `<h4>Task</h4><pre class="run-text">${esc(run.task)}</pre>` : "") +
       (run.output ? `<h4>Answer</h4><pre class="run-text">${esc(run.output)}</pre>` : "") +
       (run.error ? `<h4>Error</h4><pre class="run-text run-error">${esc(run.error)}</pre>` : "");
     box.hidden = false;
+    const copyBtn = $("run-export-copy");
+    if (copyBtn) {
+      copyBtn.addEventListener("click", () => {
+        const cmd = copyBtn.dataset.cmd || "";
+        const done = (ok) => {
+          copyBtn.textContent = ok ? "Copied" : "Press Ctrl+C to copy";
+          window.setTimeout(() => {
+            copyBtn.textContent = "Copy summary-card command";
+          }, 2000);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(cmd).then(() => done(true), () => done(false));
+        } else {
+          done(false);
+        }
+      });
+    }
     syncRunDisclosure();
   }
 

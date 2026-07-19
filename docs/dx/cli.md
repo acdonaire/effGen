@@ -97,8 +97,47 @@ effgen eval --suite math -m gpt-5-nano --provider openai --json > eval.json
 effgen report eval.json                 # writes eval.html
 effgen report eval.json -o for-team.html
 effgen report spend.json --kind cost    # name the shape explicitly
+effgen run "..." -o run.json && effgen report run.json   # a saved run
 ```
 
 - Exit code: `0` on success, `2` if the file is missing, is not JSON, or is not
   a result the renderer recognizes (the message lists the accepted `--kind`
   values).
+- A document that carries none of the fields the named `--kind` renders is
+  refused with the fields that kind needs and the keys the document has, exits
+  `2`, and writes no file — a report is never written blank.
+
+## Run cards
+
+`effgen run --card out.html` writes one run as a single shareable HTML file:
+
+```bash
+effgen run "What is 18723 * 4409? Use the calculator tool." \
+  -m llama-3.1-8b-instant --provider groq -t calculator --card run.html
+```
+
+The card carries the task, the model and provider that answered it, a
+succeeded/failed badge, the full answer, every tool step with its input, its
+result or typed failure and its duration, the sources and quoted citations, and
+the run's tokens, cost and latency. A run that failed shows the typed error —
+type, category, provider, model, message, and whether it was retryable — in
+place of an answer. A run on local hardware reads `unpriced (local)`; a hosted
+model the catalog has no rate for reads `unpriced (no published rate)`.
+
+Like the other reports the file is self-contained and opens with no network
+access; links to a run's own sources are limited to `http`/`https`, and a
+source with any other scheme is rendered as inert text. Buttons on the card
+copy the task or the equivalent `effgen run` command.
+
+`--card` is additive: terminal output and `--json` are unchanged, and it
+composes with `-o`.
+
+A run already in history can be exported as a summary card:
+
+```bash
+effgen runs show 3f9a1c2b --card run-3f9a1c2b.html
+```
+
+History keeps a truncated answer and no step trace, so that card says on its
+face that it is a summary. Use `effgen run --card` at run time for the full
+answer, trace and sources.

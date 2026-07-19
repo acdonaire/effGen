@@ -1085,3 +1085,22 @@ def test_warn_unapplied_config_keys_silent_when_nothing_unwired():
         {"guardrails": "standard", "temperature": 0.2, "not_a_field": True}, stub_cli,
     )
     assert warnings == []
+
+
+# --------------------------------------------------------------------------- #
+# `run --stream` with a file output is refused before any model is loaded
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("flag", ["-o", "--card"])
+def test_run_stream_with_a_file_output_is_refused(tmp_path, capsys, flag):
+    # Streaming assembles no result object, so the file would never be written.
+    # The refusal happens before the model is resolved, so this needs no key.
+    target = tmp_path / ("out.json" if flag == "-o" else "card.html")
+    parser = _main.create_parser()
+    args = parser.parse_args(["run", "hi", "--stream", flag, str(target)])
+
+    code = _cli().run_agent(args)
+
+    assert code == 1
+    assert not target.exists()
+    message = capsys.readouterr().out
+    assert "--stream" in message and flag.lstrip("-") in message.replace("/", " ")

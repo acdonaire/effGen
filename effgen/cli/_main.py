@@ -916,6 +916,22 @@ class CLIInterface:
             self._human_to_stderr = True
             args.stream = False
 
+        # Streaming prints tokens as they arrive and never assembles the result
+        # object the file outputs are written from, so a request for both is
+        # refused up front rather than leaving the file unwritten.
+        if getattr(args, 'stream', False):
+            for flag, value in (
+                ("-o/--output", getattr(args, 'output', None)),
+                ("--card", getattr(args, 'card', None)),
+            ):
+                if value:
+                    self.print_error(
+                        f"{flag} cannot be combined with --stream: a streamed run "
+                        f"produces no result document to write. Drop --stream to "
+                        f"get {value}."
+                    )
+                    return 1
+
         # Validate an explicit --provider before doing any work, so a typo
         # (e.g. "grok") fails fast with a suggestion instead of falling through
         # to a multi-gigabyte local model download.
@@ -1199,6 +1215,25 @@ class CLIInterface:
                     with open(output_path, 'w', encoding='utf-8') as f:
                         json.dump(response.to_dict(), f, indent=2, ensure_ascii=False)
                     self.print_success(f"Response saved to {output_path}")
+
+                # Write the shareable HTML card when asked. Composes with -o:
+                # the JSON document and the card are written from the same
+                # result, and neither touches stdout.
+                card_path = getattr(args, 'card', None)
+                if card_path:
+                    from effgen.ui.report_html import ReportError, write_html_report
+                    try:
+                        written = write_html_report(
+                            card_path,
+                            response.to_dict(),
+                            kind="run",
+                            command=_invoked_command(),
+                        )
+                    except (ReportError, OSError) as exc:
+                        self.print_error(f"--card: could not write {card_path}: {exc}")
+                        exit_code = exit_code or 1
+                    else:
+                        self.print_success(f"Run card written to {written}")
 
                 # Emit the result object to stdout for piping (same document the
                 # -o file carries). Goes to real stdout regardless of the
@@ -3306,6 +3341,13 @@ Model id formats:
                             help='Write the full result as a JSON document to this '
                                  'file (output, success, tool_calls, tokens, cost, '
                                  'trace, citations, metadata)')
+    run_parser.add_argument('--card', metavar='PATH.html',
+                            help='Write a shareable HTML card for this run to PATH — '
+                                 'the task, the answer, the tool trace with per-step '
+                                 'durations, sources and citations, and tokens/cost/'
+                                 'latency. The file is self-contained and opens with '
+                                 'no network access. Terminal and --json output are '
+                                 'unchanged.')
     run_parser.add_argument('--json', dest='output_json', action='store_true',
                             help='Emit that same JSON result object to stdout (for '
                                  'piping to jq). Human output goes to stderr; '
@@ -3429,6 +3471,11 @@ Model id formats:
     rs = runs_subparsers.add_parser('show', help='Show one run in full')
     rs.add_argument('run_id', help='Run id (as shown by `effgen runs list`)')
     rs.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
+    rs.add_argument('--card', metavar='PATH.html',
+                    help='Write a summary HTML card for this stored run to PATH. '
+                         'History keeps a truncated answer and no step trace, so '
+                         'the card states that; use `effgen run --card` at run time '
+                         'for the full answer, trace and sources.')
     rc = runs_subparsers.add_parser('cleanup', help='Delete run history older than N days')
     rc.add_argument('--days', type=int, default=30)
 
@@ -4065,20 +4112,23 @@ Model id formats:
     from effgen.ui.report_html import REPORT_KINDS as _REPORT_KINDS
     report_parser = subparsers.add_parser(
         'report',
-        help='Render a saved compare/eval/cost/loadtest JSON result as an HTML report',
+        help='Render a saved run/compare/eval/cost/loadtest JSON result as an HTML report',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             "  effgen eval --suite math --json > eval.json && effgen report eval.json\n"
+            "  effgen run 'summarize this' -o run.json && effgen report run.json\n"
             "  effgen report bakeoff.json -o bakeoff.html\n"
             "  effgen report spend.json --kind cost\n"
             "\n"
             "The report kind is inferred from the JSON shape; --kind overrides it.\n"
+            "A document that carries none of the fields the kind renders is\n"
+            "refused, and no file is written.\n"
             "The written file is self-contained and opens with no network access.\n"
         ),
     )
     report_parser.add_argument('result',
-                               help='Path to a JSON result saved from compare/eval/cost/loadtest')
+                               help='Path to a JSON result saved from run/compare/eval/cost/loadtest')
     report_parser.add_argument('-o', '--output', metavar='PATH.html',
                                help='Where to write the HTML report '
                                     '(default: the result path with an .html extension)')
@@ -6315,6 +6365,18 @@ def _handle_runs_command(args, cli) -> int:
             cli.print_line(f"Run not found: {args.run_id}")
             cli.print("List the stored runs with: effgen runs list")
             return 1
+        card_path = getattr(args, 'card', None)
+        if card_path:
+            from effgen.ui.report_html import ReportError, write_html_report
+            try:
+                written = write_html_report(
+                    card_path, record, kind="run", command=_invoked_command(),
+                )
+            except (ReportError, OSError) as exc:
+                cli.print_error(f"--card: could not write {card_path}: {exc}")
+                return 1
+            if not getattr(args, 'output_json', False):
+                cli.print(f"Summary card written to {written}")
         if getattr(args, 'output_json', False):
             print(_json.dumps(record, indent=2, default=str, ensure_ascii=False))
             return 0

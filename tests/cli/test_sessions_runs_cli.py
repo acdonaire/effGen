@@ -342,3 +342,36 @@ def test_runs_and_sessions_subcommands_are_registered():
 
     args = parser.parse_args(["sessions", "show", "abc", "--last", "3"])
     assert args.session_command == "show" and args.last == 3
+
+
+def test_runs_show_card_writes_a_labeled_summary_card(tmp_path, capsys):
+    run_log.record_run(model="llama-3.1-8b-instant", provider="groq", run_id="r-card",
+                       task="Reply with exactly: OK", output="OK",
+                       input_tokens=313, output_tokens=2, duration_s=0.27,
+                       cost_usd=1.6e-05)
+    out = tmp_path / "card.html"
+
+    assert _handle_runs_command(
+        _args(runs_command="show", run_id="r-card", card=str(out)), _cli()
+    ) == 0
+
+    html = out.read_text(encoding="utf-8")
+    assert html.startswith("<!DOCTYPE html>")
+    assert "Reply with exactly: OK" in html and "llama-3.1-8b-instant" in html
+    # The card states the limits of what stored history holds.
+    assert "truncated answer and no step trace" in html
+    # Self-contained: nothing is fetched when the file is opened.
+    assert "http://" not in html and "https://" not in html
+    assert "Summary card written to" in capsys.readouterr().out
+
+
+def test_runs_show_card_reports_an_unwritable_path(tmp_path, capsys):
+    run_log.record_run(model="m", run_id="r-card2", task="t", output="a")
+    blocked = tmp_path / "file.txt"
+    blocked.write_text("not a directory", encoding="utf-8")
+
+    assert _handle_runs_command(
+        _args(runs_command="show", run_id="r-card2",
+              card=str(blocked / "card.html")), _cli()
+    ) == 1
+    assert "--card" in capsys.readouterr().out

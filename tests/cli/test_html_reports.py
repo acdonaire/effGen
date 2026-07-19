@@ -1,8 +1,8 @@
 """Tests for the self-contained HTML reports and the ``effgen report`` command.
 
-The reports render from result documents that ``compare``/``eval``/``cost``/
-``loadtest`` already produce, so the fixtures here are those documents — no
-model call is involved in rendering.
+The reports render from result documents that ``run``/``compare``/``eval``/
+``cost``/``loadtest`` already produce, so the fixtures here are those documents
+— no model call is involved in rendering.
 """
 
 from __future__ import annotations
@@ -110,7 +110,117 @@ LOADTEST_DOC = {
     "provider": None, "model": None,
 }
 
+#: One agent run, in the shape ``AgentResponse.to_dict()`` produces: a
+#: multi-tool run with a failed step it recovered from, sources and citations.
+RUN_DOC = {
+    "task": "What is 18723 * 4409? Use the calculator tool.",
+    "model": "llama-3.1-8b-instant",
+    "provider": "groq",
+    "started_at": "2026-07-19T06:24:54+00:00",
+    "output": "82549707",
+    "success": True,
+    "mode": "single",
+    "iterations": 2,
+    "tool_calls": 2,
+    "tokens_used": 353,
+    "execution_time": 0.25,
+    "execution_trace": [{"type": "task_start", "data": {"task": "18723 * 4409"}}],
+    "execution_tree": {
+        "node_id": "root", "node_type": "agent", "name": "agent", "children": [
+            {
+                "node_id": "n1", "node_type": "tool", "name": "calculator",
+                "status": "failed", "started_at": 1.0, "duration": 0.004,
+                "children": [],
+                "metadata": {
+                    "tool_name": "calculator",
+                    "tool_input": '{"expression": "18723 x 4409"}',
+                    "error": "Calculation failed: Unsupported operator",
+                },
+            },
+            {
+                "node_id": "n2", "node_type": "tool", "name": "calculator",
+                "status": "completed", "started_at": 2.0, "duration": 0.003,
+                "children": [],
+                "metadata": {
+                    "tool_name": "calculator",
+                    "tool_input": '{"expression": "18723 * 4409"}',
+                    "result": "82549707",
+                },
+            },
+        ],
+    },
+    "routing_decision": None,
+    "metadata": {
+        "reason": "final_answer", "run_id": "afcc20ce819a", "cost_usd": 1.855e-05,
+        "prompt_tokens": 323, "completion_tokens": 30, "total_tokens": 353,
+    },
+    "citations": [
+        {"index": 1, "source": "https://example.org/a", "quote": "a quoted passage"},
+    ],
+    "sources": ["https://example.org/a", "https://example.org/b"],
+}
+
+#: A run that failed, carrying the typed error object instead of an answer.
+FAILED_RUN_DOC = {
+    "task": "Compute compound interest over seven years.",
+    "model": "gpt-5-nano",
+    "provider": "openai",
+    "started_at": "2026-07-19T06:24:55+00:00",
+    "output": "Error: hit the max_tokens limit",
+    "success": False,
+    "tool_calls": 0,
+    "tokens_used": 4240,
+    "execution_time": 16.82,
+    "execution_tree": {},
+    "metadata": {
+        "reason": "generation_failed",
+        "error": {
+            "type": "TruncatedResponse", "category": "truncation",
+            "provider": "openai", "model": "gpt-5-nano",
+            "message": "hit the max_tokens limit (4000) and produced no output",
+            "retryable": False,
+        },
+    },
+    "citations": [],
+    "sources": [],
+}
+
+#: A local run: no ``cost_usd`` key at all, because the model has no price.
+LOCAL_RUN_DOC = {
+    "task": "Explain quicksort.",
+    "model": "transformers:Qwen/Qwen2.5-1.5B-Instruct",
+    "provider": None,
+    "started_at": "2026-07-19T06:26:13+00:00",
+    "output": "Quicksort partitions the input…",
+    "success": True,
+    "tool_calls": 0,
+    "tokens_used": 373,
+    "execution_time": 1.75,
+    "execution_tree": {},
+    "metadata": {"reason": "final_answer", "prompt_tokens": 305, "completion_tokens": 68},
+    "citations": [],
+    "sources": [],
+}
+
+#: A stored run-history record, which keeps a truncated answer and no trace.
+HISTORY_RECORD = {
+    "ts": "2026-07-19T06:30:00+00:00",
+    "run_id": "ac0699e7b382",
+    "status": "ok",
+    "model": "llama-3.1-8b-instant",
+    "provider": "groq",
+    "agent": "llama-3.1-8b-instant",
+    "task": "Reply with exactly: OK",
+    "output": "OK",
+    "input_tokens": 313,
+    "output_tokens": 2,
+    "duration_s": 0.27,
+    "cost_usd": 1.6e-05,
+    "error": None,
+}
+
 DOCS = {
+    "run": RUN_DOC,
     "comparison": COMPARISON_DOC,
     "eval": EVAL_DOC,
     "cost": COST_DOC,
@@ -143,6 +253,31 @@ class _WellFormed(HTMLParser):
         stripped = data.strip()
         if stripped:
             self.text.append(stripped)
+
+
+def _fetched_references(html: str) -> list[str]:
+    """Every construct that makes the browser retrieve something on open.
+
+    A URL is not by itself a fetch: a run's answer, its tool inputs and its
+    tool results routinely quote URLs as text, and a card renders those
+    escaped. What causes a retrieval is a tag that names a file to load, a CSS
+    import, or a CSS ``url()`` pointing off-page — so those are what is
+    collected here. Links to a run's own sources are content the reader
+    chooses to follow, and are checked against the scheme allow-list
+    separately.
+    """
+    found: list[str] = []
+    found += re.findall(r"<link\b[^>]*>", html, flags=re.I)
+    found += re.findall(r"<(?:img|iframe|embed|object|video|audio|source|track)\b[^>]*>",
+                        html, flags=re.I)
+    found += re.findall(r"<script\b[^>]*\bsrc\s*=[^>]*>", html, flags=re.I)
+    found += re.findall(r"@import[^;]*;", html, flags=re.I)
+    found += re.findall(r"url\(\s*(?![\"']?data:)[^)]*\)", html, flags=re.I)
+    # Any href that is not one of the card's own source links or a fragment.
+    for href in re.findall(r'\bhref\s*=\s*"([^"]*)"', html):
+        if not href.startswith("#") and not href.startswith(("http://", "https://")):
+            found.append(f"href={href}")
+    return found
 
 
 def _parse(html: str) -> _WellFormed:
@@ -189,14 +324,28 @@ def test_build_report_rejects_non_mapping():
 @pytest.mark.parametrize("kind", REPORT_KINDS)
 def test_report_references_no_external_asset(kind):
     html = build_html_report(DOCS[kind], kind=kind)
-    assert "http://" not in html
-    assert "https://" not in html
+    assert _fetched_references(html) == []
     assert "//cdn" not in html
-    # No element may pull in an external file.
-    assert not re.search(r"\bsrc\s*=", html)
-    assert not re.search(r"\bhref\s*=", html)
-    assert "@import" not in html
-    assert "url(" not in html
+
+
+def test_a_url_in_the_answer_or_a_tool_result_is_text_not_an_asset():
+    # A research answer quotes its sources, and a web tool's input and result
+    # are full of URLs. None of that makes the page fetch anything, so the
+    # card stays self-contained while still showing the text as written.
+    doc = json.loads(json.dumps(RUN_DOC))
+    doc["output"] = "See https://example.org/paper and http://example.net/data."
+    doc["execution_tree"]["children"][0]["metadata"]["tool_input"] = (
+        '{"url": "https://example.org/fetch"}'
+    )
+    doc["execution_tree"]["children"][1]["metadata"]["result"] = (
+        "[{'url': 'https://example.org/result'}]"
+    )
+    html = build_html_report(doc, kind="run")
+
+    assert _fetched_references(html) == []
+    text = " ".join(_parse(html).text)
+    assert "https://example.org/paper" in text
+    assert "https://example.org/fetch" in text
 
 
 @pytest.mark.parametrize("kind", REPORT_KINDS)
@@ -391,7 +540,7 @@ def test_report_command_renders_each_saved_result(tmp_path, kind):
     assert proc.returncode == 0, proc.stderr
     html = out.read_text(encoding="utf-8")
     assert html.startswith("<!DOCTYPE html>")
-    assert "http://" not in html and "https://" not in html
+    assert _fetched_references(html) == []
 
 
 def test_report_command_defaults_the_output_path(tmp_path):
@@ -579,6 +728,12 @@ def test_report_escapes_markup_from_result_text(kind):
         doc["scores"][0]["model"] = payload
     elif kind == "cost":
         doc["rows"][0]["model"] = payload
+    elif kind == "run":
+        doc["task"] = payload
+        doc["output"] = payload
+        doc["model"] = payload
+        doc["execution_tree"]["children"][0]["metadata"]["tool_input"] = payload
+        doc["sources"] = [payload]
     else:
         doc["scenario"] = payload
         doc["error_breakdown"] = {payload: 3}
@@ -627,3 +782,185 @@ def test_suite_results_to_markdown():
     assert "unpriced" in md
     # A pipe inside a query does not break the table.
     assert r"2+2 \| plus" in md
+
+
+# ---------------------------------------------------------------------------
+# Run cards
+# ---------------------------------------------------------------------------
+
+def test_run_card_carries_the_run_identity_and_metrics():
+    html_text = build_html_report(RUN_DOC, kind="run")
+    text = " ".join(_parse(html_text).text)
+    assert "What is 18723 * 4409?" in text
+    assert "llama-3.1-8b-instant" in text and "groq" in text
+    assert "succeeded" in text
+    assert "afcc20ce819a" in text
+    assert "82549707" in text
+    # Tokens and cost come from the run's own metadata.
+    assert "353" in text and "$0.000019" in text
+
+
+def test_run_card_renders_every_tool_step_with_its_outcome():
+    text = " ".join(_parse(build_html_report(RUN_DOC, kind="run")).text)
+    assert "18723 x 4409" in text and "18723 * 4409" in text
+    assert "Unsupported operator" in text
+    assert "failed" in text and "ok" in text
+    # Both steps are numbered in the trace table.
+    assert "Step duration" in text
+
+
+def test_run_card_does_not_truncate_the_answer():
+    doc = json.loads(json.dumps(RUN_DOC))
+    doc["output"] = "word " * 900
+    html_text = build_html_report(doc, kind="run")
+    assert html_text.count("word") >= 900
+
+
+def test_failed_run_card_shows_the_typed_error():
+    text = " ".join(_parse(build_html_report(FAILED_RUN_DOC, kind="run")).text)
+    assert "failed" in text
+    assert "TruncatedResponse" in text and "truncation" in text
+    assert "max_tokens limit" in text
+    # Retryability is spelled out rather than left to the reader.
+    assert "Retryable" in text
+
+
+def test_local_run_card_labels_cost_as_unpriced():
+    text = " ".join(_parse(build_html_report(LOCAL_RUN_DOC, kind="run")).text)
+    assert "unpriced (local)" in text
+    assert "$0.00" not in text
+
+
+def test_a_hosted_model_without_a_rate_is_not_labelled_local():
+    # Reaching the unpriced label on a hosted run means the catalog has no rate
+    # for the model, which is not the same statement as "ran on this machine".
+    doc = json.loads(json.dumps(LOCAL_RUN_DOC))
+    doc["model"] = "some-unlisted-model"
+    doc["provider"] = "openai"
+    text = " ".join(_parse(build_html_report(doc, kind="run")).text)
+    assert "unpriced (no published rate)" in text
+    assert "local" not in text
+    assert "$0.00" not in text
+
+
+def test_run_card_links_only_http_schemes():
+    doc = json.loads(json.dumps(RUN_DOC))
+    doc["sources"] = [
+        "https://example.org/ok",
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "file:///etc/passwd",
+    ]
+    doc["citations"] = [{"index": 1, "source": "javascript:alert(2)", "quote": "q"}]
+    html_text = build_html_report(doc, kind="run")
+    hrefs = re.findall(r'href="([^"]*)"', html_text)
+    assert hrefs == ["https://example.org/ok"]
+    # The refused URLs are still shown, as inert text.
+    text = " ".join(_parse(html_text).text)
+    assert "javascript:alert(1)" in text and "file:///etc/passwd" in text
+
+
+def test_run_card_renders_a_stored_history_record_and_says_it_is_a_summary():
+    assert detect_report_kind(HISTORY_RECORD) == "run"
+    text = " ".join(_parse(build_html_report(HISTORY_RECORD, kind="run")).text)
+    assert "Reply with exactly: OK" in text
+    assert "truncated answer and no step trace" in text
+    # Totals are derived from the stored per-direction token counts.
+    assert "315" in text
+
+
+def test_run_card_carries_a_copy_affordance_for_the_task():
+    html_text = build_html_report(RUN_DOC, kind="run")
+    assert 'id="run-task"' in html_text
+    assert 'data-copy-from="run-task"' in html_text
+    assert "effgen run " in html_text
+
+
+# `effgen report` renders whatever JSON file it is handed, so a document that
+# is the right kind but the wrong shape must still produce a page or a named
+# refusal — never a traceback, and never a field rendered as nonsense.
+@pytest.mark.parametrize(
+    ("label", "doc"),
+    [
+        ("start time is not a number", {
+            "output": "x", "success": True,
+            "execution_tree": {"children": [
+                {"node_type": "tool", "name": "a", "started_at": "2026-01-01", "metadata": {}},
+                {"node_type": "tool", "name": "b", "started_at": 2.0, "metadata": {}},
+            ]},
+        }),
+        ("step metadata is not a mapping", {
+            "output": "x", "success": True,
+            "execution_tree": {"children": [
+                {"node_type": "tool", "name": "a", "metadata": "oops"}]},
+        }),
+        ("children is not a list", {
+            "output": "x", "success": True, "execution_tree": {"children": "nope"},
+        }),
+        ("execution tree is not a mapping", {
+            "output": "x", "success": True, "execution_tree": [1, 2],
+        }),
+        ("run metadata is not a mapping", {
+            "output": "x", "success": True, "metadata": "oops",
+        }),
+        ("citations is not a list", {
+            "output": "x", "success": True, "citations": {"a": 1},
+        }),
+    ],
+)
+def test_run_card_renders_a_malformed_document_without_crashing(label, doc):
+    html_text = build_html_report(doc, kind="run")
+    assert html_text.startswith("<!DOCTYPE html>")
+    assert _parse(html_text).mismatches == []
+
+
+def test_a_string_in_the_sources_field_is_not_read_as_one_source_per_character():
+    doc = {"output": "x", "success": True, "sources": "https://example.org/a"}
+    html_text = build_html_report(doc, kind="run")
+    # Iterating the string would list "h", "t", "t", "p"… as separate sources.
+    assert '<ol class="sources">' not in html_text
+
+
+# ---------------------------------------------------------------------------
+# A document that cannot back a report is refused, and no file is written
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("kind", REPORT_KINDS)
+def test_build_report_refuses_a_document_without_the_kinds_fields(kind):
+    with pytest.raises(ReportError) as exc:
+        build_html_report({"unrelated": "value"}, kind=kind)
+    message = str(exc.value)
+    assert kind in message
+    # The message names both what the kind needs and what the document had.
+    assert "unrelated" in message
+
+
+@pytest.mark.parametrize("kind", ["comparison", "eval", "cost", "loadtest"])
+def test_report_of_a_run_document_under_the_wrong_kind_writes_no_file(tmp_path, kind):
+    src = tmp_path / "run.json"
+    src.write_text(json.dumps(RUN_DOC), encoding="utf-8")
+    out = tmp_path / f"{kind}.html"
+    proc = subprocess.run(
+        [sys.executable, "-m", "effgen.cli", "report", str(src),
+         "--kind", kind, "-o", str(out)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert not out.exists()
+    combined = proc.stdout + proc.stderr
+    assert kind in combined
+    # The refusal points at the kind the document actually is.
+    assert "run" in combined
+
+
+def test_report_recognises_a_run_document(tmp_path):
+    src = tmp_path / "run.json"
+    src.write_text(json.dumps(RUN_DOC), encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "effgen.cli", "report", str(src)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    written = src.with_suffix(".html")
+    assert written.exists()
+    assert "82549707" in written.read_text(encoding="utf-8")

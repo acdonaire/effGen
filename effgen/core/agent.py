@@ -22,6 +22,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -348,6 +349,10 @@ class AgentResponse:
         execution_time: Time taken in seconds
         execution_trace: Full execution trace
         execution_tree: Hierarchical execution tree
+        task: The task text this response answers, as the agent received it
+        model: Model id the run was answered on
+        provider: Provider that served the model, when one is known
+        started_at: UTC ISO-8601 timestamp of when the run started
         routing_decision: Routing decision (if sub-agents used)
         metadata: Additional metadata. Always includes ``reason``, one of:
 
@@ -389,6 +394,10 @@ class AgentResponse:
     metadata: dict[str, Any] = field(default_factory=dict)
     citations: list[Any] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
+    task: str | None = None
+    model: str | None = None
+    provider: str | None = None
+    started_at: str | None = None
 
     def __str__(self) -> str:
         """The answer text — so ``print(result)`` shows the answer, not a repr.
@@ -468,8 +477,17 @@ class AgentResponse:
         return self.output
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to dictionary.
+
+        The document identifies the run it came from — ``task``, ``model``,
+        ``provider`` and ``started_at`` — so a saved result can be read back
+        without the caller having to keep a separate note of what produced it.
+        """
         return {
+            "task": self.task,
+            "model": self.model,
+            "provider": self.provider,
+            "started_at": self.started_at,
             "output": self.output,
             "success": self.success,
             "mode": self.mode.value,
@@ -1154,6 +1172,7 @@ Question: {task}
             )
 
         start_time = time.time()
+        started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         context = context or {}
 
         # Accept str | Message | list[ContentPart]; route media to the
@@ -1166,7 +1185,7 @@ Question: {task}
         # the model — a blank prompt was never a real request and still bills
         # the provider for a call the caller almost certainly didn't intend.
         if isinstance(task, str) and not task.strip() and not inputs:
-            return AgentResponse(
+            return self._stamp_run_identity(AgentResponse(
                 output="",
                 success=False,
                 execution_time=time.time() - start_time,
@@ -1185,7 +1204,7 @@ Question: {task}
                         "retryable": False,
                     },
                 },
-            )
+            ), task=task, started_at=started_at)
 
         debug = kwargs.pop("debug", False)
         # A max_tokens set on the config is the default output budget for every
@@ -1210,12 +1229,12 @@ Question: {task}
             gr = self._guardrail_chain.check(task, position=GuardrailPosition.INPUT)
             if not gr.passed:
                 prom_metrics.active_agents.dec(labels=labels)
-                return AgentResponse(
+                return self._stamp_run_identity(AgentResponse(
                     output=f"Input blocked by guardrail: {gr.reason}",
                     success=False,
                     execution_time=time.time() - start_time,
                     metadata={"guardrail_blocked": True, "guardrail_reason": gr.reason},
-                )
+                ), task=task, started_at=started_at)
             if gr.modified_content is not None:
                 task = gr.modified_content
                 # Record what the input redaction removed so a run is auditable
@@ -1468,7 +1487,9 @@ Question: {task}
                 if not response.success and self.config.raise_on_error:
                     raise self._reconstruct_error(response.metadata)
 
-                return response
+                return self._stamp_run_identity(
+                    response, task=task, started_at=started_at
+                )
 
             except Exception as e:
                 # When raise_on_error is set, propagate the typed error rather
@@ -1510,10 +1531,37 @@ Question: {task}
                     execution_time=response.execution_time,
                     outcome=classify_provider_error(e).category,
                 )
-                return response
+                return self._stamp_run_identity(
+                    response, task=task, started_at=started_at
+                )
 
             finally:
                 prom_metrics.active_agents.dec(labels=labels)
+
+    def _stamp_run_identity(
+        self,
+        response: AgentResponse,
+        *,
+        task: Any,
+        started_at: str,
+    ) -> AgentResponse:
+        """Record what the run was, on the response, and return it.
+
+        A result document is read long after the run, often by someone who did
+        not start it, so it carries the task, the model and provider that
+        answered it, and when it started.
+        """
+        if response.task is None and isinstance(task, str):
+            response.task = task
+        if response.model is None:
+            response.model = getattr(self, "model_name", None)
+        if response.provider is None:
+            metadata = response.metadata or {}
+            provider = metadata.get("provider") or getattr(self.config, "provider", None)
+            response.provider = str(provider) if provider else None
+        if response.started_at is None:
+            response.started_at = started_at
+        return response
 
     def _session_turn_metadata(
         self,

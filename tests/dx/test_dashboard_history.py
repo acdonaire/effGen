@@ -125,3 +125,16 @@ def test_history_elements_referenced_by_the_script_exist():
     for element_id in ("history-sub", "history-tbody", "history-detail",
                        "history-sessions-tbody", "hist-search", "hist-status"):
         assert f'id="{element_id}"' in html
+
+
+def test_run_detail_offers_a_summary_card_command_and_names_its_limits():
+    js = (STATIC / "app.js").read_text()
+    css = (STATIC / "style.css").read_text()
+
+    # The command the button copies exports the selected run from history.
+    assert "effgen runs show" in js and "--card" in js
+    # The button says what the stored record can and cannot back, so nobody
+    # expects the answer and trace a run-time card carries.
+    assert "truncated answer, no step trace" in js
+    assert "effgen run --card" in js
+    assert ".run-export" in css
