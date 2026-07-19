@@ -37,7 +37,7 @@
 <br/>
 
 <!-- Typing Animation -->
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=6C63FF&center=true&vCenter=true&multiline=true&repeat=true&width=650&height=80&lines=Build+AI+Agents+with+Small+Language+Models;Fast+%E2%80%A2+Efficient+%E2%80%A2+Production-Ready" alt="Typing SVG" />
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=6C63FF&center=true&vCenter=true&multiline=true&repeat=true&width=650&height=80&lines=Build+AI+Agents+with+Small+Language+Models;Fast+%E2%80%A2+Efficient+%E2%80%A2+Multi-Provider" alt="Typing SVG" />
 
 <br/>
 <br/>
@@ -130,7 +130,7 @@ print(f"Answer: {result.output}")
 |:---:|:---|:---|
 | 🔒 | **27 May 2026** | **v0.2.10 Released**: Security, Edge & DX — secret scanning (gitleaks), SBOM (CycloneDX), pip-audit CI, sandboxed CodeExecutor (SubprocessSandbox + DockerSandbox), OAuth2/OIDC + RBAC + audit log, Docker + Helm, AWS Lambda (Mangum), Cloudflare Worker edge proxy, VSCode extension, Jupyter magics, live dashboard. [Changelog](CHANGELOG.md#0210---2026-05-27) |
 | 📊 | **23 May 2026** | **v0.2.9 Released**: Observability & Reliability — structured JSON logs + secret redaction, OTel samplers + canonical span spec, Prometheus histograms, SLO tracking, circuit breakers, bulkheads, jittered retries, chaos harness, fuzz suite, `effgen loadtest` CLI, Alertmanager rules. [Changelog](CHANGELOG.md#029---2026-05-23) |
-| 🖼️ | **21 May 2026** | **v0.2.8 Released**: First-class multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [Changelog](CHANGELOG.md#028---2026-05-21) |
+| 🖼️ | **21 May 2026** | **v0.2.8 Released**: Multimodal input — image, audio, and video across 6 providers (Gemini, OpenAI, Groq, Anthropic, Together, HF). New `multimodal` preset, `MultimodalDescribeTool`, unified `Message` content schema, 5 cookbook walkthroughs. [Changelog](CHANGELOG.md#028---2026-05-21) |
 | 📚 | **20 May 2026** | **v0.2.7 Released**: 31 prompt templates across 7 domains — research, coding, data/SQL, legal, medical, creative, business — with golden eval harness, interactive playground, and auto-generated gallery. [Changelog](CHANGELOG.md#027---2026-05-20) |
 | 🚀 | **19 May 2026** | **v0.2.6 Released**: 14 new tools — OCR, AudioTranscribe, ImageInfo, ImageCaption, PDF, DOCX, Excel, Weather, Geocode, Maps, EmailSMTP, EmailIMAP, SlackWebhook, DiscordWebhook. New presets: `media`, `notify`. 58+ built-in tools total. [Changelog](CHANGELOG.md#026---2026-05-19) |
 | 🚀 | **18 May 2026** | **v0.2.5 Released**: 13 new free tools — PubMed, ArXiv, SemanticScholar, RSS, News, YouTubeTranscript, YouTubeMetadata, Reddit, HackerNews, Translate, LanguageDetect, QRGenerate, QRRead. 44+ built-in tools total. [Changelog](CHANGELOG.md#025---2026-05-18) |
@@ -518,11 +518,11 @@ See [docs/observability/overview.md](docs/observability/overview.md), [docs/obse
 </details>
 
 <details>
-<summary><b>What's new in v0.2.8 — First-class multimodal (image, audio & video across 6 providers)</b></summary>
+<summary><b>What's new in v0.2.8 — Multimodal input (image, audio & video across 6 providers)</b></summary>
 
 <br/>
 
-**effGen v0.2.8** makes multimodal input a first-class citizen. Send images, audio clips, and short video to any vision-capable provider through a unified `Message` schema — the adapter handles the translation, not your code.
+**effGen v0.2.8** accepts image, audio, and video as input types. Send them to any vision-capable provider through a unified `Message` schema — the adapter handles the translation, not your code.
 
 **Image input** — Gemini, OpenAI gpt-4o, Groq, Anthropic (code-only), Together, HF. Automatic resize/MIME validation via `image_pre.py`. Raises `CapabilityNotSupportedError` cleanly when the provider doesn't support vision.
 
@@ -1256,7 +1256,7 @@ result = agent.run("What does the documentation say about configuration?")
 
 ## 🚀 Deployment
 
-effGen ships production-ready deployment recipes for every major target.
+effGen ships deployment recipes for every major target.
 
 <table>
 <tr>
