@@ -24,13 +24,19 @@ say "reports the failure with a typed error", not "fails honestly"; say
 gated vocabulary is the set that is essentially always editorializing when it
 describes the software's behavior: ``honest``/``honestly``/``honesty``,
 ``gracefully``, ``delightful``/``delightfully``, ``beautifully``,
-``elegant``/``elegantly``, ``robustly``.
+``elegant``/``elegantly``, ``robustly``, ``seamless``/``seamlessly``,
+``effortlessly``, ``magically``, ``blazing``/``blazingly``,
+``production-grade``, ``production-ready``, ``world-class``,
+``battle-tested``, ``bulletproof``, ``state-of-the-art``.
 
 ``cleanly``/``properly``/``correctly`` are deliberately *not* machine-gated:
 they carry a large volume of plainly factual technical uses ("imports cleanly",
 "routes correctly", "properly configured") that a regex cannot separate from the
-rare filler use, so blanket-gating them would force an unwieldy allowlist. Those
-words are scrubbed by human review, not by this gate.
+rare filler use, so blanket-gating them would force an unwieldy allowlist.
+``first-class`` is excluded for the same reason: it is a term of art for a type
+or value the language/framework supports natively, and separating that from the
+promotional use ("a first-class experience") needs a human. Those words are
+scrubbed by human review, not by this gate.
 
 A small, documented allowlist excuses the handful of *legitimate* occurrences
 (an SSN-format mask, files that intentionally exclude the internal planning
@@ -38,6 +44,12 @@ directory, the CI meta-files that themselves grep for these markers). The scan
 is intentionally narrow and self-tested so it cannot silently no-op: a planted
 violation of every pattern must be caught (see the ``test_detector_catches_*``
 tests).
+
+Scanning is by suffix (see ``_SOURCE_SUFFIXES``), so plain-text test data —
+``.txt``/``.jsonl`` fixtures and golden files — is out of scope by design.
+Those files hold quoted third-party prose (paper abstracts) and recorded model
+output, neither of which is effGen describing itself; gating them would mean
+allowlisting verbatim quotations.
 
 ``build_plan/`` is deliberately *not* scanned — it is gitignored internal
 scaffolding and is never shipped. The human-authored release narrative
@@ -70,11 +82,13 @@ _SKIP_DIR_PREFIXES = ("build_plan/", "examples/data/")
 # itself without self-tripping.
 _SKIP_FILES = {"tests/unit/test_no_internal_scaffolding.py"}
 
-# Human-authored release narrative. Scanned for process jargon, but exempt from
-# the editorializing-self-praise check: this prose is owned by the release step
-# (which is the only phase permitted to edit it), not by the source scrub.
+# Dated release narrative. Scanned for process jargon, but exempt from the
+# editorializing-self-praise check: these are append-only historical records of
+# what each past release said, so rewording them would falsify the record.
+# README.md/README_PYPI.md are deliberately NOT exempt — they describe the
+# project as it is today and are held to the same standard as source.
 _EDITORIALIZING_EXEMPT_FILES = {
-    "CHANGELOG.md", "NEWS.md", "README.md", "README_PYPI.md",
+    "CHANGELOG.md", "NEWS.md",
 }
 
 # ── forbidden patterns: (a) internal process jargon ───────────────────────────
@@ -112,6 +126,16 @@ EDITORIALIZING_PATTERNS: dict[str, re.Pattern[str]] = {
     "praise-beautifully": re.compile(r"\bbeautifully\b", re.IGNORECASE),
     "praise-elegant": re.compile(r"\belegant(?:ly)?\b", re.IGNORECASE),
     "praise-robustly": re.compile(r"\brobustly\b", re.IGNORECASE),
+    "praise-seamless": re.compile(r"\bseamless(?:ly)?\b", re.IGNORECASE),
+    "praise-effortlessly": re.compile(r"\beffortlessly\b", re.IGNORECASE),
+    "praise-magically": re.compile(r"\bmagically\b", re.IGNORECASE),
+    "praise-blazing": re.compile(r"\bblazing(?:ly)?\b", re.IGNORECASE),
+    "praise-production-grade": re.compile(r"\bproduction[ -]grade\b", re.IGNORECASE),
+    "praise-production-ready": re.compile(r"\bproduction[ -]ready\b", re.IGNORECASE),
+    "praise-world-class": re.compile(r"\bworld[ -]class\b", re.IGNORECASE),
+    "praise-battle-tested": re.compile(r"\bbattle[ -]tested\b", re.IGNORECASE),
+    "praise-bulletproof": re.compile(r"\bbullet[ -]?proof\b", re.IGNORECASE),
+    "praise-state-of-the-art": re.compile(r"\bstate[ -]of[ -]the[ -]art\b", re.IGNORECASE),
 }
 
 # ── documented allowlist of legitimate occurrences ────────────────────────────
@@ -124,6 +148,7 @@ ALLOWLIST: list[tuple[str, str]] = [
     (".gitignore", "build_plan"),
     ("MANIFEST.in", "build_plan"),
     ("deploy/docker/.dockerignore", "build_plan"),
+    (".gitleaks.toml", "build_plan"),
     # The sibling jargon-check test carries the forbidden words as test data.
     ("tests/unit/test_onboarding.py", "for bad in"),
     # CI meta-files that themselves grep for placeholder markers.
@@ -134,9 +159,16 @@ ALLOWLIST: list[tuple[str, str]] = [
 ]
 
 # Documented allowlist for the editorializing check: genuinely-legitimate domain
-# uses of an otherwise-gated word (empty today — every source occurrence was
-# rephrased to describe behavior plainly). Same (path, substring) form as above.
-EDITORIALIZING_ALLOWLIST: list[tuple[str, str]] = []
+# uses of an otherwise-gated word. Same (path, substring) form as above.
+EDITORIALIZING_ALLOWLIST: list[tuple[str, str]] = [
+    # Prompt-template payload: the wording is an instruction sent to the model
+    # about the artifact *it* should design, not a claim about effGen itself.
+    # Changing it would change the template's output.
+    (
+        "effgen/prompts/library/domains/data/etl_plan_v1.py",
+        "You are a senior data engineer.",
+    ),
+]
 
 
 def _is_allowed(rel_path: str, line: str, allowlist: list[tuple[str, str]]) -> bool:
@@ -260,6 +292,42 @@ def test_detector_catches_planted_editorializing():
     # Plainly-factual descriptions must NOT trip the editorializing gate.
     for ok in ("routes to the correct adapter", "the model imports cleanly", "properly typed"):
         assert not find_editorializing("some/source.py", ok), ok
+
+
+def test_detector_catches_promotional_vocabulary():
+    """Every promotional word carries its own pattern, in both spellings."""
+    expected = {
+        "praise-seamless": ["a seamless upgrade", "swaps seamlessly"],
+        "praise-effortlessly": ["scales effortlessly"],
+        "praise-magically": ["the cache magically warms"],
+        "praise-blazing": ["blazing throughput", "blazingly fast startup"],
+        "praise-production-grade": ["a production-grade pipeline", "production grade RAG"],
+        "praise-production-ready": ["a production-ready chart", "production ready adapter"],
+        "praise-world-class": ["world-class ergonomics", "world class tracing"],
+        "praise-battle-tested": ["battle-tested retries", "battle tested sandbox"],
+        "praise-bulletproof": ["bulletproof auth", "bullet-proof parsing"],
+        "praise-state-of-the-art": ["state-of-the-art routing", "state of the art reranking"],
+    }
+    for name, samples in expected.items():
+        for sample in samples:
+            hits = find_editorializing("some/source.py", sample)
+            assert any(n == name for _, n, _ in hits), (name, sample)
+    # Ordinary technical prose that merely shares a word stem must stay clean.
+    for ok in (
+        "the production environment variable",
+        "class Blazer:",
+        "artwork classification",
+    ):
+        assert not find_editorializing("some/source.py", ok), ok
+
+
+def test_editorializing_allowlist_is_scoped_to_its_file():
+    """An allowlisted line is excused only on its own path."""
+    line = "        \"You are a senior data engineer. Design a production-ready ETL pipeline.\\n\\n\""
+    assert not find_editorializing(
+        "effgen/prompts/library/domains/data/etl_plan_v1.py", line
+    )
+    assert find_editorializing("effgen/elsewhere.py", line)
 
 
 def test_allowlist_excuses_legitimate_lines():
