@@ -219,12 +219,57 @@ HISTORY_RECORD = {
     "error": None,
 }
 
+#: A head-to-head over one prompt: two models that answered and one that could
+#: not be run, plus the measured verdict and a judged pick.
+BATTLE_DOC = {
+    "prompt": "Explain a bloom filter in one sentence.",
+    "wall_s": 3.31,
+    "total_cost_usd": 0.000063,
+    "generated_at": "2026-07-19T07:15:00+00:00",
+    "contenders": [
+        {
+            "model": "groq:llama-3.1-8b-instant",
+            "answer": "A bloom filter tests set membership with false positives but no "
+                      "false negatives.",
+            "error": None, "state": "done", "load_s": 0.31, "ttft_s": 0.41,
+            "latency_s": 1.64, "prompt_tokens": 56, "completion_tokens": 89,
+            "total_tokens": 145, "cost_usd": 1.0e-05, "estimated_tokens": False,
+        },
+        {
+            "model": "transformers:Qwen/Qwen2.5-1.5B-Instruct",
+            "answer": "It is a compact probabilistic set.",
+            "error": None, "state": "done", "load_s": 12.73, "ttft_s": 0.48,
+            "latency_s": 1.23, "prompt_tokens": 24, "completion_tokens": 13,
+            "total_tokens": 37, "cost_usd": None, "estimated_tokens": True,
+        },
+        {
+            "model": "openai:gpt-5-nonexistent-xyz",
+            "answer": "", "error": "ModelNotFoundError: the model does not exist",
+            "state": "failed", "load_s": None, "ttft_s": None, "latency_s": None,
+            "prompt_tokens": None, "completion_tokens": None, "total_tokens": None,
+            "cost_usd": None, "estimated_tokens": False,
+        },
+    ],
+    "verdict": {
+        "fastest": {"model": "transformers:Qwen/Qwen2.5-1.5B-Instruct",
+                    "detail": "answered in 1.23s"},
+        "cheapest": {"model": "groq:llama-3.1-8b-instant",
+                     "detail": "$0.000010 for this run; 1 model(s) publish no price "
+                               "and were not ranked"},
+        "longest": {"model": "groq:llama-3.1-8b-instant", "detail": "79 characters"},
+        "judge": {"judge_model": "gemini:gemini-3.1-flash-lite",
+                  "winner": "groq:llama-3.1-8b-instant",
+                  "reasoning": "It states both error directions."},
+    },
+}
+
 DOCS = {
     "run": RUN_DOC,
     "comparison": COMPARISON_DOC,
     "eval": EVAL_DOC,
     "cost": COST_DOC,
     "loadtest": LOADTEST_DOC,
+    "battle": BATTLE_DOC,
 }
 
 
