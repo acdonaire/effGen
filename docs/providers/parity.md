@@ -142,7 +142,7 @@ For the canonical parity task, these models were validated:
 |----------|-------|-------|
 | Cerebras | `gpt-oss-120b` | Fast, free-tier eligible |
 | Groq | `llama-3.3-70b-versatile` | Best quality/speed on free tier |
-| Together | `meta-llama/Meta-Llama-3-8B-Instruct-Lite` | Free, fast |
+| Together | `Qwen/Qwen3.5-9B` | Cheapest tool-capable serverless model |
 | Fireworks | `accounts/fireworks/models/kimi-k2p5` | Tool-capable serverless model |
 | HuggingFace | `Qwen/Qwen2.5-72B-Instruct` | Best free HF model |
 | Gemini | `gemini-2.5-flash-lite` | Fast, 20 req/day free |

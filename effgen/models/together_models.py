@@ -1,8 +1,9 @@
 """
 Together AI model registry for effGen.
 
-Full model catalog fetched from Together API on 2026-04-28 (244 models total:
-149 chat, 13 language, 11 audio, 31 image, 30 video, 5 transcribe, 2 rerank, 1 embedding, 1 code, 1 moderation).
+Chat-model catalog last verified against the Together API on 2026-07-19 (129
+chat models; the module also carries the language, audio, image, video,
+transcribe, rerank, embedding, code and moderation registries).
 
 Pricing from Together AI pricing page (https://www.together.ai/pricing).
 Rate limits: Together AI applies per-account limits; serverless tier ~100 RPM typical.
@@ -10,10 +11,10 @@ Rate limits: Together AI applies per-account limits; serverless tier ~100 RPM ty
 serverless=True  — accessible via standard API without a dedicated endpoint.
 serverless=False — requires a dedicated endpoint started in Together console.
 
-Tool-calling support verified by live API tests on 2026-04-28.
+Tool-calling support verified by live API tests.
 Together uses an OpenAI-compatible function-calling API.
 
-REGISTRY_FETCH_DATE: str = "2026-04-28"
+The snapshot date is exposed as :data:`REGISTRY_FETCH_DATE`.
 Use refresh_models() to fetch the live catalog and detect drift.
 """
 
@@ -26,10 +27,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Date this bundled registry was last fetched from the Together API
-REGISTRY_FETCH_DATE = "2026-06-17"
+REGISTRY_FETCH_DATE = "2026-07-19"
 
 # ---------------------------------------------------------------------------
-# Chat models (149 total as of 2026-04-28)
+# Chat models (129 total as of 2026-07-19)
 # Sorted by input price (ascending). Free/\$0 models listed first.
 # ---------------------------------------------------------------------------
 TOGETHER_MODELS: dict[str, dict] = {
@@ -200,6 +201,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -216,6 +218,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -232,6 +235,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -264,6 +268,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -280,6 +285,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -296,6 +302,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -312,6 +319,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -360,6 +368,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -427,6 +436,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -443,6 +453,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -898,6 +909,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -962,6 +974,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -1187,6 +1200,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -1203,6 +1217,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": False,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.0,
         "pricing_per_1m_output": 0.0,
@@ -1228,22 +1243,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "modality": "chat",
         "organization": "Qwen",
     },
-    # Togethercomputer — LFM2-24B-A2B
-    "LiquidAI/LFM2-24B-A2B": {
-        "family": "lfm",
-        "context": 32768,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": True,
-        "pricing_per_1m_input": 0.030000000000000002,
-        "pricing_per_1m_output": 0.12000000000000001,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Togethercomputer",
-    },
     # OpenAI — OpenAI GPT-OSS 20B
     "openai/gpt-oss-20b": {
         "family": "gpt-oss",
@@ -1251,6 +1250,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": True,
         "pricing_per_1m_input": 0.05,
         "pricing_per_1m_output": 0.2,
@@ -1315,6 +1315,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": True,
         "pricing_per_1m_input": 0.1,
         "pricing_per_1m_output": 0.15,
@@ -1323,22 +1324,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "organization": "Qwen",
-    },
-    # Meta — Meta Llama 3 8B Instruct Lite
-    "meta-llama/Meta-Llama-3-8B-Instruct-Lite": {
-        "family": "llama",
-        "context": 8192,
-        "max_output": 4_096,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "serverless": True,
-        "pricing_per_1m_input": 0.1,
-        "pricing_per_1m_output": 0.1,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Meta",
     },
     # Togethercomputer — Arize AI Qwen 2 1.5B Instruct
     "arize-ai/qwen-2-1.5b-instruct": {
@@ -1379,6 +1364,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": True,
         "pricing_per_1m_input": 0.15,
         "pricing_per_1m_output": 0.6,
@@ -1388,22 +1374,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "modality": "chat",
         "organization": "OpenAI",
     },
-    # Essential AI — EssentialAI Rnj-1 Instruct
-    "essentialai/rnj-1-instruct": {
-        "family": "essentialai",
-        "context": 32768,
-        "max_output": 4_096,
-        "supports_native_tools": False,
-        "supports_streaming": True,
-        "serverless": True,
-        "pricing_per_1m_input": 0.15,
-        "pricing_per_1m_output": 0.15,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Essential AI",
-    },
     # Qwen — Qwen3 Next 80B A3b Thinking
     "Qwen/Qwen3-Next-80B-A3B-Thinking": {
         "family": "qwen-3",
@@ -1411,6 +1381,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.15,
         "pricing_per_1m_output": 1.5,
@@ -1459,6 +1430,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 0.18000000000000002,
         "pricing_per_1m_output": 0.18000000000000002,
@@ -1515,22 +1487,6 @@ TOGETHER_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "organization": "Google",
-    },
-    # Qwen — Qwen3 235B A22B Instruct 2507 FP8 Throughput
-    "Qwen/Qwen3-235B-A22B-Instruct-2507-tput": {
-        "family": "qwen-3",
-        "context": 262144,
-        "max_output": 4_096,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "serverless": True,
-        "pricing_per_1m_input": 0.2,
-        "pricing_per_1m_output": 0.6,
-        "rpm": 100,
-        "tpm": 100_000,
-        "active": True,
-        "modality": "chat",
-        "organization": "Qwen",
     },
     # Zai Org — Glm 4.5 Air Fp8
     "zai-org/GLM-4.5-Air-FP8": {
@@ -1636,6 +1592,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": True,
         "pricing_per_1m_input": 0.3,
         "pricing_per_1m_output": 1.2,
@@ -1686,7 +1643,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "serverless": True,
+        "serverless": False,
         "pricing_per_1m_input": 0.5,
         "pricing_per_1m_output": 1.2,
         "rpm": 100,
@@ -1734,7 +1691,8 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "serverless": True,
+        "reasoning": True,
+        "serverless": False,
         "pricing_per_1m_input": 0.6,
         "pricing_per_1m_output": 3.6,
         "rpm": 100,
@@ -1750,7 +1708,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "serverless": True,
+        "serverless": False,
         "pricing_per_1m_input": 0.6,
         "pricing_per_1m_output": 1.7,
         "rpm": 100,
@@ -1943,7 +1901,8 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "serverless": True,
+        "reasoning": True,
+        "serverless": False,
         "pricing_per_1m_input": 1.0,
         "pricing_per_1m_output": 3.2,
         "rpm": 100,
@@ -1976,6 +1935,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 1.2,
         "pricing_per_1m_output": 1.2,
@@ -2040,6 +2000,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": True,
         "pricing_per_1m_input": 1.25,
         "pricing_per_1m_output": 1.25,
@@ -2057,7 +2018,8 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "serverless": True,
+        "reasoning": True,
+        "serverless": False,
         "pricing_per_1m_input": 1.4,
         "pricing_per_1m_output": 4.4,
         "rpm": 100,
@@ -2073,6 +2035,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 1.6,
         "pricing_per_1m_output": 1.6,
@@ -2105,7 +2068,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "serverless": True,
+        "serverless": False,
         "pricing_per_1m_input": 2.0,
         "pricing_per_1m_output": 2.0,
         "rpm": 100,
@@ -2121,6 +2084,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": False,
         "pricing_per_1m_input": 2.0,
         "pricing_per_1m_output": 2.0,
@@ -2137,6 +2101,7 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "reasoning": True,
         "serverless": True,
         "pricing_per_1m_input": 2.1,
         "pricing_per_1m_output": 4.4,
@@ -2154,7 +2119,8 @@ TOGETHER_MODELS: dict[str, dict] = {
         "max_output": 4_096,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "serverless": True,
+        "reasoning": True,
+        "serverless": False,
         "pricing_per_1m_input": 3.0,
         "pricing_per_1m_output": 7.0,
         "rpm": 100,
@@ -2212,8 +2178,11 @@ TOGETHER_EMBEDDING_MODELS: dict[str, dict] = {
 # Defaults and convenience helpers
 # ---------------------------------------------------------------------------
 
-# Default model: cheapest confirmed-serverless model with tool support
-TOGETHER_DEFAULT_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct-Lite"
+# Default model: cheapest confirmed-serverless model with tool support. It is a
+# reasoning model, so it is flagged "reasoning": True above — that is what earns
+# it the larger default output budget; on a small max_tokens it would otherwise
+# spend the whole allowance thinking and return empty text.
+TOGETHER_DEFAULT_MODEL = "Qwen/Qwen3.5-9B"
 
 # Serverless-accessible (no dedicated endpoint needed)
 TOGETHER_SERVERLESS_MODELS = {

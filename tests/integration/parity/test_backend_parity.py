@@ -88,9 +88,9 @@ PARITY_PARAMS = [
         id="groq/llama-3.3-70b-versatile",
     ),
     pytest.param(
-        "together", "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+        "together", "Qwen/Qwen3.5-9B",
         marks=pytest.mark.skipif(not _has("TOGETHER_API_KEY"), reason="SKIPPED: TOGETHER_API_KEY not set"),
-        id="together/llama-3-8b-lite",
+        id="together/qwen3.5-9b",
     ),
     pytest.param(
         "fireworks", "accounts/fireworks/models/kimi-k2p5",
@@ -235,9 +235,9 @@ NATIVE_PARAMS = [
         id="fireworks/kimi-k2p5/native",
     ),
     pytest.param(
-        "together", "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+        "together", "Qwen/Qwen3.5-9B",
         marks=pytest.mark.skipif(not _has("TOGETHER_API_KEY"), reason="SKIPPED: TOGETHER_API_KEY not set"),
-        id="together/llama-3-8b-lite/native",
+        id="together/qwen3.5-9b/native",
     ),
     pytest.param(
         "gemini", "gemini-2.5-flash-lite",

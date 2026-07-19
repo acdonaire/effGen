@@ -1,6 +1,6 @@
 # Together AI Backend
 
-effGen ships a full-featured `TogetherAdapter` for the Together AI inference API. It supports 149 chat models (as of 2026-04-28) including serverless access (no dedicated endpoint required), native tool-calling on 62 models, real token-by-token streaming, and per-request cost tracking with official Together AI pricing.
+effGen ships a full-featured `TogetherAdapter` for the Together AI inference API. It supports 129 chat models (as of 2026-07-19) including serverless access (no dedicated endpoint required), native tool-calling on 53 models, real token-by-token streaming, and per-request cost tracking with official Together AI pricing.
 
 ## Setup
 
@@ -21,7 +21,7 @@ TOGETHER_API_KEY=your_key_here
 ```python
 from effgen.models.together_adapter import TogetherAdapter
 
-# Default model: meta-llama/Meta-Llama-3-8B-Instruct-Lite (cheapest serverless with tool support)
+# Default model: Qwen/Qwen3.5-9B (cheapest serverless model with tool support)
 adapter = TogetherAdapter()
 adapter.load()
 
@@ -47,15 +47,19 @@ for row in together_pricing_table():
 
 | Model | Context | Input $/1M | Output $/1M | Tools |
 |-------|---------|-----------|------------|-------|
-| `LiquidAI/LFM2-24B-A2B` | 32K | $0.03 | $0.12 | No |
 | `openai/gpt-oss-20b` | 131K | $0.05 | $0.20 | Yes |
 | `google/gemma-3n-E4B-it` | 32K | $0.06 | $0.12 | No |
-| `meta-llama/Meta-Llama-3-8B-Instruct-Lite` | 8K | $0.10 | $0.10 | Yes |
 | `Qwen/Qwen3.5-9B` | 262K | $0.10 | $0.15 | Yes |
 | `openai/gpt-oss-120b` | 131K | $0.15 | $0.60 | Yes |
 | `Qwen/Qwen2.5-7B-Instruct-Turbo` | 32K | $0.30 | $0.30 | Yes |
-| `deepseek-ai/DeepSeek-V3.1` | 131K | $0.60 | $1.70 | Yes |
 | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | 131K | $0.88 | $0.88 | Yes |
+
+`Qwen/Qwen3.5-9B`, the `gpt-oss` models and the DeepSeek-R1, QwQ, GLM-5, MiniMax
+and Cogito families emit reasoning tokens before their answer. The catalog marks
+them `reasoning`, and effGen gives a reasoning model a much larger default output
+budget for that reason. If you pass `max_tokens` yourself, keep it generous: a
+budget exhausted mid-thought returns empty `result.text` with
+`metadata["truncated"] is True`. Unused budget is not billed.
 
 ## Streaming
 
@@ -124,7 +128,7 @@ Costs use official Together AI pricing (fetched 2026-04-28). Zero for free/dedic
 ```python
 from effgen.models._cost import CostTracker
 
-adapter = TogetherAdapter("deepseek-ai/DeepSeek-V3.1")
+adapter = TogetherAdapter("Qwen/Qwen3.5-9B")
 adapter.load()
 adapter.generate("Summarize AI in one sentence.")
 adapter.unload()
@@ -150,12 +154,12 @@ if drift["new_models"]:
 
 effGen will **always** use the bundled registry as the offline fallback. `refresh_models()` is purely informational — it never mutates the local registry.
 
-## Model Coverage (2026-04-28 snapshot)
+## Model Coverage (2026-07-19 snapshot)
 
-- **Total chat models**: 149
-- **Serverless (no endpoint needed)**: 26
-- **Tool-capable**: 62
-- **Registry date**: 2026-04-28
+- **Total chat models**: 129
+- **Serverless (no endpoint needed)**: 12
+- **Tool-capable**: 53
+- **Registry date**: 2026-07-19
 - **Families**: Llama 3/4, Qwen 2.5/3/3.5, DeepSeek V3/R1, Mistral/Mixtral, Gemma 3/4, OpenAI OSS, GLM, Kimi, MiniMax, Nemotron, Cogito, LFM, and more
 
 ## Dedicated Endpoint Models

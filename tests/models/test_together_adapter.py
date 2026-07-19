@@ -5,10 +5,13 @@ Mocks are OK for adapter plumbing tests.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from effgen.models import together_models
 from effgen.models.together_adapter import TogetherAdapter
 from effgen.models.together_models import (
     REGISTRY_FETCH_DATE,
@@ -33,7 +36,15 @@ class TestTogetherModelsRegistry:
         assert len(available_models()) > 0
 
     def test_chat_models_count(self):
-        assert len(chat_models()) == 133
+        assert len(chat_models()) == 129
+
+    def test_chat_models_match_bundled_snapshot(self):
+        """The in-package catalog and the shipped snapshot list the same ids."""
+        snapshot = json.loads(
+            (Path(together_models.__file__).parent / "_data" / "together.json").read_text()
+        )
+        assert {m["id"] for m in snapshot["models"]} == set(chat_models())
+        assert snapshot["count"] == len(chat_models())
 
     def test_serverless_models_nonempty(self):
         assert len(serverless_models()) > 0
@@ -101,16 +112,30 @@ class TestTogetherModelsRegistry:
     def test_known_serverless_models_present(self):
         expected = [
             "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-            "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
-            "deepseek-ai/DeepSeek-V3.1",
-            "Qwen/Qwen2.5-7B-Instruct-Turbo",
             "Qwen/Qwen3.5-9B",
             "openai/gpt-oss-20b",
-            "LiquidAI/LFM2-24B-A2B",
         ]
         sm = set(serverless_models())
         for mid in expected:
             assert mid in sm, f"{mid!r} should be in serverless_models()"
+
+    def test_dedicated_endpoint_models_are_not_serverless(self):
+        """Models Together serves only from a dedicated endpoint must not be
+        advertised as serverless — `is_serverless` and the "use a serverless
+        model" hint on InvalidRequestError both read this flag."""
+        dedicated = [
+            "deepseek-ai/DeepSeek-V3.1",
+            "deepseek-ai/DeepSeek-R1-0528",
+            "zai-org/GLM-5",
+            "zai-org/GLM-5.1",
+            "Qwen/Qwen3-Coder-Next-FP8",
+            "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+            "Qwen/Qwen3.5-397B-A17B",
+        ]
+        sm = set(serverless_models())
+        for mid in dedicated:
+            assert mid in TOGETHER_MODELS, f"{mid!r} missing from the catalog"
+            assert mid not in sm, f"{mid!r} needs a dedicated endpoint, not serverless"
 
 
 # ---------------------------------------------------------------------------

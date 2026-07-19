@@ -20,11 +20,11 @@ def _has_key() -> bool:
 @pytest.mark.api
 @pytest.mark.skipif(not _has_key(), reason="SKIPPED: TOGETHER_API_KEY not set")
 class TestTogetherLive:
-    def test_generate_llama_lite(self):
+    def test_generate_default_serverless(self):
         from effgen.models.together_adapter import TogetherAdapter
 
         adapter = TogetherAdapter(
-            "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+            "Qwen/Qwen3.5-9B",
             max_retries=1,
             timeout=30,
         )
@@ -47,7 +47,7 @@ class TestTogetherLive:
     def test_generate_qwen(self):
         from effgen.models.together_adapter import TogetherAdapter
 
-        adapter = TogetherAdapter("Qwen/Qwen2.5-7B-Instruct-Turbo")
+        adapter = TogetherAdapter("Qwen/Qwen3.5-9B")
         adapter.load()
         try:
             result = adapter.generate("What is 2 + 2? Answer with just the number.")
@@ -58,17 +58,17 @@ class TestTogetherLive:
     def test_generate_deepseek(self):
         from effgen.models.together_adapter import TogetherAdapter
 
-        adapter = TogetherAdapter("deepseek-ai/DeepSeek-V3.1")
+        adapter = TogetherAdapter("deepseek-ai/DeepSeek-V4-Pro")
         adapter.load()
         try:
             result = adapter.generate("Say hello in one word.")
-        except RuntimeError as exc:
-            msg = str(exc).lower()
-            if "dedicated endpoint" in msg:
-                pytest.skip(f"Together dedicated endpoint not running: {exc}")
-            raise
         except Exception as exc:
             msg = str(exc).lower()
+            # A dedicated-endpoint model whose endpoint is stopped is an account
+            # state, not a defect. The adapter signals this with InvalidRequestError,
+            # so match on the message rather than the exception type.
+            if "dedicated endpoint" in msg:
+                pytest.skip(f"Together dedicated endpoint not running: {exc}")
             if any(k in msg for k in ("rate", "429", "timeout", "timed out", "503", "service unavailable", "quota")):
                 pytest.skip(f"Together transient: {exc}")
             raise
@@ -92,7 +92,7 @@ class TestTogetherLive:
     def test_load_model_via_provider(self):
         from effgen.models import load_model
 
-        model = load_model("meta-llama/Meta-Llama-3-8B-Instruct-Lite", provider="together")
+        model = load_model("Qwen/Qwen3.5-9B", provider="together")
         try:
             result = model.generate("Say hello in one word")
             assert result.text
@@ -102,7 +102,7 @@ class TestTogetherLive:
     def test_generate_stream_yields_chunks(self):
         from effgen.models.together_adapter import TogetherAdapter
 
-        adapter = TogetherAdapter("meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+        adapter = TogetherAdapter("Qwen/Qwen3.5-9B")
         adapter.load()
         try:
             chunks = list(adapter.generate_stream("Count from 1 to 3, one per line."))
@@ -147,7 +147,7 @@ class TestTogetherLive:
     def test_usage_metadata_populated(self):
         from effgen.models.together_adapter import TogetherAdapter
 
-        adapter = TogetherAdapter("meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+        adapter = TogetherAdapter("Qwen/Qwen3.5-9B")
         adapter.load()
         try:
             result = adapter.generate("Hello")
@@ -162,7 +162,7 @@ class TestTogetherLive:
     def test_serverless_property(self):
         from effgen.models.together_adapter import TogetherAdapter
 
-        adapter = TogetherAdapter("meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+        adapter = TogetherAdapter("Qwen/Qwen3.5-9B")
         assert adapter.is_serverless is True
 
     def test_context_length(self):

@@ -163,7 +163,6 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
         # OFFICIAL rates from Together AI pricing page (2026-04-28).
         # Per million tokens: (input, output)
         "meta-llama/Llama-3.3-70B-Instruct-Turbo": (0.88, 0.88),
-        "meta-llama/Meta-Llama-3-8B-Instruct-Lite": (0.10, 0.10),
         "meta-llama/Meta-Llama-3-8B-Instruct": (0.20, 0.20),
         "meta-llama/Llama-4-Scout-17B-16E-Instruct": (0.18, 0.59),
         "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": (0.27, 0.85),
@@ -181,7 +180,6 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
         "Qwen/QwQ-32B": (1.20, 1.20),
         "Qwen/Qwen3.5-9B": (0.10, 0.15),
         "Qwen/Qwen3.5-397B-A17B": (0.60, 3.60),
-        "Qwen/Qwen3-235B-A22B-Instruct-2507-tput": (0.20, 0.60),
         "Qwen/Qwen3-Coder-Next-FP8": (0.50, 1.20),
         "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8": (2.00, 2.00),
         "Qwen/Qwen3-235B-A22B-Thinking-2507": (0.65, 3.00),
@@ -222,9 +220,7 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
         "zai-org/GLM-5.1": (1.40, 4.40),
         "google/gemma-4-31B-it": (0.20, 0.50),
         "google/gemma-3n-E4B-it": (0.06, 0.12),
-        "LiquidAI/LFM2-24B-A2B": (0.03, 0.12),
         "arize-ai/qwen-2-1.5b-instruct": (0.10, 0.10),
-        "essentialai/rnj-1-instruct": (0.15, 0.15),
         "deepcogito/cogito-v2-1-671b": (1.25, 1.25),
         "Qwen/Qwen2-1.5B-Instruct": (0.02, 0.02),
         # Free / dedicated-endpoint models → $0 in tracker
