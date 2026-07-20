@@ -11,7 +11,8 @@ Covered:
   * concurrent async tool execution (calculator + REPL) — no shared-state
     corruption, every call returns a well-formed ToolResult;
   * REPL worker lifecycle under churn — many sessions created/reset without
-    leaking processes;
+    leaking processes, and a high volume of distinct session ids under
+    concurrency staying within the live-session limit;
   * high-volume pure-function parsing (finish-reason, JSON extraction, config
     merge) — stable, no slow degradation or memory blowup.
 """
@@ -69,7 +70,8 @@ async def test_repl_session_churn_no_process_leak() -> None:
                     continue
                 try:
                     with open(f"/proc/{pid}/stat") as fh:
-                        ppid = int(fh.read().split()[3])
+                        # The comm field can hold spaces/parens; fields follow ") ".
+                        ppid = int(fh.read().rsplit(") ", 1)[-1].split()[1])
                 except (OSError, IndexError, ValueError):
                     continue
                 if ppid == me:
@@ -95,6 +97,67 @@ async def test_repl_session_churn_no_process_leak() -> None:
             assert after <= baseline + 1, f"worker leak: {baseline} -> {after}"
     finally:
         await repl.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_repl_high_session_volume_stays_within_limit() -> None:
+    """400 concurrent calls over 100 session ids stay within the session limit.
+
+    ``session_id`` is a model-supplied parameter, so a run that varies it must
+    not turn into one live interpreter per session.
+    """
+    import os
+
+    from effgen.tools.builtin.python_repl import PythonREPL
+
+    def _children() -> set[int]:
+        me = os.getpid()
+        pids: set[int] = set()
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid}/stat") as fh:
+                    ppid = int(fh.read().rsplit(") ", 1)[-1].split()[1])
+            except (OSError, IndexError, ValueError):
+                continue
+            if ppid == me:
+                pids.add(int(pid))
+        return pids
+
+    limit = 6
+    in_flight = 32
+    repl = PythonREPL(max_sessions=limit)
+    baseline = _children()
+    gate = asyncio.Semaphore(in_flight)
+    peak = 0
+    try:
+
+        async def one(i: int):
+            nonlocal peak
+            async with gate:
+                result = await repl.execute(
+                    code=f"n = {i}\nn + 1", session_id=f"v{i % 100}", timeout=60
+                )
+            peak = max(peak, len(_children() - baseline))
+            return i, result
+
+        results = await asyncio.gather(*(one(i) for i in range(400)))
+        for i, result in results:
+            assert result.success is True, result.error
+            assert result.output["result"] == i + 1
+        # A session running a call is never stopped, so a burst can exceed the
+        # limit — but only by the number of calls in flight, never by the number
+        # of distinct session ids.
+        assert peak <= limit + in_flight, f"{peak} workers alive for 100 session ids"
+
+        await asyncio.sleep(0.5)
+        settled = len(_children() - baseline)
+        assert settled <= limit, f"{settled} workers still alive, limit is {limit}"
+    finally:
+        await repl.cleanup()
+        await asyncio.sleep(0.3)
+    assert _children() - baseline == set()
 
 
 # ---------------------------------------------------------------------------
