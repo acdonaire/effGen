@@ -178,6 +178,22 @@ def _restore_provider_registry(_provider_registry_snapshot):
 
 
 @pytest.fixture(autouse=True)
+def _color_decision_comes_from_the_code(monkeypatch):
+    """Clear the color-forcing env vars for every test.
+
+    Tests that assert what the terminal surfaces emit when they are not
+    attached to a TTY (no ANSI escapes when piped, ``NO_COLOR`` honored) read
+    the output rich actually produced. Rich also consults ``FORCE_COLOR`` and
+    ``CLICOLOR_FORCE``, which many terminals, CI runners and editor consoles
+    export; with either set, a piped run keeps its colors and those assertions
+    fail for a reason outside the code under test. Clearing them here makes the
+    outcome depend only on what the CLI decides.
+    """
+    for var in ("FORCE_COLOR", "CLICOLOR_FORCE"):
+        monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _restore_server_auth_env():
     """Restore EFFGEN_API_KEY after every test (order-independence).
 
