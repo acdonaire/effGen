@@ -89,6 +89,11 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "CerebrasAdapter": ("effgen.models.cerebras_adapter", "CerebrasAdapter"),
     "ChainManager": ("effgen.prompts.chain_manager", "ChainManager"),
     "CircuitBreaker": ("effgen.utils.circuit_breaker", "CircuitBreaker"),
+    # CodeExecutor here is the convenience wrapper that runs code through a
+    # local subprocess with a static AST/regex validator (or Docker). It is not
+    # OS-level isolation on the local backend; for a model-facing tool with the
+    # project's hardened isolation, use the registered `code_executor` tool
+    # (effgen.tools.builtin.code_executor). See effgen/execution/sandbox.py.
     "CodeExecutor": ("effgen.execution.sandbox", "CodeExecutor"),
     "CodeValidator": ("effgen.execution.validators", "CodeValidator"),
     "Config": ("effgen.config.loader", "Config"),

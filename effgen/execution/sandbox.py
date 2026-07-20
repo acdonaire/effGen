@@ -1,8 +1,23 @@
 """
-Secure code execution sandbox with multi-language support.
+Code execution with static validation and multi-language support.
 
-This module provides a secure sandbox environment for executing code
-with resource limits, security validation, and output capture.
+This module runs code in a local subprocess (``LocalSandbox``) or a Docker
+container (``DockerSandbox``) with resource limits, static code validation, and
+output capture.
+
+Isolation levels differ and callers should pick with that in mind:
+
+- ``DockerSandbox`` confines the filesystem and network in a container.
+- ``LocalSandbox`` runs code in a subprocess and screens it with an AST/regex
+  validator (``effgen.execution.validators.CodeValidator``). That validator is a
+  static check, not an operating-system boundary: code that builds forbidden
+  names or imports at run time can defeat it, so ``LocalSandbox`` does not
+  isolate the host filesystem, environment, or process table.
+
+For a model-facing tool with the project's hardened isolation, use the
+registered ``code_executor`` tool (``effgen.tools.builtin.code_executor``),
+which dispatches to ``effgen.security.sandbox`` (Docker when available, a
+subprocess fallback that confines network and ``/tmp``).
 """
 
 from __future__ import annotations
@@ -201,11 +216,14 @@ class BaseSandbox(ABC):
 
 
 class LocalSandbox(BaseSandbox):
-    """
-    Local process-based sandbox for code execution.
+    """Runs code in a local subprocess, screened by a static validator.
 
-    This sandbox executes code in a subprocess with resource limits.
-    Less secure than Docker-based sandbox but simpler to set up.
+    The subprocess carries resource limits, and code is checked by the
+    AST/regex ``CodeValidator`` before it runs. That validator is a static
+    check, not an operating-system boundary: it does not isolate the host
+    filesystem, environment, or process table. Use ``DockerSandbox`` or the
+    ``code_executor`` tool (``effgen.security.sandbox``) when isolation from
+    untrusted code matters.
     """
 
     def execute(self, code: str, language: str) -> ExecutionResult:
@@ -436,10 +454,15 @@ class LocalSandbox(BaseSandbox):
 
 
 class CodeExecutor:
-    """
-    High-level code executor that manages sandbox selection and execution.
+    """Selects a backend (``LocalSandbox`` or ``DockerSandbox``) and runs code.
 
-    This is the main interface for executing code in effGen.
+    This is a convenience wrapper around the backends in this module. The
+    ``"local"`` backend (the default) relies on the AST/regex
+    ``CodeValidator`` — a static check, not host isolation (see the module
+    docstring). To run code an untrusted model produced with the project's
+    hardened isolation, use the registered ``code_executor`` tool
+    (``effgen.tools.builtin.code_executor``) instead, which dispatches to
+    ``effgen.security.sandbox``.
     """
 
     def __init__(self,

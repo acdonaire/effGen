@@ -588,3 +588,31 @@ class TestCodeExecutorSandboxIntegration:
         assert not hasattr(executor, "_execute_fallback"), (
             "CodeExecutor should not have _execute_fallback; sandbox handles this"
         )
+
+
+class TestPublicCodeExecutorHonesty:
+    """`from effgen import CodeExecutor` documents its isolation level plainly."""
+
+    def test_public_export_still_resolves(self):
+        import effgen
+        from effgen.execution.sandbox import CodeExecutor as _SandboxExecutor
+
+        # Backward-compatible: the public name still points at the wrapper.
+        assert effgen.CodeExecutor is _SandboxExecutor
+
+    def test_local_backend_docstrings_state_they_are_not_os_isolation(self):
+        from effgen.execution.sandbox import CodeExecutor, LocalSandbox
+
+        for doc in (CodeExecutor.__doc__, LocalSandbox.__doc__):
+            assert doc is not None
+            low = doc.lower()
+            # Names the hardened path and disclaims OS-level isolation.
+            assert "code_executor" in low
+            assert "not" in low and ("isolat" in low or "boundary" in low)
+
+    def test_module_docstring_points_at_the_hardened_tool(self):
+        import effgen.execution.sandbox as mod
+
+        assert mod.__doc__ is not None
+        assert "effgen.security.sandbox" in mod.__doc__
+        assert "code_executor" in mod.__doc__
