@@ -59,6 +59,43 @@ def _fallback_url(url: str) -> str | None:
     return urlunsplit((parsed.scheme, fallback_host, parsed.path, parsed.query, parsed.fragment))
 
 
+def _is_login_url(url: Any) -> bool:
+    """Whether ``url`` addresses Reddit's login page itself.
+
+    Matched on the first path segment (``/login`` or ``/login/...``) so a
+    subreddit, user, or thread slug that merely contains the word — ``r/login``,
+    ``u/login_name``, a title like "logins_are_hard" — is not mistaken for it.
+    """
+    if not isinstance(url, str):
+        return False
+    segments = [segment for segment in urlsplit(url).path.split("/") if segment]
+    return bool(segments) and segments[0] == "login"
+
+
+def _redirected_to_login(resp: Any) -> bool:
+    """Whether Reddit bounced this request to its login page.
+
+    A blocked client is not always answered with 403: Reddit also redirects it
+    to ``/login/?reason=...``, and that page answers 404. Taken at face value
+    the result reads as "no such subreddit", so the redirect is recognised and
+    reported as the block it is.
+
+    Checks the URL the response actually came from — redirects are followed
+    manually by the SSRF-safe fetch helper — and the redirect chain, for a
+    client that followed them itself.
+    """
+    if _is_login_url(getattr(resp, "url", "")):
+        return True
+    history = getattr(resp, "history", ()) or ()
+    if not isinstance(history, list | tuple):
+        return False
+    for hop in history:
+        headers = getattr(hop, "headers", None) or {}
+        if _is_login_url(headers.get("location") or headers.get("Location")):
+            return True
+    return False
+
+
 def _get_json(url: str, timeout: int = _DEFAULT_TIMEOUT, retries: int = 3) -> Any:
     """Fetch JSON from Reddit with 429 backoff.
 
@@ -92,15 +129,24 @@ def _get_json(url: str, timeout: int = _DEFAULT_TIMEOUT, retries: int = 3) -> An
                 return resp.json()
             except ValueError as exc:
                 raise ConnectionError(f"Reddit returned non-JSON response: {exc}") from exc
-        if status == 403 and not tried_fallback:
+        blocked = status == 403 or _redirected_to_login(resp)
+        if blocked and not tried_fallback:
             fallback = _fallback_url(current_url)
             if fallback:
                 logger.warning(
-                    "Reddit blocked old.reddit.com with HTTP 403; retrying via www.reddit.com"
+                    "Reddit blocked old.reddit.com (HTTP %d); retrying via www.reddit.com",
+                    status,
                 )
                 current_url = fallback
                 tried_fallback = True
                 continue
+        if blocked:
+            raise ConnectionError(
+                f"Reddit blocked this request (HTTP {status}). Reddit rejects "
+                "unauthenticated API traffic from some networks and redirects "
+                "it to a login page; retry from another network or use an "
+                "authenticated Reddit client."
+            )
         if status == 429:
             if attempt == retries - 1:
                 break

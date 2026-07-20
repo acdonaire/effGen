@@ -262,6 +262,124 @@ def test_reddit_403_falls_back_to_www_mock():
     assert r.output["posts"][0]["title"] == "Fallback Post"
 
 
+def test_reddit_login_redirect_falls_back_to_www_mock():
+    """A bounce to Reddit's login page is a block, so the fallback host is tried."""
+    from effgen.tools.builtin import reddit as reddit_mod
+
+    bounced = MagicMock()
+    bounced.status_code = 404
+    bounced.reason = "Not Found"
+    bounced.url = "https://old.reddit.com/login/?reason=lor2&dest=%2Fr%2Fpython"
+    bounced.history = ()
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.json.return_value = _make_listing([_make_post(title="Fallback Post")])
+
+    with patch.object(reddit_mod, "safe_requests_get", side_effect=[bounced, ok]) as m_get:
+        r = _run(RedditTool().execute(operation="subreddit_hot", subreddit="python", n=5))
+
+    called_urls = [call.args[1] for call in m_get.call_args_list]
+    assert called_urls[0].startswith("https://old.reddit.com/")
+    assert called_urls[1].startswith("https://www.reddit.com/")
+    assert r.output["success"] is True
+    assert r.output["posts"][0]["title"] == "Fallback Post"
+
+
+def test_reddit_login_redirect_reports_a_block_not_a_missing_page():
+    """Both hosts bouncing to login reports the block, not "404 Not Found"."""
+    from effgen.tools.builtin import reddit as reddit_mod
+
+    def _bounced(url: str) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = 404
+        resp.reason = "Not Found"
+        resp.url = url.split("/r/")[0] + "/login/?reason=lor2"
+        resp.history = ()
+        return resp
+
+    with patch.object(
+        reddit_mod,
+        "safe_requests_get",
+        side_effect=lambda _mod, url, **kw: _bounced(url),
+    ):
+        r = _run(RedditTool().execute(operation="subreddit_hot", subreddit="python", n=5))
+
+    error = r.output["error"]
+    assert r.output["success"] is False
+    assert "blocked" in error.lower()
+    assert "login" in error.lower()
+    assert "Not Found" not in error
+
+
+def test_reddit_genuine_404_is_still_reported_as_not_found():
+    """A 404 that did not come from a login bounce is reported as-is."""
+    from effgen.tools.builtin import reddit as reddit_mod
+
+    missing = MagicMock()
+    missing.status_code = 404
+    missing.reason = "Not Found"
+    missing.url = "https://old.reddit.com/r/thissubdoesnotexist/hot.json?limit=5"
+    missing.history = ()
+
+    with patch.object(reddit_mod, "safe_requests_get", return_value=missing) as m_get:
+        r = _run(
+            RedditTool().execute(
+                operation="subreddit_hot", subreddit="thissubdoesnotexist", n=5
+            )
+        )
+
+    assert m_get.call_count == 1, "a genuine 404 must not retry the fallback host"
+    assert r.output["success"] is False
+    assert "404" in r.output["error"]
+    assert "Not Found" in r.output["error"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://old.reddit.com/r/login/hot.json?limit=5",
+        "https://old.reddit.com/user/login_name/submitted.json?limit=5",
+        "https://old.reddit.com/r/f/comments/abc/logins_are_hard/.json",
+    ],
+)
+def test_reddit_404_on_a_login_named_target_is_not_read_as_a_block(url):
+    """A subreddit/user/thread whose name contains "login" is not a login page."""
+    from effgen.tools.builtin import reddit as reddit_mod
+
+    missing = MagicMock()
+    missing.status_code = 404
+    missing.reason = "Not Found"
+    missing.url = url
+    missing.history = ()
+
+    with patch.object(reddit_mod, "safe_requests_get", return_value=missing) as m_get:
+        with pytest.raises(ConnectionError) as excinfo:
+            reddit_mod._get_json(url)
+
+    assert m_get.call_count == 1, "a genuine 404 must not retry the fallback host"
+    assert "404" in str(excinfo.value)
+    assert "blocked" not in str(excinfo.value).lower()
+
+
+def test_reddit_login_redirect_detected_from_the_redirect_chain():
+    """A client that followed the bounce itself is recognised from its history."""
+    from effgen.tools.builtin import reddit as reddit_mod
+
+    hop = MagicMock()
+    hop.headers = {"Location": "/login/?dest=%2Fr%2Fpython"}
+    bounced = MagicMock()
+    bounced.status_code = 404
+    bounced.reason = "Not Found"
+    bounced.url = "https://www.reddit.com/r/python/hot.json?limit=5"
+    bounced.history = [hop]
+
+    with patch.object(reddit_mod, "safe_requests_get", return_value=bounced):
+        with pytest.raises(ConnectionError) as excinfo:
+            reddit_mod._get_json("https://www.reddit.com/r/python/hot.json?limit=5")
+
+    assert "blocked" in str(excinfo.value).lower()
+
+
 # ---------------------------------------------------------------------------
 # Live integration tests
 # ---------------------------------------------------------------------------
