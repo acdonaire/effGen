@@ -39,11 +39,14 @@ import asyncio
 import json
 import logging
 import os
+import queue
 import select
 import subprocess
 import sys
 import threading
 import time
+import weakref
+from collections import OrderedDict
 from typing import Any
 
 from ..base_tool import (
@@ -59,18 +62,83 @@ logger = logging.getLogger(__name__)
 _WORKER_PATH = os.path.join(os.path.dirname(__file__), "_repl_worker.py")
 
 
+_spawn_queue: queue.Queue = queue.Queue()
+_spawn_thread: threading.Thread | None = None
+_spawn_thread_lock = threading.Lock()
+
+
+def _spawn_loop() -> None:  # pragma: no cover - runs for the interpreter's life
+    while True:
+        start, box, done = _spawn_queue.get()
+        try:
+            box.append((None, start()))
+        except BaseException as exc:  # relayed to the caller that queued the work
+            box.append((exc, None))
+        finally:
+            done.set()
+
+
+def _start_on_spawn_thread(start: Any) -> Any:
+    """Run ``start`` on the long-lived worker-spawning thread.
+
+    The worker asks the kernel to kill it if its parent dies, and on Linux that
+    signal is delivered when the *thread* that created the process exits — not
+    when the process does. A worker started from a short-lived thread (an event
+    loop's default executor, say) is therefore killed as soon as that thread is
+    recycled, which silently empties the session's namespace: the next call
+    lands on a fresh worker and the caller's variables are gone. Every worker is
+    started from this thread instead, which lives as long as the interpreter.
+    """
+    global _spawn_thread
+    with _spawn_thread_lock:
+        if _spawn_thread is None or not _spawn_thread.is_alive():
+            _spawn_thread = threading.Thread(
+                target=_spawn_loop, name="effgen-repl-spawner", daemon=True
+            )
+            _spawn_thread.start()
+    box: list[tuple[BaseException | None, Any]] = []
+    done = threading.Event()
+    _spawn_queue.put((start, box, done))
+    done.wait()
+    error, value = box[0]
+    if error is not None:
+        raise error
+    return value
+
+
+def _close_fd(fd: int) -> None:
+    try:
+        os.close(fd)
+    except OSError:  # already closed
+        pass
+
+
 class _Worker:
     """Handle to a single persistent REPL worker subprocess."""
 
-    __slots__ = ("proc", "resp_fd", "lock")
+    __slots__ = ("proc", "resp_fd", "lock", "users", "_fd_closer", "__weakref__")
 
     def __init__(self, proc: subprocess.Popen, resp_fd: int):
         self.proc = proc
         self.resp_fd = resp_fd
         self.lock = threading.Lock()
+        # Callers that have been handed this worker and have not finished with
+        # it. Counted from hand-out (not from acquiring ``lock``) so eviction
+        # never picks a worker a caller is about to send a request to.
+        self.users = 0
+        # The response fd is released when this handle is no longer referenced,
+        # not when the worker is killed: a thread reading a reply holds the
+        # handle for the whole request, so the fd cannot be closed — and its
+        # number handed to another worker's pipe — while that read is waiting.
+        self._fd_closer = weakref.finalize(self, _close_fd, resp_fd)
 
     def kill(self) -> None:
-        """Hard-kill the worker's whole process group and release its fds."""
+        """Hard-kill the worker's whole process group.
+
+        Any thread waiting on a reply sees end-of-file on the response pipe and
+        reports the failure; the pipe itself is closed once no thread holds
+        this handle.
+        """
         proc = self.proc
         try:
             if proc.poll() is None:
@@ -83,14 +151,11 @@ class _Worker:
                     proc.kill()
         except Exception:  # pragma: no cover - defensive
             pass
-        for closer in (
-            lambda: proc.stdin and proc.stdin.close(),
-            lambda: os.close(self.resp_fd),
-        ):
-            try:
-                closer()
-            except Exception:  # pragma: no cover - best-effort worker fd/teardown cleanup
-                pass
+        try:
+            if proc.stdin:
+                proc.stdin.close()
+        except Exception:  # pragma: no cover - best-effort worker fd cleanup
+            pass
         try:
             proc.wait(timeout=5)
         except Exception:  # pragma: no cover - best-effort worker reap
@@ -101,6 +166,18 @@ def signal_SIGKILL() -> int:
     import signal
 
     return signal.SIGKILL
+
+
+def _kill_all_workers(workers: dict[str, _Worker]) -> None:
+    """Kill every worker in ``workers`` and empty the mapping.
+
+    Registered as the tool's finalizer so a REPL that is dropped without
+    ``cleanup()`` being awaited does not leave its worker subprocesses running
+    for the rest of the host process's life.
+    """
+    for worker in list(workers.values()):
+        worker.kill()
+    workers.clear()
 
 
 class PythonREPL(BaseTool):
@@ -114,7 +191,9 @@ class PythonREPL(BaseTool):
     - Comprehensive error handling
     - Output capture (stdout/stderr)
     - Expression vs statement handling
-    - Session management (reset, save, restore)
+    - Session management (reset, save, restore), with a bounded number of live
+      sessions: past ``max_sessions`` the least recently used idle session's
+      worker is stopped and its variables are discarded
 
     Security:
     - User code runs in an isolated worker subprocess (its own process group)
@@ -139,6 +218,10 @@ class PythonREPL(BaseTool):
     DEFAULT_TIMEOUT = 30          # seconds (matches ToolMetadata.timeout_seconds)
     DEFAULT_MAX_OUTPUT = 102400   # 100 KB
     DEFAULT_MAX_MEMORY_MB = 1024  # per-worker address-space cap (RLIMIT_AS)
+    # Live worker subprocesses kept at once. ``session_id`` is a model-supplied
+    # parameter, so without a cap a caller (or a model varying the id) can
+    # spawn one interpreter per session and hold them all.
+    DEFAULT_MAX_SESSIONS = 8
     # Hard ceiling on bytes read back from a worker for a single request.
     _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
@@ -176,6 +259,7 @@ class PythonREPL(BaseTool):
         max_output: int = DEFAULT_MAX_OUTPUT,
         max_memory_mb: int | None = DEFAULT_MAX_MEMORY_MB,
         allow_unrestricted: bool = False,
+        max_sessions: int | None = None,
     ):
         """Initialize the Python REPL.
 
@@ -191,6 +275,15 @@ class PythonREPL(BaseTool):
                 stays restricted. Can also be enabled out-of-band by setting the
                 ``EFFGEN_REPL_ALLOW_UNRESTRICTED`` environment variable to a
                 truthy value (``1``/``true``/``yes``/``on``).
+            max_sessions: How many session worker subprocesses stay live at
+                once (default 8, or the ``EFFGEN_REPL_MAX_SESSIONS``
+                environment variable). When a new session would exceed the
+                limit, the least recently used *idle* session's worker is
+                stopped and its variables are discarded; using that session
+                again starts a fresh worker with an empty namespace. A session
+                whose call is still running is never stopped, so while more
+                calls than the limit are in flight the count can exceed it
+                until they finish. Values below 1 are raised to 1.
         """
         super().__init__(
             metadata=ToolMetadata(
@@ -281,9 +374,31 @@ class PythonREPL(BaseTool):
             "1", "true", "yes", "on",
         )
         self._allowed_imports = self.DEFAULT_ALLOWED_IMPORTS.copy()
-        # session_id -> _Worker (live worker subprocess holding the namespace)
-        self._workers: dict[str, _Worker] = {}
+        self._max_sessions = self._resolve_max_sessions(max_sessions)
+        # session_id -> _Worker (live worker subprocess holding the namespace),
+        # in least-recently-used order so the oldest session is evicted first.
+        self._workers: OrderedDict[str, _Worker] = OrderedDict()
         self._workers_lock = threading.Lock()
+        # Stop the workers even if the tool is dropped without cleanup().
+        self._finalizer = weakref.finalize(self, _kill_all_workers, self._workers)
+
+    @classmethod
+    def _resolve_max_sessions(cls, max_sessions: int | None) -> int:
+        """Resolve the live-session cap from the argument or the environment."""
+        if max_sessions is None:
+            raw = os.environ.get("EFFGEN_REPL_MAX_SESSIONS", "").strip()
+            if raw:
+                try:
+                    max_sessions = int(raw)
+                except ValueError:
+                    logger.warning(
+                        "EFFGEN_REPL_MAX_SESSIONS=%r is not an integer; "
+                        "using the default of %d",
+                        raw, cls.DEFAULT_MAX_SESSIONS,
+                    )
+        if max_sessions is None:
+            max_sessions = cls.DEFAULT_MAX_SESSIONS
+        return max(1, int(max_sessions))
 
     async def initialize(self) -> None:
         """Initialize the REPL (workers are spawned lazily on first use)."""
@@ -293,7 +408,12 @@ class PythonREPL(BaseTool):
     # Worker lifecycle
     # ------------------------------------------------------------------
     def _spawn_worker(self) -> _Worker:
-        """Start a fresh worker subprocess in its own process group."""
+        """Start a fresh worker subprocess in its own process group.
+
+        The process itself is started on the shared spawner thread — see
+        :func:`_start_on_spawn_thread` for why it cannot be started on whatever
+        thread happens to be running the call.
+        """
         resp_r, resp_w = os.pipe()
         env = os.environ.copy()
         env["EFFGEN_REPL_RESP_FD"] = str(resp_w)
@@ -330,21 +450,84 @@ class PythonREPL(BaseTool):
         if hasattr(os, "setsid"):
             popen_kwargs["preexec_fn"] = _preexec
         try:
-            proc = subprocess.Popen([sys.executable, _WORKER_PATH], **popen_kwargs)
+            proc = _start_on_spawn_thread(
+                lambda: subprocess.Popen([sys.executable, _WORKER_PATH], **popen_kwargs)
+            )
         finally:
             os.close(resp_w)  # the child owns its copy now
         return _Worker(proc, resp_r)
 
     def _get_worker(self, session_id: str) -> _Worker:
-        """Return the live worker for a session, spawning one if needed."""
+        """Reserve the worker for a session, spawning one if needed.
+
+        Spawning past ``max_sessions`` evicts the least recently used idle
+        session first, so the number of live worker subprocesses stays bounded
+        however many distinct session ids arrive. The returned worker is
+        checked out to the caller, who must call :meth:`_release_worker` when
+        done with it.
+        """
+        evicted: list[_Worker] = []
         with self._workers_lock:
             worker = self._workers.get(session_id)
             if worker is None or worker.proc.poll() is not None:
                 if worker is not None:
-                    worker.kill()
+                    evicted.append(self._workers.pop(session_id))
+                while len(self._workers) >= self._max_sessions:
+                    old_id = self._evictable_session()
+                    if old_id is None:
+                        logger.debug(
+                            "Every one of the %d REPL sessions is still running "
+                            "a call; starting session %r alongside them.",
+                            self._max_sessions, session_id,
+                        )
+                        break
+                    logger.warning(
+                        "REPL session limit of %d reached; stopping the least "
+                        "recently used idle session %r. Its variables are "
+                        "discarded; using it again starts an empty session. "
+                        "Raise the limit with max_sessions= or "
+                        "EFFGEN_REPL_MAX_SESSIONS.",
+                        self._max_sessions, old_id,
+                    )
+                    evicted.append(self._workers.pop(old_id))
                 worker = self._spawn_worker()
-                self._workers[session_id] = worker
-            return worker
+            self._workers[session_id] = worker
+            self._workers.move_to_end(session_id)
+            worker.users += 1
+        for old_worker in evicted:
+            old_worker.kill()
+        return worker
+
+    def _release_worker(self, worker: _Worker) -> None:
+        """Give back a worker checked out by :meth:`_get_worker`.
+
+        Trims the pool back to the limit if a burst of concurrent calls pushed
+        it over, so extra workers do not stay alive after the burst.
+        """
+        evicted: list[_Worker] = []
+        with self._workers_lock:
+            worker.users -= 1
+            while len(self._workers) > self._max_sessions:
+                over_id = self._evictable_session()
+                if over_id is None:
+                    break
+                evicted.append(self._workers.pop(over_id))
+        for old_worker in evicted:
+            old_worker.kill()
+
+    def _evictable_session(self) -> str | None:
+        """The least recently used session no caller is currently using.
+
+        Only an unused session is evicted, so a call in flight always runs to
+        completion or to its own timeout. If every session is in use the limit
+        is exceeded for as long as those calls last — the extra workers are
+        bounded by how many calls are in flight, and the next spawn trims back
+        to the limit. Callers hold ``_workers_lock``.
+        """
+        for session_id, worker in self._workers.items():
+            if worker.users == 0:
+                return session_id
+        return None
 
     def _kill_worker(self, session_id: str) -> None:
         with self._workers_lock:
@@ -371,21 +554,41 @@ class PythonREPL(BaseTool):
         this is safe (no output was emitted, so nothing double-runs) and fixes a
         rare race where a worker died after the previous request.
         """
-        worker = self._get_worker(session_id)
+        while True:
+            worker = self._get_worker(session_id)
+            try:
+                result = self._request_on(worker, session_id, payload, _attempt, timeout)
+            finally:
+                self._release_worker(worker)
+            if result is not None:
+                return result
+            _attempt = 1
+
+    def _request_on(
+        self,
+        worker: _Worker,
+        session_id: str,
+        payload: dict[str, Any],
+        _attempt: int,
+        timeout: float | None,
+    ) -> dict[str, Any] | None:
+        """Send one request to a reserved worker and read its reply.
+
+        Returns ``None`` when the worker turned out to be dead before anything
+        was sent, so the caller can retry on a fresh one.
+        """
         line = (json.dumps(payload) + "\n").encode("utf-8")
         with worker.lock:
             try:
                 worker.proc.stdin.write(line)
                 worker.proc.stdin.flush()
-            except (BrokenPipeError, ValueError, OSError):
-                # Worker died between requests — respawn once and retry.
+            except (BrokenPipeError, ValueError, OSError) as e:
+                # Worker died between requests. Nothing was sent, so retrying on
+                # a fresh worker cannot double-run the code.
                 self._kill_worker(session_id)
-                worker = self._get_worker(session_id)
-                try:
-                    worker.proc.stdin.write(line)
-                    worker.proc.stdin.flush()
-                except Exception as e:
-                    return self._failure(f"REPL worker unavailable: {e}")
+                if _attempt == 0:
+                    return None
+                return self._failure(f"REPL worker unavailable: {e}")
 
             effective_timeout = timeout if (timeout is not None and timeout > 0) else self._timeout
             deadline = time.monotonic() + effective_timeout
@@ -413,12 +616,10 @@ class PythonREPL(BaseTool):
                 if not chunk:
                     self._kill_worker(session_id)
                     # Worker died before answering. If it produced no partial
-                    # output and we haven't retried yet, respawn and retry once
+                    # output and we haven't retried yet, retry on a fresh worker
                     # (safe: nothing was emitted for this request).
                     if buf == b"" and _attempt == 0:
-                        return self._request(
-                            session_id, payload, _attempt=1, timeout=timeout
-                        )
+                        return None
                     return self._failure("REPL worker exited unexpectedly")
                 buf += chunk
                 if len(buf) > self._MAX_RESPONSE_BYTES:

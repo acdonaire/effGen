@@ -256,6 +256,10 @@ def _install_parent_death_signal() -> None:
     never returns to read stdin, so an abrupt parent death would leave it
     running as an orphan. ``PR_SET_PDEATHSIG`` closes that gap; it is set here
     (post-exec) because the flag is cleared across ``execve``.
+
+    Note for the parent side: Linux delivers this signal when the *thread* that
+    created the process exits, not when the process does, so workers have to be
+    started from a thread that lives as long as the interpreter.
     """
     if not sys.platform.startswith("linux"):
         return
