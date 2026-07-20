@@ -9,8 +9,10 @@ Key behaviours
 --------------
 - generate()         — creates a prediction, polls with exponential backoff,
                        returns a GenerationResult once status == "succeeded".
-- generate_stream()  — uses replicate.stream() (SSE) for models that support it;
-                       falls back to polling + output_iterator() otherwise.
+- generate_stream()  — SSE token-by-token for models that support it; falls back
+                       to polling + output_iterator() otherwise.  Once the stream
+                       closes, the completed prediction's metrics are read back
+                       so the streamed call is priced like generate().
 - ModelTimeoutError  — raised (not RuntimeError) when polling exceeds timeout.
 - compute_seconds    — prediction metrics.predict_time is surfaced in
                        ModelResponse.metadata["compute_seconds"] so callers can
@@ -55,6 +57,7 @@ from effgen.models.base import (
     GenerationConfig,
     GenerationResult,
     TokenCount,
+    accumulate_stream_cost,
 )
 from effgen.models.errors import (
     BudgetExceededError,
@@ -83,6 +86,13 @@ _TERMINAL_STATUSES = {"succeeded", "failed", "canceled"}
 _POLL_INITIAL_DELAY = 1.0   # seconds
 _POLL_MAX_DELAY = 30.0      # seconds
 _POLL_BACKOFF_FACTOR = 1.5
+
+# A closed stream means the prediction has finished generating, so its record
+# reaches a terminal status within a moment. These bound the reload that reads
+# the finished record's metrics, so a lagging record costs the caller a second
+# rather than the full prediction timeout.
+_STREAM_METRICS_RELOAD_ATTEMPTS = 3
+_STREAM_METRICS_RELOAD_DELAY = 0.5  # seconds
 
 
 class _ReplicateModelType:
@@ -174,6 +184,9 @@ class ReplicateAdapter(BaseModel):
         self._client: Any = None
         self._enable_cost_tracking = enable_cost_tracking
         self._info: dict[str, Any] = info or {}
+        # Prediction behind the stream currently being consumed; its completed
+        # metrics is the only source of a streamed call's compute seconds.
+        self._last_stream_prediction: Any = None
 
         self._rate_limiter: RateLimitCoordinator | None = None
         if enable_rate_limiting:
@@ -527,36 +540,11 @@ class ReplicateAdapter(BaseModel):
 
         # Metrics
         metrics = prediction.metrics or {}
-        predict_time: float = metrics.get("predict_time", 0.0)
-        input_tokens: int = int(metrics.get("input_token_count", 0))
-        output_tokens: int = int(metrics.get("output_token_count", 0))
+        predict_time, input_tokens, output_tokens, cost_usd = self._price_metrics(metrics)
         total_tokens = input_tokens + output_tokens
+        cost_per_sec = self._info.get("cost_per_second_usd", 0.0)
 
-        # Cost tracking
-        cost_usd = 0.0
-        info = self._info
-        cost_per_sec = info.get("cost_per_second_usd", 0.0)
-        if cost_per_sec and predict_time:
-            cost_usd = predict_time * cost_per_sec
-        elif info.get("pricing_per_1m_input") and input_tokens:
-            cost_usd = (
-                input_tokens * info["pricing_per_1m_input"] / 1_000_000
-                + output_tokens * info.get("pricing_per_1m_output", 0.0) / 1_000_000
-            )
-
-        if self._enable_cost_tracking and cost_usd:
-            try:
-                CostTracker.get().record(
-                    provider="replicate",
-                    model=self.model_name,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cost_usd=cost_usd,
-                )
-            except BudgetExceededError:
-                raise
-            except Exception:
-                logger.debug("CostTracker recording failed for Replicate", exc_info=True)
+        self._record_cost(input_tokens, output_tokens, cost_usd)
 
         metadata = {
             "provider": "replicate",
@@ -597,6 +585,52 @@ class ReplicateAdapter(BaseModel):
             model_name=self.model_name,
             metadata=metadata,
         )
+
+    def _price_metrics(
+        self, metrics: dict[str, Any]
+    ) -> tuple[float, int, int, float]:
+        """Price a completed prediction from its ``metrics`` block.
+
+        Returns ``(predict_time, input_tokens, output_tokens, cost_usd)``.
+        Replicate bills per second of GPU compute, so ``predict_time`` times the
+        registry's per-second rate is the cost for most models; the hosted
+        per-token models (whose per-second rate is 0) are priced from their
+        token counts instead.
+        """
+        predict_time = float(metrics.get("predict_time", 0.0) or 0.0)
+        input_tokens = int(metrics.get("input_token_count", 0) or 0)
+        output_tokens = int(metrics.get("output_token_count", 0) or 0)
+
+        info = self._info
+        cost_per_sec = info.get("cost_per_second_usd", 0.0)
+        cost_usd = 0.0
+        if cost_per_sec and predict_time:
+            cost_usd = predict_time * cost_per_sec
+        elif info.get("pricing_per_1m_input") and input_tokens:
+            cost_usd = (
+                input_tokens * info["pricing_per_1m_input"] / 1_000_000
+                + output_tokens * info.get("pricing_per_1m_output", 0.0) / 1_000_000
+            )
+        return predict_time, input_tokens, output_tokens, cost_usd
+
+    def _record_cost(
+        self, input_tokens: int, output_tokens: int, cost_usd: float
+    ) -> None:
+        """Record a completed call's usage on the global ledger."""
+        if not (self._enable_cost_tracking and cost_usd):
+            return
+        try:
+            CostTracker.get().record(
+                provider="replicate",
+                model=self.model_name,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost_usd,
+            )
+        except BudgetExceededError:
+            raise
+        except Exception:
+            logger.debug("CostTracker recording failed for Replicate", exc_info=True)
 
     def _extract_tool_calls(
         self, text: str, raw_output: Any
@@ -679,6 +713,7 @@ class ReplicateAdapter(BaseModel):
         inp.update(kwargs)
 
         supports_streaming = self._info.get("supports_streaming", True)
+        self._last_stream_prediction = None
 
         with timed_call("replicate", self.model_name) as _stream_timer:
             _first_token = True
@@ -689,14 +724,123 @@ class ReplicateAdapter(BaseModel):
                     _first_token = False
                 yield token
 
+        self._account_stream_usage()
+
+    def _account_stream_usage(self) -> None:
+        """Price and record the streamed call that just finished.
+
+        Replicate reports a call's compute seconds and token counts only on the
+        completed prediction, which is not available until the stream closes.
+        Reloading the prediction here costs one API call and no model compute,
+        and lets a streamed call report its cost the way ``generate()`` does.
+        A record that has not caught up within the bounded reload window is
+        left unpriced rather than held against the caller, who already has
+        every token of their answer.
+        """
+        prediction = self._last_stream_prediction
+        self._last_stream_prediction = None
+        if prediction is None:
+            return
+        try:
+            if prediction.status not in _TERMINAL_STATUSES:
+                self._reload_until_terminal(prediction)
+                if prediction.status not in _TERMINAL_STATUSES:
+                    logger.debug(
+                        "Replicate prediction %s had not finished recording when "
+                        "its stream closed; the call is not priced",
+                        getattr(prediction, "id", ""),
+                    )
+                    return
+            metrics = prediction.metrics or {}
+            _, input_tokens, output_tokens, cost_usd = self._price_metrics(metrics)
+            if not (cost_usd or input_tokens or output_tokens):
+                return
+            self._record_cost(input_tokens, output_tokens, cost_usd)
+            accumulate_stream_cost(
+                self,
+                cost_usd,
+                input_tokens + output_tokens,
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+            )
+        except BudgetExceededError:
+            raise
+        except Exception:  # noqa: BLE001 - accounting must not break a delivered stream
+            logger.debug("Stream usage accounting failed for Replicate", exc_info=True)
+
+    def _reload_until_terminal(self, prediction: Any) -> None:
+        """Reload a just-streamed prediction until its record is terminal.
+
+        Bounded to a few short attempts: the generation is already complete, so
+        this waits only for the record to catch up, never for the model.
+        """
+        for _ in range(_STREAM_METRICS_RELOAD_ATTEMPTS):
+            try:
+                prediction.reload()
+            except Exception:
+                logger.debug("Replicate prediction reload failed", exc_info=True)
+                return
+            if prediction.status in _TERMINAL_STATUSES:
+                return
+            time.sleep(_STREAM_METRICS_RELOAD_DELAY)
+
+    def _can_read_sse(self) -> bool:
+        """Whether this SDK exposes what :meth:`_read_sse` needs."""
+        try:
+            from replicate.stream import EventSource  # noqa: F401
+        except ImportError:  # pragma: no cover - SDK layout change
+            return False
+        return hasattr(self._client, "_client")
+
+    def _read_sse(self, stream_url: str) -> Iterator[str]:
+        """Yield token text from Replicate's SSE stream endpoint.
+
+        SSE framing stays with the SDK's own event parser.
+        """
+        from replicate.stream import EventSource
+
+        headers = {"Accept": "text/event-stream", "Cache-Control": "no-store"}
+        with self._client._client.stream("GET", stream_url, headers=headers) as response:
+            for event in EventSource(self._client, response):
+                # A ServerSentEvent stringifies to its token text (and to the
+                # empty string for the non-output event types).
+                yield str(event)
+
     def _stream_sse(self, inp: dict[str, Any]) -> Iterator[str]:
-        """Stream via Replicate SSE (real token-by-token)."""
+        """Stream via Replicate SSE (real token-by-token).
+
+        The prediction is created here rather than through ``client.stream()``
+        so the prediction object stays available after the stream closes — the
+        completed prediction's ``metrics`` is the only place Replicate reports
+        the compute seconds a streamed call is billed for.
+        """
         from replicate.exceptions import ReplicateError
 
         try:
-            for event in self._client.stream(self.model_name, input=inp):
-                # event is a ServerSentEvent; its string representation is the token
-                yield str(event)
+            if not self._can_read_sse():
+                # A future SDK layout without the event parser still streams,
+                # through the SDK helper that does not expose the prediction —
+                # so that call reports no cost.
+                logger.debug(
+                    "Replicate SDK stream internals unavailable; streaming "
+                    "without usage accounting"
+                )
+                for event in self._client.stream(self.model_name, input=inp):
+                    yield str(event)
+                return
+
+            prediction = self._client.predictions.create(
+                model=self.model_name, input=inp, stream=True
+            )
+            self._last_stream_prediction = prediction
+            stream_url = (prediction.urls or {}).get("stream")
+            if not stream_url:
+                raise RuntimeError(
+                    f"Replicate model '{self.model_name}' did not return a stream "
+                    f"URL. Set supports_streaming=False for this model, or call "
+                    f"generate() instead of generate_stream()."
+                )
+            yield from self._read_sse(stream_url)
         except ReplicateError as exc:
             if exc.status == 401:
                 raise ModelAuthError(
@@ -745,6 +889,7 @@ class ReplicateAdapter(BaseModel):
                 f"Replicate prediction creation failed for '{self.model_name}': {exc}"
             ) from exc
 
+        self._last_stream_prediction = prediction
         deadline = time.monotonic() + self.timeout
         delay = self._initial_poll_interval
 

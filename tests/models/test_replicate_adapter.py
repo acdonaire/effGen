@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from effgen.models import replicate_adapter
+from effgen.models.base import get_stream_usage
 from effgen.models.errors import ModelAuthError, ModelTimeoutError
 from effgen.models.replicate_adapter import ReplicateAdapter
 from effgen.models.replicate_models import (
@@ -505,23 +507,53 @@ class TestStreamingMocked:
         adapter._is_loaded = True
         return adapter
 
+    @staticmethod
+    def _stream_prediction(metrics: dict | None = None) -> MagicMock:
+        """A prediction as the SSE path sees it: created with a stream URL."""
+        pred = MagicMock()
+        pred.id = "pred-stream"
+        pred.status = "succeeded"
+        pred.error = None
+        pred.urls = {"stream": "https://stream.replicate.com/pred-stream"}
+        pred.metrics = metrics if metrics is not None else {}
+        return pred
+
     def test_stream_sse_yields_tokens(self):
         adapter = self._make_loaded_adapter()
+        adapter._client.predictions.create.return_value = self._stream_prediction()
         tokens = ["Hello", " ", "world", "!"]
-        adapter._client.stream.return_value = iter(tokens)
 
-        chunks = list(adapter.generate_stream("Hi"))
+        with patch.object(adapter, "_read_sse", return_value=iter(tokens)):
+            chunks = list(adapter.generate_stream("Hi"))
+
         assert "".join(chunks) == "Hello world!"
+
+    def test_stream_requests_a_streaming_prediction(self):
+        adapter = self._make_loaded_adapter()
+        adapter._client.predictions.create.return_value = self._stream_prediction()
+
+        with patch.object(adapter, "_read_sse", return_value=iter(["hi"])):
+            list(adapter.generate_stream("Hi"))
+
+        assert adapter._client.predictions.create.call_args.kwargs["stream"] is True
+
+    def test_stream_without_stream_url_names_the_fix(self):
+        adapter = self._make_loaded_adapter()
+        pred = self._stream_prediction()
+        pred.urls = {}
+        adapter._client.predictions.create.return_value = pred
+
+        with pytest.raises(RuntimeError, match="did not return a stream URL"):
+            list(adapter.generate_stream("Hi"))
 
     def test_stream_sse_auth_error(self):
         adapter = self._make_loaded_adapter()
 
         from replicate.exceptions import ReplicateError
 
-        def bad_stream(*args, **kwargs):
-            raise ReplicateError(status=401, title="Unauthorized", detail="Bad key")
-
-        adapter._client.stream.side_effect = bad_stream
+        adapter._client.predictions.create.side_effect = ReplicateError(
+            status=401, title="Unauthorized", detail="Bad key"
+        )
 
         with pytest.raises(ModelAuthError):
             list(adapter.generate_stream("Hi"))
@@ -531,13 +563,22 @@ class TestStreamingMocked:
 
         from replicate.exceptions import ReplicateError
 
-        def billing_error(*args, **kwargs):
-            raise ReplicateError(status=402, title="Insufficient credit", detail="Add billing")
-
-        adapter._client.stream.side_effect = billing_error
+        adapter._client.predictions.create.side_effect = ReplicateError(
+            status=402, title="Insufficient credit", detail="Add billing"
+        )
 
         with pytest.raises(RuntimeError, match="insufficient credits"):
             list(adapter.generate_stream("Hi"))
+
+    def test_stream_falls_back_when_sdk_internals_are_absent(self):
+        adapter = self._make_loaded_adapter()
+        adapter._client.stream.return_value = iter(["a", "b"])
+
+        with patch.object(adapter, "_can_read_sse", return_value=False):
+            chunks = list(adapter.generate_stream("Hi"))
+
+        assert "".join(chunks) == "ab"
+        adapter._client.predictions.create.assert_not_called()
 
     def test_non_streaming_model_falls_back_to_poll(self):
         adapter = self._make_loaded_adapter("replicate/flan-t5-xl")
@@ -556,6 +597,169 @@ class TestStreamingMocked:
 
         assert len(chunks) > 0
         assert "".join(chunks) != ""
+
+
+# ---------------------------------------------------------------------------
+# Streamed-call cost accounting
+# ---------------------------------------------------------------------------
+
+class TestStreamCostAccounting:
+    """A streamed call reports its cost and tokens the way generate() does.
+
+    Replicate reports compute seconds only on the completed prediction, so the
+    adapter reads the prediction back once the stream has closed.
+    """
+
+    def _adapter(self, model_id: str = "meta/meta-llama-3-8b-instruct") -> ReplicateAdapter:
+        adapter = ReplicateAdapter(
+            model_id,
+            api_token="test-token",
+            enable_rate_limiting=False,
+            enable_cost_tracking=False,
+        )
+        adapter._client = MagicMock()
+        adapter._is_loaded = True
+        return adapter
+
+    @staticmethod
+    def _prediction(metrics: dict, status: str = "succeeded") -> MagicMock:
+        pred = MagicMock()
+        pred.id = "pred-1"
+        pred.status = status
+        pred.error = None
+        pred.urls = {"stream": "https://stream.replicate.com/pred-1"}
+        pred.metrics = metrics
+        return pred
+
+    def _stream(self, adapter: ReplicateAdapter, pred: MagicMock) -> str:
+        adapter._client.predictions.create.return_value = pred
+        with patch.object(adapter, "_read_sse", return_value=iter(["Par", "is"])):
+            return "".join(adapter.generate_stream("Capital of France?"))
+
+    def test_per_second_billing_is_recorded(self):
+        adapter = self._adapter()  # cost_per_second_usd = 0.000225
+        pred = self._prediction(
+            {"predict_time": 2.0, "input_token_count": 12, "output_token_count": 8}
+        )
+
+        assert self._stream(adapter, pred) == "Paris"
+
+        assert adapter.get_total_cost() == pytest.approx(2.0 * 0.000225)
+        assert adapter.total_tokens == 20
+        usage = get_stream_usage(adapter)
+        assert usage["prompt_tokens"] == 12
+        assert usage["completion_tokens"] == 8
+        assert usage["cost_usd"] == pytest.approx(0.00045)
+
+    def test_per_token_hosted_model_is_recorded(self):
+        # Hosted per-token models carry cost_per_second_usd == 0.
+        adapter = self._adapter("anthropic/claude-3.5-haiku")
+        pred = self._prediction(
+            {"predict_time": 3.0, "input_token_count": 1000, "output_token_count": 500}
+        )
+
+        self._stream(adapter, pred)
+
+        info = REPLICATE_MODELS["anthropic/claude-3.5-haiku"]
+        expected = (
+            1000 * info["pricing_per_1m_input"] / 1_000_000
+            + 500 * info.get("pricing_per_1m_output", 0.0) / 1_000_000
+        )
+        assert adapter.get_total_cost() == pytest.approx(expected)
+        assert adapter.total_tokens == 1500
+
+    def test_streamed_cost_matches_generate_for_the_same_metrics(self):
+        metrics = {
+            "predict_time": 1.5,
+            "input_token_count": 40,
+            "output_token_count": 60,
+        }
+        streamed = self._adapter()
+        self._stream(streamed, self._prediction(metrics))
+
+        priced = self._adapter()
+        _, in_tok, out_tok, cost = priced._price_metrics(metrics)
+
+        assert streamed.get_total_cost() == pytest.approx(cost)
+        assert streamed.total_tokens == in_tok + out_tok
+
+    def test_unfinished_prediction_is_polled_before_pricing(self):
+        adapter = self._adapter()
+        pred = self._prediction({}, status="processing")
+
+        def finish():
+            pred.status = "succeeded"
+            pred.metrics = {
+                "predict_time": 1.0,
+                "input_token_count": 5,
+                "output_token_count": 5,
+            }
+
+        pred.reload.side_effect = finish
+
+        with patch("time.sleep"):
+            self._stream(adapter, pred)
+
+        assert pred.reload.called
+        assert adapter.get_total_cost() == pytest.approx(0.000225)
+
+    def test_lagging_prediction_record_is_left_unpriced(self):
+        # The caller already has every token. A record that never reports a
+        # terminal status must not hold the stream open for the prediction
+        # timeout, so it is abandoned after a bounded number of reloads.
+        adapter = self._adapter()
+        adapter.timeout = 300.0
+        pred = self._prediction({}, status="processing")
+
+        with patch("time.sleep") as sleep:
+            assert self._stream(adapter, pred) == "Paris"
+
+        assert pred.reload.call_count <= replicate_adapter._STREAM_METRICS_RELOAD_ATTEMPTS
+        slept = sum(call.args[0] for call in sleep.call_args_list)
+        assert slept < adapter.timeout
+        assert adapter.get_total_cost() == 0.0
+        assert get_stream_usage(adapter) is None
+
+    def test_prediction_without_metrics_records_nothing(self):
+        adapter = self._adapter()
+
+        assert self._stream(adapter, self._prediction({})) == "Paris"
+
+        assert adapter.get_total_cost() == 0.0
+        assert get_stream_usage(adapter) is None
+
+    def test_accounting_failure_does_not_break_the_stream(self):
+        adapter = self._adapter()
+        pred = self._prediction({"predict_time": 1.0})
+        type(pred).metrics = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("reload blew up"))
+        )
+
+        assert self._stream(adapter, pred) == "Paris"
+
+    def test_polling_fallback_also_records_cost(self):
+        # flan-t5-xl has supports_streaming=False, so the poll path runs.
+        adapter = self._adapter("replicate/flan-t5-xl")
+        pred = MagicMock()
+        pred.id = "pred-poll"
+        pred.status = "succeeded"
+        pred.error = None
+        pred.output = ["Par", "is"]
+        pred.metrics = {
+            "predict_time": 4.0,
+            "input_token_count": 3,
+            "output_token_count": 2,
+        }
+        pred.reload = MagicMock()
+        adapter._client.predictions.create.return_value = pred
+
+        with patch("time.sleep"):
+            text = "".join(adapter.generate_stream("Capital of France?"))
+
+        assert text == "Paris"
+        cost_per_sec = REPLICATE_MODELS["replicate/flan-t5-xl"]["cost_per_second_usd"]
+        assert adapter.get_total_cost() == pytest.approx(4.0 * cost_per_sec)
+        assert adapter.total_tokens == 5
 
 
 # ---------------------------------------------------------------------------
