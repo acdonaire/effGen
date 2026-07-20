@@ -534,6 +534,36 @@ class TransformersEngine(BatchModel):
         logger.warning("Could not determine max length from config, using 2048")
         return 2048
 
+    def _eos_token_ids(self) -> int | list[int] | None:
+        """Return every token id that should end generation for this model.
+
+        A model's own ``generation_config`` may declare several terminators
+        while ``tokenizer.eos_token_id`` holds only one. Llama 3.x is the case
+        that matters: the tokenizer reports ``<|eot_id|>`` (end of turn), but a
+        tool call ends with ``<|eom_id|>`` (end of message). Passing only the
+        tokenizer's id leaves ``<|eom_id|>`` a normal token, so after emitting a
+        tool call the model keeps going and writes the assistant turn that
+        should have followed the tool's result — inventing an observation it
+        never received. Merging both sources stops generation where the model
+        intends to stop, and leaves single-terminator models unchanged.
+        """
+        ids: list[int] = []
+
+        def _add(value: Any) -> None:
+            candidates = value if isinstance(value, list | tuple) else [value]
+            for candidate in candidates:
+                # bool is an int subclass and is never a token id.
+                if isinstance(candidate, int) and not isinstance(candidate, bool):
+                    if candidate not in ids:
+                        ids.append(candidate)
+
+        _add(getattr(getattr(self.model, "generation_config", None), "eos_token_id", None))
+        _add(getattr(self.tokenizer, "eos_token_id", None))
+
+        if not ids:
+            return None
+        return ids[0] if len(ids) == 1 else ids
+
     def _create_generation_config(
         self,
         config: GenerationConfig | None = None
@@ -554,6 +584,8 @@ class TransformersEngine(BatchModel):
         if config is None:
             config = GenerationConfig()
 
+        eos_token_id = self._eos_token_ids()
+
         # Normalize deterministic generation. Transformers 5.x rejects
         # temperature<=0 ("has to be a strictly positive float") and warns when
         # sampling params (temperature/top_p/top_k) are set while do_sample is
@@ -570,7 +602,7 @@ class TransformersEngine(BatchModel):
                 repetition_penalty=config.repetition_penalty,
                 do_sample=True,
                 pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=eos_token_id,
             )
         else:
             # Greedy decoding. Set the sampling params to their no-op defaults
@@ -588,7 +620,7 @@ class TransformersEngine(BatchModel):
                 repetition_penalty=config.repetition_penalty,
                 do_sample=False,
                 pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=eos_token_id,
             )
 
         # Return stop sequences separately for post-processing
