@@ -282,3 +282,40 @@ def test_render_table_file_keeps_stdout_clean(capsys):
     assert "Accuracy" in captured.err
     # No box-drawing/ANSI on the plain stderr path.
     assert "│" not in captured.err and "\x1b[" not in captured.err
+
+
+# --------------------------------------------------------------------------- #
+# `run -q/--quiet` suppresses the run banner and setup lines (no live call)
+# --------------------------------------------------------------------------- #
+def _run_banner_output(argv, monkeypatch, capsys):
+    """Drive the run handler with a stub agent that stops before any model
+    call, and return everything printed to stdout+stderr."""
+
+    class _StubAgent:
+        def __init__(self, *a, **k):
+            raise RuntimeError("stop before any model call")
+
+    monkeypatch.setattr(_main, "Agent", _StubAgent)
+    cli = _main.CLIInterface()
+    cli.console = None
+    parser = _main.create_parser()
+    cli.run_agent(parser.parse_args(argv))
+    captured = capsys.readouterr()
+    return captured.out + captured.err
+
+
+@pytest.mark.parametrize("argv", [
+    ["run", "hi", "-m", "does-not-matter", "-q"],
+    ["-q", "run", "hi", "-m", "does-not-matter"],
+])
+def test_run_quiet_suppresses_banner(argv, monkeypatch, capsys):
+    text = _run_banner_output(argv, monkeypatch, capsys)
+    assert "Running Task" not in text
+    assert "Initializing agent" not in text
+    assert "Model:" not in text
+
+
+def test_run_without_quiet_shows_banner(monkeypatch, capsys):
+    text = _run_banner_output(["run", "hi", "-m", "does-not-matter"], monkeypatch, capsys)
+    assert "Running Task" in text
+    assert "Initializing agent" in text

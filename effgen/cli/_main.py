@@ -916,6 +916,10 @@ class CLIInterface:
             self._human_to_stderr = True
             args.stream = False
 
+        # `-q/--quiet` (global or on the subcommand) suppresses the run banner
+        # and the setup status lines so only the final answer/result is printed.
+        quiet = getattr(args, 'quiet', False)
+
         # Streaming prints tokens as they arrive and never assembles the result
         # object the file outputs are written from, so a request for both is
         # refused up front rather than leaving the file unwritten.
@@ -940,7 +944,8 @@ class CLIInterface:
             self.print_error(prov_err)
             return 1
 
-        self.print_header(f"effGen v{__version__} - Running Task")
+        if not quiet:
+            self.print_header(f"effGen v{__version__} - Running Task")
 
         # Resolve the model once so the preset and plain paths agree. With no
         # -m/--model, mirror `quickstart`: prefer a detected cheap cloud model,
@@ -953,7 +958,8 @@ class CLIInterface:
             run_model, _sugg_provider, _sugg_reason = _quickstart_suggest_model()
             if provider is None and _sugg_provider:
                 provider = _sugg_provider
-            self.print(f"Using model {run_model} ({_sugg_reason}); override with -m/--model.")
+            if not quiet:
+                self.print(f"Using model {run_model} ({_sugg_reason}); override with -m/--model.")
 
         agent = None
         try:
@@ -964,7 +970,8 @@ class CLIInterface:
                 if config_path.exists():
                     loaded_config = self.config_loader.load_config(config_path)
                     config = loaded_config.to_dict()
-                    self.print_success(f"Loaded configuration from {config_path}")
+                    if not quiet:
+                        self.print_success(f"Loaded configuration from {config_path}")
                     _warn_unapplied_config_keys(config, self)
                 else:
                     self.print_error(f"Configuration file not found: {config_path}")
@@ -976,7 +983,8 @@ class CLIInterface:
             if getattr(args, 'preset', None):
                 from effgen.presets import create_agent as _create_preset_agent
                 model_id = run_model
-                self.print(f"Using preset: {args.preset}")
+                if not quiet:
+                    self.print(f"Using preset: {args.preset}")
                 _preset_overrides = {"provider": provider} if provider else {}
                 if rag_docs:
                     _preset_overrides["knowledge_base"] = rag_docs
@@ -1042,12 +1050,13 @@ class CLIInterface:
                 )
 
                 # Create agent
-                self.print(f"\nInitializing agent: {agent_config.name}")
-                self.print(f"Model: {agent_config.model}")
-                self.print(f"Tools: {len(tools)} available")
-                self.print(f"Sub-agents: {'enabled' if agent_config.enable_sub_agents else 'disabled'}")
-                if guardrails:
-                    self.print(f"Guardrails: {guardrails}")
+                if not quiet:
+                    self.print(f"\nInitializing agent: {agent_config.name}")
+                    self.print(f"Model: {agent_config.model}")
+                    self.print(f"Tools: {len(tools)} available")
+                    self.print(f"Sub-agents: {'enabled' if agent_config.enable_sub_agents else 'disabled'}")
+                    if guardrails:
+                        self.print(f"Guardrails: {guardrails}")
 
                 agent = Agent(agent_config, session_id=getattr(args, 'session_id', None))
 
@@ -1065,14 +1074,14 @@ class CLIInterface:
                 mode = AgentMode.AUTO
 
             # Run task
-            self.print(f"\n[bold]Task:[/bold] {args.task}" if self.console else f"\nTask: {args.task}")
-            self.print()
+            if not quiet:
+                self.print(f"\n[bold]Task:[/bold] {args.task}" if self.console else f"\nTask: {args.task}")
+                self.print()
 
             exit_code = 0
             # --json emits a single JSON document to stdout: no live spinner,
             # which would otherwise render there on an interactive terminal.
             animate = self._animate(args) and not json_mode
-            quiet = getattr(args, 'quiet', False)
             model_label = _progress.short_model_label(
                 getattr(agent.config, "model", None) if hasattr(agent, "config") else None
             )
