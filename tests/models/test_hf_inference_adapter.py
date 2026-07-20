@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from effgen.models.base import get_stream_usage
 from effgen.models.errors import ModelAuthError, ModelUnavailableError
 from effgen.models.hf_inference_adapter import HFInferenceAdapter
 from effgen.models.hf_inference_models import (
@@ -481,6 +482,133 @@ class TestHFStreaming:
         )
         with pytest.raises(ModelUnavailableError):
             list(adapter.generate_stream("hello"))
+
+
+# ---------------------------------------------------------------------------
+# Streamed-call cost accounting
+# ---------------------------------------------------------------------------
+
+class TestHFStreamCostAccounting:
+    """A streamed call reports its cost and tokens the way generate() does.
+
+    The chat endpoint sends a usage block on its final chunk for some models;
+    where it does not, the same character-based estimate the non-streaming path
+    uses is applied to the prompt and the accumulated output.
+    """
+
+    MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+
+    def _adapter(self, model_id: str | None = None):
+        adapter = HFInferenceAdapter(
+            model_id or self.MODEL,
+            api_token="fake-token",
+            enable_rate_limiting=False,
+            enable_cost_tracking=False,
+        )
+        adapter._client = MagicMock()
+        adapter._is_loaded = True
+        return adapter
+
+    @staticmethod
+    def _chunks(tokens, usage=None):
+        def _stream(**kwargs):
+            for token in tokens:
+                yield SimpleNamespace(
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content=token))],
+                    usage=None,
+                )
+            if usage is not None:
+                yield SimpleNamespace(choices=[], usage=usage)
+
+        return _stream
+
+    def test_reported_usage_is_used_when_the_stream_sends_it(self):
+        adapter = self._adapter()
+        usage = SimpleNamespace(prompt_tokens=30, completion_tokens=13)
+        adapter._client.chat_completion.side_effect = self._chunks(
+            ["Red", ", blue"], usage
+        )
+
+        text = "".join(adapter.generate_stream("Name the primary colors."))
+
+        assert text == "Red, blue"
+        recorded = get_stream_usage(adapter)
+        assert recorded["prompt_tokens"] == 30
+        assert recorded["completion_tokens"] == 13
+        assert recorded["total_tokens"] == 43
+        assert adapter.total_tokens == 43
+        info = HF_MODELS[self.MODEL]
+        expected = (
+            30 * info["pricing_per_1m_input"] / 1_000_000
+            + 13 * info.get("pricing_per_1m_output", 0.0) / 1_000_000
+        )
+        assert adapter.get_total_cost() == pytest.approx(expected)
+
+    def test_tokens_are_estimated_when_the_stream_omits_usage(self):
+        adapter = self._adapter()
+        adapter._client.chat_completion.side_effect = self._chunks(
+            ["Red, blue", " and yellow."]
+        )
+
+        text = "".join(adapter.generate_stream("Name the primary colors."))
+
+        recorded = get_stream_usage(adapter)
+        assert recorded is not None
+        # The estimate counts the streamed output, not just the prompt.
+        assert recorded["completion_tokens"] == adapter._estimate_tokens(text)
+        # The prompt estimate covers the system prompt too, so it exceeds the
+        # bare user prompt's own estimate.
+        assert recorded["prompt_tokens"] >= adapter._estimate_tokens(
+            "Name the primary colors."
+        )
+        assert adapter.get_total_cost() > 0.0
+
+    def test_streamed_cost_matches_generate_for_the_same_usage(self):
+        usage = SimpleNamespace(prompt_tokens=30, completion_tokens=13)
+        streamed = self._adapter()
+        streamed._client.chat_completion.side_effect = self._chunks(["hi"], usage)
+        list(streamed.generate_stream("Name the primary colors."))
+
+        priced = self._adapter()
+        assert streamed.get_total_cost() == pytest.approx(
+            priced._price_tokens(30, 13)
+        )
+
+    def test_unpriced_model_records_zero_without_failing(self):
+        # google/gemma-3-27b-it carries no per-token price in the registry.
+        adapter = self._adapter("google/gemma-3-27b-it")
+        usage = SimpleNamespace(prompt_tokens=19, completion_tokens=12)
+        adapter._client.chat_completion.side_effect = self._chunks(["Red"], usage)
+
+        list(adapter.generate_stream("Name the primary colors."))
+
+        assert adapter.get_total_cost() == 0.0
+        assert adapter.total_tokens == 31
+
+    def test_stream_that_yields_nothing_still_records_the_prompt(self):
+        # The prompt was sent and billed even though no output came back.
+        adapter = self._adapter()
+        adapter._client.chat_completion.side_effect = self._chunks([])
+
+        assert list(adapter.generate_stream("")) == []
+
+        recorded = get_stream_usage(adapter)
+        assert recorded["completion_tokens"] == 0
+        assert recorded["prompt_tokens"] > 0
+
+    def test_usage_does_not_leak_between_streamed_calls(self):
+        adapter = self._adapter()
+        adapter._client.chat_completion.side_effect = self._chunks(
+            ["hi"], SimpleNamespace(prompt_tokens=100, completion_tokens=100)
+        )
+        list(adapter.generate_stream("first"))
+
+        adapter._client.chat_completion.side_effect = self._chunks(["hi"])
+        list(adapter.generate_stream("second"))
+
+        # The second call had no usage block, so it is estimated — it must not
+        # reuse the first call's counts.
+        assert get_stream_usage(adapter)["prompt_tokens"] < 100
 
 
 # ---------------------------------------------------------------------------

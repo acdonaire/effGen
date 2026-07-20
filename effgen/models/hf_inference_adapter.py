@@ -46,6 +46,7 @@ from effgen.models.base import (
     GenerationConfig,
     GenerationResult,
     TokenCount,
+    accumulate_stream_cost,
 )
 from effgen.models.errors import (
     BudgetExceededError,
@@ -75,6 +76,24 @@ _HF_MODEL_TYPE_VALUE = "hf_inference"
 _UNAVAILABLE_STATUS = {503, 404}
 # HTTP status codes that indicate auth failure
 _AUTH_STATUS = {401, 403}
+
+
+def _messages_text(messages: list[dict[str, Any]]) -> str:
+    """Flatten a chat message list to the text a token estimate can measure.
+
+    Multimodal content arrives as a list of parts; only the text parts carry
+    characters to count.
+    """
+    parts: list[str] = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+    return "".join(parts)
 
 
 class _HFModelType:
@@ -172,6 +191,9 @@ class HFInferenceAdapter(BaseModel):
         self._client: Any = None
         self._enable_cost_tracking = enable_cost_tracking
         self._info: dict[str, Any] = info or {}
+        # Usage block from the final chunk of a streamed call, when the
+        # endpoint sends one; otherwise the streamed call is estimated.
+        self._last_stream_api_usage: Any = None
         # Provider routing: explicit arg > registry hint > "auto" (HF Router picks).
         # The legacy "hf-inference" backend no longer hosts most chat models — the
         # default is "auto" so the HF Router selects an available backend (Together,
@@ -677,12 +699,16 @@ class HFInferenceAdapter(BaseModel):
         if hasattr(resp, "generated_text"):
             text = resp.generated_text or ""
             details = getattr(resp, "details", None)
-            output_tokens = len(getattr(details, "tokens", [])) if details else max(1, len(text) // 4)
-            input_tokens = max(1, len(prompt) // 4)
+            output_tokens = (
+                len(getattr(details, "tokens", []))
+                if details
+                else self._estimate_tokens(text)
+            )
+            input_tokens = self._estimate_tokens(prompt)
         else:
             text = str(resp)
-            input_tokens = max(1, len(prompt) // 4)
-            output_tokens = max(1, len(text) // 4)
+            input_tokens = self._estimate_tokens(prompt)
+            output_tokens = self._estimate_tokens(text)
 
         total_tokens = input_tokens + output_tokens
         return self._build_result(
@@ -694,6 +720,55 @@ class HFInferenceAdapter(BaseModel):
             tool_calls=[],
         )
 
+    def _price_tokens(self, input_tokens: int, output_tokens: int) -> float:
+        """Price a call from the registry's per-1M-token rates.
+
+        Returns ``0.0`` for a model the registry carries no input price for,
+        which is how an unpriced Serverless model reads.
+        """
+        info = self._info
+        price_in = info.get("pricing_per_1m_input", 0.0)
+        price_out = info.get("pricing_per_1m_output", 0.0)
+        if not (price_in and input_tokens):
+            return 0.0
+        return (
+            input_tokens * price_in / 1_000_000
+            + output_tokens * price_out / 1_000_000
+        )
+
+    def _record_cost(
+        self, input_tokens: int, output_tokens: int, cost_usd: float
+    ) -> None:
+        """Record a completed call's usage on the global ledger."""
+        if not (self._enable_cost_tracking and cost_usd):
+            return
+        try:
+            CostTracker.get().record(
+                provider="hf_inference",
+                model=self.model_name,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost_usd,
+            )
+        except BudgetExceededError:
+            raise
+        except Exception:
+            logger.debug("CostTracker recording failed for HF Inference", exc_info=True)
+
+    @staticmethod
+    def _estimate_tokens_from_chars(char_count: int) -> int:
+        """Approximate a token count as four characters per token.
+
+        Used wherever the endpoint reports no token counts of its own: a
+        ``text_generation`` response without token details, and a streamed call
+        whose final chunk carried no usage block.
+        """
+        return max(1, char_count // 4) if char_count else 0
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Approximate the token count of ``text``."""
+        return self._estimate_tokens_from_chars(len(text))
+
     def _build_result(
         self,
         text: str,
@@ -704,29 +779,8 @@ class HFInferenceAdapter(BaseModel):
         tool_calls: list[dict[str, Any]],
     ) -> GenerationResult:
         """Assemble a GenerationResult and record cost."""
-        info = self._info
-        cost_usd = 0.0
-        price_in = info.get("pricing_per_1m_input", 0.0)
-        price_out = info.get("pricing_per_1m_output", 0.0)
-        if price_in and input_tokens:
-            cost_usd = (
-                input_tokens * price_in / 1_000_000
-                + output_tokens * price_out / 1_000_000
-            )
-
-        if self._enable_cost_tracking and cost_usd:
-            try:
-                CostTracker.get().record(
-                    provider="hf_inference",
-                    model=self.model_name,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cost_usd=cost_usd,
-                )
-            except BudgetExceededError:
-                raise
-            except Exception:
-                logger.debug("CostTracker recording failed for HF Inference", exc_info=True)
+        cost_usd = self._price_tokens(input_tokens, output_tokens)
+        self._record_cost(input_tokens, output_tokens, cost_usd)
 
         metadata = {
             "provider": "hf_inference",
@@ -817,17 +871,69 @@ class HFInferenceAdapter(BaseModel):
         messages_arg = kwargs.pop("messages", None)
 
         use_text_gen = self._info.get("use_text_generation", False)
+        self._last_stream_api_usage = None
 
+        if use_text_gen:
+            prompt_text = prompt
+        else:
+            messages = self._build_messages(prompt, system_prompt, messages_arg)
+            prompt_text = _messages_text(messages)
+
+        # Only the streamed text's length is needed for a token estimate, so
+        # the chunks are measured as they pass rather than accumulated.
+        output_chars = 0
         with timed_call("hf", self.model_name) as _stream_timer:
             _first_token = True
             src = self._stream_text(prompt, config, **kwargs) if use_text_gen else self._stream_chat(
-                self._build_messages(prompt, system_prompt, messages_arg), config, **kwargs
+                messages, config, **kwargs
             )
             for token in src:
                 if _first_token:
                     _stream_timer.mark_first_token()
                     _first_token = False
+                output_chars += len(token)
                 yield token
+
+        self._account_stream_usage(len(prompt_text), output_chars)
+
+    def _account_stream_usage(self, prompt_chars: int, output_chars: int) -> None:
+        """Price and record the streamed call that just finished.
+
+        The chat endpoint sends a usage block on its final chunk for some
+        models; when it does, those counts are used. Otherwise the token counts
+        come from the same character-based estimate the non-streaming path
+        applies, over the character counts of the prompt and of the streamed
+        output. The cost lands on the global ledger and on this adapter's
+        cumulative totals, so a streamed call reports the same way a
+        ``generate()`` call does.
+
+        Args:
+            prompt_chars: Characters sent, across every message in the prompt.
+            output_chars: Characters yielded by the stream.
+        """
+        try:
+            usage = self._last_stream_api_usage
+            self._last_stream_api_usage = None
+            input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+            output_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+            if not (input_tokens or output_tokens):
+                input_tokens = self._estimate_tokens_from_chars(prompt_chars)
+                output_tokens = self._estimate_tokens_from_chars(output_chars)
+            if not (input_tokens or output_tokens):
+                return
+            cost_usd = self._price_tokens(input_tokens, output_tokens)
+            self._record_cost(input_tokens, output_tokens, cost_usd)
+            accumulate_stream_cost(
+                self,
+                cost_usd,
+                input_tokens + output_tokens,
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+            )
+        except BudgetExceededError:
+            raise
+        except Exception:  # noqa: BLE001 - accounting must not break a delivered stream
+            logger.debug("Stream usage accounting failed for HF Inference", exc_info=True)
 
     def _stream_chat(
         self,
@@ -855,6 +961,9 @@ class HFInferenceAdapter(BaseModel):
                 stream=True,
                 **call_kwargs,
             ):
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    self._last_stream_api_usage = usage
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
         except Exception as exc:
