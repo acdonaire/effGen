@@ -28,6 +28,16 @@ result = repl.execute({"code": "print(sum(x))"})
 print(result["data"]["output"])  # 30
 ```
 
+Each `session_id` is backed by its own worker subprocess. At most
+`max_sessions` of them stay live (default 8, or `EFFGEN_REPL_MAX_SESSIONS`);
+past that, the least recently used idle session is stopped and its variables
+are discarded, so using it again starts an empty session. Raise the limit if
+you need more sessions warm at once:
+
+```python
+repl = PythonREPL(max_sessions=32)
+```
+
 ### CodeExecutor
 **Sandboxed multi-language code execution (Python, JavaScript, Bash).**
 
