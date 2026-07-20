@@ -25,6 +25,111 @@ logger = logging.getLogger(__name__)
 _obs_log = _get_obs_logger(__name__)
 
 
+# Keys a tool-call envelope may carry besides the name. An object whose only
+# keys come from this set is a call even without an arguments key; one that
+# carries data fields alongside the name is a JSON answer, not a call.
+_CALL_ENVELOPE_KEYS = frozenset({"name", "function", "type", "id", "index"})
+
+
+def _json_tool_call(
+    text: str, tools: dict[str, Any] | None = None
+) -> tuple[str, dict[str, Any]] | None:
+    """Extract a ``{"name": ..., "arguments"|"parameters": {...}}`` tool call.
+
+    Scans string-aware balanced JSON objects rather than matching braces with a
+    regex: an argument value that itself contains a brace (Llama 3.2 emits
+    ``"filter_metadata": "{}"``) truncates a non-greedy ``\\{.*?\\}`` match, and
+    the resulting fragment fails to parse, so a valid call is read as no call at
+    all.
+
+    An object with no arguments key is only a call when nothing but envelope
+    keys sits beside the name, or when ``tools`` confirms the name is a tool
+    that exists — otherwise a JSON answer such as ``{"name": "Acme Corp",
+    "revenue": 5}`` would be run as a call to a tool named "Acme Corp".
+
+    Returns the tool name and its arguments, or ``None``.
+    """
+    # Every shape below carries one of these keys; skip the scan otherwise.
+    if '"name"' not in text and '"function"' not in text:
+        return None
+
+    from .structured_output import _extract_balanced
+
+    search_from = 0
+    while True:
+        start = text.find("{", search_from)
+        if start == -1:
+            return None
+        blob = _extract_balanced(text[start:])
+        if blob is not None:
+            call = _as_tool_call(blob, tools)
+            if call is not None:
+                return call
+        search_from = start + 1
+
+
+def _is_truncated_json_call(text: str) -> bool:
+    """Whether the text looks like a tool call the generation cut short.
+
+    A ``"name"``/``"function"`` key with no balanced object around it is a call
+    that ran out of tokens; returning it as the answer would ship raw call
+    syntax to the user.
+    """
+    if '"name"' not in text and '"function"' not in text:
+        return False
+
+    from .structured_output import _extract_balanced
+
+    start = text.find("{")
+    if start == -1:
+        return True
+    blob = _extract_balanced(text[start:])
+    if blob is None:
+        return True
+    try:
+        json.loads(blob)
+    except (json.JSONDecodeError, TypeError):
+        return True
+    return False
+
+
+def _as_tool_call(
+    blob: str, tools: dict[str, Any] | None
+) -> tuple[str, dict[str, Any]] | None:
+    """Read one balanced JSON object as a tool call, or return ``None``."""
+    try:
+        data = json.loads(blob)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    # OpenAI-shaped calls nest the name/arguments under "function".
+    inner = data.get("function")
+    call = inner if isinstance(inner, dict) else data
+    name = call.get("name")
+    if not isinstance(name, str) and isinstance(call.get("function"), str):
+        name = call["function"]
+    if not isinstance(name, str) or not name:
+        return None
+
+    args = call.get("arguments")
+    if args is None:
+        args = call.get("parameters")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (json.JSONDecodeError, TypeError):
+            args = None
+    if isinstance(args, dict):
+        return name, args
+    if args is not None:
+        return None
+    if set(call) - _CALL_ENVELOPE_KEYS and not (tools and name in tools):
+        return None
+    return name, {}
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -420,6 +525,26 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
             except (json.JSONDecodeError, TypeError) as e:
                 logger.debug(f"Failed to parse Qwen tool call JSON: {e}")
 
+        # --- Try the <function=NAME>{...}</function> wrapper ---
+        # The name is followed by '>', not by the '(' or '{' the combined
+        # pattern below requires, so this shape needs its own read.
+        fn_match = re.search(r"<function=([\w.-]+)>\s*(?=\{)", text)
+        if fn_match:
+            from .structured_output import _extract_balanced
+
+            blob = _extract_balanced(text[fn_match.end():])
+            try:
+                arguments = json.loads(blob) if blob else None
+            except (json.JSONDecodeError, TypeError) as e:
+                arguments = None
+                logger.debug(f"Failed to parse <function=> tool call: {e}")
+            if isinstance(arguments, dict):
+                result.tool_name = fn_match.group(1)
+                result.arguments = arguments
+                result.is_tool_call = True
+                logger.debug(f"Parsed <function=> tool call: {result.tool_name}")
+                return result
+
         # --- Try Llama/Hermes format: <|python_tag|> or <function= ---
         llama_match = re.search(
             r'(?:<\|python_tag\|>|<function=)(\w+)\s*[(\{](.+?)[)\}]',
@@ -467,30 +592,31 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
                 logger.debug(f"Failed to parse Mistral tool call: {e}")
 
         # --- Try generic JSON function call ---
-        # Look for {"name": "tool", "arguments": {...}} pattern
-        json_match = re.search(
-            r'\{\s*"(?:name|function)"\s*:\s*"(\w+)".*?"(?:arguments|parameters)"\s*:\s*(\{.*?\})',
-            text, re.DOTALL,
-        )
-        if json_match:
-            try:
-                tool_name = json_match.group(1)
-                arguments = json.loads(json_match.group(2))
-                result.tool_name = tool_name
-                result.arguments = arguments if isinstance(arguments, dict) else {}
-                result.is_tool_call = True
-                logger.debug(f"Parsed generic JSON tool call: {tool_name}")
-                return result
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.debug(f"Failed to parse generic JSON tool call: {e}")
+        # {"name": "tool", "arguments": {...}}, with or without a leading
+        # <|python_tag|> marker — Llama 3.2 emits the bare object.
+        json_call = _json_tool_call(text, tools)
+        if json_call is not None:
+            tool_name, arguments = json_call
+            result.tool_name = tool_name
+            result.arguments = arguments
+            result.is_tool_call = True
+            logger.debug(f"Parsed generic JSON tool call: {tool_name}")
+            return result
 
         # --- No tool call found — check for plain text answer ---
         # If the response doesn't contain any tool call markers, treat as final answer
         text_stripped = text.strip()
         if text_stripped and not any(marker in text for marker in [
             "<tool_call>", "<|python_tag|>", "<function=", "[TOOL_CALLS]",
-            "Thought:", "Action:", "Tool:", '"name"', '"function"',
+            "Thought:", "Action:", "Tool:",
         ]):
+            # A bare "name"/"function" key is only evidence of a call the parse
+            # above could not finish — a truncated one. When the JSON is
+            # complete it is an answer (e.g. {"name": "Acme Corp", ...}), and
+            # withholding it would leave the run with no answer at all.
+            if _is_truncated_json_call(text):
+                logger.debug("Incomplete JSON call detected, not a final answer")
+                return result
             result.final_answer = text_stripped
             logger.debug("No tool call markers found, treating as final answer")
 
