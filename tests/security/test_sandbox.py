@@ -616,3 +616,20 @@ class TestPublicCodeExecutorHonesty:
         assert mod.__doc__ is not None
         assert "effgen.security.sandbox" in mod.__doc__
         assert "code_executor" in mod.__doc__
+
+    def test_package_and_validator_docstrings_do_not_overclaim_safety(self):
+        # The execution package defaults to LocalSandbox; a static validator
+        # narrows the attack surface but is not an OS boundary, so neither the
+        # package nor the validator module may claim it makes execution "safe"
+        # or "secure" without naming the container/namespace isolation instead.
+        import effgen.execution as pkg
+        import effgen.execution.validators as validators
+
+        pkg_doc = (pkg.__doc__ or "").lower()
+        assert "secure code execution" not in pkg_doc
+        assert "code_executor" in pkg_doc
+
+        val_doc = (validators.__doc__ or "").lower()
+        assert "ensuring safe execution" not in val_doc
+        # It states plainly that the static screen is not an OS boundary.
+        assert "static" in val_doc and "not" in val_doc

@@ -1,8 +1,14 @@
 """
 Execution and sandbox systems for effGen.
 
-This package provides secure code execution with Docker isolation,
-multi-language support, resource limits, and security validation.
+This package runs code with multi-language support, resource limits, and static
+code validation. Isolation depends on the backend: ``DockerSandbox`` confines
+the filesystem and network in a container; ``LocalSandbox`` runs code in a
+subprocess screened by an AST/regex validator, which is a static check rather
+than an operating-system boundary and does not isolate the host. To run code an
+untrusted model produced with the project's hardened isolation, use the
+registered ``code_executor`` tool (``effgen.security.sandbox``); see
+``effgen/execution/sandbox.py`` for the details.
 """
 
 from .docker_sandbox import DOCKER_AVAILABLE, DockerManager, DockerSandbox

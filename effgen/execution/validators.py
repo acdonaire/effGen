@@ -1,8 +1,12 @@
 """
-Code validators for security and safety checks.
+Static code validators for pre-execution screening.
 
-This module provides validators to analyze code before execution,
-detecting dangerous patterns and ensuring safe execution practices.
+This module analyzes code before execution and flags patterns known to be
+dangerous (shell-out, network, filesystem, dynamic import/exec). The checks are
+a static AST/regex screen, not an operating-system boundary: code that builds a
+forbidden name or import at run time can pass them, so they narrow the attack
+surface but do not by themselves make execution safe. Combine them with the
+container or namespace isolation described in ``effgen/execution/sandbox.py``.
 """
 
 from __future__ import annotations
