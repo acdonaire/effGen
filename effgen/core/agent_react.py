@@ -46,6 +46,8 @@ from .agent import AgentMode, AgentResponse  # noqa: E402
 from .agent_runtime import (  # noqa: E402
     _SCAFFOLD_LITERAL_RES,
     _TOOL_ECHO_RE,
+    CONTEXT_ANSWER_INSTRUCTION,
+    CONTINUE_INSTRUCTION,
     NUDGE_ALREADY_COMPUTED,
     NUDGE_CONTINUE,
     NUDGE_HAVE_ANSWER,
@@ -184,7 +186,7 @@ class AgentReActMixin:
                     prompt = (
                         f"{task}\n\n"
                         f"Previous steps:\n{scratchpad}\n\n"
-                        f"Continue solving the task. If you have the final answer, state it clearly."
+                        f"{self._continuation_instruction(previous_actions)}"
                     )
                 else:
                     prompt = task
@@ -224,6 +226,7 @@ class AgentReActMixin:
                     conversation_history=conversation_history,
                     system_prompt=self.config.system_prompt,
                     verbose=self._verbose_tools,
+                    closing_instruction=self._context_answer_instruction(previous_actions),
                 )
 
             # Debug: log first iteration prompt to see if history is included
@@ -463,6 +466,23 @@ class AgentReActMixin:
                     )
                     # Extract the last successful observation from scratchpad
                     partial = self._extract_partial_answer(scratchpad)
+                    # A retrieval/search tool's observation is source material,
+                    # so returning it here hands back a passage dump in place of
+                    # an answer. The model already has what it retrieved: stop
+                    # offering tools and give it one turn to write the answer
+                    # from the scratchpad before falling back to the passages.
+                    if (
+                        partial
+                        and self._is_context_retrieval_tool(action)
+                        and not _force_text_answer
+                    ):
+                        _force_text_answer = True
+                        scratchpad += (
+                            f"\nAction: {action}"
+                            f"\nAction Input: {action_input}"
+                            f"\nObservation: {NUDGE_HAVE_RESULTS}"
+                        )
+                        continue
                     if partial:
                         return _build_response(
                             partial,
@@ -541,16 +561,30 @@ class AgentReActMixin:
                         normalized_result = " ".join(tool_result.split())[:500]
                         result_key = (action, normalized_result)
                         if result_key in previous_results:
+                            # A retrieval/search tool's output is context, not a
+                            # synthesized answer, so returning it verbatim hands
+                            # back a passage dump. The observation is already in
+                            # the scratchpad: stop offering tools and give the
+                            # model one turn to write the answer from it. A
+                            # compute tool (e.g. calculator) reproducing its
+                            # result is a confident answer and is returned as-is.
+                            if (
+                                self._is_context_retrieval_tool(action)
+                                and not _force_text_answer
+                            ):
+                                logger.info(
+                                    "[Loop efficiency] Retrieval tool '%s' repeated a "
+                                    "result; asking for a synthesized answer",
+                                    action,
+                                )
+                                _force_text_answer = True
+                                scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
+                                continue
                             logger.info(
                                 "[Loop efficiency] Tool '%s' reproduced an identical "
                                 "result; returning it as the final answer",
                                 action,
                             )
-                            # A retrieval/search tool's output is context, not a
-                            # synthesized answer: returning it verbatim is an
-                            # unsynthesized passage dump, so flag it partial.
-                            # A compute tool (e.g. calculator) reproducing its
-                            # result is a confident answer and stays unflagged.
                             extra = (
                                 {"partial": True}
                                 if self._is_context_retrieval_tool(action)
@@ -640,13 +674,39 @@ class AgentReActMixin:
         retrieved context rather than a computed answer.
 
         Used to flag a fallback that returns such a tool's raw observation as
-        partial, so a passage dump is not presented as a synthesized answer.
+        partial, so a passage dump is not presented as a synthesized answer, and
+        to pick the continuation instruction in :meth:`_continuation_instruction`.
         """
         tool = self.tools.get(action)
         category = getattr(getattr(tool, "metadata", None), "category", None)
         if category is ToolCategory.INFORMATION_RETRIEVAL:
             return True
         return action in {"retrieval", "web_search", "search", "knowledge_base"}
+
+    def _context_answer_instruction(
+        self, previous_actions: list[tuple[str, str]]
+    ) -> str:
+        """Return the answer-shaping line when the latest observation is
+        retrieved context, or ``""`` for every other tool.
+
+        A tool prompt ends with the last tool's observation, so whatever follows
+        it is the final thing the model reads before answering. After a
+        retrieval/search tool that observation is a block of source passages, and
+        a generic close leaves the strongest recent signal a wall of text that
+        reads like a finished answer: the smallest models return it verbatim,
+        dropping the citation markers and the question's scope along the way.
+        This line states what to do with the passages instead. Returning ``""``
+        for every other tool keeps those prompts byte-for-byte unchanged.
+        """
+        if previous_actions and self._is_context_retrieval_tool(previous_actions[-1][0]):
+            return CONTEXT_ANSWER_INSTRUCTION
+        return ""
+
+    def _continuation_instruction(
+        self, previous_actions: list[tuple[str, str]]
+    ) -> str:
+        """Return the line that closes the native/hybrid prompt after a tool ran."""
+        return self._context_answer_instruction(previous_actions) or CONTINUE_INSTRUCTION
 
     def _extract_partial_answer(self, scratchpad: str) -> str | None:
         """

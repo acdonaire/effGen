@@ -131,6 +131,22 @@ NUDGE_NOT_USABLE = (
     "plain Final Answer."
 )
 
+# Closes a tool prompt when the last observation was a computed result.
+CONTINUE_INSTRUCTION = (
+    "Continue solving the task. If you have the final answer, state it clearly."
+)
+# Closes a tool prompt when the last observation was retrieved source passages.
+# The passages sit immediately above and read like a finished answer, so the
+# close states what to do with them: answer from them, do not return them.
+CONTEXT_ANSWER_INSTRUCTION = (
+    "The passages above are source material, not the answer. Write the answer "
+    "yourself, in your own sentences, covering only what the question asks. "
+    "Cite each passage you used inline as [1], [2], ... numbered by its order "
+    "above. Do not copy sentences from the passages, and do not repeat a passage "
+    "that does not answer the question. If the passages do not answer it, say so "
+    "and name what is missing."
+)
+
 # Literal loop-bookkeeping strings to strip — every injectable nudge above, plus a
 # couple of defensive bracketed/sub-phrase variants. These must never reach a
 # user-facing answer. An adjacent newline is consumed when present so removing a

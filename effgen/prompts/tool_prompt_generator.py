@@ -165,6 +165,7 @@ class ToolPromptGenerator:
         conversation_history: str = "",
         system_prompt: str = "You are a helpful AI assistant.",
         verbose: bool = True,
+        closing_instruction: str = "",
     ) -> str:
         """
         Generate a complete ReAct prompt with enhanced tool descriptions.
@@ -175,6 +176,10 @@ class ToolPromptGenerator:
             conversation_history: Formatted conversation history.
             system_prompt: System-level instructions.
             verbose: Whether to include verbose tool descriptions.
+            closing_instruction: Text to place after the scratchpad, where it is
+                the last thing the model reads. Used to say what to do with a
+                trailing observation the model would otherwise return as-is
+                (retrieved passages). Empty leaves the prompt unchanged.
 
         Returns:
             Complete formatted ReAct prompt string.
@@ -189,6 +194,14 @@ class ToolPromptGenerator:
             task=task,
             scratchpad=scratchpad,
         )
+
+        if closing_instruction:
+            # The ReAct formats parse an answer off the "Final Answer:" label, so
+            # restate the label alongside the instruction to keep that contract.
+            prompt = (
+                f"{prompt}\n\n{closing_instruction}\n"
+                "Give that answer now, after a 'Final Answer:' label."
+            )
 
         return prompt
 

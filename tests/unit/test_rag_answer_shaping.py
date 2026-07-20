@@ -1,0 +1,79 @@
+"""Unit tests for the continuation line that closes a native/hybrid tool prompt.
+
+The native/hybrid prompt ends with the last tool's observation, so the closing
+line is the final thing a model reads before it answers. After a retrieval or
+search tool that observation is a block of source passages; the closing line
+restates the answer contract there so the passages are not returned as the
+answer. Every other tool keeps the original wording.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from effgen.core.agent_react import AgentReActMixin
+from effgen.tools.base_tool import ToolCategory
+
+GENERIC = "Continue solving the task. If you have the final answer, state it clearly."
+
+
+class _StubTool:
+    def __init__(self, category=None):
+        self.metadata = type("Meta", (), {"category": category})()
+
+
+class _StubAgent(AgentReActMixin):
+    """Minimal carrier for the tool registry the instruction selector reads."""
+
+    def __init__(self, tools=None):
+        self.tools = tools or {}
+
+
+def _instruction(agent, *actions):
+    return agent._continuation_instruction([(a, "{}") for a in actions])
+
+
+class TestContinuationInstruction:
+    def test_no_tool_has_run_yet_keeps_generic_line(self):
+        assert _StubAgent()._continuation_instruction([]) == GENERIC
+
+    @pytest.mark.parametrize("action", ["calculator", "python_repl", "bash", "unknown_tool"])
+    def test_non_retrieval_tool_keeps_generic_line(self, action):
+        assert _instruction(_StubAgent(), action) == GENERIC
+
+    @pytest.mark.parametrize(
+        "action", ["retrieval", "web_search", "search", "knowledge_base"]
+    )
+    def test_retrieval_tool_restates_the_answer_contract(self, action):
+        text = _instruction(_StubAgent(), action)
+        assert text != GENERIC
+        low = text.lower()
+        # Names the passages as source material, asks for the model's own
+        # wording, asks for inline citations, and forbids copying.
+        assert "source material" in low
+        assert "your own sentences" in low
+        assert "[1]" in text
+        assert "do not copy" in low
+        # Keeps the fail-closed instruction for an unanswerable question.
+        assert "do not answer it" in low or "not answer it" in low or "missing" in low
+
+    def test_category_marks_a_custom_tool_as_retrieval(self):
+        agent = _StubAgent(
+            {"house_docs": _StubTool(ToolCategory.INFORMATION_RETRIEVAL)}
+        )
+        assert _instruction(agent, "house_docs") != GENERIC
+
+    def test_category_leaves_a_non_retrieval_custom_tool_alone(self):
+        agent = _StubAgent({"invoice_math": _StubTool(ToolCategory.DATA_PROCESSING)})
+        assert _instruction(agent, "invoice_math") == GENERIC
+
+    def test_only_the_most_recent_tool_decides(self):
+        agent = _StubAgent()
+        # Retrieval ran earlier, but a calculator produced the latest observation.
+        assert _instruction(agent, "retrieval", "calculator") == GENERIC
+        # ... and the other way round.
+        assert _instruction(agent, "calculator", "retrieval") != GENERIC
+
+    def test_generic_line_is_unchanged_for_default_agents(self):
+        """A tool-using agent that never retrieves sees the original prompt."""
+        assert _instruction(_StubAgent(), "calculator") == GENERIC
