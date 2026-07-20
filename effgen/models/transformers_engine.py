@@ -1217,6 +1217,9 @@ class TransformersEngine(BatchModel):
         model — leftover hooks can corrupt the CUDA forward state of
         subsequently-loaded models in the same process (observed as
         intermittent C-level aborts inside Qwen2 RMSNorm under pytest).
+
+        The device memory the weights occupied is returned to the GPU, so the
+        next model to load sees it as free.
         """
         if self.model is not None:
             logger.debug(f"Unloading model '{self.model_name}'...")
@@ -1241,11 +1244,9 @@ class TransformersEngine(BatchModel):
                 torch.cuda.synchronize()
             except Exception:
                 logger.debug("torch.cuda.synchronize() failed during unload", exc_info=True)
-            torch.cuda.empty_cache()
-            try:
-                torch.cuda.ipc_collect()
-            except Exception:
-                logger.debug("torch.cuda.ipc_collect() failed during unload", exc_info=True)
+            from effgen.gpu.utils import release_cached_memory
+
+            release_cached_memory()
 
         self._is_loaded = False
         logger.debug(f"Model '{self.model_name}' unloaded successfully")

@@ -649,6 +649,9 @@ class VLLMEngine(BatchModel):
     def unload(self) -> None:
         """
         Unload the model and free GPU memory.
+
+        The device memory the weights occupied is returned to the GPU, so the
+        next model to load sees it as free.
         """
         if self.llm is not None:
             logger.info(f"Unloading model '{self.model_name}'...")
@@ -668,7 +671,9 @@ class VLLMEngine(BatchModel):
         gc.collect()
 
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            from effgen.gpu.utils import release_cached_memory
+
+            release_cached_memory()
 
         self._is_loaded = False
         logger.info(f"Model '{self.model_name}' unloaded successfully")

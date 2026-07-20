@@ -457,6 +457,60 @@ def clear_cache(device_id: int | None = None) -> None:
         logger.debug("Cleared cache for all GPUs")
 
 
+def _devices_with_cached_memory() -> list[int]:
+    """Devices this process already holds allocator memory on.
+
+    Reads ``memory_reserved`` per device, which reports 0 for a device this
+    process never initialized — so probing does not create a CUDA context (and
+    the few hundred MB of device memory that comes with one) on idle GPUs.
+    """
+    devices = []
+    for device_id in range(get_device_count()):
+        try:
+            if torch.cuda.memory_reserved(device_id) > 0:
+                devices.append(device_id)
+        except (RuntimeError, AssertionError):  # device unavailable to this process
+            continue
+    return devices
+
+
+def release_cached_memory(device_id: int | None = None) -> None:
+    """Return the memory this process has cached on a GPU back to the device.
+
+    ``torch.cuda.empty_cache()`` can only release an allocator segment with no
+    live block left in it. cuBLAS keeps a per-stream workspace allocated
+    through that same allocator, and when a model was loaded into one large
+    segment the workspace can land inside it — a few megabytes then hold the
+    whole segment, so the gigabytes a model occupied stay reserved after it is
+    unloaded. Dropping the workspaces first (they are reallocated on the next
+    matmul) lets the segment go.
+
+    Args:
+        device_id: Device to release, or ``None`` for every device this
+            process has cached memory on.
+    """
+    if not is_gpu_available():
+        return
+
+    clear_workspaces = getattr(torch._C, "_cuda_clearCublasWorkspaces", None)
+    if clear_workspaces is not None:
+        try:
+            clear_workspaces()
+        except Exception:  # pragma: no cover - torch build without the hook
+            logger.debug("Could not clear cuBLAS workspaces", exc_info=True)
+
+    devices = [device_id] if device_id is not None else _devices_with_cached_memory()
+    for target in devices:
+        # Device-scoped so the process-wide current device is restored.
+        with torch.cuda.device(target):
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:  # pragma: no cover - no IPC handles to collect
+                logger.debug("torch.cuda.ipc_collect() failed", exc_info=True)
+    logger.debug(f"Released cached GPU memory on devices {devices}")
+
+
 def synchronize(device_id: int | None = None) -> None:
     """
     Synchronize GPU operations.
