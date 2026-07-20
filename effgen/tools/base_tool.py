@@ -515,10 +515,12 @@ class BaseTool(ABC):
     def _coerce_parameters(self, kwargs: dict) -> dict:
         """Coerce LLM-supplied parameter values to their declared types.
 
-        LLMs occasionally send integers as strings (e.g. ``"precision": "0"``).
-        This method silently converts them so downstream validation succeeds.
-        Only applies to INTEGER and FLOAT spec types; leaves everything else
-        untouched.
+        LLMs occasionally send a value as a string: an integer as ``"0"``, or a
+        whole object as ``"{}"`` (Llama 3.2 fills optional object parameters
+        that way). This method converts those to the declared type so downstream
+        validation succeeds. An object/array string is only accepted when it
+        parses as JSON *and* yields the declared type; anything else is left as
+        it is for validation to reject.
         """
         coerced = dict(kwargs)
         param_map = {p.name: p for p in self._metadata.parameters}
@@ -538,6 +540,16 @@ class BaseTool(ABC):
                     pass
             elif spec.type == ParameterType.BOOLEAN and isinstance(value, str):
                 coerced[name] = value.lower() in ("true", "1", "yes")
+            elif spec.type in (ParameterType.OBJECT, ParameterType.ARRAY) and isinstance(
+                value, str
+            ):
+                try:
+                    parsed = json.loads(value)
+                except (ValueError, TypeError):  # leave the raw value for validation to reject
+                    continue
+                expected = dict if spec.type == ParameterType.OBJECT else list
+                if isinstance(parsed, expected):
+                    coerced[name] = parsed
         return coerced
 
     async def execute(self, **kwargs) -> ToolResult:
