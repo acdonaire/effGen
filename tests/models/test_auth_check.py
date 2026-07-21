@@ -21,7 +21,8 @@ DUMMY_MODELS = {"dummy-model": {"context": 4_096}}
 
 @pytest.fixture(autouse=True)
 def reset_registry():
-    ProviderRegistry.reset()
+    """Only the fake providers registered here may be visible to check_keys."""
+    ProviderRegistry.clear()
     yield
     ProviderRegistry.reset()
 

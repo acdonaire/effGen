@@ -37,17 +37,15 @@ OVERLAP_MODELS = {
 
 @pytest.fixture(autouse=True)
 def reset_registry():
-    """Reset the singleton before each test to avoid cross-test pollution.
+    """Start each test from an empty registry, and hand back a full one.
 
-    On teardown we restore the real adapters rather than leaving the registry
-    empty: a bare ``reset()`` would otherwise wipe every provider for tests that
-    run later in the session (the adapter modules are already imported, so they
-    would not self-register again), e.g. the live vision routing tests.
+    The tests here register fake providers and assert on the exact provider
+    list, so they need the registry empty. ``reset()`` on teardown puts the
+    real providers back, so nothing that runs later sees an empty registry.
     """
-    ProviderRegistry.reset()
+    ProviderRegistry.clear()
     yield
     ProviderRegistry.reset()
-    _force_register_all()
 
 
 # ---------------------------------------------------------------------------
@@ -180,38 +178,15 @@ class TestAmbiguousModelError:
 # Real adapters self-register on import
 # ---------------------------------------------------------------------------
 
-def _force_register_all():
-    """Re-invoke each adapter's _register() even if the module was already imported."""
-    import effgen.models.anthropic_adapter as _anthropic
-    import effgen.models.cerebras_adapter as _cerebras
-    import effgen.models.fireworks_adapter as _fireworks
-    import effgen.models.gemini_adapter as _gemini
-    import effgen.models.groq_adapter as _groq
-    import effgen.models.hf_inference_adapter as _hf
-    import effgen.models.openai_adapter as _openai
-    import effgen.models.replicate_adapter as _replicate
-    import effgen.models.together_adapter as _together
-
-    _anthropic._register()
-    _cerebras._register()
-    _fireworks._register()
-    _gemini._register()
-    _groq._register()
-    _hf._register()
-    _openai._register()
-    _replicate._register()
-    _together._register()
-
-
 class TestAdapterSelfRegistration:
     def test_all_9_providers_registered_after_imports(self):
-        _force_register_all()
+        ProviderRegistry.register_builtins()
         providers = ProviderRegistry.list_providers()
         expected = {"anthropic", "cerebras", "fireworks", "gemini", "groq", "hf", "openai", "replicate", "together"}
         assert expected.issubset(set(providers)), f"Missing: {expected - set(providers)}"
 
     def test_groq_prefix_lookup(self):
-        _force_register_all()
+        ProviderRegistry.register_builtins()
         prov, cls, info = lookup("groq:llama-3.3-70b-versatile")
         assert prov == "groq"
         assert "context" in info

@@ -383,7 +383,7 @@ class TestProviderRegistryBulkheadIntegration:
     def setup_method(self):
         from effgen.models.registry import ProviderRegistry
 
-        ProviderRegistry.reset()
+        ProviderRegistry.clear()
 
         class FakeAdapter:
             pass

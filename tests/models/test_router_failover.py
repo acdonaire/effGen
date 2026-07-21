@@ -49,12 +49,10 @@ class _DummyAdapter:
 @pytest.fixture(autouse=True)
 def _isolated_registry(monkeypatch):
     """Each test starts with a fresh ProviderRegistry."""
-    orig_providers = dict(ProviderRegistry._providers)
-    orig_index = dict(ProviderRegistry._model_index)
-    ProviderRegistry.reset()
+    snapshot = ProviderRegistry.snapshot()
+    ProviderRegistry.clear()
     yield
-    ProviderRegistry._providers = orig_providers
-    ProviderRegistry._model_index = orig_index
+    ProviderRegistry.restore(snapshot)
 
 
 def _reg(

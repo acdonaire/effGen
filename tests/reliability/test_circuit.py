@@ -312,7 +312,7 @@ class TestProviderRegistryIntegration:
     def setup_method(self):
         from effgen.models.registry import ProviderRegistry
 
-        ProviderRegistry.reset()
+        ProviderRegistry.clear()
 
         # Register a fake provider
         class FakeAdapter:

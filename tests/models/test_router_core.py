@@ -22,25 +22,6 @@ from effgen.models.routing.first_available import FirstAvailablePolicy
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _force_register_all_adapters() -> None:
-    """Re-register all provider adapters after tests reset the singleton registry."""
-    import importlib
-
-    for mod_name in [
-        "effgen.models.cerebras_adapter",
-        "effgen.models.openai_adapter",
-        "effgen.models.groq_adapter",
-        "effgen.models.anthropic_adapter",
-        "effgen.models.gemini_adapter",
-        "effgen.models.together_adapter",
-        "effgen.models.fireworks_adapter",
-        "effgen.models.replicate_adapter",
-        "effgen.models.hf_inference_adapter",
-    ]:
-        module = importlib.import_module(mod_name)
-        module._register()
-
-
 def _make_candidates(*providers: str) -> list[ProviderModelPair]:
     return [ProviderModelPair(p, f"{p}-model-001") for p in providers]
 
@@ -68,7 +49,7 @@ def test_provider_model_pair_is_namedtuple():
 
 def test_first_available_skips_missing_key(monkeypatch):
     """Providers without a configured key must be eliminated."""
-    ProviderRegistry.reset()
+    ProviderRegistry.clear()
     from effgen.models.capabilities import Capability as Cap
 
     class _DummyAdapter:
@@ -101,11 +82,10 @@ def test_first_available_skips_missing_key(monkeypatch):
 
     # Restore global registry state
     ProviderRegistry.reset()
-    _force_register_all_adapters()
 
 
 def test_first_available_all_missing_keys_raises(monkeypatch):
-    ProviderRegistry.reset()
+    ProviderRegistry.clear()
 
     class _DummyAdapter:
         pass
@@ -126,7 +106,6 @@ def test_first_available_all_missing_keys_raises(monkeypatch):
         policy.select(candidates, ctx)
 
     ProviderRegistry.reset()
-    _force_register_all_adapters()
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +114,7 @@ def test_first_available_all_missing_keys_raises(monkeypatch):
 
 def test_capability_filtering_eliminates_unsupported(monkeypatch):
     """Provider missing a required capability must be eliminated."""
-    ProviderRegistry.reset()
+    ProviderRegistry.clear()
 
     class _DummyAdapter:
         pass
@@ -169,7 +148,6 @@ def test_capability_filtering_eliminates_unsupported(monkeypatch):
             assert "vision" in reason
 
     ProviderRegistry.reset()
-    _force_register_all_adapters()
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +155,7 @@ def test_capability_filtering_eliminates_unsupported(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_router_decision_records_eliminations(monkeypatch):
-    ProviderRegistry.reset()
+    ProviderRegistry.clear()
 
     class _DummyAdapter:
         pass
@@ -210,12 +188,11 @@ def test_router_decision_records_eliminations(monkeypatch):
         assert isinstance(reason, str) and reason
 
     ProviderRegistry.reset()
-    _force_register_all_adapters()
 
 
 def test_router_decision_records_every_non_chosen_candidate(monkeypatch):
     """FirstAvailablePolicy should explain every candidate it does not choose."""
-    ProviderRegistry.reset()
+    ProviderRegistry.clear()
 
     class _DummyAdapter:
         pass
@@ -267,7 +244,6 @@ def test_router_decision_records_every_non_chosen_candidate(monkeypatch):
     assert "tools" in reasons[ProviderModelPair("later_no_cap", "lnc")]
 
     ProviderRegistry.reset()
-    _force_register_all_adapters()
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +252,7 @@ def test_router_decision_records_every_non_chosen_candidate(monkeypatch):
 
 def test_policy_based_router_uses_fallback_when_policies_fail(monkeypatch):
     """When all policies fail, fallback is used."""
-    ProviderRegistry.reset()
+    ProviderRegistry.clear()
 
     class _DummyAdapter:
         pass
@@ -299,14 +275,13 @@ def test_policy_based_router_uses_fallback_when_policies_fail(monkeypatch):
     assert decision.chosen.provider == "fallback_prov"
 
     ProviderRegistry.reset()
-    _force_register_all_adapters()
     import effgen.models.hf_inference_adapter  # noqa: F401
     import effgen.models.replicate_adapter  # noqa: F401
 
 
 def test_policy_based_router_raises_when_all_fail(monkeypatch):
     """NoCandidateError raised when policies AND fallback both fail."""
-    ProviderRegistry.reset()
+    ProviderRegistry.clear()
 
     class _DummyAdapter:
         pass
@@ -330,12 +305,11 @@ def test_policy_based_router_raises_when_all_fail(monkeypatch):
             router.route(ctx)
 
     ProviderRegistry.reset()
-    _force_register_all_adapters()
 
 
 def test_model_router_policy_constructor_routes(monkeypatch):
     """ModelRouter must expose the policy-based routing surface."""
-    ProviderRegistry.reset()
+    ProviderRegistry.clear()
 
     class _DummyAdapter:
         pass
@@ -357,7 +331,6 @@ def test_model_router_policy_constructor_routes(monkeypatch):
     assert decision.policy_name == "first_available"
 
     ProviderRegistry.reset()
-    _force_register_all_adapters()
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +339,7 @@ def test_model_router_policy_constructor_routes(monkeypatch):
 
 def test_all_9_providers_have_capabilities():
     """Every registered provider must declare at least one capability."""
-    _force_register_all_adapters()
+    ProviderRegistry.register_builtins()
 
     providers = ProviderRegistry.list_providers()
     assert len(providers) == 9, f"Expected 9 providers, got {len(providers)}: {providers}"
