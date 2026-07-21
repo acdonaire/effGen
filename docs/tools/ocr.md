@@ -37,7 +37,7 @@ brew install tesseract-lang
 
 ```bash
 pip install "effgen[tools]"
-# installs: pytesseract>=0.3.10, Pillow>=10.0.0
+# installs: pytesseract>=0.3.10, Pillow>=12.3.0
 ```
 
 Or as part of the full install:

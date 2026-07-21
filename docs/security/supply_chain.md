@@ -10,15 +10,16 @@ locked set.
 ## Dependency lock file
 
 `requirements-lock.txt` is a hash-pinned snapshot of every transitive
-dependency.  It is generated with [`pip-compile`](https://pip-tools.readthedocs.io/):
+dependency of the base install.  `requirements-all-lock.txt` is the companion
+constraints file for the `[all]` extra (see `docs/installation.md`); it carries
+versions without hashes.
+
+Both are compiled with [`uv`](https://docs.astral.sh/uv/), which resolves for a
+target Python version rather than the interpreter that happens to be running.
+One script writes both, and re-applies the header each file carries:
 
 ```bash
-pip install pip-tools
-pip-compile \
-    --generate-hashes \
-    --strip-extras \
-    --output-file requirements-lock.txt \
-    pyproject.toml
+python scripts/gen_locks.py
 ```
 
 ### Reproducible installs
@@ -33,13 +34,49 @@ pip install effgen -r requirements-lock.txt
 
 ### Regenerating the lockfile
 
-When you update a dependency in `pyproject.toml`, regenerate the lockfile
-before opening a pull request:
+When you update a dependency in `pyproject.toml`, regenerate both lockfiles
+before opening a pull request.  To move a single package (for example when
+raising a floor past an advisory) while leaving the rest of the resolution on
+its current pins, pass `--upgrade-package`:
 
 ```bash
-pip-compile --generate-hashes --strip-extras \
-    --output-file requirements-lock.txt pyproject.toml
+python scripts/gen_locks.py --upgrade-package mcp
 ```
+
+Never edit a pinned version or a hash by hand.  `tests/security/
+test_supply_chain.py` checks that every pin in both lockfiles satisfies the
+specifiers declared in `pyproject.toml`, so a lockfile left behind by a raised
+floor fails the suite with the regeneration command in the message.
+
+### Raising a floor past an advisory
+
+A lockfile only governs installs that are driven by it.  An ordinary
+`pip install "effgen[...]"` resolves from the specifiers in `pyproject.toml`,
+so keeping an affected release out of every install means declaring the floor
+in every install shape that can reach the package:
+
+- If the package is in the closure of the base install, declare it in
+  `[project.dependencies]` — that covers every extra as well.  `httplib2`
+  arrives this way, through `google-generativeai` → `google-api-python-client`.
+- Otherwise declare it in **each** extra whose closure reaches it, including
+  the extras that only pull it transitively.  `Pillow` arrives through ten
+  different packages (`matplotlib`, `pdfplumber`, `reportlab`, `qrcode`,
+  `tensorboard`, `outlines`, `together`, `fireworks-ai`, `mistral-common`,
+  `torchvision`), so every extra carrying one of them repeats the floor.
+
+`tests/security/test_supply_chain.py` fails when two declarations of the same
+package disagree on their lower bound, which is how a partially-raised floor
+shows up.  To find the shapes that can still resolve an affected release,
+compile each extra against a constraint that holds the package below the floor
+and check which resolutions succeed:
+
+```bash
+echo 'pillow<12.3.0' > /tmp/floor.txt
+uv pip compile pyproject.toml --extra data --python-version 3.11 \
+    -c /tmp/floor.txt -o /dev/null
+```
+
+A resolution that succeeds is an install shape that is still exposed.
 
 The `deps-audit.yml` CI workflow runs `pip-audit` against the lockfile on
 every push to `main` and daily at 06:00 UTC.

@@ -34,7 +34,7 @@ pure-Python `qrcode` + `Pillow` and has **no system dependency**.
 ```bash
 pip install "effgen[qr]"
 # or manually:
-pip install "qrcode[pil]>=7.4" "pyzbar>=0.1.9" "opencv-python-headless>=4.8.0" "Pillow>=9.1.0"
+pip install "qrcode[pil]>=7.4" "pyzbar>=0.1.9" "opencv-python-headless>=4.8.0" "Pillow>=12.3.0"
 ```
 
 ---
