@@ -144,6 +144,30 @@ def test_legacy_convenience_slo_route_explains_an_empty_list_too():
     assert "/dashboard/data.json" in body["detail"]
 
 
+def test_legacy_convenience_slo_route_reports_a_failure_as_an_error(monkeypatch):
+    """An unreadable tracker is a 500 in the shared envelope, not an empty 200."""
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    import effgen.observability.slo as slo_mod
+    from effgen.cli._main import CLIInterface
+
+    def _boom():
+        raise RuntimeError("tracker unavailable")
+
+    monkeypatch.setattr(slo_mod, "get_tracker", _boom)
+    app = fastapi.FastAPI()
+    cli = CLIInterface()
+    app.state.cli = cli
+    cli._register_convenience_routes(app)
+
+    resp = TestClient(app).get("/slo")
+    assert resp.status_code == 500
+    err = resp.json()["error"]
+    assert set(err) == {"message", "type", "param", "code"}
+    assert "tracker unavailable" in err["message"]
+
+
 def test_slo_reflects_registered_tracker_state(client):
     from effgen.observability.slo import SLO, _reset_global_tracker, get_tracker
 
