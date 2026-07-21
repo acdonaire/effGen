@@ -36,20 +36,27 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 OUTPUT_DIR = REPO_ROOT / "dist"
 
-# Last full pip-audit sweep across core + [all]: verified 2026-06-18 — a fresh
+# Last full pip-audit sweep across core + [all]: verified 2026-07-21 — a fresh
 # install resolves every non-exempt dependency to a patched release (e.g.
-# starlette 1.3.1 clears CVE-2026-54282/54283, aiohttp 3.14.1, cryptography
+# starlette 1.3.1 clears CVE-2026-54282/54283, aiohttp 3.14.x, cryptography
 # 49.x, python-multipart 0.0.32, tornado 6.5.7, pypdf 6.13.3 clears
-# GHSA-jm82-fx9c-mx94), so this gate is green out of the box. The pinned lock
-# files are frozen snapshots and are bumped separately.
+# GHSA-jm82-fx9c-mx94, mcp 1.28.1 clears CVE-2026-59950, httplib2 0.32.0 clears
+# PYSEC-2026-3444, Pillow 12.3.0 clears the imaging set), so this gate is green
+# out of the box. Both lockfiles are recompiled from the same specifiers, so
+# they resolve to the same patched releases.
+#
+# An entry below is exempt because the fix is unreachable from here, not
+# because the advisory is unimportant. Re-check each one when its upstream
+# moves.
 #
 # Packages excluded from the HIGH/CRITICAL gate:
-#   - packaging toolchain (pip, setuptools) — not shipped runtime deps
-#   - dev-only utilities (py, pytest-forked) — not in production wheel
-#   - optional extras with known upstream issues (vllm, torch, transformers)
+#   - dev-only utilities (py, pytest-forked, wheel) — not in the built wheel
+#   - optional extras whose fixed release is a major jump under evaluation
+#     (vllm, torch, transformers, xgrammar)
 _EXEMPT = {
-    "pip",
-    "setuptools",
+    "pip",  # installer, not a shipped runtime dep
+    "setuptools",  # build backend; the version in requirements-lock.txt is
+    # whatever torch permits, so it advances when torch does
     "wheel",
     "py",
     "pytest-forked",
@@ -59,9 +66,11 @@ _EXEMPT = {
     "xgrammar",
     "diskcache",  # no fix available upstream (CVE-2025-69872, pickle serialization)
     "chromadb",  # optional [vector-db] extra; no upstream fix for CVE-2026-45829
-    "stanza",  # optional transitive dep (via argostranslate); no upstream fix for
-    # CVE-2026-54499 (unsafe pickle in torch.load fallback); effgen never loads
-    # untrusted stanza checkpoints
+    "stanza",  # optional transitive dep of argostranslate, which requires exactly
+    # stanza==1.10.1 — so 1.12.2 (the release that clears PYSEC-2026-3075) cannot
+    # be installed until argostranslate widens that pin. The earlier
+    # CVE-2026-54499 (unsafe pickle in a torch.load fallback) has no fix at all.
+    # effgen never loads untrusted stanza checkpoints.
     "nltk",  # optional [eval] extra (also transitive via rouge_score), not a core
     # dependency; no upstream fix for CVE-2026-12243 (3.9.4 is the latest release).
     # The CVE is a path traversal reachable only when an attacker controls the

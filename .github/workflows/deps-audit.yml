@@ -6,12 +6,14 @@ on:
     paths:
       - "pyproject.toml"
       - "requirements-lock.txt"
+      - "requirements-all-lock.txt"
       - ".github/workflows/deps-audit.yml"
   pull_request:
     branches: [main, dev]
     paths:
       - "pyproject.toml"
       - "requirements-lock.txt"
+      - "requirements-all-lock.txt"
   schedule:
     # Run daily at 06:00 UTC so new CVEs surface promptly
     - cron: "0 6 * * *"
@@ -63,7 +65,8 @@ jobs:
 
       - name: Gate on HIGH / CRITICAL vulnerabilities
         # Parse the JSON and fail if any vuln is HIGH or CRITICAL in core deps.
-        # Exemptions:
+        # Exemptions (each is exempt because the fix is unreachable from here,
+        # not because the advisory is unimportant):
         #   - pip / setuptools (packaging toolchain, not runtime)
         #   - py / pytest-forked (dev-only, not shipped)
         #   - vllm / torch / transformers / xgrammar (optional extras, not core)
@@ -83,8 +86,10 @@ jobs:
               "diskcache",
               # optional [vector-db] extra; no upstream fix for CVE-2026-45829
               "chromadb",
-              # optional transitive dep via argostranslate; no upstream fix for
-              # CVE-2026-54499 (unsafe pickle in torch.load fallback)
+              # optional transitive dep of argostranslate, which requires exactly
+              # stanza==1.10.1, so the release that clears PYSEC-2026-3075 cannot
+              # be installed; CVE-2026-54499 (unsafe pickle in a torch.load
+              # fallback) has no fix at all
               "stanza",
               # optional [eval] extra (also transitive via rouge_score); no upstream
               # fix for CVE-2026-12243 (path traversal via attacker-controlled
