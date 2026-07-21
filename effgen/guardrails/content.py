@@ -91,12 +91,22 @@ class PIIGuardrail(Guardrail):
     - When ``detect_labeled`` is enabled (default): **label-anchored fields**
       common in semi-structured records — ``Name:``/``Patient``, ``DOB:``,
       ``MRN:``/``Medical Record #``, ``Address:``, and member/beneficiary/policy
-      IDs (``Member ID``, ``Insurance ID``, ``Policy Number``). The label is kept
-      and only the value is replaced (e.g. ``MRN: [MRN REDACTED]``).
+      IDs (``Member ID``, ``Insurance ID``, ``Policy Number``, ``Policy #``). The
+      label is kept and only the value is replaced (e.g. ``MRN: [MRN REDACTED]``).
+      The label and its value may be separated by a colon, ``#``, a dash, or a
+      line break, with or without surrounding whitespace; dates may be numeric or
+      spelled out (``DOB: January 5, 1980``).
 
     **Coverage limits.** Label-anchored detection relies on a preceding label; a
     free-text personal name with no label (``Seen by Maria Gonzalez``) is not
-    detected by regex alone. For records that use site-specific identifiers, pass
+    detected by regex alone. A name that follows a bare label with no separator
+    (``Name JOHN SMITH``) is matched only in capitalized-word form, so that an
+    all-caps section header (``PATIENT NOTE``) is not mistaken for a name.
+    Matching is deliberately biased towards redacting: a label followed by a
+    plausible value is replaced even where the surrounding sentence makes it
+    ordinary prose (``Dr. Who``, ``the medical record system``), on the view that
+    an over-redacted word costs less than a leaked identifier.
+    For records that use site-specific identifiers, pass
     ``custom_patterns`` (regexes) and/or ``custom_terms`` (literal strings) to
     extend coverage. For a privacy-critical path, set ``strict=True``: in redact
     mode the check then reports ``passed=False`` whenever any PII is detected, so
@@ -137,18 +147,25 @@ class PIIGuardrail(Guardrail):
             r"(?=[A-Za-z0-9/+]*[A-Z])(?=[A-Za-z0-9/+]*[a-z])(?=[A-Za-z0-9/+]*[0-9])"
             r"[A-Za-z0-9/+]{40}"
         ),
-        re.compile(r"\bsk-proj-[A-Za-z0-9_\-]{20,}\b"),                        # OpenAI project key
-        re.compile(r"\bsk-ant-api\d{2}-[A-Za-z0-9_\-]{20,}\b"),                # Anthropic key
-        re.compile(r"\b(?:sk|gsk|rk|pk)-[A-Za-z0-9]{20,}\b"),                   # OpenAI/Groq-style API keys
-        re.compile(r"\b(?:gsk|sk)_[A-Za-z0-9]{20,}\b"),                         # underscore-style keys
-        re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),                              # Google API key
-        re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),                                 # HuggingFace token
-        re.compile(r"\br8_[A-Za-z0-9]{20,}\b"),                                 # Replicate token
-        re.compile(r"\bcsk-[A-Za-z0-9]{20,}\b"),                                # Cerebras key
-        re.compile(r"\bghp_[A-Za-z0-9]{36,}\b"),                                # GitHub personal token
-        re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}\b"),                        # GitHub fine-grained token
-        re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),                        # Slack token
-        re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{20,}\b"),                       # bearer token
+        # Prefixed API keys. The body charset includes ``_`` (and ``-`` where the
+        # provider uses it) and the patterns carry no trailing ``\b``: a key whose
+        # body contains an underscore has no word boundary at its end, so a
+        # trailing ``\b`` made the whole token fail to match rather than matching
+        # a prefix of it. Greedy matching to the end of the token keeps the full
+        # secret inside the redaction.
+        re.compile(r"\bsk-proj-[A-Za-z0-9_\-]{20,}"),                          # OpenAI project key
+        re.compile(r"\bsk-svcacct-[A-Za-z0-9_\-]{20,}"),                       # OpenAI service-account key
+        re.compile(r"\bsk-ant-api\d{2}-[A-Za-z0-9_\-]{20,}"),                  # Anthropic key
+        re.compile(r"\b(?:sk|gsk|rk|pk)-[A-Za-z0-9_]{20,}"),                    # OpenAI/Groq-style API keys
+        re.compile(r"\b(?:gsk|sk)_[A-Za-z0-9_]{20,}"),                          # underscore-style keys
+        re.compile(r"\bAIza[0-9A-Za-z_\-]{35,}"),                               # Google API key
+        re.compile(r"\bhf_[A-Za-z0-9_]{20,}"),                                  # HuggingFace token
+        re.compile(r"\br8_[A-Za-z0-9_]{20,}"),                                  # Replicate token
+        re.compile(r"\bcsk-[A-Za-z0-9_]{20,}"),                                 # Cerebras key
+        re.compile(r"\bghp_[A-Za-z0-9_]{36,}"),                                 # GitHub personal token
+        re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}"),                          # GitHub fine-grained token
+        re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),                          # Slack token
+        re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{20,}\b", re.I),                 # bearer token
         re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),                   # PEM private key
     ]
 
@@ -162,9 +179,30 @@ class PIIGuardrail(Guardrail):
     # precedes it. The label is preserved; only the digits are replaced.
     # Separator between a field label and its value. Tolerates a trailing period
     # from an abbreviation (``D.O.B.``), a ``#`` before the colon (``Record #:``),
-    # a dash (``DOB - ...``), and surrounding whitespace. Values never begin with
-    # these characters, so it does not eat into a value.
-    _LSEP = r"\s*[:#.\-]{0,3}\s*"
+    # a dash (``DOB - ...``), and whitespace around *and between* the separator
+    # characters (``D.O.B. : 1965-03-02``). Values never begin with these
+    # characters, so it does not eat into a value.
+    _LSEP = r"\s*(?:[:#.\-]\s*){0,3}"
+    # A label is not recognised inside a redaction placeholder, so re-checking
+    # already-redacted text ("MRN: [MRN REDACTED]") leaves it unchanged instead
+    # of redacting the placeholder again.
+    _NOT_IN_PLACEHOLDER = r"(?<!\[)"
+    # An identifier value is a whole token, and a token that itself labels an
+    # already-redacted value is not one ("Medical Record Number - [MRN
+    # REDACTED]" must not redact the word "Number" on a second pass).
+    _NOT_A_LABEL = (
+        r"(?![A-Za-z0-9\-])(?!" + _LSEP + r"\[[A-Z][A-Z ]*REDACTED\])"
+    )
+    # Words that start another field label. A name value stops before one of
+    # them so it does not absorb the next field ("Name: Maria Gonzalez  Member
+    # ID: 12345" keeps the member-ID field intact).
+    _FIELD_LABEL_WORD = (
+        r"(?i:mrn|medical|record|dob|d\.o\.b|date|birth|ssn|social|member|insurance|"
+        r"beneficiary|subscriber|policy|group|health|plan|address|addr|mailing|"
+        r"phone|tel|telephone|fax|email|e-mail|patient|name|id|account)\b"
+    )
+    _NOT_LABEL_WORD = r"(?!" + _FIELD_LABEL_WORD + r")"
+
     # A labeled personal name: a capitalized first token, then up to ``n`` more
     # tokens that may be an initial (``Q.``) or a capitalized word including
     # apostrophe/hyphen surnames (``O'Brien``, ``Smith-Jones``). The first token
@@ -175,12 +213,34 @@ class PIIGuardrail(Guardrail):
     # must carry a period or be followed by a non-letter, so a following acronym
     # label ("MRN") is not mistaken for a middle initial.
     _NAME_VALUE = (
-        r"[A-Z][a-z][A-Za-z'.\-]*"
-        r"(?:[ \t]+(?:[A-Z][a-z'][A-Za-z'.\-]*|[A-Z](?:\.|(?![A-Za-z])))){{0,{n}}}"
+        _NOT_LABEL_WORD + r"[A-Z][a-z][A-Za-z'.\-]*"
+        r"(?:[ \t]+" + _NOT_LABEL_WORD +
+        r"(?:[A-Z][a-z'][A-Za-z'.\-]*|[A-Z](?:\.|(?![A-Za-z])))){{0,{n}}}"
+    )
+    # A name value that follows an explicit separator (``Name: ...``). Because
+    # the separator already establishes that a value starts here, the tokens may
+    # also be all-caps (``Name: JOHN SMITH``, common in exported records) — a
+    # shape the whitespace-only form has to exclude so an all-caps section header
+    # (``PATIENT NOTE``) is not read as a labeled name.
+    # Each continuation token must be a whole token (no partial-word backtrack)
+    # and must not itself be a field label, so the value stops before the next
+    # ``MRN:``/``DOB:`` rather than absorbing it.
+    _NAME_VALUE_ANY = (
+        _NOT_LABEL_WORD + r"[A-Z][A-Za-z'.\-]+"
+        r"(?:[ \t]+" + _NOT_LABEL_WORD +
+        r"(?:[A-Z][A-Za-z'.\-]+|[A-Z](?:\.|(?![A-Za-z])))"
+        r"(?![A-Za-z'\-])(?![ \t]*[:#])){{0,{n}}}"
+    )
+
+    # Month names (full or three-letter abbreviation) for spelled-out dates.
+    _MONTH_NAME = (
+        r"(?i:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|"
+        r"dec(?:ember)?)"
     )
 
     _SSN_CUED_PATTERN = re.compile(
-        r"(?P<label>(?i:\bSSN\b|\bSocial\s+Security(?:\s+(?:No|Number|#))?\b)" + _LSEP + r")"
+        r"(?P<label>" + _NOT_IN_PLACEHOLDER + r"(?i:\bSSN\b|\bSocial\s+Security(?:\s+(?:No|Number|#))?\b)" + _LSEP + r")"
         r"(?P<value>(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4})\b"
     )
 
@@ -189,24 +249,49 @@ class PIIGuardrail(Guardrail):
     # that the more specific fields resolve before the line-spanning address.
     _LABELED_PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
         (
+            # ``Name: John Smith`` / ``Name:John Smith`` / ``Name: JOHN SMITH`` /
+            # ``Name - John Smith`` / a value on the line below the label. The
+            # separator may be followed by no whitespace at all, so a compact
+            # record line is redacted like a spaced one. A dash separator needs
+            # whitespace on its left so a hyphenated word ("Patient-Reported
+            # outcomes") is not read as a label plus value.
             "name", "[NAME REDACTED]",
             re.compile(
-                r"(?P<label>(?i:\b(?:patient(?:\s+name)?|name)\b)[ \t]*[:#.]{0,2}[ \t]+)"
+                r"(?P<label>" + _NOT_IN_PLACEHOLDER
+                + r"(?i:\b(?:patient(?:\s+name)?|name)\b)"
+                + r"(?:[ \t]*[:#.]{1,2}|[ \t]+-)[ \t]*\n?[ \t]*)"
+                r"(?P<value>" + _NAME_VALUE_ANY.format(n=3) + r")"
+            ),
+        ),
+        (
+            # ``Patient John Smith`` — no separator, so the stricter
+            # capitalized-word shape applies.
+            "name", "[NAME REDACTED]",
+            re.compile(
+                r"(?P<label>" + _NOT_IN_PLACEHOLDER + r"(?i:\b(?:patient(?:\s+name)?|name)\b)[ \t]+)"
                 r"(?P<value>" + _NAME_VALUE.format(n=3) + r")"
             ),
         ),
         (
+            # An honorific introduces a person, so the value here may also be
+            # all-caps ("Dr. NAKAMURA").
             "name", "[NAME REDACTED]",
             re.compile(
-                r"(?P<label>(?i:\b(?:Dr|Mr|Mrs|Ms)\b)\.?[ \t]+)"
-                r"(?P<value>" + _NAME_VALUE.format(n=2) + r")"
+                r"(?P<label>" + _NOT_IN_PLACEHOLDER + r"(?i:\b(?:Dr|Mr|Mrs|Ms)\b)\.?[ \t]+)"
+                r"(?P<value>" + _NAME_VALUE_ANY.format(n=2) + r")"
             ),
         ),
         (
             "DOB", "[DOB REDACTED]",
             re.compile(
-                r"(?P<label>(?i:\b(?:DOB|D\.O\.B\.?|date\s+of\s+birth|birth\s*date)\b)" + _LSEP + r")"
-                r"(?P<value>\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}|\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2})"
+                r"(?P<label>" + _NOT_IN_PLACEHOLDER + r"(?i:\b(?:DOB|D\.O\.B\.?|date\s+of\s+birth|birth\s*date)\b)" + _LSEP + r")"
+                # Numeric dates, plus month-name dates in either order
+                # ("January 5, 1980" / "5 Jan 1980").
+                r"(?P<value>\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}"
+                r"|\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2}"
+                + r"|" + _MONTH_NAME + r"\.?[ \t]+\d{1,2}(?:st|nd|rd|th)?,?[ \t]+\d{2,4}"
+                + r"|\d{1,2}(?:st|nd|rd|th)?[ \t]+(?:of[ \t]+)?"
+                + _MONTH_NAME + r"\.?,?[ \t]+\d{2,4})"
             ),
         ),
         (
@@ -217,18 +302,25 @@ class PIIGuardrail(Guardrail):
                 # a word character and need \b, but "#" does not — \b can
                 # never match between two non-word characters, so a shared
                 # trailing \b silently rejects "Record #:"/"Record # 123".
-                r"(?P<label>(?i:\b(?:MRN\b|medical\s+record(?:\s+(?:no|number|#))?\b|"
+                r"(?P<label>" + _NOT_IN_PLACEHOLDER + r"(?i:\b(?:MRN\b|medical\s+record(?:\s+(?:no|number|#))?\b|"
                 r"record\s+(?:(?:no|number)\b|#)))" + _LSEP + r")"
-                r"(?P<value>[A-Za-z0-9][A-Za-z0-9\-]{3,})"
+                # A short all-digit value is accepted as well as a longer
+                # alphanumeric one, so a 1–3 digit record number is redacted
+                # while a short English word after the label is not.
+                r"(?P<value>[A-Za-z0-9][A-Za-z0-9\-]{3,}|\d{1,3}\b)" + _NOT_A_LABEL
             ),
         ),
         (
             "member_id", "[ID REDACTED]",
             re.compile(
-                r"(?P<label>(?i:\b(?:insurance\s+(?:member\s+)?id|member\s+id|"
-                r"beneficiary\s+id|subscriber\s+id|policy\s+(?:no|number|#|id)|"
-                r"group\s+(?:no|number|#)|health\s+plan\s+id)\b)" + _LSEP + r")"
-                r"(?P<value>[A-Za-z0-9][A-Za-z0-9\-]{3,})"
+                r"(?P<label>" + _NOT_IN_PLACEHOLDER + r"(?i:\b(?:insurance\s+(?:member\s+)?id\b|member\s+id\b|"
+                # As with the record-number label, each alternative carries its
+                # own trailing boundary: a shared \b after the whole group can
+                # never match right after "#", so "Policy #: 12345" was missed.
+                r"beneficiary\s+id\b|subscriber\s+id\b|"
+                r"policy\s+(?:(?:no|number|id)\b|#)|"
+                r"group\s+(?:(?:no|number)\b|#)|health\s+plan\s+id\b))" + _LSEP + r")"
+                r"(?P<value>[A-Za-z0-9][A-Za-z0-9\-]{3,}|\d{1,3}\b)" + _NOT_A_LABEL
             ),
         ),
         # Street address up to a ZIP code (preferred: precise end so a following
@@ -236,7 +328,7 @@ class PIIGuardrail(Guardrail):
         (
             "address", "[ADDRESS REDACTED]",
             re.compile(
-                r"(?P<label>(?i:\b(?:mailing\s+address|home\s+address|street\s+address|"
+                r"(?P<label>" + _NOT_IN_PLACEHOLDER + r"(?i:\b(?:mailing\s+address|home\s+address|street\s+address|"
                 r"address|addr)\b)" + _LSEP + r")"
                 r"(?P<value>\d+[^\n]*?\b\d{5}(?:-\d{4})?\b)"
             ),
@@ -246,7 +338,7 @@ class PIIGuardrail(Guardrail):
         (
             "address", "[ADDRESS REDACTED]",
             re.compile(
-                r"(?P<label>(?i:\b(?:mailing\s+address|home\s+address|street\s+address|"
+                r"(?P<label>" + _NOT_IN_PLACEHOLDER + r"(?i:\b(?:mailing\s+address|home\s+address|street\s+address|"
                 r"address|addr)\b)" + _LSEP + r")"
                 r"(?P<value>\d+[^\n.;]*)"
             ),
