@@ -238,8 +238,11 @@ def test_generate_raises_if_not_loaded():
     adapter = MLXVLMAdapter(model_name="fake-vlm")
     # Do NOT set adapter._engine or adapter._is_loaded
     msg = Message(role=Role.USER, content=[TextPart(text="hello")])
-    with pytest.raises(RuntimeError, match="not loaded"):
+    with pytest.raises(RuntimeError, match="not loaded") as exc_info:
         adapter.generate([msg])
+    # A missing local model cannot be fixed by retrying the call.
+    assert exc_info.value.error_context["category"] == "not_loaded"
+    assert exc_info.value.error_context["retry_status"] == "non_retryable"
 
 
 def test_generate_forwards_config():
@@ -272,8 +275,9 @@ def test_generate_stream_yields_chunks():
 def test_generate_stream_raises_if_not_loaded():
     adapter = MLXVLMAdapter(model_name="fake-vlm")
     msg = Message(role=Role.USER, content=[TextPart(text="hello")])
-    with pytest.raises(RuntimeError, match="not loaded"):
+    with pytest.raises(RuntimeError, match="not loaded") as exc_info:
         list(adapter.generate_stream([msg]))
+    assert exc_info.value.error_context["category"] == "not_loaded"
 
 
 # ---------------------------------------------------------------------------

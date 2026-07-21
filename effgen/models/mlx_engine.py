@@ -18,6 +18,7 @@ import logging
 from collections.abc import Iterator
 from typing import Any
 
+from effgen.models._adapter_utils import not_loaded_error, provider_runtime_error
 from effgen.models.base import (
     BatchModel,
     GenerationConfig,
@@ -167,7 +168,10 @@ class MLXEngine(BatchModel):
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Failed to load model with MLX: {error_msg}")
-            raise RuntimeError(f"MLX model loading failed: {error_msg}") from e
+            raise provider_runtime_error(
+                "mlx", self.model_name, "load", e,
+                message="MLX model loading failed",
+            ) from e
 
     def _detect_context_length(self) -> int:
         """Detect the model's maximum context length from its config."""
@@ -291,7 +295,7 @@ class MLXEngine(BatchModel):
             RuntimeError: If model is not loaded or generation fails
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("mlx", self.model_name, "generate")
 
         from mlx_lm import generate as mlx_generate
 
@@ -359,7 +363,10 @@ class MLXEngine(BatchModel):
 
         except Exception as e:
             logger.error(f"MLX generation failed: {e}")
-            raise RuntimeError(f"MLX generation failed: {e}") from e
+            raise provider_runtime_error(
+                "mlx", self.model_name, "generate", e,
+                message="MLX generation failed",
+            ) from e
 
     def generate_stream(
         self,
@@ -386,7 +393,7 @@ class MLXEngine(BatchModel):
             RuntimeError: If model is not loaded or generation fails
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("mlx", self.model_name, "generate_stream")
 
         from mlx_lm import stream_generate
 
@@ -446,7 +453,10 @@ class MLXEngine(BatchModel):
 
         except Exception as e:
             logger.error(f"MLX streaming generation failed: {e}")
-            raise RuntimeError(f"MLX streaming generation failed: {e}") from e
+            raise provider_runtime_error(
+                "mlx", self.model_name, "generate_stream", e,
+                message="MLX streaming generation failed",
+            ) from e
 
     def generate_batch(
         self,
@@ -473,7 +483,7 @@ class MLXEngine(BatchModel):
             List of GenerationResult objects
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("mlx", self.model_name, "generate_batch")
 
         if len(prompts) > 1:
             logger.info(
@@ -520,14 +530,17 @@ class MLXEngine(BatchModel):
             RuntimeError: If model is not loaded
         """
         if not self._is_loaded or self.tokenizer is None:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("mlx", self.model_name, "count_tokens")
 
         try:
             tokens = self.tokenizer.encode(text)
             return TokenCount(count=len(tokens), model_name=self.model_name)
         except Exception as e:
             logger.error(f"Token counting failed: {e}")
-            raise RuntimeError(f"Token counting failed: {e}") from e
+            raise provider_runtime_error(
+                "mlx", self.model_name, "count_tokens", e,
+                message="Token counting failed",
+            ) from e
 
     def get_context_length(self) -> int:
         """Get maximum context length."""

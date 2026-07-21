@@ -15,6 +15,7 @@ import os
 from collections.abc import Iterator
 from typing import Any
 
+from ._adapter_utils import provider_runtime_error
 from .base import BaseModel, GenerationConfig, GenerationResult, ModelType, TokenCount
 
 logger = logging.getLogger(__name__)
@@ -68,14 +69,20 @@ class GGUFEngine(BaseModel):
             raise FileNotFoundError(f"GGUF model file not found: {self.model_name}")
 
         logger.info("Loading GGUF model: %s", self.model_name)
-        self._llm = Llama(
-            model_path=self.model_name,
-            n_ctx=self.n_ctx,
-            n_gpu_layers=self.n_gpu_layers,
-            n_threads=self.n_threads,
-            verbose=self.verbose,
-            **self._extra,
-        )
+        try:
+            self._llm = Llama(
+                model_path=self.model_name,
+                n_ctx=self.n_ctx,
+                n_gpu_layers=self.n_gpu_layers,
+                n_threads=self.n_threads,
+                verbose=self.verbose,
+                **self._extra,
+            )
+        except Exception as exc:
+            raise provider_runtime_error(
+                "gguf", self.model_name, "load", exc,
+                message="GGUF model loading failed",
+            ) from exc
         self._is_loaded = True
         self._metadata = {
             "engine": "llama-cpp-python",
@@ -114,11 +121,18 @@ class GGUFEngine(BaseModel):
             self.load()
         params = self._to_kwargs(config)
         params.update(kwargs)
-        # Clear residual context/KV state from any prior call so each completion
-        # starts from a clean state. Without this the sampler's RNG continues
-        # from the previous call and a fixed seed does not reproduce.
-        self._llm.reset()
-        out = self._llm(prompt, **params)
+        try:
+            # Clear residual context/KV state from any prior call so each
+            # completion starts from a clean state. Without this the sampler's
+            # RNG continues from the previous call and a fixed seed does not
+            # reproduce.
+            self._llm.reset()
+            out = self._llm(prompt, **params)
+        except Exception as exc:
+            raise provider_runtime_error(
+                "gguf", self.model_name, "generate", exc,
+                message="GGUF generation failed",
+            ) from exc
         choice = out["choices"][0]
         text = choice.get("text", "")
         usage = out.get("usage", {}) or {}
@@ -141,14 +155,26 @@ class GGUFEngine(BaseModel):
         params = self._to_kwargs(config)
         params.update(kwargs)
         params["stream"] = True
-        self._llm.reset()
-        for chunk in self._llm(prompt, **params):
-            yield chunk["choices"][0].get("text", "")
+        try:
+            self._llm.reset()
+            for chunk in self._llm(prompt, **params):
+                yield chunk["choices"][0].get("text", "")
+        except Exception as exc:
+            raise provider_runtime_error(
+                "gguf", self.model_name, "generate_stream", exc,
+                message="GGUF streaming generation failed",
+            ) from exc
 
     def count_tokens(self, text: str) -> TokenCount:
         if not self._is_loaded:
             self.load()
-        tokens = self._llm.tokenize(text.encode("utf-8"))
+        try:
+            tokens = self._llm.tokenize(text.encode("utf-8"))
+        except Exception as exc:
+            raise provider_runtime_error(
+                "gguf", self.model_name, "count_tokens", exc,
+                message="GGUF token counting failed",
+            ) from exc
         return TokenCount(count=len(tokens), model_name=self.model_name)
 
     def get_context_length(self) -> int:

@@ -33,7 +33,12 @@ from transformers import (
     set_seed as _hf_set_seed,
 )
 
-from effgen.models._adapter_utils import normalize_finish_reason
+from effgen.models._adapter_utils import (
+    attach_error_context,
+    normalize_finish_reason,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models.base import (
     BatchModel,
     GenerationConfig,
@@ -41,6 +46,7 @@ from effgen.models.base import (
     ModelType,
     TokenCount,
 )
+from effgen.models.errors import ModelNotFoundError
 
 # Suppress common warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='accelerate')
@@ -433,12 +439,20 @@ class TransformersEngine(BatchModel):
                     if offline
                     else "it could not be downloaded (no network)"
                 )
-                raise ModelNotCachedError(
-                    f"Model '{self.model_name}' is not in the local HuggingFace cache "
-                    f"and {reason}. Cached models: {listed}."
+                raise attach_error_context(
+                    ModelNotCachedError(
+                        f"Model '{self.model_name}' is not in the local "
+                        f"HuggingFace cache and {reason}. Cached models: "
+                        f"{listed}."
+                    ),
+                    "transformers", self.model_name, "load",
+                    source=ModelNotFoundError("transformers", self.model_name),
                 ) from e
             logger.error(f"Failed to load model with Transformers: {e}")
-            raise RuntimeError(f"Transformers model loading failed: {e}") from e
+            raise provider_runtime_error(
+                "transformers", self.model_name, "load", e,
+                message="Transformers model loading failed",
+            ) from e
 
     def _resolve_placement(self) -> str:
         """Return where the model parameters actually reside after loading.
@@ -762,7 +776,7 @@ class TransformersEngine(BatchModel):
             ValueError: If prompt exceeds context length
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("transformers", self.model_name, "generate")
 
         self.validate_prompt(prompt)
 
@@ -899,7 +913,10 @@ class TransformersEngine(BatchModel):
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             _reraise_if_classified(e)
-            raise RuntimeError(f"Generation failed: {e}") from e
+            raise provider_runtime_error(
+                "transformers", self.model_name, "generate", e,
+                message="Generation failed",
+            ) from e
         finally:
             self._tokenizer_lock.release()
 
@@ -925,7 +942,7 @@ class TransformersEngine(BatchModel):
             ValueError: If prompt exceeds context length
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("transformers", self.model_name, "generate_stream")
 
         self.validate_prompt(prompt)
 
@@ -1033,7 +1050,10 @@ class TransformersEngine(BatchModel):
         except Exception as e:
             logger.error(f"Streaming generation failed: {e}")
             _reraise_if_classified(e)
-            raise RuntimeError(f"Streaming generation failed: {e}") from e
+            raise provider_runtime_error(
+                "transformers", self.model_name, "generate_stream", e,
+                message="Streaming generation failed",
+            ) from e
 
     def generate_batch(
         self,
@@ -1057,7 +1077,7 @@ class TransformersEngine(BatchModel):
             ValueError: If any prompt exceeds context length
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("transformers", self.model_name, "generate_batch")
 
         # Validate all prompts
         for prompt in prompts:
@@ -1127,7 +1147,10 @@ class TransformersEngine(BatchModel):
         except Exception as e:
             logger.error(f"Batch generation failed: {e}")
             _reraise_if_classified(e)
-            raise RuntimeError(f"Batch generation failed: {e}") from e
+            raise provider_runtime_error(
+                "transformers", self.model_name, "generate_batch", e,
+                message="Batch generation failed",
+            ) from e
         finally:
             self._tokenizer_lock.release()
 
@@ -1145,7 +1168,7 @@ class TransformersEngine(BatchModel):
             RuntimeError: If model is not loaded
         """
         if not self._is_loaded or self.tokenizer is None:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("transformers", self.model_name, "count_tokens")
 
         # Serialize tokenizer access (see generate(): "Already borrowed").
         with self._tokenizer_lock:
@@ -1154,7 +1177,10 @@ class TransformersEngine(BatchModel):
                 return TokenCount(count=len(tokens), model_name=self.model_name)
             except Exception as e:
                 logger.error(f"Token counting failed: {e}")
-                raise RuntimeError(f"Token counting failed: {e}") from e
+                raise provider_runtime_error(
+                    "transformers", self.model_name, "count_tokens", e,
+                    message="Token counting failed",
+                ) from e
 
     def get_context_length(self) -> int:
         """

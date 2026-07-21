@@ -17,6 +17,11 @@ from collections.abc import Iterator
 
 import torch
 
+from effgen.models._adapter_utils import (
+    attach_error_context,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models.base import BatchModel, GenerationConfig, GenerationResult, ModelType, TokenCount
 
 logger = logging.getLogger(__name__)
@@ -269,12 +274,19 @@ class VLLMEngine(BatchModel):
                     f"5. Free up GPU memory by stopping other processes\n"
                     f"{'='*60}"
                 )
-                raise RuntimeError(
-                    f"CUDA out of memory while loading '{self.model_name}'. "
-                    f"Try lowering gpu_memory_utilization (current: {gpu_mem}) or use quantization."
+                raise attach_error_context(
+                    RuntimeError(
+                        f"CUDA out of memory while loading '{self.model_name}'. "
+                        f"Try lowering gpu_memory_utilization (current: "
+                        f"{gpu_mem}) or use quantization."
+                    ),
+                    "vllm", self.model_name, "load", source=e,
                 ) from e
 
-            raise RuntimeError(f"vLLM model loading failed: {error_msg}") from e
+            raise provider_runtime_error(
+                "vllm", self.model_name, "load", e,
+                message="vLLM model loading failed",
+            ) from e
 
     def _format_prompt_with_chat_template(
         self,
@@ -408,7 +420,7 @@ class VLLMEngine(BatchModel):
             ValueError: If prompt exceeds context length
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("vllm", self.model_name, "generate")
 
         # Apply chat template if enabled and not skipped
         if not skip_chat_template:
@@ -452,7 +464,10 @@ class VLLMEngine(BatchModel):
                     "Try reducing max_tokens in GenerationConfig or use a smaller prompt."
                 )
 
-            raise RuntimeError(f"Generation failed: {error_msg}") from e
+            raise provider_runtime_error(
+                "vllm", self.model_name, "generate", e,
+                message="Generation failed",
+            ) from e
 
     def generate_stream(
         self,
@@ -480,7 +495,7 @@ class VLLMEngine(BatchModel):
             ValueError: If prompt exceeds context length
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("vllm", self.model_name, "generate_stream")
 
         # Apply chat template if enabled and not skipped
         if not skip_chat_template:
@@ -501,7 +516,10 @@ class VLLMEngine(BatchModel):
 
         except Exception as e:
             logger.error(f"Streaming generation failed: {e}")
-            raise RuntimeError(f"Streaming generation failed: {e}") from e
+            raise provider_runtime_error(
+                "vllm", self.model_name, "generate_stream", e,
+                message="Streaming generation failed",
+            ) from e
 
     def generate_batch(
         self,
@@ -529,7 +547,7 @@ class VLLMEngine(BatchModel):
             ValueError: If any prompt exceeds context length
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("vllm", self.model_name, "generate_batch")
 
         # Apply chat template to all prompts if enabled
         if not skip_chat_template:
@@ -572,7 +590,10 @@ class VLLMEngine(BatchModel):
 
         except Exception as e:
             logger.error(f"Batch generation failed: {e}")
-            raise RuntimeError(f"Batch generation failed: {e}") from e
+            raise provider_runtime_error(
+                "vllm", self.model_name, "generate_batch", e,
+                message="Batch generation failed",
+            ) from e
 
     def count_tokens(self, text: str) -> TokenCount:
         """
@@ -588,14 +609,17 @@ class VLLMEngine(BatchModel):
             RuntimeError: If model is not loaded
         """
         if not self._is_loaded or self.tokenizer is None:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("vllm", self.model_name, "count_tokens")
 
         try:
             tokens = self.tokenizer.encode(text)
             return TokenCount(count=len(tokens), model_name=self.model_name)
         except Exception as e:
             logger.error(f"Token counting failed: {e}")
-            raise RuntimeError(f"Token counting failed: {e}") from e
+            raise provider_runtime_error(
+                "vllm", self.model_name, "count_tokens", e,
+                message="Token counting failed",
+            ) from e
 
     def get_context_length(self) -> int:
         """

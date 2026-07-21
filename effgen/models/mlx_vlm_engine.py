@@ -13,6 +13,7 @@ import logging
 from collections.abc import Iterator
 from typing import Any
 
+from effgen.models._adapter_utils import not_loaded_error, provider_runtime_error
 from effgen.models.base import GenerationConfig, GenerationResult, ModelType
 from effgen.models.mlx_engine import MLXEngine
 
@@ -151,7 +152,10 @@ class MLXVLMEngine(MLXEngine):
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Failed to load VLM with MLX-VLM: {error_msg}")
-            raise RuntimeError(f"MLX-VLM model loading failed: {error_msg}") from e
+            raise provider_runtime_error(
+                "mlx_vlm", self.model_name, "load", e,
+                message="MLX-VLM model loading failed",
+            ) from e
 
     def _format_prompt_with_chat_template(
         self,
@@ -232,7 +236,7 @@ class MLXVLMEngine(MLXEngine):
             RuntimeError: If model is not loaded or generation fails
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("mlx_vlm", self.model_name, "generate")
 
         # If no images, delegate to text-only parent
         if not images:
@@ -319,7 +323,10 @@ class MLXVLMEngine(MLXEngine):
 
         except Exception as e:
             logger.error(f"MLX-VLM generation failed: {e}")
-            raise RuntimeError(f"MLX-VLM generation failed: {e}") from e
+            raise provider_runtime_error(
+                "mlx_vlm", self.model_name, "generate", e,
+                message="MLX-VLM generation failed",
+            ) from e
 
     def generate_stream(
         self,
@@ -399,7 +406,7 @@ class MLXVLMEngine(MLXEngine):
             List of GenerationResult objects, one per prompt
         """
         if not self._is_loaded:
-            raise RuntimeError("Model is not loaded. Call load() first.")
+            raise not_loaded_error("mlx_vlm", self.model_name, "generate_batch")
 
         if images_list is None:
             # No images at all, delegate to parent batch

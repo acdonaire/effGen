@@ -42,6 +42,7 @@ from typing import Any
 
 from effgen.core.messages import AudioPart, ImagePart, Message, TextPart, VideoPart
 from effgen.errors import CapabilityNotSupportedError
+from effgen.models._adapter_utils import not_loaded_error
 from effgen.models.base import (
     BaseModel,
     GenerationConfig,
@@ -274,9 +275,7 @@ class MLXVLMAdapter(BaseModel):
             CapabilityNotSupportedError: If audio or video parts are present.
         """
         if not self.loaded:
-            raise RuntimeError(
-                "MLXVLMAdapter is not loaded. Call adapter.load() first."
-            )
+            raise not_loaded_error("mlx_vlm", self.model_name, "generate")
 
         prompt, images = self._messages_to_prompt_and_images(messages)
         cfg = self._build_config(config)
@@ -312,9 +311,7 @@ class MLXVLMAdapter(BaseModel):
             CapabilityNotSupportedError: If audio or video parts are present.
         """
         if not self.loaded:
-            raise RuntimeError(
-                "MLXVLMAdapter is not loaded. Call adapter.load() first."
-            )
+            raise not_loaded_error("mlx_vlm", self.model_name, "generate_stream")
 
         prompt, images = self._messages_to_prompt_and_images(messages)
         cfg = self._build_config(config)
