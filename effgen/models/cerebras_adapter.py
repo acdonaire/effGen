@@ -16,7 +16,11 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
-from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
+from effgen.models._adapter_utils import (
+    normalize_finish_reason,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models.base import (
@@ -238,7 +242,7 @@ class CerebrasAdapter(BaseModel):
             GenerationResult with the generated text and token usage.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("CerebrasAdapter not loaded. Call load() first.")
+            raise not_loaded_error("cerebras", self.model_name, "generate")
 
         if config is None:
             config = GenerationConfig()
@@ -268,7 +272,7 @@ class CerebrasAdapter(BaseModel):
     ) -> GenerationResult:
         """Async version of :meth:`generate` — preferred inside async contexts."""
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("CerebrasAdapter not loaded. Call load() first.")
+            raise not_loaded_error("cerebras", self.model_name, "async_generate")
 
         if config is None:
             config = GenerationConfig()
@@ -499,7 +503,7 @@ class CerebrasAdapter(BaseModel):
             RuntimeError: If ``load()`` has not been called or the stream fails.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("CerebrasAdapter not loaded. Call load() first.")
+            raise not_loaded_error("cerebras", self.model_name, "generate_stream")
 
         if config is None:
             config = GenerationConfig()
@@ -681,7 +685,7 @@ class CerebrasAdapter(BaseModel):
             RuntimeError: If the adapter is not loaded or the API call fails.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("CerebrasAdapter not loaded. Call load() first.")
+            raise not_loaded_error("cerebras", self.model_name, "generate_with_tools")
 
         model_info_dict = CEREBRAS_MODELS.get(self.model_name, {})
         if not model_info_dict.get("supports_native_tools", False):

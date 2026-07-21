@@ -19,7 +19,11 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
-from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
+from effgen.models._adapter_utils import (
+    normalize_finish_reason,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models._multimodal import (
     require_audio_support,
     require_video_support,
@@ -634,7 +638,7 @@ class GeminiAdapter(FunctionCallingModel):
                 read it before answering *prompt*.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("gemini", self.model_name, "generate")
         if isinstance(prompt, str):
             self.validate_prompt(prompt)
 
@@ -883,7 +887,7 @@ class GeminiAdapter(FunctionCallingModel):
     ) -> Iterator[str]:
         """Stream generated text chunks."""
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("gemini", self.model_name, "generate_stream")
         if isinstance(prompt, str):
             self.validate_prompt(prompt)
 
@@ -981,7 +985,7 @@ class GeminiAdapter(FunctionCallingModel):
 
     def count_tokens(self, text: str) -> TokenCount:
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("gemini", self.model_name, "count_tokens")
         try:
             response = self.client.models.count_tokens(
                 model=self.model_name, contents=text

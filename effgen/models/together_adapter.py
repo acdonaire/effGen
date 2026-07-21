@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from effgen.models._adapter_utils import (
     DIRECT_CALL_REASONING_MAX_TOKENS,
     normalize_finish_reason,
+    not_loaded_error,
     provider_runtime_error,
 )
 from effgen.models._cost import CostTracker
@@ -246,7 +247,7 @@ class TogetherAdapter(BaseModel):
             GenerationResult with text and token usage.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("TogetherAdapter not loaded. Call load() first.")
+            raise not_loaded_error("together", self.model_name, "generate")
 
         if config is None:
             config = GenerationConfig()
@@ -285,7 +286,7 @@ class TogetherAdapter(BaseModel):
     ) -> GenerationResult:
         """Async version of :meth:`generate` — preferred inside async contexts."""
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("TogetherAdapter not loaded. Call load() first.")
+            raise not_loaded_error("together", self.model_name, "async_generate")
 
         if config is None:
             config = GenerationConfig()
@@ -587,7 +588,7 @@ class TogetherAdapter(BaseModel):
             GenerationResult whose ``metadata["tool_calls"]`` contains parsed calls.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("TogetherAdapter not loaded. Call load() first.")
+            raise not_loaded_error("together", self.model_name, "generate_with_tools")
         if config is None:
             config = GenerationConfig()
         return self._do_generate(prompt, config, tools=tools, messages=messages, **kwargs)
@@ -604,7 +605,7 @@ class TogetherAdapter(BaseModel):
             str: Successive text chunks from the model.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("TogetherAdapter not loaded. Call load() first.")
+            raise not_loaded_error("together", self.model_name, "generate_stream")
 
         if config is None:
             config = GenerationConfig()

@@ -19,7 +19,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
+from effgen.models._adapter_utils import (
+    normalize_finish_reason,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models._multimodal import require_audio_support, require_vision_support
 from effgen.models.anthropic_cache import validate_breakpoint_count
 from effgen.models.anthropic_models import (
@@ -433,7 +437,7 @@ class AnthropicAdapter(FunctionCallingModel):
         content in subsequent calls to preserve redacted_thinking blocks.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("anthropic", self.model_name, "generate")
 
         if isinstance(prompt, str | list):
             self.validate_prompt(prompt)
@@ -538,7 +542,7 @@ class AnthropicAdapter(FunctionCallingModel):
         Redacted_thinking blocks are preserved for logging but not yielded.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("anthropic", self.model_name, "generate_stream")
 
         if isinstance(prompt, str | list):
             self.validate_prompt(prompt)
@@ -613,7 +617,7 @@ class AnthropicAdapter(FunctionCallingModel):
                     print(f"[tool] {chunk.data['name']}: {chunk.data['input']}")
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("anthropic", self.model_name, "generate_stream_full")
 
         if isinstance(prompt, str | list):
             self.validate_prompt(prompt)
@@ -773,7 +777,7 @@ class AnthropicAdapter(FunctionCallingModel):
         Multiple parallel tool_use blocks are supported.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("anthropic", self.model_name, "generate_with_tools")
 
         self.validate_prompt(prompt)
 
@@ -863,7 +867,7 @@ class AnthropicAdapter(FunctionCallingModel):
         to preserve redacted_thinking blocks and avoid 400 errors.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("anthropic", self.model_name, "generate_with_history")
 
         if config is None:
             config = GenerationConfig()
@@ -943,7 +947,7 @@ class AnthropicAdapter(FunctionCallingModel):
 
     def count_tokens(self, text: str) -> TokenCount:
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("anthropic", self.model_name, "count_tokens")
 
         try:
             response = self.client.messages.count_tokens(

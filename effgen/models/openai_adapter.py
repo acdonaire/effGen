@@ -21,7 +21,11 @@ from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any
 
-from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
+from effgen.models._adapter_utils import (
+    normalize_finish_reason,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models._multimodal import (
     require_audio_support,
     require_video_support,
@@ -398,7 +402,7 @@ class OpenAIAdapter(FunctionCallingModel):
             Transcribed text string.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("openai", self.model_name, "transcribe_audio")
 
         import io
 
@@ -573,7 +577,7 @@ class OpenAIAdapter(FunctionCallingModel):
         separate method.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("openai", self.model_name, "generate")
         if isinstance(prompt, str):
             self.validate_prompt(prompt)
         if config is None:
@@ -696,7 +700,7 @@ class OpenAIAdapter(FunctionCallingModel):
     ) -> Iterator[str]:
         """Stream completions for *prompt*, yielding text chunks."""
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("openai", self.model_name, "generate_stream")
         if isinstance(prompt, str):
             self.validate_prompt(prompt)
         if config is None:
@@ -808,7 +812,7 @@ class OpenAIAdapter(FunctionCallingModel):
             RuntimeError: For network / API errors.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("openai", self.model_name, "generate_structured")
         self.validate_prompt(prompt)
         if config is None:
             config = GenerationConfig()
@@ -888,7 +892,7 @@ class OpenAIAdapter(FunctionCallingModel):
             GenerationResult with ``metadata["cached_input_tokens"]`` populated.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("openai", self.model_name, "generate_with_system_prompt")
         self.validate_prompt(prompt)
         if config is None:
             config = GenerationConfig()
@@ -954,7 +958,7 @@ class OpenAIAdapter(FunctionCallingModel):
             **kwargs: Extra params forwarded to the API.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("openai", self.model_name, "generate_with_tools")
         if isinstance(prompt, str):
             self.validate_prompt(prompt)
         if config is None:
@@ -1064,7 +1068,7 @@ class OpenAIAdapter(FunctionCallingModel):
             GenerationResult with the final text and metadata.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("openai", self.model_name, "generate_with_native_tools")
         self.validate_prompt(prompt)
         if config is None:
             config = GenerationConfig()
@@ -1259,7 +1263,7 @@ class OpenAIAdapter(FunctionCallingModel):
             **kwargs: Extra params forwarded to the API.
         """
         if not self._is_loaded:
-            raise RuntimeError("Client not initialized. Call load() first.")
+            raise not_loaded_error("openai", self.model_name, "chat")
         if config is None:
             config = GenerationConfig()
 

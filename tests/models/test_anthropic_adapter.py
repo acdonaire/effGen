@@ -356,7 +356,7 @@ class TestGenerateMocked:
     def test_not_loaded_raises(self):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "k"}):
             adapter = AnthropicAdapter()
-        with pytest.raises(RuntimeError, match="not initialized"):
+        with pytest.raises(RuntimeError, match="Model is not loaded"):
             adapter.generate("hi")
 
 
@@ -515,7 +515,7 @@ class TestStreamingMocked:
     def test_stream_not_loaded_raises(self):
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "k"}):
             adapter = AnthropicAdapter()
-        with pytest.raises(RuntimeError, match="not initialized"):
+        with pytest.raises(RuntimeError, match="Model is not loaded"):
             list(adapter.generate_stream("hi"))
 
 

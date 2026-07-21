@@ -20,7 +20,11 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
-from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
+from effgen.models._adapter_utils import (
+    normalize_finish_reason,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -306,7 +310,7 @@ class GroqAdapter(BaseModel):
             GenerationResult with text and token usage.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("GroqAdapter not loaded. Call load() first.")
+            raise not_loaded_error("groq", self.model_name, "generate")
 
         if config is None:
             config = GenerationConfig()
@@ -345,7 +349,7 @@ class GroqAdapter(BaseModel):
     ) -> GenerationResult:
         """Async version of :meth:`generate` — preferred inside async contexts."""
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("GroqAdapter not loaded. Call load() first.")
+            raise not_loaded_error("groq", self.model_name, "async_generate")
 
         if config is None:
             config = GenerationConfig()
@@ -732,7 +736,7 @@ class GroqAdapter(BaseModel):
             GenerationResult whose ``metadata["tool_calls"]`` contains parsed calls.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("GroqAdapter not loaded. Call load() first.")
+            raise not_loaded_error("groq", self.model_name, "generate_with_tools")
         if config is None:
             config = GenerationConfig()
         return self._do_generate(prompt, config, tools=tools, messages=messages, **kwargs)
@@ -749,7 +753,7 @@ class GroqAdapter(BaseModel):
             str: Successive text chunks from the model.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("GroqAdapter not loaded. Call load() first.")
+            raise not_loaded_error("groq", self.model_name, "generate_stream")
 
         if config is None:
             config = GenerationConfig()
