@@ -253,9 +253,13 @@ class PIIGuardrail(Guardrail):
         ),
     ]
 
-    # Email address
+    # Email address. The left guard is a negative lookbehind over the local-part
+    # charset rather than ``\b``: ``\b`` matches after every ``.``/``-`` inside a
+    # long token, so a run of local-part characters with no ``@`` was re-scanned
+    # from each of those positions (quadratic work on adversarial input). With
+    # the lookbehind the scan starts only at the true start of a token.
     _EMAIL_PATTERN = re.compile(
-        r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"
+        r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"
     )
 
     # US phone: (xxx) xxx-xxxx, xxx-xxx-xxxx, xxx.xxx.xxxx, +1xxxxxxxxxx
