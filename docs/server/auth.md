@@ -39,10 +39,24 @@ key at startup, so the server is never unauthenticated by default.
 
 ## Public endpoints (no auth required)
 
-- `/health`
-- `/healthz`, `/ready`, `/livez`, `/readyz`
-- `/openapi.json`, `/docs`, `/redoc` (API schema only — no data)
-- `/metrics` (unless `EFFGEN_METRICS_AUTH=1`)
+- `/health`, `/healthz`, `/livez`, `/ready`, `/readyz` — liveness and readiness
+  probes. A trailing slash (`/health/`) names the same endpoint.
+- `/slo` — aggregate SLO burn-rate status (no request bodies, costs, or user data).
+- `/openapi.json`, `/docs`, `/redoc` — API schema only, no data.
+- `/dashboard`, `/playground` and their static assets (`.js`, `.css`, images) —
+  the page shell, so it can load and prompt for a key.
+
+Everything else requires credentials, including every `/v1` route and the data
+endpoints behind those two pages (`/dashboard/data.json`, `/dashboard/spans`,
+`/dashboard/catalog.json`, `/dashboard/history.json`, `/dashboard/topology.json`,
+`/playground/bootstrap`). `/metrics` is protected by default; set
+`EFFGEN_PUBLIC_METRICS=1` to serve it openly (`EFFGEN_METRICS_AUTH=1` forces
+auth back on). `EFFGEN_PUBLIC_DASHBOARD=1` and `EFFGEN_PUBLIC_PLAYGROUND=1` open
+the corresponding data endpoints for local viewing.
+
+A rejected request is answered with the same error envelope as the rest of the
+API: `{"error": {"message": …, "type": "invalid_request_error", "param": null,
+"code": "invalid_api_key"}}`.
 
 ---
 

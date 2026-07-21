@@ -106,8 +106,9 @@ for ev in client.chat.completions.create(
 ```
 
 A mid-stream failure is emitted as a terminal SSE event carrying an `error`
-object and `finish_reason: "error"` (redacted), not buffered into a content
-chunk.
+object and `finish_reason: "error"` (redacted), followed by `[DONE]`, rather
+than truncating the stream. Both `/v1/chat/completions` and `/v1/completions`
+behave this way.
 
 ## Tools — compatibility level
 
@@ -132,16 +133,26 @@ to the caller's RBAC policy.
 
 ## Errors
 
-Errors use the OpenAI error envelope with an accurate status and redacted
-message:
+**Every** error the server returns uses the OpenAI error envelope with an
+accurate status and a redacted message — the model routes, `/v1/embeddings`,
+the ops and RBAC routes, the dashboard and playground endpoints, the failures
+raised before a route runs (auth, rate limit, RBAC, body-size cap, request
+validation), and the ones raised outside any route (unknown URL, wrong method,
+unhandled error):
 
 ```json
 {"error": {"message": "…", "type": "model_not_found",
            "param": null, "code": "model_not_found"}}
 ```
 
-`404` model-not-found, `401` authentication, `429` rate-limit, `400` invalid
-request, `504` timeout, `500` otherwise.
+Status codes: `400` invalid request, `401` authentication, `403` RBAC denial,
+`404` model or URL not found, `405` method not allowed, `413` body too large,
+`422` request validation, `429` rate limit, `502`/`503` upstream, `504` timeout,
+`500` otherwise. Branch on `type` and `code` rather than on the message text.
+
+A request with nothing for the model to act on is refused with `400` before any
+billed call: `empty_messages` / `empty_content` on `/v1/chat/completions`,
+`empty_prompt` on `/v1/completions`, `empty_input` on `/v1/embeddings`.
 
 ## Performance
 

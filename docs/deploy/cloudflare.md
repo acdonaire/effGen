@@ -116,7 +116,8 @@ curl -I https://effgen-edge-proxy.<your-account>.workers.dev/health
 # → X-Content-Type-Options: nosniff
 
 curl -s https://effgen-edge-proxy.<your-account>.workers.dev/v1/models
-# → {"error":{"code":"unauthorized","message":"Bearer token required"}}
+# → {"error":{"message":"Bearer token required","type":"invalid_request_error",
+#             "param":null,"code":"unauthorized"}}
 
 # With a valid token
 curl -H "Authorization: Bearer $TOKEN" \
@@ -153,11 +154,17 @@ The `RATE_LIMIT` KV namespace stores fixed-window counters.  Keys are:
 These paths skip JWT validation and are forwarded directly:
 
 ```
-/health   /healthz   /metrics   /favicon.ico
+/health   /healthz   /livez   /ready   /readyz   /slo   /favicon.ico
 ```
 
-Configure your effGen backend to keep these paths public as well, or
-add your own OIDC check there.
+A trailing slash names the same endpoint (`/health/` is public too). The set
+matches the effGen server's own public endpoints, so one auth rule decides
+access at the edge and at the origin.
+
+`/metrics` is **not** in the list: the server protects it by default, and the
+Worker forwards a backend token, so exempting it at the edge would serve metrics
+to an unauthenticated caller. Scrape it with a token, or set
+`EFFGEN_PUBLIC_METRICS=1` on the backend and add the path here deliberately.
 
 ---
 
@@ -198,8 +205,12 @@ X-RateLimit-Limit: 100
 X-RateLimit-Remaining: 0
 X-RateLimit-Reset: 1716768000
 
-{"error":{"code":"rate_limit_exceeded","message":"IP rate limit: 100 req/60s"}}
+{"error":{"message":"IP rate limit: 100 req/60s","type":"rate_limit_exceeded",
+          "param":null,"code":"rate_limit_exceeded"}}
 ```
+
+Errors raised at the edge use the same `{"error": {message, type, param, code}}`
+envelope the origin server returns, so a client reads both the same way.
 
 ---
 
