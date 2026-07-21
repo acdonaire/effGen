@@ -73,7 +73,9 @@ def _is_transient_provider_error(*texts: str | None) -> bool:
 
 # ---------------------------------------------------------------------------
 # Provider × model matrix
-# Prefer small/fast/free models; one per provider.
+# Prefer small/fast/free models; one per provider. Pick an instruct model rather
+# than a reasoning model: the canonical task runs on the default token budget,
+# and a reasoning model can spend all of it before emitting a visible token.
 # ---------------------------------------------------------------------------
 
 PARITY_PARAMS = [
@@ -88,9 +90,9 @@ PARITY_PARAMS = [
         id="groq/llama-3.3-70b-versatile",
     ),
     pytest.param(
-        "together", "Qwen/Qwen3.5-9B",
+        "together", "Qwen/Qwen2.5-7B-Instruct-Turbo",
         marks=pytest.mark.skipif(not _has("TOGETHER_API_KEY"), reason="SKIPPED: TOGETHER_API_KEY not set"),
-        id="together/qwen3.5-9b",
+        id="together/qwen2.5-7b-instruct-turbo",
     ),
     pytest.param(
         "fireworks", "accounts/fireworks/models/kimi-k2p6",
@@ -235,9 +237,9 @@ NATIVE_PARAMS = [
         id="fireworks/kimi-k2p6/native",
     ),
     pytest.param(
-        "together", "Qwen/Qwen3.5-9B",
+        "together", "Qwen/Qwen2.5-7B-Instruct-Turbo",
         marks=pytest.mark.skipif(not _has("TOGETHER_API_KEY"), reason="SKIPPED: TOGETHER_API_KEY not set"),
-        id="together/qwen3.5-9b/native",
+        id="together/qwen2.5-7b-instruct-turbo/native",
     ),
     pytest.param(
         "gemini", "gemini-2.5-flash-lite",
