@@ -8,16 +8,18 @@ labelled placeholder like ``<REDACTED:openai_key>``.
 
 Built-in patterns
 -----------------
-- ``openai_key``     — ``sk-[a-zA-Z0-9]{20,}``
-- ``anthropic_key``  — ``sk-ant-[a-zA-Z0-9]{20,}``
-- ``cerebras_key``   — ``csk-[a-zA-Z0-9]{20,}``
-- ``google_key``     — ``AIza[0-9A-Za-z_-]{35}``
-- ``hf_key``         — ``hf_[a-zA-Z0-9]{20,}``
-- ``groq_key``       — ``gsk_[a-zA-Z0-9]{20,}``
-- ``replicate_key``  — ``r8_[A-Za-z0-9]{30,}``
-- ``fireworks_key``  — ``fw_[A-Za-z0-9]{20,}``
+- ``openai_key``     — ``sk-[a-zA-Z0-9_-]{20,}``
+- ``anthropic_key``  — ``sk-ant-[a-zA-Z0-9_-]{20,}``
+- ``cerebras_key``   — ``csk-[a-zA-Z0-9_-]{20,}``
+- ``google_key``     — ``AIza[0-9A-Za-z_-]{35,}``
+- ``hf_key``         — ``hf_[a-zA-Z0-9_-]{20,}``
+- ``groq_key``       — ``gsk_[a-zA-Z0-9_-]{20,}``
+- ``replicate_key``  — ``r8_[A-Za-z0-9_-]{30,}``
+- ``fireworks_key``  — ``fw_[A-Za-z0-9_-]{20,}``
+- ``github_token``   — ``github_pat_…`` / ``ghp_…`` and the other ``gh?_`` prefixes
+- ``slack_token``    — ``xox[baprs]-…``
 - ``aws_access_key`` — ``(AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[0-9A-Z]{16}``
-- ``bearer_token``   — ``Bearer [^\\s]+``
+- ``bearer_token``   — ``Bearer [^\\s]+`` (case-insensitive keyword)
 - ``slack_webhook``  — Slack incoming webhook URLs (host kept, path replaced)
 - ``discord_webhook`` — Discord webhook path
 - ``env_secret``     — generic ``*_API_KEY=…`` / ``*SECRET…=…`` / ``*TOKEN=…`` /
@@ -62,22 +64,31 @@ _REDACT = "<REDACTED:{}>"
 
 _BUILTIN_PATTERNS: list[tuple[str, str, str]] = [
     # More-specific first
+    # Every key body accepts ``_`` and ``-`` and is open-ended, so a token that
+    # is longer than the canonical length or that contains an underscore is
+    # replaced whole instead of leaving a usable tail in the log line.
     ("anthropic_key", r"sk-ant-[a-zA-Z0-9_\-]{20,}", _REDACT.format("anthropic_key")),
     ("cerebras_key",  r"csk-[a-zA-Z0-9_\-]{20,}",    _REDACT.format("cerebras_key")),
-    ("google_key",    r"AIza[0-9A-Za-z_\-]{35}",     _REDACT.format("google_key")),
-    ("hf_key",        r"hf_[a-zA-Z0-9]{20,}",         _REDACT.format("hf_key")),
+    ("google_key",    r"AIza[0-9A-Za-z_\-]{35,}",    _REDACT.format("google_key")),
+    ("hf_key",        r"hf_[a-zA-Z0-9_\-]{20,}",      _REDACT.format("hf_key")),
     ("groq_key",      r"gsk_[a-zA-Z0-9_\-]{20,}",     _REDACT.format("groq_key")),
     # Replicate API tokens: ``r8_`` + 30+ url-safe chars.
-    ("replicate_key", r"r8_[A-Za-z0-9]{30,}",         _REDACT.format("replicate_key")),
+    ("replicate_key", r"r8_[A-Za-z0-9_\-]{30,}",      _REDACT.format("replicate_key")),
     # Fireworks API keys: ``fw_`` + 20+ chars.
-    ("fireworks_key", r"fw_[A-Za-z0-9]{20,}",         _REDACT.format("fireworks_key")),
+    ("fireworks_key", r"fw_[A-Za-z0-9_\-]{20,}",      _REDACT.format("fireworks_key")),
+    # GitHub tokens: classic ``gh?_`` prefixes and fine-grained ``github_pat_``.
+    ("github_token",  r"(?:github_pat_[A-Za-z0-9_]{30,}|gh[pousr]_[A-Za-z0-9_]{30,})",
+     _REDACT.format("github_token")),
+    # Slack bot/user/app tokens.
+    ("slack_token",   r"xox[baprs]-[A-Za-z0-9\-]{10,}", _REDACT.format("slack_token")),
     # AWS access key IDs: a fixed 4-letter type prefix + 16 upper/digits.
     ("aws_access_key", r"(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[0-9A-Z]{16}",
      _REDACT.format("aws_access_key")),
     # openai key AFTER more-specific sk-ant- / csk- patterns
     ("openai_key",    r"sk-[a-zA-Z0-9_\-]{20,}",      _REDACT.format("openai_key")),
-    # Bearer token — matches "Bearer <anything non-whitespace>"
-    ("bearer_token",  r"Bearer [^\s]{6,}",            _REDACT.format("bearer_token")),
+    # Bearer token — matches "Bearer <anything non-whitespace>", in any case
+    # (an HTTP header dump may carry "bearer" or "BEARER").
+    ("bearer_token",  r"(?i:Bearer) [^\s]{6,}",       _REDACT.format("bearer_token")),
     # Slack incoming webhook: keep host, mask path
     ("slack_webhook", r"https://hooks\.slack\.com/services/[A-Za-z0-9/]+",
      _REDACT.format("slack_webhook")),
