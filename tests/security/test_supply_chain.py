@@ -9,15 +9,19 @@ Validates:
 3. Version-drift detection works (installs a fake package, checks detection).
 4. EFFGEN_VERIFY_HASHES=1 triggers verification on import effgen.
 5. Clean environments pass without warnings.
+6. The compiled lockfiles pin versions the declared specifiers allow.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import warnings
 from pathlib import Path
 
 import pytest
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 try:  # tomllib is stdlib on Python 3.11+
     import tomllib
@@ -405,8 +409,182 @@ class TestStartupHook:
 
 
 # ---------------------------------------------------------------------------
-# 5. Lockfile exists
+# 5. Lockfiles
 # ---------------------------------------------------------------------------
+
+_REGEN = "python scripts/gen_locks.py"
+
+
+def _lock_pins(lockfile: Path) -> dict[str, str]:
+    """Map normalised package name -> pinned version from a compiled lockfile.
+
+    Handles both the hash-pinned core lock (``name==X \\``) and the plain
+    ``[all]`` constraints lock (``name==X``).
+    """
+    pins: dict[str, str] = {}
+    for raw in lockfile.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("--hash"):
+            continue
+        match = re.match(r"^([A-Za-z0-9._-]+)==([^\s\\;]+)", line)
+        if match:
+            pins[canonicalize_name(match.group(1))] = match.group(2)
+    return pins
+
+
+def _declared_requirements(extras: tuple[str, ...] = ()) -> list[Requirement]:
+    """Requirements declared in pyproject for the core deps plus ``extras``.
+
+    A lockfile is only compiled for a specific set of extras, so it is only
+    answerable for those. Self-referencing extras (``effgen[server]``) are
+    expanded so their contents are covered too.
+    """
+    with open(PYPROJECT, "rb") as fh:
+        cfg = tomllib.load(fh)
+    project = cfg.get("project", {})
+    optional = project.get("optional-dependencies", {})
+
+    by_extra = {canonicalize_name(name): specs for name, specs in optional.items()}
+
+    pending: list[str] = list(project.get("dependencies", []))
+    resolved_extras: set[str] = set()
+    for extra in extras:
+        resolved_extras.add(canonicalize_name(extra))
+        pending.extend(by_extra.get(canonicalize_name(extra), []))
+
+    requirements: list[Requirement] = []
+    while pending:
+        try:
+            req = Requirement(pending.pop())
+        except InvalidRequirement:  # pragma: no cover - defensive
+            continue
+        if canonicalize_name(req.name) == "effgen":
+            for extra in req.extras:
+                key = canonicalize_name(extra)
+                if key not in resolved_extras:
+                    resolved_extras.add(key)
+                    pending.extend(by_extra.get(key, []))
+            continue
+        requirements.append(req)
+    return requirements
+
+
+class TestLockfilePinsSatisfyDeclaredFloors:
+    """A compiled lockfile must never pin a version the project has ruled out.
+
+    Version floors in ``pyproject.toml`` are how a dependency with a published
+    advisory is kept out of an install. A lockfile that was compiled before a
+    floor was raised still pins the affected release, so an install driven by
+    the lock silently gets the version the floor excludes. Both lockfiles are
+    checked against every declared specifier (core and extras).
+    """
+
+    @pytest.mark.parametrize(
+        ("lock_name", "extras"),
+        [
+            ("requirements-lock.txt", ()),
+            ("requirements-all-lock.txt", ("all",)),
+        ],
+    )
+    def test_pins_satisfy_pyproject_specifiers(self, lock_name: str, extras: tuple[str, ...]):
+        lockfile = REPO_ROOT / lock_name
+        if not lockfile.exists():
+            pytest.skip(f"{lock_name} not found")
+
+        pins = _lock_pins(lockfile)
+        assert pins, f"{lock_name} parsed as empty — the pin format changed"
+
+        violations: list[str] = []
+        for req in _declared_requirements(extras):
+            pinned = pins.get(canonicalize_name(req.name))
+            if pinned is None or not req.specifier:
+                continue
+            if not req.specifier.contains(pinned, prereleases=True):
+                violations.append(f"{req.name}: locked {pinned}, declared {req.specifier}")
+
+        assert not violations, (
+            f"{lock_name} pins versions excluded by pyproject.toml:\n  "
+            + "\n  ".join(sorted(violations))
+            + f"\nRegenerate the lockfile:\n  {_REGEN}"
+        )
+
+    @pytest.mark.parametrize(
+        ("lock_name", "extras"),
+        [
+            ("requirements-lock.txt", ()),
+            ("requirements-all-lock.txt", ("all",)),
+        ],
+    )
+    def test_declared_packages_are_locked(self, lock_name: str, extras: tuple[str, ...]):
+        """Every unconditional declared dependency appears in the lockfile.
+
+        A dependency added to ``pyproject.toml`` after the lockfile was last
+        compiled is absent from it, so a constrained install resolves that one
+        package freely. Requirements carrying an environment marker are skipped
+        because they resolve per platform.
+        """
+        lockfile = REPO_ROOT / lock_name
+        if not lockfile.exists():
+            pytest.skip(f"{lock_name} not found")
+
+        pins = _lock_pins(lockfile)
+        missing = sorted(
+            req.name
+            for req in _declared_requirements(extras)
+            if req.marker is None and canonicalize_name(req.name) not in pins
+        )
+        assert not missing, (
+            f"{lock_name} is missing declared dependencies: {missing}\n"
+            f"Regenerate the lockfile:\n  {_REGEN}"
+        )
+
+
+class TestDeclaredFloorsAgreeAcrossExtras:
+    """One package must carry the same lower bound everywhere it is declared.
+
+    A floor raised past an advisory only constrains the install shapes that
+    declare it. When a package is reachable from several extras, each of them
+    repeats the requirement, so raising the bound in one place and not the
+    others leaves the remaining extras resolving to the affected release. This
+    compares the lower bound of every repeated declaration and reports the ones
+    that disagree.
+    """
+
+    def test_lower_bounds_match(self):
+        with open(PYPROJECT, "rb") as fh:
+            cfg = tomllib.load(fh)
+        project = cfg.get("project", {})
+
+        # {package: {location: lower-bound}}
+        bounds: dict[str, dict[str, str]] = {}
+        sources = [("project.dependencies", project.get("dependencies", []))]
+        sources += list(project.get("optional-dependencies", {}).items())
+
+        for location, specs in sources:
+            for spec in specs:
+                try:
+                    req = Requirement(spec)
+                except InvalidRequirement:  # pragma: no cover - defensive
+                    continue
+                if canonicalize_name(req.name) == "effgen":
+                    continue
+                lower = sorted(
+                    s.version for s in req.specifier if s.operator in (">=", ">", "==")
+                )
+                if lower:
+                    bounds.setdefault(canonicalize_name(req.name), {})[location] = ",".join(lower)
+
+        disagreements = [
+            f"{name}: " + ", ".join(f"{loc} {bound}" for loc, bound in sorted(places.items()))
+            for name, places in sorted(bounds.items())
+            if len(set(places.values())) > 1
+        ]
+        assert not disagreements, (
+            "pyproject.toml declares different lower bounds for the same package:\n  "
+            + "\n  ".join(disagreements)
+            + "\nRaise every declaration to the highest bound — an extra that keeps "
+            "the old one still resolves to it."
+        )
 
 
 class TestLockfilePresent:
@@ -416,8 +594,7 @@ class TestLockfilePresent:
         lockfile = REPO_ROOT / "requirements-lock.txt"
         assert lockfile.exists(), (
             "requirements-lock.txt not found. Generate it with:\n"
-            "  pip-compile --generate-hashes --strip-extras pyproject.toml "
-            "--output-file requirements-lock.txt"
+            f"  {_REGEN}"
         )
 
     def test_lockfile_has_hashes(self):
