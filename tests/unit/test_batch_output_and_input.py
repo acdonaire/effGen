@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import json
 
+import pytest
 from pydantic import BaseModel
 
 from effgen.core.agent import AgentResponse
@@ -198,14 +199,28 @@ def test_read_queries_explicit_field_wins_over_alias(tmp_path):
 
 
 def test_read_queries_reports_empty_row_with_keys(tmp_path):
+    # A row carrying no query text is reported with the fields it did have and
+    # is not returned as an empty query. With no usable row left, the read fails
+    # instead of sending empty prompts to the model.
     p = tmp_path / "in.jsonl"
     p.write_text('{"note": "hi", "id": 3}\n')
+    empties: list[tuple[int, list[str]]] = []
+    with pytest.raises(ValueError, match="No queries found"):
+        BatchRunner._read_queries(
+            p, "query", on_empty=lambda ln, keys: empties.append((ln, keys)),
+        )
+    assert empties == [(1, ["id", "note"])]
+
+
+def test_read_queries_empty_row_dropped_but_others_kept(tmp_path):
+    p = tmp_path / "in.jsonl"
+    p.write_text('{"note": "hi"}\n{"query": "real"}\n')
     empties: list[tuple[int, list[str]]] = []
     queries = BatchRunner._read_queries(
         p, "query", on_empty=lambda ln, keys: empties.append((ln, keys)),
     )
-    assert queries == [""]
-    assert empties == [(1, ["id", "note"])]
+    assert queries == ["real"]
+    assert empties == [(1, ["note"])]
 
 
 def test_read_queries_alias_resolution_in_csv(tmp_path):
