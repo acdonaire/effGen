@@ -105,62 +105,29 @@ from tests.fixtures.mock_models import MockModel, MockStreamingModel, MockToolCa
 # ---------------------------------------------------------------------------
 # ProviderRegistry isolation (suite order-independence).
 #
-# Several model tests reset the global ProviderRegistry singleton in their own
-# teardown. Because the adapter modules are imported only once per process,
-# they do not self-register again, so a bare reset() leaves the registry EMPTY
-# for every test that runs afterwards. Capability-gating lookups then return an
-# empty set() and fail only when the suite runs in a particular order (the same
-# tests pass in isolation).
+# The provider registry is a process-wide singleton, and tests edit it: they
+# register fake providers, empty it, trip a provider's circuit breaker, or
+# adjust a capability set. None of that may change what a later test sees, and
+# a test that only fails after some other test ran is expensive to diagnose.
 #
-# This autouse fixture restores the full provider catalog at the START of every
-# test, so the offline suite is order-independent regardless of what a previous
-# test left behind. It is defined in the root conftest, so it is set up before
-# any module-level reset fixture and torn down after it; restoring at setup also
-# makes it immune to teardown ordering — tests that deliberately reset to an
-# empty registry (e.g. tests/models/test_auth_check.py) still get their empty
-# registry because their own fixture runs after this one.
+# This autouse fixture reinstalls a full copy of the provider catalog at the
+# START of every test, so each one begins from the same state no matter what
+# ran before it. Restoring at setup (rather than teardown) also makes it
+# independent of fixture teardown order: a test that deliberately wants an
+# empty registry still gets one, because its own fixture runs after this one.
+# ProviderRegistry.snapshot()/restore() copy the per-provider records, so edits
+# made *inside* a record — a tripped circuit breaker, an added or removed model,
+# a cleared capability set — do not survive either; a model catalog is put back
+# in the dict the adapter module reads, so the two cannot drift apart.
 # ---------------------------------------------------------------------------
-
-def _force_register_all_providers() -> None:
-    """Re-run every adapter's ``_register()`` even if the module is already imported."""
-    from effgen.models import (
-        anthropic_adapter,
-        cerebras_adapter,
-        fireworks_adapter,
-        gemini_adapter,
-        groq_adapter,
-        hf_inference_adapter,
-        openai_adapter,
-        replicate_adapter,
-        together_adapter,
-    )
-
-    for mod in (
-        anthropic_adapter,
-        cerebras_adapter,
-        fireworks_adapter,
-        gemini_adapter,
-        groq_adapter,
-        hf_inference_adapter,
-        openai_adapter,
-        replicate_adapter,
-        together_adapter,
-    ):
-        register = getattr(mod, "_register", None)
-        if callable(register):
-            register()
-
 
 @pytest.fixture(scope="session")
 def _provider_registry_snapshot():
-    """Canonical full snapshot of the provider catalog, captured once per session."""
+    """Canonical copy of the provider catalog, captured once per session."""
     from effgen.models.registry import ProviderRegistry
 
-    _force_register_all_providers()
-    return {
-        "providers": dict(ProviderRegistry._providers),
-        "model_index": {k: list(v) for k, v in ProviderRegistry._model_index.items()},
-    }
+    ProviderRegistry.register_builtins()
+    return ProviderRegistry.snapshot()
 
 
 @pytest.fixture(autouse=True)
@@ -168,12 +135,44 @@ def _restore_provider_registry(_provider_registry_snapshot):
     """Restore the full ProviderRegistry before every test (order-independence)."""
     from effgen.models.registry import ProviderRegistry
 
-    ProviderRegistry._providers.clear()
-    ProviderRegistry._providers.update(_provider_registry_snapshot["providers"])
-    ProviderRegistry._model_index.clear()
-    ProviderRegistry._model_index.update(
-        {k: list(v) for k, v in _provider_registry_snapshot["model_index"].items()}
-    )
+    ProviderRegistry.restore(_provider_registry_snapshot)
+    yield
+
+
+# ---------------------------------------------------------------------------
+# "Warn once per process" records (suite order-independence).
+#
+# Several heads-up messages are emitted at most once per process, keyed on what
+# they are about, so a long run does not repeat them. The record of what has
+# already been said is module-level state: whichever test triggers the message
+# first sees it, and a test that asserts the same message later sees nothing.
+# Clearing the records before every test makes each one observe the warnings it
+# actually triggers, whatever ran before it.
+# ---------------------------------------------------------------------------
+
+_WARN_ONCE_RECORDS = (
+    ("effgen.core._compat", "_warned_drift"),
+    ("effgen.core.agent_generation", "_reasoning_budget_warned"),
+    ("effgen.core.agent_runtime", "_tool_output_injection_gap_warned"),
+    ("effgen.presets.registry", "_tool_overhead_warned"),
+    ("effgen.ui.theme", "_warned_unknown"),
+    ("effgen.gpu.cuda_compat", "_warned"),
+    ("effgen.security.sandbox", "_subprocess_fallback_warned"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_warn_once_records():
+    """Let every test see the one-time warnings it triggers itself."""
+    for module_name, attr in _WARN_ONCE_RECORDS:
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        record = getattr(module, attr, None)
+        if isinstance(record, set):
+            record.clear()
+        elif isinstance(record, bool):
+            setattr(module, attr, False)
     yield
 
 
@@ -421,7 +420,16 @@ def pytest_collection_modifyitems(config, items):
     e2e tests load models with bitsandbytes 4-bit quantization; their CUDA state
     historically deadlocked the integration streaming tests when they ran first,
     so e2e is sorted to the end of the session.
+
+    Setting ``EFFGEN_TEST_REVERSE_ORDER=1`` reverses collection order first, so
+    every module runs before the modules it normally follows. That is a cheap,
+    deterministic way to surface a test that only passes because of what ran
+    before it; the order-independence CI lane uses it alongside the shuffled
+    runs. The e2e bucket still sorts to the end.
     """
+    if os.environ.get("EFFGEN_TEST_REVERSE_ORDER") == "1":
+        items.reverse()
+
     for item in items:
         p = _norm_path(item)
         for needle, marker in _DIR_MARKERS.items():
