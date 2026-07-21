@@ -70,7 +70,7 @@ The hook is configured in `.pre-commit-config.yaml` and uses `.gitleaks.toml` fo
 |----------|---------|
 | Cerebras | `csk-...` / `CEREBRAS_API_KEY=...` |
 | Groq | `gsk_...` |
-| OpenAI | `sk-proj-...` |
+| OpenAI | `sk-proj-...` / `sk-svcacct-...` |
 | Anthropic | `sk-ant-api03-...` |
 | Google Gemini | `AIza...` |
 | HuggingFace | `hf_...` |

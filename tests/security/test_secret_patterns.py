@@ -100,6 +100,7 @@ class TestPlantedSecretsDetected:
     # Realistic-looking (non-sequential) fake key materials for testing only
     _GROQ_KEY = "gsk_3f8b2c9d1e7a4f6b0c5d8e2a9b4f7c1d3e6a8b2c5f9d1e4a7b0c3f6e9b2d5a8"
     _OPENAI_PROJ_KEY = "sk-proj-3f8b2c9d1e7a4f6b0c5d8e2a9b4f7c1d3e6a8b2c5f9d"
+    _OPENAI_SVCACCT_KEY = "sk-svcacct-3f8b2c9d1e7a4f6b0c5d8e2a9b4f7c1d3e6a8b2c5f9d"
     _ANTHROPIC_KEY = "sk-ant-api03-3f8b2c9d1e7a4f6b0c5d8e2a9b4f7c1d3e6a8b2c5f9"
     _HF_TOKEN = "hf_3f8b2c9d1e7a4f6b0c5d8e2a9b4f7c1d3e6a"
     _REPLICATE_TOKEN = "r8_3f8b2c9d1e7a4f6b0c5d8e2a9b4f7c1d3e6a8b"
@@ -122,6 +123,16 @@ class TestPlantedSecretsDetected:
         secret_file.write_text(f'OPENAI_API_KEY = "{self._OPENAI_PROJ_KEY}"\n')
         exit_code, findings = _run_gitleaks_detect(tmp_path)
         assert exit_code != 0, "gitleaks should have detected the planted OpenAI project key"
+
+    @skip_if_no_gitleaks
+    def test_openai_service_account_key_detected(self, tmp_path):
+        """An OpenAI service-account key (sk-svcacct-...) must be detected."""
+        secret_file = tmp_path / "settings.py"
+        secret_file.write_text(f'OPENAI_API_KEY = "{self._OPENAI_SVCACCT_KEY}"\n')
+        exit_code, findings = _run_gitleaks_detect(tmp_path)
+        assert exit_code != 0, (
+            "gitleaks should have detected the planted OpenAI service-account key"
+        )
 
     @skip_if_no_gitleaks
     def test_anthropic_api_key_detected(self, tmp_path):

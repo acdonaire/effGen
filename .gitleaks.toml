@@ -48,6 +48,12 @@ regex = '''sk-proj-[A-Za-z0-9_\-]{20,}'''
 tags = ["openai", "api-key", "effgen"]
 
 [[rules]]
+id = "effgen-openai-service-account-key"
+description = "OpenAI API Key (service-account key)"
+regex = '''sk-svcacct-[A-Za-z0-9_\-]{20,}'''
+tags = ["openai", "api-key", "effgen"]
+
+[[rules]]
 id = "effgen-openai-legacy-key"
 description = "OpenAI Legacy API Key"
 regex = '''sk-[A-Za-z0-9]{48}'''
