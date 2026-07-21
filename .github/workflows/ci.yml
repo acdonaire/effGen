@@ -143,7 +143,8 @@ jobs:
     # catch cross-directory test pollution (a test that only fails depending on
     # what ran before it — e.g. a teardown that empties a global registry, or an
     # import that mutates sys.path). This job runs the WHOLE offline suite in a
-    # single process, then again in a randomized order, so such isolation
+    # single process four times — fixed order, a fresh shuffle, a shuffle pinned
+    # to a fixed seed, and reversed collection order — so such isolation
     # regressions fail CI instead of flaking a future release run.
     name: Order-independence (single-process offline suite)
     runs-on: ubuntu-latest
@@ -180,6 +181,29 @@ jobs:
           pytest tests \
             -m "not gpu and not api and not live and not docker and not expensive" \
             -o "addopts=" -p randomly --tb=short -q
+
+      - name: Full offline suite, single process (pinned shuffle)
+        # A second shuffle, seeded the same way on every run. The step above
+        # samples a new order each time (good for finding coupling, but a
+        # failure there is a new order every run); this one is the same order
+        # for everybody, so a failure is reproducible from the seed alone and
+        # stays failing until it is fixed.
+        run: |
+          pytest tests \
+            -m "not gpu and not api and not live and not docker and not expensive" \
+            -o "addopts=" -p randomly --randomly-seed=20260720 --tb=short -q
+
+      - name: Full offline suite, single process (reversed order)
+        # Deterministic counterpart to the shuffles: every module now runs
+        # before the modules it normally follows, which is where teardown
+        # pollution shows up. tests/e2e still runs last (its CUDA state is not
+        # safe to run before the streaming tests).
+        env:
+          EFFGEN_TEST_REVERSE_ORDER: "1"
+        run: |
+          pytest tests \
+            -m "not gpu and not api and not live and not docker and not expensive" \
+            --tb=short -q
 
   security:
     name: Security Scan
