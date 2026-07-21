@@ -78,6 +78,9 @@ dependencies = [
     # google-api-python-client; 0.32.0 is the first release that clears
     # PYSEC-2026-3444.
     "httplib2>=0.32.0",
+    # pyasn1 reaches the base install through google-auth -> pyasn1-modules;
+    # 0.6.4 is the first release that clears CVE-2026-59885/-59886.
+    "pyasn1>=0.6.4",
     # Configuration Management
     "pyyaml>=6.0.1",
     "jsonschema>=4.19.0",

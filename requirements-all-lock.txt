@@ -281,7 +281,7 @@ fsspec==2024.6.1
     #   torch
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.50
+gitpython==3.1.53
     # via wandb
 google-ai-generativelanguage==0.6.15
     # via google-generativeai
@@ -830,8 +830,10 @@ py-serializable==2.1.0
     # via cyclonedx-python-lib
 pyarrow==24.0.0
     # via datasets
-pyasn1==0.6.3
-    # via pyasn1-modules
+pyasn1==0.6.4
+    # via
+    #   effgen (pyproject.toml)
+    #   pyasn1-modules
 pyasn1-modules==0.4.2
     # via google-auth
 pybase64==1.4.3
