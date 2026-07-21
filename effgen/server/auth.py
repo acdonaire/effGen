@@ -8,9 +8,16 @@ Configurable via environment variables:
   EFFGEN_OIDC_JWKS_URI     — JWKS endpoint (auto-discovered if omitted)
   EFFGEN_DEV_MODE          — set to "1" to disable auth (loud warning)
 
-Public endpoints (no JWT required by default):
-  /health
-  /metrics   (can be protected via EFFGEN_METRICS_AUTH=1)
+Public endpoints (no JWT required):
+  /health, /healthz, /livez, /ready, /readyz  — liveness and readiness probes
+  /slo                                        — aggregate burn-rate status
+  /openapi.json, /docs, /redoc                — API schema, no data
+  /dashboard, /playground and their static assets — the page shells
+
+Everything else requires credentials, /metrics included; set
+EFFGEN_PUBLIC_METRICS=1 to serve metrics without auth (EFFGEN_METRICS_AUTH=1
+forces auth back on). A rejected request is answered with the server's shared
+``{"error": {message, type, param, code}}`` envelope.
 """
 from __future__ import annotations
 
@@ -340,6 +347,19 @@ _DASHBOARD_DATA_PATHS: frozenset[str] = frozenset({
     "/dashboard/topology.json",
 })
 
+
+def _is_public_path(path: str, public_paths: frozenset[str]) -> bool:
+    """Return True when *path* names one of the always-public endpoints.
+
+    A trailing slash is ignored, so ``/health/`` is the probe endpoint and not
+    an unknown protected path — the router redirects the two spellings to the
+    same route, and a probe configured either way behaves the same.
+    """
+    if path in public_paths:
+        return True
+    return len(path) > 1 and path.endswith("/") and path.rstrip("/") in public_paths
+
+
 # File extensions treated as inert static dashboard assets.
 _STATIC_ASSET_SUFFIXES: tuple[str, ...] = (
     ".js", ".css", ".html", ".png", ".svg", ".ico", ".map", ".woff", ".woff2",
@@ -400,7 +420,7 @@ def get_auth_dependency():  # noqa: ANN201
         credentials: HTTPAuthorizationCredentials | None = None,
     ) -> TokenPayload | None:
         # Public paths are exempt
-        if request.url.path in _PUBLIC_PATHS:
+        if _is_public_path(request.url.path, _PUBLIC_PATHS):
             return None
 
         # Dev-mode bypass
@@ -548,7 +568,12 @@ class AuthMiddleware:
         )
         _is_playground = _is_playground_public or _is_playground_static(path)
         _dev = self._effective_dev_mode()
-        if path in self.public_paths or _is_dashboard or _is_playground or _dev:
+        if (
+            _is_public_path(path, self.public_paths)
+            or _is_dashboard
+            or _is_playground
+            or _dev
+        ):
             if _dev:
                 scope.setdefault("state", {})["user"] = TokenPayload(
                     sub="dev-user",
