@@ -93,8 +93,130 @@ def test_extract_roundtrips_real_json(value, wrap: str) -> None:
     # Objects/arrays must be found; bare scalars are not "the first {/[".
     if isinstance(value, dict | list) and value != {} and value != []:
         assert isinstance(result, str)
-        # Extracted text is cleanable and re-parseable.
-        assert json.loads(result) == value or isinstance(json.loads(result), type(value))
+        # Extracted text re-parses to exactly the value that went in.
+        assert json.loads(result) == value
+
+
+# Object keys and string values built from the characters that make extraction
+# hard: quotes, braces, brackets, commas, colons, backslashes, backticks.
+_TRICKY_TEXT = st.text(alphabet=st.sampled_from(list('{}[]",:`\\ \nabZ09')), max_size=24)
+
+_TRICKY_OBJECTS = st.dictionaries(
+    st.text(alphabet=st.sampled_from(list('abZ09,:{} "')), min_size=1, max_size=8),
+    st.recursive(
+        st.none() | st.booleans() | st.integers(-(10**9), 10**9) | _TRICKY_TEXT,
+        lambda c: st.lists(c, max_size=4) | st.dictionaries(_TRICKY_TEXT, c, max_size=4),
+        max_leaves=10,
+    ),
+    min_size=1,
+    max_size=5,
+)
+
+_EMBEDDINGS = st.sampled_from([
+    "{body}",
+    "```json\n{body}\n```",
+    "```\n{body}\n```",
+    "```JSON\n{body}\n```",
+    "Sure — here is the result:\n{body}\nLet me know if that helps.",
+    "```json\n{body}\n```\nThat covers it.",
+    "Answer (note: the shape is {stuff}):\n{body}",
+])
+
+
+@settings(max_examples=600, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(_TRICKY_OBJECTS, _EMBEDDINGS)
+def test_extract_preserves_string_contents(value, wrap: str) -> None:
+    """Extraction returns the model's JSON byte-for-byte in meaning.
+
+    A string value holding a comma, colon, brace, bracket, or backtick is data,
+    not syntax: the extracted text must re-parse to exactly the object that was
+    embedded, never a "repaired" variant.
+    """
+    text = wrap.replace("{stuff}", "...").format(body=json.dumps(value))
+    result = extract_json_from_text(text)
+    assert isinstance(result, str)
+    assert json.loads(result) == value
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"note": "first, then: go"}',
+        '{"note": "a,] b"}',
+        '{"note": "use {a: 1} as the shape"}',
+        '{"note": "trailing, }"}',
+        '{"code": "```json"}',
+        '{"quoted": "he said \\"go, now: fast\\""}',
+        '```json\n{"note": "first, then: go"}\n```',
+    ],
+)
+def test_extract_does_not_rewrite_valid_json(text: str) -> None:
+    """Text that already parses as JSON comes back unchanged."""
+    expected = json.loads(extract_json_from_text(text) or "null")
+    embedded = json.loads(text[text.index("{"):text.rindex("}") + 1])
+    assert expected == embedded
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # Backticks inside the JSON's own keys/values are data, not a fence.
+        ('{"9": [{"```": null}], "0": []}', {"9": [{"```": None}], "0": []}),
+        ('{"tip": "wrap it in ```json ... ```"}', {"tip": "wrap it in ```json ... ```"}),
+        # A real fence still wins over a stray brace in the prose before it.
+        ('intro { not json } ```json\n{"real": 1}\n```', {"real": 1}),
+        ('```json\n{"```": null}\n```', {"```": None}),
+    ],
+)
+def test_extract_fence_versus_backticks_in_data(raw: str, expected) -> None:
+    """A fence is honoured; backticks belonging to the JSON payload are not."""
+    out = extract_json_from_text(raw)
+    assert out is not None
+    assert json.loads(out) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('{"a": 1,}', {"a": 1}),
+        ('{a: 1}', {"a": 1}),
+        ('{a: "x", b: [1, 2,],}', {"a": "x", "b": [1, 2]}),
+        ('{"a": {b: 2,}}', {"a": {"b": 2}}),
+        ('```json\n{"items": [1, 2,],}\n```', {"items": [1, 2]}),
+    ],
+)
+def test_extract_still_repairs_common_defects(raw: str, expected) -> None:
+    """Trailing commas and unquoted keys are still repaired outside strings."""
+    out = extract_json_from_text(raw)
+    assert out is not None
+    assert json.loads(out) == expected
+
+
+@settings(max_examples=400, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(_TRICKY_OBJECTS, st.integers(min_value=1, max_value=400))
+def test_extract_truncated_json_never_crashes_or_invents(value, cut: int) -> None:
+    """A response cut off mid-JSON returns None or a real prefix — never invented data.
+
+    Truncation must never produce a *plausible but wrong* object. Whatever comes
+    back has to be an object or array that was genuinely present in the text
+    that survived, so the caller either gets real data or a parse failure it can
+    act on — not a silently short answer.
+    """
+    body = json.dumps(value)
+    truncated = f"```json\n{body[:cut]}"
+    result = extract_json_from_text(truncated)
+    if result is None:
+        return
+    assert isinstance(result, str)
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError:
+        return  # A clear parse failure is the acceptable other outcome.
+    # It parsed, so the balanced region was complete in the surviving text.
+    assert isinstance(parsed, dict | list)
+    # A complete top-level object can only have come from an untruncated body.
+    if cut >= len(body):
+        assert parsed == value
 
 
 @settings(max_examples=400, suppress_health_check=[HealthCheck.too_slow])
@@ -196,7 +318,7 @@ def test_validate_deep_nesting_fails_closed() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_structured_outcome_honest_failure_shape() -> None:
+def test_structured_outcome_failure_shape() -> None:
     """A failed outcome preserves raw text and an error — never a silent empty success."""
     outcome = StructuredOutcome(
         success=False, attempts=3, method="reprompt",

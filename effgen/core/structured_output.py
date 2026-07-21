@@ -180,21 +180,41 @@ def extract_json_from_text(text: str) -> str | None:
     Returns:
         Extracted JSON string, or None if not found.
     """
+    # The first bracket-balanced object/array anywhere in the text, used both as
+    # the fallback and to tell a real code fence from backticks that are part of
+    # the JSON's own data.
+    span = _find_balanced(text)
+
     # Prefer a markdown code fence: locate the fence *opener* and scan the text
     # that follows for a bracket-balanced object/array (string-aware). We do not
     # rely on a lazy ``...```...``` regex to delimit the content, because a fence
     # whose own JSON contains a ``` (e.g. as a string value) would be truncated
     # at that inner backtick. The fence is a strong "JSON is here" signal, so it
     # takes priority over a stray brace earlier in surrounding prose.
-    opener = re.search(r'```(?:json)?[ \t]*\n?', text)
-    if opener:
-        balanced = _extract_balanced(text[opener.end():])
-        if balanced is not None:
-            return _clean_json(balanced)
+    opener = re.search(r'```[ \t]*(?:json|JSON)?[ \t]*\r?\n?', text)
+    if opener is not None:
+        # Backticks *inside* a JSON value that already parses are data, not a
+        # fence — scanning from them would return a fragment of that object.
+        backticks_are_data = (
+            span is not None
+            and span[0] <= opener.start() < span[1]
+            and _parses_as_json(text[span[0]:span[1]])
+        )
+        if not backticks_are_data:
+            balanced = _extract_balanced(text[opener.end():])
+            if balanced is not None:
+                return _clean_json(balanced)
 
-    # No usable fence: find the first balanced JSON object/array anywhere.
-    balanced = _extract_balanced(text)
-    return _clean_json(balanced) if balanced is not None else None
+    return _clean_json(text[span[0]:span[1]]) if span is not None else None
+
+
+def _parses_as_json(text: str) -> bool:
+    """Whether *text* is already valid JSON."""
+    try:
+        json.loads(text)
+    except (ValueError, TypeError):
+        return False
+    return True
 
 
 def _extract_balanced(text: str) -> str | None:
@@ -204,6 +224,15 @@ def _extract_balanced(text: str) -> str | None:
     Starts from whichever opening bracket appears *earliest* so a top-level
     array of objects (``[{...}]``) is extracted whole rather than collapsing to
     its first inner object.
+    """
+    span = _find_balanced(text)
+    return text[span[0]:span[1]] if span is not None else None
+
+
+def _find_balanced(text: str) -> tuple[int, int] | None:
+    """Return the ``(start, end)`` span of the first balanced object/array.
+
+    ``end`` is exclusive. Returns ``None`` when nothing balances.
     """
     brace = text.find("{")
     bracket = text.find("[")
@@ -244,17 +273,70 @@ def _extract_balanced(text: str) -> str | None:
             elif c == end_char:
                 depth -= 1
                 if depth == 0:
-                    return text[start:i + 1]
+                    return start, i + 1
     return None
 
 
+def _split_string_literals(text: str) -> list[tuple[str, bool]]:
+    """Split *text* into ``(segment, is_string_literal)`` spans.
+
+    A span is marked as a string literal when it is a double-quoted JSON string
+    (escapes honoured). An unterminated trailing quote marks the rest of the
+    text as a literal, so a repair never edits what looks like string content.
+    """
+    spans: list[tuple[str, bool]] = []
+    start = 0
+    i = 0
+    n = len(text)
+    in_string = False
+    while i < n:
+        c = text[i]
+        if in_string:
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                spans.append((text[start:i + 1], True))
+                start = i + 1
+                in_string = False
+        elif c == '"':
+            if start < i:
+                spans.append((text[start:i], False))
+            start = i
+            in_string = True
+        i += 1
+    if start < n:
+        spans.append((text[start:], in_string))
+    return spans
+
+
 def _clean_json(text: str) -> str:
-    """Clean common JSON issues from SLM output."""
-    # Remove trailing commas before } or ]
-    text = re.sub(r',\s*([}\]])', r'\1', text)
-    # Quote unquoted keys
-    text = re.sub(r'(?<=[{,])\s*([a-zA-Z_]\w*)\s*:', r' "\1":', text)
-    return text
+    """Repair the two JSON defects small models commonly emit.
+
+    Removes a trailing comma before ``}``/``]`` and quotes an unquoted object
+    key. Text that already parses as JSON is returned byte-for-byte unchanged,
+    and both repairs are applied only outside string literals — so a string
+    value containing a comma, colon, or bracket (``{"note": "first, then: go"}``)
+    keeps its exact content.
+    """
+    try:
+        json.loads(text)
+    except (ValueError, TypeError):
+        pass
+    else:
+        return text
+
+    out: list[str] = []
+    for segment, is_literal in _split_string_literals(text):
+        if is_literal:
+            out.append(segment)
+            continue
+        # Remove trailing commas before } or ]
+        segment = re.sub(r',\s*([}\]])', r'\1', segment)
+        # Quote unquoted keys
+        segment = re.sub(r'(?<=[{,])\s*([a-zA-Z_]\w*)\s*:', r' "\1":', segment)
+        out.append(segment)
+    return "".join(out)
 
 
 def structured_generate(
