@@ -111,6 +111,40 @@ Resolves a model ID to `(provider_name, adapter_cls, model_info)`.
   no provider is specified.
 - Raises `KeyError` if the model ID is not found.
 
+### `ProviderRegistry.reset() -> None`
+
+Returns the registry to the state effGen starts in: every registration dropped
+— including the circuit breaker and bulkhead held per provider — and the
+built-in provider adapters registered again. Model lookups keep working
+afterwards.
+
+### `ProviderRegistry.clear() -> None`
+
+Removes every registration and leaves the registry empty. Model lookups raise
+until something registers; `reset()` brings the built-in providers back.
+
+### `ProviderRegistry.register_builtins() -> list[str]`
+
+Registers the provider adapters that ship with effGen and returns their names.
+Adapter modules register themselves the first time they are imported, so
+importing them again after the registry was emptied does nothing — this calls
+their registration hooks directly. Idempotent.
+
+### `ProviderRegistry.snapshot() -> dict` / `ProviderRegistry.restore(snapshot)`
+
+Save and put back the exact set of registrations. `restore()` also undoes edits
+made inside a provider record — an added or removed model, a changed capability
+set, a tripped circuit breaker — which makes it the way to isolate registry
+state in a test. A provider's model catalog is restored in the dict its adapter
+module defines, so the adapter and the registry agree afterwards:
+
+```python
+snapshot = ProviderRegistry.snapshot()
+ProviderRegistry.register("my_provider", MyAdapter, MY_MODELS, env_keys=["MY_KEY"])
+...
+ProviderRegistry.restore(snapshot)
+```
+
 ## `check_keys(providers=None) -> dict`
 
 Returns a mapping of `provider → {available, env_key, env_keys_checked}`.

@@ -116,12 +116,35 @@ pip install -e ".[dev]"
 pytest tests -m "not gpu and not api and not live and not docker and not expensive" -p randomly -q
 # Reproduce a specific order (use the seed printed in the failing run's header)
 pytest tests -p randomly --randomly-seed=12345 -m "not gpu and not api and not live and not docker and not expensive"
+# Reversed collection order: deterministic, and every module runs before the
+# modules it normally follows (tests/e2e still runs last).
+EFFGEN_TEST_REVERSE_ORDER=1 pytest tests -m "not gpu and not api and not live and not docker and not expensive" -q
 ```
 
-The other lanes opt out of shuffling with `-p no:randomly` so their order stays
-fixed and reproducible. Global isolation is enforced in `tests/conftest.py`: an
-autouse fixture restores the full `ProviderRegistry` before every test, so a
-teardown that empties it can no longer poison later tests.
+The CI job runs four passes: fixed order, a fresh shuffle, a shuffle pinned to a
+fixed seed (so a failure is reproducible from the seed alone and keeps failing
+until it is fixed), and the reversed order. The other lanes opt out of shuffling
+with `-p no:randomly` so their order stays fixed and reproducible.
+
+Global isolation is enforced in `tests/conftest.py`: an autouse fixture
+reinstalls the full provider catalog before every test via
+`ProviderRegistry.snapshot()`/`restore()`, so neither a teardown that empties the
+registry nor an edit made inside a provider record — a tripped circuit breaker,
+an added or removed model, a cleared capability set — reaches the tests that run
+next. `tests/unit/test_registry_isolation.py` guards that guarantee, including
+two cases that run pytest in a subprocess over a polluting module followed by a
+checking one. A second autouse fixture clears the module-level "warn once per
+process" records, so a test observes the one-time messages it triggers itself
+rather than only the first test that happened to trigger them.
+
+The registry calls behind that are worth knowing when you write a test that
+touches providers:
+
+| Call | Effect |
+| --- | --- |
+| `ProviderRegistry.reset()` | Back to the state effGen starts in: the built-in providers registered, no circuit-breaker or bulkhead state. |
+| `ProviderRegistry.clear()` | Empty registry — model lookups raise until something registers. |
+| `ProviderRegistry.snapshot()` / `.restore(snap)` | Save and put back the exact registrations, including edits made inside a provider record. |
 
 ### "Green offline" is not "release ready"
 
