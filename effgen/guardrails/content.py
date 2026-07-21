@@ -434,12 +434,18 @@ class PIIGuardrail(Guardrail):
             _record("phone", n)
 
         if self.detect_credit_card:
+            # Every Luhn-valid number is redacted, not just the first: a record
+            # listing two cards must not leave the second one in clear text.
+            seen_cards: set[str] = set()
             for match in self._CC_PATTERN.finditer(content):
-                digits_only = re.sub(r"[ -]", "", match.group())
+                number = match.group()
+                if number in seen_cards:
+                    continue
+                digits_only = re.sub(r"[ -]", "", number)
                 if self._luhn_check(digits_only):
+                    seen_cards.add(number)
                     _record("credit_card")
-                    redacted = redacted.replace(match.group(), "[CC REDACTED]")
-                    break  # one detection is enough
+                    redacted = redacted.replace(number, "[CC REDACTED]")
 
         if self.detect_ip:
             found_ip = 0
