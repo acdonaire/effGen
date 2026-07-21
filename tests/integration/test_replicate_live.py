@@ -53,7 +53,9 @@ def adapter():
     a.load()
     try:
         a.generate("Say exactly: READY")
-    except RuntimeError as exc:
+    except Exception as exc:
+        # The unfunded-account refusal reaches here as whichever typed error the
+        # adapter classified it as, not only RuntimeError.
         _xfail_if_replicate_unfunded(exc)
         raise
     yield a
@@ -79,7 +81,9 @@ def granite_adapter():
     a.load()
     try:
         a.generate("Say exactly: READY")
-    except RuntimeError as exc:
+    except Exception as exc:
+        # The unfunded-account refusal reaches here as whichever typed error the
+        # adapter classified it as, not only RuntimeError.
         _xfail_if_replicate_unfunded(exc)
         raise
     yield a
@@ -238,7 +242,7 @@ class TestReplicateLiveMultiModel:
             try:
                 try:
                     r = a.generate("Say 'hello' in exactly one word.")
-                except RuntimeError as exc:
+                except Exception as exc:
                     _xfail_if_replicate_unfunded(exc)
                     raise
                 results[model_id] = r.text
