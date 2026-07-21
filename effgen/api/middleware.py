@@ -401,7 +401,23 @@ def _install_graceful_shutdown(app: Any, timeout: float) -> None:
             if shutting_down["value"]:
                 import json as _json
 
-                body = _json.dumps({"error": "server is shutting down"}).encode()
+                message = "Server is shutting down; retry against another instance."
+                try:
+                    from effgen.api.openai_compat import error_envelope
+
+                    payload = error_envelope(
+                        503, message, code="server_shutting_down", redact=False
+                    )
+                except Exception:  # noqa: BLE001 - the drain path must not depend on the import
+                    payload = {
+                        "error": {
+                            "message": message,
+                            "type": "upstream_unavailable",
+                            "param": None,
+                            "code": "server_shutting_down",
+                        }
+                    }
+                body = _json.dumps(payload).encode()
                 await send({
                     "type": "http.response.start",
                     "status": 503,

@@ -46,6 +46,13 @@ _KNOWN_PROVIDERS: frozenset[str] = frozenset(
     }
 )
 
+# Machine-readable ``code`` for the errors the framework itself raises, so a
+# client can branch on a stable string instead of parsing the message.
+_HTTP_ERROR_CODES: dict[int, str] = {
+    404: "not_found",
+    405: "method_not_allowed",
+}
+
 # FastAPI Request must be importable at module level so route type annotations
 # resolve correctly when `from __future__ import annotations` is active.
 try:
@@ -157,14 +164,17 @@ def create_app(
         redoc_url="/redoc",
     )
 
-    # Request-validation errors (422) get the same OpenAI error envelope as model
-    # errors so an OpenAI client reads `err.type`/`err.code` uniformly instead of
-    # FastAPI's `{"detail": [...]}`. The field-level detail is folded into the
-    # message so nothing is lost.
+    # Every error this app returns — validation (422), a raised HTTPException
+    # (including the router's own 404/405), and an unhandled exception (500) —
+    # is rendered with the same `{"error": {message, type, param, code}}`
+    # envelope the model routes use, so a client branches on `err.type` /
+    # `err.code` uniformly instead of switching between that and FastAPI's
+    # `{"detail": ...}`.
     try:
         from fastapi.exceptions import RequestValidationError
+        from starlette.exceptions import HTTPException as _StarletteHTTPException
 
-        from effgen.api.openai_compat import error_envelope
+        from effgen.api.openai_compat import _classify_http, error_envelope
 
         @app.exception_handler(RequestValidationError)
         async def _validation_handler(request: Any, exc: RequestValidationError) -> Any:
@@ -179,8 +189,41 @@ def create_app(
                 status_code=422,
                 content=error_envelope(422, msg, code="invalid_request_body", redact=False),
             )
-    except Exception:  # noqa: BLE001 - validation handler is best-effort
-        logger.debug("Could not install validation exception handler", exc_info=True)
+
+        @app.exception_handler(_StarletteHTTPException)
+        async def _http_exception_handler(request: Any, exc: Any) -> Any:
+            detail = exc.detail if isinstance(exc.detail, str) else "request failed"
+            # A 404/405 from the router is about the URL, not about a model, so
+            # it is typed as an invalid request. Response headers the exception
+            # carries are part of the HTTP contract (``Allow`` on a 405,
+            # ``WWW-Authenticate`` on a 401) and survive the re-render.
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=error_envelope(
+                    exc.status_code,
+                    detail,
+                    code=_HTTP_ERROR_CODES.get(exc.status_code),
+                    error_type=(
+                        "invalid_request_error" if exc.status_code in (404, 405) else None
+                    ),
+                ),
+                headers=getattr(exc, "headers", None),
+            )
+
+        @app.exception_handler(Exception)
+        async def _unhandled_handler(request: Any, exc: Exception) -> Any:
+            logger.exception("Unhandled error serving %s", getattr(request, "url", ""))
+            status, _err_type, code = _classify_http(exc)
+            if status < 500:
+                status, code = 500, None
+            # The message is redacted before it leaves the process so an
+            # upstream error carrying a key does not reach the client.
+            return JSONResponse(
+                status_code=status,
+                content=error_envelope(status, str(exc) or exc.__class__.__name__, code=code),
+            )
+    except Exception:  # noqa: BLE001 - error handlers are best-effort
+        logger.debug("Could not install error handlers", exc_info=True)
 
     # ------------------------------------------------------------------
     # Middleware stack. ``add_middleware`` is LIFO, so the *last* added wraps
@@ -278,7 +321,7 @@ def create_app(
 
     @app.get("/metrics", tags=["ops"])
     async def metrics(request: _FastAPIRequest) -> Any:  # type: ignore[valid-type]
-        """Prometheus metrics (requires auth by default; opt out via --public-metrics)."""
+        """Prometheus metrics (requires auth by default; EFFGEN_PUBLIC_METRICS=1 opens it)."""
         try:
             from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
             from starlette.responses import Response
@@ -292,7 +335,18 @@ def create_app(
                 pass
             return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
         except ImportError:
-            return JSONResponse({"detail": "prometheus_client not installed"}, status_code=503)
+            from effgen.api.openai_compat import error_envelope
+
+            return JSONResponse(
+                error_envelope(
+                    503,
+                    "Metrics are unavailable: prometheus_client is not installed. "
+                    "Install it with `pip install 'effgen[server]'`.",
+                    code="metrics_unavailable",
+                    redact=False,
+                ),
+                status_code=503,
+            )
 
     @app.get("/slo", tags=["ops"])
     async def slo_status() -> dict[str, Any]:
@@ -331,6 +385,7 @@ def create_app(
     @app.get("/rbac/policy", tags=["auth"])
     async def rbac_policy(request: _FastAPIRequest) -> dict[str, Any]:  # type: ignore[valid-type]
         """Return the effective RBAC policy for the current principal."""
+        from effgen.api.openai_compat import error_envelope
         from effgen.server.rbac import PolicyDenied, resolve_policy
 
         user = getattr(request.state, "user", None)
@@ -338,7 +393,12 @@ def create_app(
         try:
             policy = resolve_policy(roles)
         except PolicyDenied as exc:
-            return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
+            # Same envelope the RBAC middleware returns when it denies a model
+            # call, so both denials read identically to a client.
+            return JSONResponse(
+                error_envelope(exc.status_code, str(exc), redact=False),
+                status_code=exc.status_code,
+            )
         return {
             "roles": [r.name for r in policy.roles],
             "allowed_tools": sorted(policy.allowed_tools) or ["*"],
@@ -1037,6 +1097,30 @@ def _mount_existing_routers(
         logger.debug("Embeddings router not mounted: %s", exc)
 
 
+def _asset_not_found(name: str) -> Any:
+    """Return the shared 404 error envelope for a missing web asset.
+
+    The dashboard and playground answer a missing file with the same
+    ``{"error": {message, type, param, code}}`` shape as the ``/v1`` routes, so
+    a caller never has to handle two error formats from one server.
+    """
+    from fastapi.responses import JSONResponse
+
+    from effgen.api.openai_compat import error_envelope
+
+    label = name[:100]
+    return JSONResponse(
+        error_envelope(
+            404,
+            f"{label} not found",
+            code="not_found",
+            error_type="invalid_request_error",
+            redact=False,
+        ),
+        status_code=404,
+    )
+
+
 def _resolve_web_asset(asset_path: str, *roots: Any) -> Any:
     """Resolve a static asset request against the given directories in order.
 
@@ -1091,7 +1175,7 @@ def _mount_dashboard(app: Any) -> None:
             index = static_dir / "index.html"
             if index.exists():
                 return FileResponse(str(index), media_type="text/html")
-            return JSONResponse({"detail": "dashboard not found"}, status_code=404)
+            return _asset_not_found("dashboard")
 
         # ---- /dashboard/data.json -------------------------------------------
         @router.get("/data.json", include_in_schema=False)
@@ -1189,7 +1273,7 @@ def _mount_dashboard(app: Any) -> None:
             asset = _resolve_web_asset(asset_path, static_dir, shared_dir)
             if asset is not None:
                 return FileResponse(str(asset))
-            return JSONResponse({"detail": "not found"}, status_code=404)
+            return _asset_not_found(asset_path)
 
         app.include_router(router)
         logger.info("Mounted dashboard at /dashboard")
@@ -1227,7 +1311,7 @@ def _mount_playground(app: Any) -> None:
             index = static_dir / "index.html"
             if index.exists():
                 return FileResponse(str(index), media_type="text/html")
-            return JSONResponse({"detail": "playground not found"}, status_code=404)
+            return _asset_not_found("playground")
 
         @router.get("/bootstrap", include_in_schema=False)
         async def playground_bootstrap(request: _FastAPIRequest) -> Any:  # type: ignore[valid-type]
@@ -1239,7 +1323,7 @@ def _mount_playground(app: Any) -> None:
             asset = _resolve_web_asset(asset_path, static_dir, shared_dir)
             if asset is not None:
                 return FileResponse(str(asset))
-            return JSONResponse({"detail": "not found"}, status_code=404)
+            return _asset_not_found(asset_path)
 
         app.include_router(router)
         logger.info("Mounted playground at /playground")
