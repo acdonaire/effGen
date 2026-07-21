@@ -1612,7 +1612,11 @@ class CLIInterface:
                     payload["detail"] = _EMPTY_DETAIL
                 return payload
             except Exception as exc:  # noqa: BLE001
-                return {"slos": [], "error": str(exc)}
+                # A failure is reported with the server's error envelope and a
+                # 500, not disguised as an empty result at 200.
+                from effgen.api.openai_compat import error_envelope
+
+                return JSONResponse(error_envelope(500, str(exc)), status_code=500)
 
         @app.get("/tools")
         async def list_tools_endpoint() -> Any:
@@ -1683,7 +1687,11 @@ class CLIInterface:
                             await ws.send_json({"type": "token", "content": token})
                         await ws.send_json({"type": "done"})
                     except Exception as e:  # noqa: BLE001
-                        await ws.send_json({"type": "error", "detail": str(e)})
+                        # Redacted like the HTTP error paths, so an upstream
+                        # message carrying a key never reaches the client.
+                        from effgen.api.openai_compat import _redact
+
+                        await ws.send_json({"type": "error", "detail": _redact(str(e))})
                     finally:
                         agent_instance.close()  # release per-turn agent resources
             except WebSocketDisconnect:
