@@ -209,3 +209,392 @@ def test_adapter_source_has_no_redundant_cost_key(module_name):
         f"{module_name} reintroduced a bare 'cost' metadata key; "
         "cost_usd is the canonical per-call key."
     )
+
+
+# ---------------------------------------------------------------------------
+# Error contract: every adapter reports a failure the same way
+# ---------------------------------------------------------------------------
+#
+# The two rules under test, for every provider adapter and local engine:
+#   1. a provider/runtime failure raises an error carrying ``.error_context``
+#      (so the retry layer, the agent's error record and the server envelope
+#      all read one classified shape) and never leaks a credential;
+#   2. a call made before ``load()`` fails fast instead of being retried.
+#
+# The failure is injected at the client boundary rather than mocked at the
+# adapter's own API, so each adapter's real error-handling code runs.
+
+_SECRET = "sk-proj-abcdEFGH0123456789abcdEFGH0123456789abcdEF12"
+
+
+class _FakeSDKError(Exception):
+    """A provider SDK's HTTP error: status code plus a body echoing the key."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Error code: 401 - {'error': {'message': 'Incorrect API key "
+            f"provided: {_SECRET}'}}}}"
+        )
+        self.status_code = 401
+
+
+class _ExplodingClient:
+    """Any attribute access returns another one; any call raises."""
+
+    def __getattr__(self, name: str):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return _ExplodingClient()
+
+    def __call__(self, *args, **kwargs):
+        raise _FakeSDKError()
+
+    def __iter__(self):
+        raise _FakeSDKError()
+
+
+def _adapter_cases():
+    """(provider, class, ctor kwargs) for every keyed provider adapter."""
+    from effgen.models.anthropic_adapter import AnthropicAdapter
+    from effgen.models.cerebras_adapter import CerebrasAdapter
+    from effgen.models.fireworks_adapter import FireworksAdapter
+    from effgen.models.gemini_adapter import GeminiAdapter
+    from effgen.models.groq_adapter import GroqAdapter
+    from effgen.models.hf_inference_adapter import HFInferenceAdapter
+    from effgen.models.openai_adapter import OpenAIAdapter
+    from effgen.models.replicate_adapter import ReplicateAdapter
+    from effgen.models.together_adapter import TogetherAdapter
+
+    key = "unit-test-key"
+    return [
+        ("openai", OpenAIAdapter, {"model_name": "gpt-5-nano", "api_key": key}),
+        ("groq", GroqAdapter, {"model_name": "llama-3.1-8b-instant", "api_key": key}),
+        ("gemini", GeminiAdapter, {"model_name": "gemini-3.1-flash-lite", "api_key": key}),
+        ("cerebras", CerebrasAdapter, {"model_name": "gpt-oss-120b", "api_key": key}),
+        ("together", TogetherAdapter,
+         {"model_name": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "api_key": key}),
+        ("fireworks", FireworksAdapter,
+         {"model_name": "accounts/fireworks/models/llama-v3p1-8b-instruct", "api_key": key}),
+        ("replicate", ReplicateAdapter,
+         {"model_name": "meta/meta-llama-3-8b-instruct", "api_key": key}),
+        ("hf_inference", HFInferenceAdapter,
+         {"model_name": "meta-llama/Llama-3.1-8B-Instruct", "api_key": key}),
+        ("anthropic", AnthropicAdapter,
+         {"model_name": "claude-3-5-haiku-latest", "api_key": key}),
+    ]
+
+
+_TOOL_SCHEMA = [{
+    "type": "function",
+    "function": {
+        "name": "calculator",
+        "description": "Evaluate an expression",
+        "parameters": {
+            "type": "object",
+            "properties": {"expression": {"type": "string"}},
+        },
+    },
+}]
+
+
+def _invoke(adapter, method: str):
+    """Call *method* on *adapter* with minimal valid arguments."""
+    from effgen.models.base import GenerationConfig
+
+    config = GenerationConfig(max_tokens=16)
+    if method == "generate":
+        return adapter.generate("hi", config)
+    if method == "generate_stream":
+        return list(adapter.generate_stream("hi", config))
+    if method == "generate_with_tools":
+        return adapter.generate_with_tools("hi", _TOOL_SCHEMA, config)
+    if method == "generate_structured":
+        return adapter.generate_structured("hi", {"type": "object", "properties": {}}, config)
+    if method == "generate_with_system_prompt":
+        return adapter.generate_with_system_prompt("hi", "sys", config)
+    if method == "generate_with_history":
+        return adapter.generate_with_history([{"role": "user", "content": "hi"}], config)
+    raise AssertionError(f"unhandled method {method}")
+
+
+_GENERATION_METHODS = (
+    "generate",
+    "generate_stream",
+    "generate_with_tools",
+    "generate_structured",
+    "generate_with_system_prompt",
+    "generate_with_history",
+)
+
+
+def _methods_of(cls):
+    return [m for m in _GENERATION_METHODS if hasattr(cls, m)]
+
+
+_PROVIDER_METHOD_CASES = [
+    pytest.param(provider, cls, kwargs, method, id=f"{provider}-{method}")
+    for provider, cls, kwargs in _adapter_cases()
+    for method in _methods_of(cls)
+]
+
+
+@pytest.mark.parametrize("provider,cls,kwargs,method", _PROVIDER_METHOD_CASES)
+def test_provider_failure_is_classified_and_redacted(provider, cls, kwargs, method):
+    adapter = cls(**kwargs)
+    adapter._is_loaded = True
+    # Adapters name their SDK handle differently (``_client``/``client``).
+    for attr in ("_client", "client", "_model", "model"):
+        if hasattr(adapter, attr):
+            setattr(adapter, attr, _ExplodingClient())
+
+    with pytest.raises(Exception) as exc_info:  # noqa: PT011 - type varies per adapter
+        _invoke(adapter, method)
+
+    exc = exc_info.value
+    ctx = getattr(exc, "error_context", None)
+    assert isinstance(ctx, dict), f"{provider}.{method} raised {type(exc).__name__} with no error_context"
+    assert set(ctx) == _REQUIRED_CONTEXT_KEYS
+    assert _SECRET not in str(exc), f"{provider}.{method} leaked the submitted key"
+    assert ctx["retry_status"] == RETRY_NON_RETRYABLE
+    if isinstance(exc, NotImplementedError):
+        # The adapter refuses the call before reaching the provider (this
+        # model has no native tool calling); that refusal is classified too.
+        assert ctx["category"] == "invalid_request"
+    else:
+        assert ctx["category"] == "auth"
+
+
+@pytest.mark.parametrize("provider,cls,kwargs,method", _PROVIDER_METHOD_CASES)
+def test_call_before_load_fails_fast(provider, cls, kwargs, method):
+    from effgen.models.errors import classify_provider_error
+
+    adapter = cls(**kwargs)  # never loaded
+
+    with pytest.raises(Exception) as exc_info:  # noqa: PT011 - type varies per adapter
+        _invoke(adapter, method)
+
+    exc = exc_info.value
+    ctx = getattr(exc, "error_context", None)
+    assert isinstance(ctx, dict), f"{provider}.{method} raised {type(exc).__name__} with no error_context"
+    assert ctx["retry_status"] == RETRY_NON_RETRYABLE
+    assert not classify_provider_error(exc).should_retry, (
+        f"{provider}.{method} would be retried although the model is not loaded"
+    )
+
+
+class _ExplodingLocalModel:
+    """A local runtime that fails on the device (e.g. out of memory)."""
+
+    device = "cuda:0"
+    config = None
+
+    def __getattr__(self, name: str):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return _ExplodingLocalModel()
+
+    def __call__(self, *args, **kwargs):
+        raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+
+    def generate(self, *args, **kwargs):
+        raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+
+
+def _local_engine_cases():
+    from effgen.models.transformers_engine import TransformersEngine
+    from effgen.models.vllm_engine import VLLMEngine
+
+    return [
+        ("transformers", TransformersEngine),
+        ("vllm", VLLMEngine),
+    ]
+
+
+@pytest.mark.parametrize("engine_name,cls", _local_engine_cases())
+@pytest.mark.parametrize("method", ["generate", "generate_stream"])
+def test_local_engine_failure_is_classified(engine_name, cls, method):
+    engine = cls(model_name="Qwen/Qwen2.5-1.5B-Instruct")
+    engine._is_loaded = True
+    engine.model = _ExplodingLocalModel()
+    engine.tokenizer = _ExplodingLocalModel()
+    if hasattr(engine, "llm"):
+        engine.llm = _ExplodingLocalModel()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _invoke(engine, method)
+
+    ctx = getattr(exc_info.value, "error_context", None)
+    assert isinstance(ctx, dict), f"{engine_name}.{method} raised no classified error"
+    assert ctx["provider"] == engine_name
+    assert set(ctx) == _REQUIRED_CONTEXT_KEYS
+
+
+@pytest.mark.parametrize("engine_name,cls", _local_engine_cases())
+@pytest.mark.parametrize("method", ["generate", "generate_stream"])
+def test_local_engine_call_before_load_fails_fast(engine_name, cls, method):
+    from effgen.models.errors import classify_provider_error
+
+    engine = cls(model_name="Qwen/Qwen2.5-1.5B-Instruct")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _invoke(engine, method)
+
+    ctx = getattr(exc_info.value, "error_context", None)
+    assert isinstance(ctx, dict)
+    assert ctx["category"] == "not_loaded"
+    assert not classify_provider_error(exc_info.value).should_retry
+
+
+def test_device_out_of_memory_names_what_to_change():
+    from effgen.models._adapter_utils import provider_runtime_error
+
+    err = provider_runtime_error(
+        "transformers", "Qwen/Qwen2.5-1.5B-Instruct", "generate",
+        RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB"),
+    )
+    message = str(err)
+    assert "max_tokens" in message
+    assert "quantization_bits" in message
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB"),
+        RuntimeError("MPS backend out of memory (MPS allocated: 8.00 GB)"),
+        RuntimeError("llama_model_load: failed to allocate buffer"),
+    ],
+)
+def test_device_out_of_memory_is_not_retried(exc):
+    """Reissuing the same request against a full device cannot succeed.
+
+    Classified as ``unknown``, the retry layer would re-run a generation that
+    is guaranteed to fail again and the remediation would point at the
+    provider's status page instead of the device.
+    """
+    from effgen.models.errors import classify_provider_error
+
+    cls = classify_provider_error(exc)
+    assert cls.category == "resource_exhausted"
+    assert not cls.should_retry
+
+
+def test_provider_500_out_of_memory_stays_transient():
+    """A cloud 5xx keeps its status-derived class — that one can be retried."""
+    from effgen.models.errors import classify_provider_error
+
+    assert classify_provider_error(
+        _StatusError(500, "server out of memory")
+    ).category == "transient"
+
+
+def test_not_loaded_error_shape():
+    from effgen.models._adapter_utils import not_loaded_error
+
+    err = not_loaded_error("openai", "gpt-5-nano", "generate")
+    assert err.error_context["category"] == "not_loaded"
+    assert err.error_context["retry_status"] == RETRY_NON_RETRYABLE
+    assert "load()" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# Classification of failures providers report ambiguously
+# ---------------------------------------------------------------------------
+
+
+class _StatusError(Exception):
+    def __init__(self, status: int, message: str = "") -> None:
+        super().__init__(message or f"HTTP {status}")
+        self.status_code = status
+
+
+def test_rejected_key_reported_as_400_is_still_auth():
+    """Gemini answers a rejected API key with HTTP 400 INVALID_ARGUMENT.
+
+    Classifying that by status alone labels the same failure ``auth`` on the
+    non-streaming path and ``invalid_request`` on the streaming one.
+    """
+    from effgen.models.errors import classify_provider_error
+
+    exc = _StatusError(
+        400,
+        "400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': "
+        "'API key not valid. Please pass a valid API key.', "
+        "'status': 'INVALID_ARGUMENT'}}",
+    )
+    assert classify_provider_error(exc).category == "auth"
+
+
+def test_generic_invalid_argument_is_not_auth():
+    from effgen.models.errors import classify_provider_error
+
+    exc = _StatusError(400, "400 INVALID_ARGUMENT. Unsupported value for 'top_k'")
+    assert classify_provider_error(exc).category == "invalid_request"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        _StatusError(402, "Payment required"),
+        RuntimeError("Replicate account has insufficient credits. Add billing"),
+    ],
+)
+def test_billing_failures_are_not_retried(exc):
+    from effgen.models.errors import classify_provider_error
+
+    assert not classify_provider_error(exc).should_retry
+
+
+def test_typed_error_message_is_redacted():
+    err = ModelAuthError(
+        "openai", "gpt-5-nano",
+        f"Incorrect API key provided: {_SECRET}",
+    )
+    assert _SECRET not in str(err)
+    assert _SECRET not in err.message
+
+
+@pytest.mark.parametrize(
+    "cls,kwargs",
+    [
+        ("effgen.models.hf_inference_adapter:HFInferenceAdapter",
+         {"model_name": "meta-llama/Llama-3.1-8B-Instruct"}),
+        ("effgen.models.replicate_adapter:ReplicateAdapter",
+         {"model_name": "meta/meta-llama-3-8b-instruct"}),
+    ],
+)
+def test_api_key_alias_is_used_not_dropped(cls, kwargs):
+    """These two adapters name the credential ``api_token``.
+
+    ``api_key`` is the name the other seven use, so it is accepted here too —
+    otherwise it lands in ``**kwargs`` and the ambient environment credential
+    is used instead of the one the caller passed.
+    """
+    import importlib
+
+    module_name, class_name = cls.split(":")
+    adapter_cls = getattr(importlib.import_module(module_name), class_name)
+    adapter = adapter_cls(api_key="explicit-caller-credential", **kwargs)
+    assert adapter._api_token == "explicit-caller-credential"
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        "effgen.models.hf_inference_adapter:HFInferenceAdapter",
+        "effgen.models.replicate_adapter:ReplicateAdapter",
+    ],
+)
+def test_api_key_alias_does_not_shift_positional_arguments(cls):
+    """The alias sits last, so an existing positional call still means what it did."""
+    import importlib
+    import inspect
+
+    module_name, class_name = cls.split(":")
+    adapter_cls = getattr(importlib.import_module(module_name), class_name)
+    names = [
+        p.name
+        for p in inspect.signature(adapter_cls.__init__).parameters.values()
+        if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    ]
+    assert names[-1] == "api_key", names
