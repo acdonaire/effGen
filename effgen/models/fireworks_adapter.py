@@ -19,7 +19,11 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
-from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
+from effgen.models._adapter_utils import (
+    normalize_finish_reason,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models.base import (
@@ -44,6 +48,22 @@ if TYPE_CHECKING:
     from effgen.models._rate_limit_store import SQLiteRateLimitStore
 
 logger = logging.getLogger(__name__)
+
+
+def _not_found_message(model_name: str) -> str:
+    """Explain a Fireworks "model not found" rejection.
+
+    Fireworks answers a request for an undeployed model and a request the API
+    key is not allowed to make with the same ``NOT_FOUND`` body, so the message
+    names both causes instead of asserting one.
+    """
+    return (
+        f"model '{model_name}' was not found. Fireworks returns this same "
+        f"response for a model that is not deployed and for one this API key "
+        f"cannot access, so check both. List deployed ids with: "
+        f"from effgen.models.fireworks_models import available_models; "
+        f"print(available_models())"
+    )
 
 _FIREWORKS_MODEL_TYPE_VALUE = "fireworks"
 _FIREWORKS_PREFIX = "accounts/fireworks/models/"
@@ -236,7 +256,7 @@ class FireworksAdapter(BaseModel):
             GenerationResult with text and token usage.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("FireworksAdapter not loaded. Call load() first.")
+            raise not_loaded_error("fireworks", self.model_name, "generate")
 
         if config is None:
             config = GenerationConfig()
@@ -266,7 +286,7 @@ class FireworksAdapter(BaseModel):
     ) -> GenerationResult:
         """Async version of :meth:`generate` — preferred inside async contexts."""
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("FireworksAdapter not loaded. Call load() first.")
+            raise not_loaded_error("fireworks", self.model_name, "async_generate")
 
         if config is None:
             config = GenerationConfig()
@@ -369,10 +389,7 @@ class FireworksAdapter(BaseModel):
                     raise ModelNotFoundError(
                         provider="fireworks",
                         model_name=self.model_name,
-                        message=f"Fireworks model '{self.model_name}' not found or not deployed. "
-                                f"Check available models with: "
-                                f"from effgen.models.fireworks_models import available_models; "
-                                f"print(available_models())",
+                        message=_not_found_message(self.model_name),
                     ) from exc
 
                 is_rate = (
@@ -494,7 +511,7 @@ class FireworksAdapter(BaseModel):
             GenerationResult whose ``metadata["tool_calls"]`` contains parsed calls.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("FireworksAdapter not loaded. Call load() first.")
+            raise not_loaded_error("fireworks", self.model_name, "generate_with_tools")
         if config is None:
             config = GenerationConfig()
         return self._do_generate(prompt, config, tools=tools, messages=messages, **kwargs)
@@ -511,7 +528,7 @@ class FireworksAdapter(BaseModel):
             str: Successive text chunks from the model.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("FireworksAdapter not loaded. Call load() first.")
+            raise not_loaded_error("fireworks", self.model_name, "generate_stream")
 
         if config is None:
             config = GenerationConfig()
@@ -644,9 +661,10 @@ class FireworksAdapter(BaseModel):
                 or "not found" in msg_lower
                 or "not deployed" in msg_lower
             ):
-                raise RuntimeError(
-                    f"Fireworks model '{self.model_name}' not found or not deployed. "
-                    f"Use available_models() to list valid IDs."
+                raise ModelNotFoundError(
+                    provider="fireworks",
+                    model_name=self.model_name,
+                    message=_not_found_message(self.model_name),
                 ) from exc
             logger.error("Fireworks streaming failed: %s", exc)
             raise provider_runtime_error("fireworks", self.model_name, "stream", exc, message="Fireworks streaming failed") from exc

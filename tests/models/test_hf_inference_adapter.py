@@ -431,8 +431,9 @@ class TestHFErrorHandling:
     def test_generic_error_wraps_as_runtime(self):
         adapter = self._loaded_adapter()
         adapter._client.chat_completion.side_effect = Exception("Something unexpected")
-        with pytest.raises(RuntimeError, match="HuggingFace Inference error"):
+        with pytest.raises(RuntimeError, match="HuggingFace Inference request failed") as exc_info:
             adapter.generate("hello")
+        assert exc_info.value.error_context["provider"] == "hf_inference"
 
 
 # ---------------------------------------------------------------------------

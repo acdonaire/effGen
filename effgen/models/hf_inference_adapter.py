@@ -35,9 +35,13 @@ import logging
 import os
 import re
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
-from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
+from effgen.models._adapter_utils import (
+    normalize_finish_reason,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_audio_support, require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
@@ -115,7 +119,8 @@ class HFInferenceAdapter(BaseModel):
             (the endpoint already encodes the model).  Defaults to
             ``"Qwen/Qwen2.5-7B-Instruct"``.
         api_token: HuggingFace access token.  Falls back to the ``HF_TOKEN``
-            and ``HUGGINGFACE_API_KEY`` environment variables.
+            and ``HUGGINGFACE_API_KEY`` environment variables.  ``api_key`` is
+            accepted as an alias.
         endpoint_url: URL of a dedicated Inference Endpoint.  When set, all
             requests are routed to that URL instead of the public Serverless API.
         timeout: Per-request timeout in seconds (default 120s).
@@ -165,6 +170,7 @@ class HFInferenceAdapter(BaseModel):
         warn_unknown_model: bool = True,
         provider: str | None = None,
         rate_limit_storage: "SQLiteRateLimitStore | None" = None,
+        api_key: str | None = None,
         **kwargs: Any,
     ) -> None:
         info = HF_MODELS.get(model_name)
@@ -183,10 +189,14 @@ class HFInferenceAdapter(BaseModel):
             context_length=(info or {}).get("context", 8_192),
         )
 
-        self._api_token = api_token
+        # ``api_key=`` is the name every other adapter uses; accept it here so
+        # a credential passed under that name is used, not dropped into kwargs.
+        self._api_token = api_token or api_key
         self._endpoint_url = endpoint_url
         self.timeout = timeout
-        self.max_retries = max_retries
+        # At least one attempt: a 0/negative budget would skip the request
+        # loop entirely and leave the caller with no response and no error.
+        self.max_retries = max(1, int(max_retries))
         self._extra_kwargs = kwargs
         self._client: Any = None
         self._enable_cost_tracking = enable_cost_tracking
@@ -315,8 +325,12 @@ class HFInferenceAdapter(BaseModel):
     # Error helpers
     # ------------------------------------------------------------------
 
-    def _raise_for_unavailable(self, exc: Exception, context: str = "") -> None:
-        """Convert HF HTTP errors to typed effGen exceptions."""
+    def _raise_for_unavailable(self, exc: Exception, context: str = "") -> NoReturn:
+        """Convert an HF HTTP error into a typed effGen exception.
+
+        Always raises: every branch ends in a typed error or the shared
+        classified wrapper, so a caller can rely on this never returning.
+        """
         exc_str = str(exc)
         status_code = getattr(getattr(exc, "response", None), "status_code", None)
         status_match = re.search(r"\b(401|403|404|503)\b", exc_str)
@@ -369,9 +383,11 @@ class HFInferenceAdapter(BaseModel):
                 ),
             ) from exc
 
-        # Re-raise unknown errors
-        raise RuntimeError(
-            f"HuggingFace Inference error for '{self.model_name}': {exc}"
+        # Everything else keeps the same classified, redacted shape as the
+        # other adapters (a 402 or a transport failure lands here).
+        raise provider_runtime_error(
+            "hf_inference", self.model_name, context or "request", exc,
+            message=f"HuggingFace Inference request failed for '{self.model_name}'",
         ) from exc
 
     # ------------------------------------------------------------------
@@ -466,7 +482,7 @@ class HFInferenceAdapter(BaseModel):
             Transcribed text.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("HFInferenceAdapter not loaded. Call load() first.")
+            raise not_loaded_error("hf_inference", self.model_name, "transcribe_audio")
 
         from effgen.core.messages import AudioPart
         from effgen.multimodal.audio_pre import chunk as _chunk_audio
@@ -539,7 +555,7 @@ class HFInferenceAdapter(BaseModel):
             ModelUnavailableError: When the model is not available on Serverless.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("HFInferenceAdapter not loaded. Call load() first.")
+            raise not_loaded_error("hf_inference", self.model_name, "generate")
 
         if config is None:
             config = GenerationConfig()
@@ -847,7 +863,7 @@ class HFInferenceAdapter(BaseModel):
             ModelUnavailableError: When the model is unavailable on Serverless.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("HFInferenceAdapter not loaded. Call load() first.")
+            raise not_loaded_error("hf_inference", self.model_name, "generate_stream")
 
         if config is None:
             config = GenerationConfig()

@@ -301,8 +301,11 @@ class TestFireworksAdapterGenerate:
             "NOT_FOUND: Model not found, inaccessible, and/or not deployed"
         )
         from effgen.models.errors import ModelNotFoundError
-        with pytest.raises(ModelNotFoundError, match="not found or not deployed"):
+        with pytest.raises(ModelNotFoundError, match="was not found") as exc_info:
             adapter.generate("Hello")
+        # Fireworks answers a key-visibility failure the same way, so the
+        # message names both causes.
+        assert "cannot access" in str(exc_info.value)
 
     def test_generate_retries_on_rate_limit(self):
         adapter = _loaded_adapter()
