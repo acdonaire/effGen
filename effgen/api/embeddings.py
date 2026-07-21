@@ -388,7 +388,12 @@ def create_embeddings_router(engine: EmbeddingEngine | None = None) -> Any:
         # other error path on this server instead of FastAPI's default
         # `{"detail": ...}` shape.
         texts = [req.input] if isinstance(req.input, str) else list(req.input)
-        if not texts:
+        # An empty list — or one holding nothing but blank strings — has no text
+        # to embed. Reject it with a 400 instead of returning vectors for
+        # nothing, the same rule /v1/chat/completions applies to content-free
+        # messages. A blank entry alongside real text is still embedded, so a
+        # batch caller keeps index alignment.
+        if not texts or all(not str(t).strip() for t in texts):
             return JSONResponse(
                 status_code=400,
                 content=error_envelope(400, "input must not be empty", code="empty_input"),

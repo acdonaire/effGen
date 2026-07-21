@@ -625,7 +625,12 @@ _STATUS_ERROR_CODE: dict[int, str] = {
 
 
 def error_envelope(
-    status: int, message: str, *, code: str | None = None, redact: bool = True
+    status: int,
+    message: str,
+    *,
+    code: str | None = None,
+    error_type: str | None = None,
+    redact: bool = True,
 ) -> dict[str, Any]:
     """Build the standard OpenAI error envelope for an HTTP *status*.
 
@@ -635,8 +640,13 @@ def error_envelope(
     hint that legitimately spells out ``Authorization: Bearer <key>``) so the
     key/secret scrubber does not mangle the guidance; provider/upstream error
     text is always redacted (``redact=True``).
+
+    ``error_type`` overrides the type derived from *status*. Pass it when the
+    status alone would mislabel the failure — a 404 for an unknown URL path is
+    an ``invalid_request_error``, not the ``model_not_found`` a 404 from the
+    model routes means.
     """
-    err_type = _STATUS_ERROR_TYPE.get(
+    err_type = error_type or _STATUS_ERROR_TYPE.get(
         status, "server_error" if status >= 500 else "invalid_request_error"
     )
     err_code = code if code is not None else _STATUS_ERROR_CODE.get(status)
@@ -906,6 +916,19 @@ def create_openai_router(
                 completion_text_parts: list[str] = []
                 provider_completion_tokens: int | None = None
                 started = False
+
+                def _error_event(exc: Exception) -> str:
+                    """Terminal SSE event describing a mid-stream failure."""
+                    _, _etype, _ecode = _classify_http(exc)
+                    return json.dumps({
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": _now(),
+                        "model": model,
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                        "error": _error_payload(str(exc), _etype, _ecode)["error"],
+                    })
+
                 try:
                     for chunk in result:
                         started = True
@@ -915,30 +938,20 @@ def create_openai_router(
                             model, text, chat_id=chat_id
                         )
                         yield f"data: {json.dumps(payload)}\n\n"
-                except TypeError:
-                    if started:
-                        raise
-                    # ``result`` was not iterable (a bare object) — stringify once.
-                    text = str(result)
-                    completion_text_parts.append(text)
-                    payload = build_chat_chunk(model, text, chat_id=chat_id)
-                    yield f"data: {json.dumps(payload)}\n\n"
                 except Exception as e:  # noqa: BLE001
-                    # Mid-stream failure: emit a terminal error event
-                    # (redacted) instead of silently truncating or buffering it
-                    # into a content chunk.
-                    _, _etype, _ecode = _classify_http(e)
-                    err_evt = {
-                        "id": chat_id,
-                        "object": "chat.completion.chunk",
-                        "created": _now(),
-                        "model": model,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
-                        "error": _error_payload(str(e), _etype, _ecode)["error"],
-                    }
-                    yield f"data: {json.dumps(err_evt)}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
+                    if isinstance(e, TypeError) and not started:
+                        # ``result`` was not iterable (a bare object) — stringify once.
+                        text = str(result)
+                        completion_text_parts.append(text)
+                        payload = build_chat_chunk(model, text, chat_id=chat_id)
+                        yield f"data: {json.dumps(payload)}\n\n"
+                    else:
+                        # Mid-stream failure: emit a terminal error event
+                        # (redacted) instead of truncating the stream or
+                        # buffering the error into a content chunk.
+                        yield f"data: {_error_event(e)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
                 # A streaming runner may expose the completed call's real usage
                 # once exhausted (as ``.usage`` on the iterator), including the
                 # cost the provider's token counts price out to.
@@ -1024,6 +1037,16 @@ def create_openai_router(
         prompt = (
             request.prompt if isinstance(request.prompt, str) else "\n".join(request.prompt)
         )
+        # An empty or whitespace-only prompt gives the model nothing to complete.
+        # Reject it with a 400 before any billed call, the same way
+        # /v1/chat/completions rejects content-free messages.
+        if not prompt.strip():
+            return JSONResponse(
+                status_code=400,
+                content=error_envelope(
+                    400, "prompt must not be empty", code="empty_prompt"
+                ),
+            )
         prompt_tokens = _approx_tokens(prompt)
 
         try:
@@ -1043,39 +1066,42 @@ def create_openai_router(
             cmpl_id = _cmpl_id()
 
             def sse_iter():
-                try:
-                    for chunk in result:
-                        payload = {
-                            "id": cmpl_id,
-                            "object": "text_completion",
-                            "created": _now(),
-                            "model": model,
-                            "choices": [
-                                {
-                                    "text": str(chunk),
-                                    "index": 0,
-                                    "logprobs": None,
-                                    "finish_reason": None,
-                                }
-                            ],
-                        }
-                        yield f"data: {json.dumps(payload)}\n\n"
-                except TypeError:
-                    payload = {
+                started = False
+
+                def _chunk(text: str, finish_reason: str | None) -> dict:
+                    return {
                         "id": cmpl_id,
                         "object": "text_completion",
                         "created": _now(),
                         "model": model,
                         "choices": [
                             {
-                                "text": str(result),
+                                "text": text,
                                 "index": 0,
                                 "logprobs": None,
-                                "finish_reason": "stop",
+                                "finish_reason": finish_reason,
                             }
                         ],
                     }
-                    yield f"data: {json.dumps(payload)}\n\n"
+
+                try:
+                    for chunk in result:
+                        started = True
+                        yield f"data: {json.dumps(_chunk(str(chunk), None))}\n\n"
+                except Exception as e:  # noqa: BLE001
+                    if isinstance(e, TypeError) and not started:
+                        # ``result`` was not iterable (a bare object) — stringify once.
+                        yield f"data: {json.dumps(_chunk(str(result), 'stop'))}\n\n"
+                    else:
+                        # Mid-stream failure: emit a terminal error event
+                        # (redacted) rather than truncating the stream, matching
+                        # /v1/chat/completions.
+                        _, _etype, _ecode = _classify_http(e)
+                        err_evt = _chunk("", "error")
+                        err_evt["error"] = _error_payload(str(e), _etype, _ecode)["error"]
+                        yield f"data: {json.dumps(err_evt)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
                 yield "data: [DONE]\n\n"
 
             return StreamingResponse(sse_iter(), media_type="text/event-stream")
