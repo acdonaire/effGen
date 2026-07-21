@@ -443,6 +443,11 @@ class TestBoundedWork:
         Measured as the ratio between the 4x and 1x sizes: a linear scan gives
         ~4, quadratic backtracking gives ~16 or worse. The threshold has slack
         for timer noise on a shared host.
+
+        Each size is timed several times and the fastest run is used. These
+        measurements are only a few milliseconds, so a single sample caught by
+        an unrelated scheduling spike could otherwise fail the ratio; the
+        minimum is the sample least contaminated by other load.
         """
         guard = PIIGuardrail(action="redact")
         base, big = 4_000, 16_000
@@ -450,9 +455,12 @@ class TestBoundedWork:
         def timed(n: int) -> float:
             payload = _adversarial(unit, n)
             guard.check(payload)  # warm any regex caches
-            start = time.perf_counter()
-            guard.check(payload)
-            return time.perf_counter() - start
+            best = float("inf")
+            for _ in range(5):
+                start = time.perf_counter()
+                guard.check(payload)
+                best = min(best, time.perf_counter() - start)
+            return best
 
         small = max(timed(base), 1e-4)
         large = timed(big)
