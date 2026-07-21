@@ -32,6 +32,8 @@ _RETRY_STATUS_BY_CATEGORY: dict[str, str] = {
     "not_found": RETRY_NON_RETRYABLE,
     "refusal": RETRY_NON_RETRYABLE,
     "invalid_request": RETRY_NON_RETRYABLE,
+    "not_loaded": RETRY_NON_RETRYABLE,
+    "resource_exhausted": RETRY_NON_RETRYABLE,
     "fatal": RETRY_NON_RETRYABLE,
     "rate_limited": RETRY_RATE_LIMITED,
     "transient": RETRY_WILL_RETRY,
@@ -47,6 +49,8 @@ REMEDIATION_BY_CATEGORY: dict[str, str] = {
     "timeout": "Request timed out — increase the adapter timeout or retry.",
     "transient": "Transient provider error — retry shortly; check the provider status page if it persists.",
     "invalid_request": "Request rejected as invalid — check parameters, prompt size, and any JSON schema.",
+    "not_loaded": "The model is not loaded — call load() on the adapter first, or build it with load_model(), which loads it for you.",
+    "resource_exhausted": "The device ran out of memory — the same request will fail again until less is asked of it or more memory is free.",
     "refusal": "The model refused the request — rephrase or adjust the content.",
     "fatal": "Unrecoverable error — check configuration and provider status.",
     "unknown": "Unexpected provider error — check the provider status and effGen logs (set EFFGEN_LOG_LEVEL=DEBUG).",
@@ -89,6 +93,26 @@ def context_overflow_hint(message: str) -> str | None:
     )
 
 
+def scrub_provider_message(message: str) -> str:
+    """Return *message* with any secret material replaced by a redaction marker.
+
+    Provider SDKs echo parts of the request back in an error body, and some
+    include the submitted credential. Every typed error below routes its
+    ``message`` through this helper so an adapter cannot put a key into an
+    exception string that later reaches a log, a CLI panel, or an API
+    envelope. Redaction never masks the error itself: if the redactor is
+    unavailable, the original text is returned.
+    """
+    if not message:
+        return message
+    try:
+        from effgen.observability.redact import get_redactor
+
+        return get_redactor().scrub(message)
+    except Exception:  # noqa: BLE001 - redaction must not replace the error
+        return message
+
+
 def error_context_dict(
     provider: str,
     model: str,
@@ -124,11 +148,13 @@ class ModelRefusalError(Exception):
     """
 
     def __init__(self, refusal_message: str, model_name: str = "") -> None:
-        self.refusal_message = refusal_message
+        self.refusal_message = scrub_provider_message(refusal_message)
         self.model_name = model_name
         self.error_context = error_context_dict("", model_name, "request", "refusal")
         suffix = f" (model={model_name!r})" if model_name else ""
-        super().__init__(f"Model refused to generate structured output{suffix}: {refusal_message}")
+        super().__init__(
+            f"Model refused to generate structured output{suffix}: {self.refusal_message}"
+        )
 
 
 class ModelAuthError(Exception):
@@ -147,10 +173,10 @@ class ModelAuthError(Exception):
     def __init__(self, provider: str, model_name: str = "", message: str = "") -> None:
         self.provider = provider
         self.model_name = model_name
-        self.message = message
+        self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "auth")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = message or "authentication failed"
+        body = self.message or "authentication failed"
         super().__init__(f"{provider} auth error{suffix}: {body}")
 
 
@@ -212,10 +238,10 @@ class ModelUnavailableError(Exception):
         self.provider = provider
         self.model_name = model_name
         self.suggestions = suggestions or []
-        self.message = message
+        self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "not_found")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = message or "model is not available on the serverless tier"
+        body = self.message or "model is not available on the serverless tier"
         suggest_str = ""
         if self.suggestions:
             suggest_str = "  Try one of: " + ", ".join(self.suggestions)
@@ -233,10 +259,10 @@ class ModelNotFoundError(Exception):
     def __init__(self, provider: str, model_name: str = "", message: str = "") -> None:
         self.provider = provider
         self.model_name = model_name
-        self.message = message
+        self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "not_found")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = message or "model not found"
+        body = self.message or "model not found"
         super().__init__(f"{provider} error{suffix}: {body}")
 
 
@@ -334,10 +360,10 @@ class ProviderTransientError(Exception):
         self.provider = provider
         self.model_name = model_name
         self.status_code = status_code
-        self.message = message
+        self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "transient")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = message or "transient server error"
+        body = self.message or "transient server error"
         super().__init__(f"{provider} {status_code}{suffix}: {body}")
 
 
@@ -387,10 +413,10 @@ class InvalidRequestError(Exception):
     def __init__(self, provider: str, model_name: str = "", message: str = "") -> None:
         self.provider = provider
         self.model_name = model_name
-        self.message = message
+        self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "invalid_request")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = message or "invalid request"
+        body = self.message or "invalid request"
         super().__init__(f"{provider} invalid request{suffix}: {body}")
 
 
@@ -464,12 +490,14 @@ class ErrorClass:
 
     ``category`` is the single human-readable label (``"auth"``,
     ``"not_found"``, ``"rate_limited"``, ``"transient"``, ``"timeout"``,
-    ``"refusal"``, ``"invalid_request"``, ``"fatal"``, or ``"unknown"``).
+    ``"refusal"``, ``"invalid_request"``, ``"not_loaded"``,
+    ``"resource_exhausted"``, ``"fatal"``, or ``"unknown"``).
     The boolean flags let callers branch without string-matching ``category``.
 
     Only ``retryable`` errors (transient/timeout/unknown) and ``rate_limited``
-    errors should be retried. ``auth``, ``not_found``, ``refusal`` and
-    ``fatal`` errors will not succeed on retry and must fail fast.
+    errors should be retried. ``auth``, ``not_found``, ``refusal``,
+    ``invalid_request``, ``not_loaded``, ``resource_exhausted`` and ``fatal``
+    errors will not succeed on retry and must fail fast.
     """
 
     category: str
@@ -494,6 +522,8 @@ _TRANSIENT = ErrorClass("transient", retryable=True)
 _TIMEOUT = ErrorClass("timeout", retryable=True)
 _REFUSAL = ErrorClass("refusal", refusal=True)
 _INVALID = ErrorClass("invalid_request", fatal=True)
+_NOT_LOADED = ErrorClass("not_loaded", fatal=True)
+_RESOURCE_EXHAUSTED = ErrorClass("resource_exhausted", fatal=True)
 _FATAL = ErrorClass("fatal", fatal=True)
 _UNKNOWN = ErrorClass("unknown", retryable=True)
 
@@ -508,9 +538,37 @@ _ERROR_CLASS_BY_CATEGORY: dict[str, ErrorClass] = {
     "timeout": _TIMEOUT,
     "refusal": _REFUSAL,
     "invalid_request": _INVALID,
+    "not_loaded": _NOT_LOADED,
+    "resource_exhausted": _RESOURCE_EXHAUSTED,
     "fatal": _FATAL,
     "unknown": _UNKNOWN,
 }
+
+
+# Wording the local runtimes (torch, vLLM, llama.cpp, MLX) use when the device
+# runs out of memory. A cloud provider's failure carries an HTTP status and is
+# classified before these are consulted.
+DEVICE_MEMORY_SIGNALS = (
+    "out of memory",
+    "outofmemoryerror",
+    "not enough memory",
+    "insufficient device memory",
+    "failed to allocate",
+)
+
+
+# Phrases that state outright that the submitted credential was rejected.
+# Kept narrow on purpose: each one names the key itself, so it cannot match a
+# request-validation error that merely mentions an argument.
+_EXPLICIT_INVALID_KEY_SIGNALS = (
+    "api key not valid",
+    "invalid api key",
+    "invalid_api_key",
+    "incorrect api key",
+    "api_key_invalid",
+    "wrong api key",
+    "wrong_api_key",
+)
 
 
 def _status_code_of(exc: Exception) -> int | None:
@@ -580,6 +638,15 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         if cached is not None:
             return cached
 
+    # 1.8. An explicit "this credential is not valid" statement outranks the
+    # status code. Gemini reports a rejected API key as HTTP 400
+    # INVALID_ARGUMENT, so classifying by status alone labels the same failure
+    # ``invalid_request`` on one code path and ``auth`` on another. Only these
+    # unambiguous key phrases qualify — a generic INVALID_ARGUMENT stays an
+    # invalid request.
+    if any(k in str(exc).lower() for k in _EXPLICIT_INVALID_KEY_SIGNALS):
+        return _AUTH
+
     # 2. HTTP status code (raw SDK errors carry one).
     status = _status_code_of(exc)
     if status is not None:
@@ -589,9 +656,12 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
             return _NOT_FOUND
         if status == 429:
             return _RATE_LIMITED
+        # 402 payment-required is an account/billing state (no credit, no
+        # payment method): the same request will keep failing until billing
+        # is fixed, so it must not be retried.
         # 413 payload-too-large is a property of the request, not a transient
         # rate limit — retrying the same oversized request will not succeed.
-        if status in (400, 413, 422):
+        if status in (400, 402, 413, 422):
             return _INVALID
         if status == 408 or status >= 500:
             return _TRANSIENT
@@ -613,6 +683,12 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
 
     # 4. Message-text heuristics (last resort).
     msg = str(exc).lower()
+    # A local runtime that ran out of device memory. Reissuing the identical
+    # request against the same device cannot succeed, so it must not be
+    # retried; the caller has to ask for less or free memory. Cloud failures
+    # never reach here — they carry an HTTP status and are classified above.
+    if any(k in msg or k in name for k in DEVICE_MEMORY_SIGNALS):
+        return _RESOURCE_EXHAUSTED
     if any(k in msg for k in ("rate limit", "rate-limit", "too many requests", "quota exceeded", "429")):
         return _RATE_LIMITED
     if any(k in msg for k in (
@@ -621,6 +697,12 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
     )):
         return _AUTH
     if "unknown provider" in msg:
+        return _INVALID
+    # Billing states (no credit, no payment method, spend cap) keep failing
+    # until the account is topped up, so they fail fast rather than retry.
+    if any(k in msg for k in (
+        "insufficient credit", "insufficient funds", "payment required",
+    )):
         return _INVALID
     if any(k in msg for k in ("model_not_found", "does not exist", "not found", "no such model", "unknown model")):
         return _NOT_FOUND

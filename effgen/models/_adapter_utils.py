@@ -15,7 +15,8 @@ uniform contract:
   machine-readable context. :func:`build_error_context` and
   :func:`provider_runtime_error` produce a consistent, **redacted** error whose
   ``.error_context`` carries ``{provider, model, request_type, retry_status,
-  remediation}``.
+  remediation}``. :func:`not_loaded_error` gives the same shape to the guard
+  every adapter runs when a call arrives before ``load()``.
 
 These are internal helpers (no public API surface change).
 """
@@ -25,6 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 from .errors import (
+    DEVICE_MEMORY_SIGNALS,
     RETRY_NON_RETRYABLE,
     RETRY_RATE_LIMITED,
     RETRY_WILL_RETRY,
@@ -216,6 +218,24 @@ DIRECT_CALL_REASONING_MAX_TOKENS = 16384
 # Structured, redacted provider errors
 # ---------------------------------------------------------------------------
 
+def device_memory_hint(message: str) -> str | None:
+    """Return advice for a local out-of-memory failure, or ``None``.
+
+    A device out-of-memory failure classifies as ``resource_exhausted``, whose
+    remediation says only that the request will keep failing. This adds the
+    concrete levers. Callers append it to their remediation text when it
+    applies.
+    """
+    lowered = (message or "").lower()
+    if not any(s in lowered for s in DEVICE_MEMORY_SIGNALS):
+        return None
+    return (
+        " The device ran out of memory — lower max_tokens or the batch size, "
+        "load the model with quantization_bits=4/8, pick a smaller model, or "
+        "free the GPU (check `nvidia-smi`)."
+    )
+
+
 def build_error_context(
     provider: str,
     model: str,
@@ -285,8 +305,40 @@ def provider_runtime_error(
         if hint:
             remediation = remediation + hint
 
+    # A local engine that ran out of device memory needs device-level advice,
+    # not the provider-status advice the generic categories carry.
+    device_hint = device_memory_hint(str(exc))
+    if device_hint:
+        remediation = remediation + device_hint
+
     err = RuntimeError(
         f"{head} [{ctx['retry_status']}]: {cause}. {remediation}"
+    )
+    err.error_context = ctx  # type: ignore[attr-defined]
+    return err
+
+
+def not_loaded_error(
+    provider: str,
+    model: str = "",
+    request_type: str = "request",
+) -> RuntimeError:
+    """Build the error every adapter raises when a call arrives before ``load()``.
+
+    The returned :class:`RuntimeError` carries the same ``.error_context``
+    shape as a provider failure, with category ``"not_loaded"`` and a
+    non-retryable status: the model is missing locally, so a retry cannot
+    change the outcome. Adapters raise this instead of a bare
+    ``RuntimeError`` so the retry layer, the agent's error record, and the
+    server envelope all see one classified shape.
+    """
+    ctx = error_context_dict(provider, model, request_type, "not_loaded")
+    where = ", ".join(p for p in (f"provider={provider}" if provider else "",
+                                  f"model={model!r}" if model else "") if p)
+    suffix = f" ({where})" if where else ""
+    err = RuntimeError(
+        f"Model is not loaded{suffix} [{ctx['retry_status']}]: "
+        f"{request_type}() was called before load(). {ctx['remediation']}"
     )
     err.error_context = ctx  # type: ignore[attr-defined]
     return err
@@ -319,7 +371,9 @@ __all__ = [
     "needs_reasoning_headroom",
     "default_max_output_tokens",
     "build_error_context",
+    "device_memory_hint",
     "provider_runtime_error",
+    "not_loaded_error",
     "attach_error_context",
     "RETRY_WILL_RETRY",
     "RETRY_RATE_LIMITED",
