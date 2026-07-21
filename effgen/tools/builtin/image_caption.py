@@ -61,26 +61,22 @@ def _ensure_provider_registry() -> None:
     """Ensure vision provider adapters are registered with ProviderRegistry.
 
     Importing an adapter module triggers its module-level ``_register()`` the
-    first time, but a prior ``ProviderRegistry.reset()`` leaves the registry
-    empty while the module stays in ``sys.modules`` — so a plain re-import is a
-    no-op and would not restore the provider. We therefore re-invoke each
-    module's idempotent ``_register()`` whenever its provider is missing.
+    first time only, so a registry that was emptied at runtime
+    (``ProviderRegistry.clear()``) cannot be repopulated by importing again —
+    the modules are already in ``sys.modules``. Re-running the built-in
+    registrations restores whichever vision providers are missing.
     """
     from effgen.models.registry import ProviderRegistry
 
-    for module_name, provider_name in (
-        ("effgen.models.gemini_adapter", "gemini"),
-        ("effgen.models.openai_adapter", "openai"),
-        ("effgen.models.replicate_adapter", "replicate"),
+    if all(
+        name in ProviderRegistry.list_providers()
+        for name in ("gemini", "openai", "replicate")
     ):
-        try:
-            module = __import__(module_name, fromlist=["_register"])
-            if provider_name not in ProviderRegistry.list_providers():
-                register = getattr(module, "_register", None)
-                if callable(register):
-                    register()
-        except Exception as exc:
-            logger.debug("Could not import %s for vision routing: %s", module_name, exc)
+        return
+    try:
+        ProviderRegistry.register_builtins()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Could not restore provider registrations for vision routing: %s", exc)
 
 
 def _provider_api_key_env(provider_name: str) -> str:
