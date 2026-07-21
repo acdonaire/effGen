@@ -101,6 +101,27 @@ _STREAM_METRICS_RELOAD_ATTEMPTS = 3
 _STREAM_METRICS_RELOAD_DELAY = 0.5  # seconds
 
 
+class _SdkExceptionUnavailable(Exception):
+    """Never raised — stands in for an SDK exception type that cannot be imported."""
+
+
+def _replicate_error_type() -> type[BaseException]:
+    """The SDK's error class, or a type nothing raises when the SDK is absent.
+
+    The generation paths match on the SDK's own exception class to read its HTTP
+    status. Importing that class inside those paths makes a missing SDK surface
+    as an unclassified ``ModuleNotFoundError`` in the middle of a call, instead
+    of the typed error the caller expects. Returning a stand-in keeps the match
+    inert so whatever the call actually raises is classified normally; the
+    install hint stays with ``load()``, which is where the SDK is first needed.
+    """
+    try:
+        from replicate.exceptions import ReplicateError
+    except ImportError:
+        return _SdkExceptionUnavailable
+    return ReplicateError
+
+
 class _ReplicateModelType:
     """Sentinel so ModelType enum doesn't need patching."""
     value = _REPLICATE_MODEL_TYPE_VALUE
@@ -465,7 +486,7 @@ class ReplicateAdapter(BaseModel):
 
     def _do_generate(self, inp: dict[str, Any]) -> GenerationResult:
         """Internal: create prediction, poll, assemble GenerationResult."""
-        from replicate.exceptions import ReplicateError
+        ReplicateError = _replicate_error_type()
 
         prediction = None
         last_exc: Exception | None = None
@@ -855,7 +876,7 @@ class ReplicateAdapter(BaseModel):
         completed prediction's ``metrics`` is the only place Replicate reports
         the compute seconds a streamed call is billed for.
         """
-        from replicate.exceptions import ReplicateError
+        ReplicateError = _replicate_error_type()
 
         try:
             if not self._can_read_sse():
@@ -915,7 +936,7 @@ class ReplicateAdapter(BaseModel):
 
     def _stream_poll(self, inp: dict[str, Any]) -> Iterator[str]:
         """Stream via polling output_iterator (non-SSE models)."""
-        from replicate.exceptions import ReplicateError
+        ReplicateError = _replicate_error_type()
 
         try:
             prediction = self._client.predictions.create(

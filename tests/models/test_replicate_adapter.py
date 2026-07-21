@@ -927,3 +927,68 @@ class TestRefreshModels:
         assert report["live_count"] == 2
         # "new-org/brand-new-model" is in live but not in registry → added
         assert "new-org/brand-new-model" in report["added"]
+
+
+# ---------------------------------------------------------------------------
+# Behaviour when the optional SDK is not installed
+# ---------------------------------------------------------------------------
+
+class TestSdkAbsent:
+    """The adapter must not turn a missing SDK into an unclassified failure.
+
+    ``replicate`` ships in an optional extra, so an install without it is
+    normal. The generation paths match on the SDK's own exception class to read
+    its HTTP status; resolving that class must not raise ``ModuleNotFoundError``
+    in the middle of a call, because that error carries no classification and no
+    ``error_context``, and its message ("No module named 'replicate'") reads as
+    a missing *model* rather than a missing package.
+    """
+
+    def test_error_type_falls_back_when_sdk_is_absent(self, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_replicate(name, *args, **kwargs):
+            if name == "replicate" or name.startswith("replicate."):
+                raise ModuleNotFoundError(f"No module named '{name}'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_replicate)
+
+        resolved = replicate_adapter._replicate_error_type()
+        assert issubclass(resolved, BaseException)
+        # Nothing raises the stand-in, so the match stays inert and the real
+        # failure reaches the generic classification path.
+        assert resolved is replicate_adapter._SdkExceptionUnavailable
+
+    def test_error_type_is_the_sdk_class_when_installed(self):
+        pytest.importorskip("replicate", reason="replicate SDK not installed")
+        from replicate.exceptions import ReplicateError
+
+        assert replicate_adapter._replicate_error_type() is ReplicateError
+
+    def test_provider_failure_still_classified_without_the_sdk(self, monkeypatch):
+        """A failing call is classified even when the SDK cannot be imported."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_replicate(name, *args, **kwargs):
+            if name == "replicate" or name.startswith("replicate."):
+                raise ModuleNotFoundError(f"No module named '{name}'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_replicate)
+
+        adapter = ReplicateAdapter("meta/meta-llama-3-8b-instruct", api_key="k")
+        adapter._is_loaded = True
+        client = MagicMock()
+        client.predictions.create.side_effect = RuntimeError("401 unauthorized")
+        adapter._client = client
+
+        with pytest.raises(Exception) as exc_info:
+            adapter.generate("hi")
+
+        assert not isinstance(exc_info.value, ModuleNotFoundError)
+        assert isinstance(getattr(exc_info.value, "error_context", None), dict)
