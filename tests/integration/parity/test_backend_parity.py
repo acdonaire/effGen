@@ -93,9 +93,9 @@ PARITY_PARAMS = [
         id="together/qwen3.5-9b",
     ),
     pytest.param(
-        "fireworks", "accounts/fireworks/models/kimi-k2p5",
+        "fireworks", "accounts/fireworks/models/kimi-k2p6",
         marks=pytest.mark.skipif(not _has("FIREWORKS_API_KEY"), reason="SKIPPED: FIREWORKS_API_KEY not set"),
-        id="fireworks/kimi-k2p5",
+        id="fireworks/kimi-k2p6",
     ),
     pytest.param(
         "hf", "Qwen/Qwen2.5-72B-Instruct",
@@ -230,9 +230,9 @@ NATIVE_PARAMS = [
         id="groq/llama-3.3-70b-versatile/native",
     ),
     pytest.param(
-        "fireworks", "accounts/fireworks/models/kimi-k2p5",
+        "fireworks", "accounts/fireworks/models/kimi-k2p6",
         marks=pytest.mark.skipif(not _has("FIREWORKS_API_KEY"), reason="SKIPPED: FIREWORKS_API_KEY not set"),
-        id="fireworks/kimi-k2p5/native",
+        id="fireworks/kimi-k2p6/native",
     ),
     pytest.param(
         "together", "Qwen/Qwen3.5-9B",

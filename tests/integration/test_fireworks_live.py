@@ -26,8 +26,9 @@ pytestmark = pytest.mark.skipif(
 # Cheap models used for live tests (must be in live serverless catalog as of test run)
 # gpt-oss-120b is the cheapest text-only model currently in the Fireworks serverless catalog.
 _SMALL_MODEL = "accounts/fireworks/models/gpt-oss-120b"
-# kimi-k2p5 confirmed native structured tool_calls (still in live catalog)
-_TOOL_MODEL = "accounts/fireworks/models/kimi-k2p5"
+# kimi-k2p6 returns native structured tool_calls; kimi-k2p5 is no longer
+# deployed on the serverless catalog (verified 2026-07-20).
+_TOOL_MODEL = "accounts/fireworks/models/kimi-k2p6"
 
 
 def _xfail_if_fireworks_transient(exc: Exception) -> None:
