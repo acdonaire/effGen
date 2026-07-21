@@ -74,6 +74,10 @@ dependencies = [
     "proto-plus>=1.24.0",
     "grpcio-status>=1.60.0",
     "googleapis-common-protos>=1.63.0",
+    # httplib2 reaches the base install through google-generativeai ->
+    # google-api-python-client; 0.32.0 is the first release that clears
+    # PYSEC-2026-3444.
+    "httplib2>=0.32.0",
     # Configuration Management
     "pyyaml>=6.0.1",
     "jsonschema>=4.19.0",
@@ -109,7 +113,8 @@ dependencies = [
     "gputil>=1.4.0",
     "nvidia-ml-py>=11.495.46",
     # Protocol Support - MCP
-    "mcp>=1.25.0",
+    # 1.28.1 is the first release that clears CVE-2026-59950.
+    "mcp>=1.28.1",
     # Performance Monitoring
     "psutil>=5.9.0",
     # Data Processing
@@ -174,7 +179,11 @@ dev = [
 # CUDA-13 torch and disables the GPU. Install vLLM against your driver's torch
 # build per docs/installation.md ("Installing vLLM"); engine="auto-fast" falls
 # back to Transformers if the installed vLLM can't import.
-vllm = ["vllm>=0.2.7,<1.0"]
+vllm = [
+    "vllm>=0.2.7,<1.0",
+    # via vllm / mistral-common / torchvision
+    "Pillow>=12.3.0",
+]
 mlx = [
     "mlx>=0.16.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-lm>=0.18.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
@@ -194,6 +203,8 @@ finance = [
 data = [
     "matplotlib>=3.7.0",
     "plotly>=5.18.0",
+    # via matplotlib
+    "Pillow>=12.3.0",
 ]
 eval = [
     "rouge-score>=0.1.2",
@@ -216,6 +227,8 @@ qr = [
     "qrcode[pil]>=7.4",
     "pyzbar>=0.1.9",
     "opencv-python-headless>=4.8.0",
+    # via qrcode[pil]
+    "Pillow>=12.3.0",
 ]
 server = [
     # OIDC/JWT auth for the API server
@@ -241,11 +254,16 @@ lambda = [
 ]
 tools = [
     "pytesseract>=0.3.10",
-    "Pillow>=10.0.0",
+    # Pillow 12.3.0 is the first release clear of the imaging advisories
+    # (PYSEC-2026-2253..-2257, -3451..-3453, CVE-2026-54058/-59197/-59198/
+    # -59200/-59204). Every extra whose dependency closure reaches Pillow —
+    # directly or through another package — repeats this floor, because a
+    # floor declared only elsewhere does not constrain this install.
+    "Pillow>=12.3.0",
 ]
 geo = [
     "staticmap>=0.5.4",
-    "Pillow>=10.0.0",
+    "Pillow>=12.3.0",
 ]
 documents = [
     "pypdf>=6.13.3",
@@ -257,6 +275,8 @@ documents = [
     # round-trip PDF fixtures with known text; install it alongside the
     # parsers so the full doc-pipeline test suite runs end-to-end.
     "reportlab>=4.0.0",
+    # via pdfplumber / reportlab
+    "Pillow>=12.3.0",
 ]
 audio = [
     "faster-whisper>=1.0.0",
@@ -272,6 +292,8 @@ groq = [
 ]
 together = [
     "together>=1.3",
+    # via together
+    "Pillow>=12.3.0",
 ]
 fireworks = [
     # Cap below 0.18: fireworks-ai 0.18+ hard-pins protobuf==5.29.3/5.29.4
@@ -279,6 +301,8 @@ fireworks = [
     # which hard-pins openai==1.78.1. 0.16/0.17 require only `openai` and no
     # protobuf pin, so [all] stays resolvable and CVE-safe.
     "fireworks-ai>=0.15,<0.18",
+    # via fireworks-ai
+    "Pillow>=12.3.0",
 ]
 replicate = [
     "replicate>=1.0",
@@ -299,6 +323,9 @@ search = [
     "duckduckgo-search>=8.1.0",
     "google-search-results>=2.4.2",
     "google-api-python-client>=2.108.0",
+    # httplib2 reaches the install through google-api-python-client;
+    # 0.32.0 is the first release that clears PYSEC-2026-3444.
+    "httplib2>=0.32.0",
 ]
 cloud-secrets = [
     "boto3>=1.28.0",
@@ -309,6 +336,8 @@ cloud-secrets = [
 monitoring = [
     "wandb>=0.16.0",
     "tensorboard>=2.15.0",
+    # via tensorboard
+    "Pillow>=12.3.0",
 ]
 # ---------------------------------------------------------------------------
 # Use-case extras (curated groupings for common install intents). The base
@@ -325,6 +354,8 @@ api = [
     "replicate>=1.0",
     "cerebras-cloud-sdk>=1.0",
     "huggingface_hub>=0.26",
+    # via together / fireworks-ai
+    "Pillow>=12.3.0",
 ]
 local = [
     # Run/quantize local Transformers models on GPU (torch/transformers/accelerate
@@ -343,11 +374,16 @@ grammar = [
     # concrete outlines symbols it needs, so an incompatible build degrades to
     # the fallback rather than erroring.
     "outlines>=1.0",
+    # via outlines
+    "Pillow>=12.3.0",
 ]
 tools-web = [
     # Web-search / browsing tools (DuckDuckGo ships in the base install).
     "google-search-results>=2.4.2",
     "google-api-python-client>=2.108.0",
+    # httplib2 reaches the install through google-api-python-client;
+    # 0.32.0 is the first release that clears PYSEC-2026-3444.
+    "httplib2>=0.32.0",
 ]
 tools-docs = [
     # Document parsing tools (PDF / DOCX / XLSX).
@@ -356,6 +392,8 @@ tools-docs = [
     "python-docx>=1.1.0",
     "openpyxl>=3.1.0",
     "pandas>=2.0.0,<4",
+    # via pdfplumber
+    "Pillow>=12.3.0",
 ]
 all = [
     # [all] is the CI / everything extra: it installs every optional dependency
@@ -390,6 +428,9 @@ all = [
     "duckduckgo-search>=8.1.0",
     "google-search-results>=2.4.2",
     "google-api-python-client>=2.108.0",
+    # httplib2 reaches the install through google-api-python-client;
+    # 0.32.0 is the first release that clears PYSEC-2026-3444.
+    "httplib2>=0.32.0",
     "boto3>=1.28.0",
     "hvac>=1.2.0",
     "azure-keyvault-secrets>=4.7.0",
@@ -422,7 +463,7 @@ all = [
     "pyzbar>=0.1.9",
     "opencv-python-headless>=4.8.0",
     "pytesseract>=0.3.10",
-    "Pillow>=10.0.0",
+    "Pillow>=12.3.0",
     "faster-whisper>=1.0.0",
     "pydub>=0.25.1",
     "pypdf>=6.13.3",
