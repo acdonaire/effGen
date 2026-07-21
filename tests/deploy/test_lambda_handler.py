@@ -463,7 +463,11 @@ class TestTimeoutBudget:
         resp = slow_handler({"rawPath": "/slow"}, _ShortBudgetCtx())
         assert resp["statusCode"] == 504, f"expected 504 on overrun, got {resp}"
         body = json.loads(resp["body"])
-        assert "timeout" in body["detail"].lower()
+        # Same error envelope the app's own routes return.
+        assert set(body["error"]) == {"message", "type", "param", "code"}
+        assert body["error"]["type"] == "timeout"
+        assert body["error"]["code"] == "invocation_timeout"
+        assert "timeout" in body["error"]["message"].lower()
 
     def test_fast_request_within_budget_ok(self, handler_module):
         def _fast_adapter(event, context):

@@ -179,14 +179,39 @@ def _event_path(event: Any) -> str:
     )
 
 
+def _error_body(status: int, message: str, code: str) -> str:
+    """Serialize an error the same way the app's own routes do.
+
+    The handler answers with the ``{"error": {message, type, param, code}}``
+    envelope every effGen endpoint uses, so a client sees one error shape
+    whether the failure came from a route or from the invocation wrapper. Falls
+    back to the literal shape if the app package cannot be imported (the
+    cold-start failure path).
+    """
+    import json
+
+    try:
+        from effgen.api.openai_compat import error_envelope
+
+        payload = error_envelope(status, message, code=code, redact=False)
+    except Exception:  # noqa: BLE001 - the failure path must never depend on the import
+        err_type = "timeout" if status == 504 else "server_error"
+        payload = {
+            "error": {"message": message, "type": err_type, "param": None, "code": code}
+        }
+    return json.dumps(payload)
+
+
 def _timeout_response(budget_s: float) -> dict:
     """API Gateway response returned when the invocation budget is exceeded."""
     return {
         "statusCode": 504,
         "headers": {"content-type": "application/json"},
-        "body": (
-            '{"detail": "Request exceeded the per-invocation timeout budget of '
-            f'{budget_s:.0f}s"}}'
+        "body": _error_body(
+            504,
+            "Request exceeded the per-invocation timeout budget of "
+            f"{budget_s:.0f}s",
+            "invocation_timeout",
         ),
         "isBase64Encoded": False,
     }
@@ -260,6 +285,10 @@ except Exception as _init_exc:  # noqa: BLE001
         return {
             "statusCode": 500,
             "headers": {"content-type": "application/json"},
-            "body": '{"detail": "Lambda handler failed to initialise — check logs"}',
+            "body": _error_body(
+                500,
+                "Lambda handler failed to initialise — check logs",
+                "initialisation_failed",
+            ),
             "isBase64Encoded": False,
         }

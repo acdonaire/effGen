@@ -180,8 +180,15 @@ class TestWorkerJs:
         )
         assert "X-Frame-Options" in self.src, "worker.js must set X-Frame-Options"
 
-    def test_public_paths_skip_auth(self):
-        assert "/health" in self.src, "worker.js must skip auth for /health"
+    def test_public_paths_match_the_origin_server(self):
+        for path in ("/health", "/healthz", "/livez", "/ready", "/readyz", "/slo"):
+            assert f'"{path}"' in self.src, f"worker.js must skip auth for {path}"
+
+    def test_metrics_is_not_public_at_the_edge(self):
+        public = self.src.split("const PUBLIC_PATHS")[1].split("]")[0]
+        assert "/metrics" not in public, (
+            "worker.js must not exempt /metrics from auth — the origin protects it"
+        )
 
     def test_jwt_expiry_check(self):
         assert "exp" in self.src, "worker.js must check JWT exp claim"
@@ -314,6 +321,11 @@ await test("Missing Authorization → 401", async () => {
   assert(res.status === 401, `Expected 401, got ${res.status}`);
   const body = await res.json();
   assert(body.error?.code === "unauthorized", `Expected 'unauthorized' code, got ${body.error?.code}`);
+  // Same envelope the origin server returns: {message, type, param, code}.
+  const keys = Object.keys(body.error).sort().join(",");
+  assert(keys === "code,message,param,type", `Expected the shared error envelope, got ${keys}`);
+  assert(body.error.type === "invalid_request_error", `Expected 'invalid_request_error', got ${body.error.type}`);
+  assert(body.error.param === null, "Expected param to be null");
 });
 
 // 3. Malformed JWT (not 3 parts) → 401 invalid_token
@@ -358,19 +370,30 @@ await test("Valid JWT + upstream unreachable → 502", async () => {
   assert(res.status === 502, `Expected 502, got ${res.status}`);
   const body = await res.json();
   assert(body.error?.code === "bad_gateway", `Expected 'bad_gateway', got ${body.error?.code}`);
+  assert(body.error.type === "upstream_error", `Expected 'upstream_error', got ${body.error.type}`);
 });
 
-// 7. /health is public (no auth required), forwarded to upstream
-await test("/health skips auth → forwarded", async () => {
+// 7. The origin's public endpoints are public at the edge too, forwarded upstream.
+await test("public paths skip auth → forwarded", async () => {
   const env7 = {
     ...baseEnv,
     _fetch: mockFetch(async () => new Response(JSON.stringify({ status: "ok" }), {
       status: 200, headers: { "Content-Type": "application/json" },
     })),
   };
-  const req = makeRequest("GET", "/health", {});
-  const res = await handler(req, env7, ctx);
-  assert(res.status === 200, `Expected 200, got ${res.status}`);
+  // A trailing slash names the same endpoint, as it does at the origin.
+  for (const path of ["/health", "/health/", "/healthz", "/livez", "/ready", "/readyz", "/slo"]) {
+    const res = await handler(makeRequest("GET", path, {}), env7, ctx);
+    assert(res.status === 200, `Expected 200 for ${path}, got ${res.status}`);
+  }
+});
+
+// 7b. /metrics is protected at the origin, so the edge must not exempt it.
+await test("/metrics without a token → 401", async () => {
+  const res = await handler(makeRequest("GET", "/metrics", {}), baseEnv, ctx);
+  assert(res.status === 401, `Expected 401, got ${res.status}`);
+  const body = await res.json();
+  assert(body.error?.code === "unauthorized", `Expected 'unauthorized', got ${body.error?.code}`);
 });
 
 // 8. Rate limit exceeded → 429

@@ -37,8 +37,36 @@ const SECURITY_HEADERS = {
   "X-Powered-By": "effgen",
 };
 
-/** Public paths that skip JWT Bearer validation. */
-const PUBLIC_PATHS = new Set(["/health", "/healthz", "/metrics", "/favicon.ico"]);
+/**
+ * Public paths that skip JWT Bearer validation.
+ *
+ * The set mirrors the origin server's public endpoints — the liveness and
+ * readiness probes and the aggregate SLO status — so one auth rule decides
+ * access at the edge and at the origin. `/metrics` is deliberately absent: the
+ * origin protects it by default, and the worker forwards a backend token, so
+ * exempting it here would serve metrics to an unauthenticated caller.
+ */
+const PUBLIC_PATHS = new Set([
+  "/health",
+  "/healthz",
+  "/livez",
+  "/ready",
+  "/readyz",
+  "/slo",
+  "/favicon.ico",
+]);
+
+/**
+ * Return true when *path* is public, ignoring a trailing slash so `/health/`
+ * is the probe endpoint the origin also treats as public.
+ *
+ * @param {string} path - Request path
+ * @returns {boolean}
+ */
+function isPublicPath(path) {
+  if (PUBLIC_PATHS.has(path)) return true;
+  return path.length > 1 && path.endsWith("/") && PUBLIC_PATHS.has(path.replace(/\/+$/, ""));
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -169,7 +197,32 @@ async function checkRateLimit(kv, key, max, windowSeconds) {
 }
 
 /**
+ * Map an HTTP status to the OpenAI error `type` the origin server uses, so an
+ * error raised at the edge carries the same fields as one from the origin.
+ *
+ * @param {number} status - HTTP status code
+ * @returns {string}
+ */
+function errorType(status) {
+  const byStatus = {
+    400: "invalid_request_error",
+    401: "invalid_request_error",
+    403: "permission_error",
+    404: "invalid_request_error",
+    413: "invalid_request_error",
+    429: "rate_limit_exceeded",
+    502: "upstream_error",
+    503: "upstream_unavailable",
+    504: "timeout",
+  };
+  return byStatus[status] || (status >= 500 ? "server_error" : "invalid_request_error");
+}
+
+/**
  * Build a JSON error response with standard headers.
+ *
+ * Uses the origin server's `{"error": {message, type, param, code}}` envelope
+ * so a client reads edge and origin failures the same way.
  *
  * @param {number} status - HTTP status code
  * @param {string} code - Machine-readable error code
@@ -179,7 +232,7 @@ async function checkRateLimit(kv, key, max, windowSeconds) {
  */
 function errorResponse(status, code, message, extraHeaders = {}) {
   return new Response(
-    JSON.stringify({ error: { code, message } }),
+    JSON.stringify({ error: { message, type: errorType(status), param: null, code } }),
     {
       status,
       headers: {
@@ -215,7 +268,7 @@ async function handleRequest(request, env, ctx) {
 
   // ── 2. JWT Bearer validation (skip public paths) ─────────────────────────
   let tokenSub = "";
-  const isPublic = PUBLIC_PATHS.has(path);
+  const isPublic = isPublicPath(path);
 
   if (!isPublic) {
     const authHeader = request.headers.get("Authorization") || "";
