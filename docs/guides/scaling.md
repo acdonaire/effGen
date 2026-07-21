@@ -163,7 +163,10 @@ effgen batch --input queries.jsonl --output results.jsonl --resume
 ```
 
 A malformed input line is skipped with a message naming the file and line
-number; pass `--strict` to hard-fail on the first bad line instead. Use
+number; pass `--strict` to hard-fail on the first bad line instead. A line that
+parses but is not a question — a JSON scalar or array, or a row whose fields
+carry no query text — is reported the same way and is not sent to the model, so
+an input file with nothing usable fails instead of billing empty prompts. Use
 `--temperature 0` for deterministic reruns where the provider supports it.
 
 ## Domain Keyword Expansion
