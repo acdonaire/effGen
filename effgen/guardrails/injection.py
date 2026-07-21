@@ -49,9 +49,11 @@ class PromptInjectionGuardrail(Guardrail):
         re.compile(
             r"\b(?:ignore|disregard|forget|override|bypass|skip|do\s+not\s+follow)"
             r"(?:\s+(?:all|any|the|your|my|these|those|this|previous|prior|above|"
-            r"earlier|original|initial|preceding|foregoing|aforementioned)){0,5}"
-            r"\s+(?:instructions?|prompts?|rules?|guidelines?|directives?|"
-            r"constraints?|context|messages?|commands?)",
+            r"earlier|original|initial|preceding|foregoing|aforementioned|"
+            r"safety|security|system|content|default)){0,5}"
+            r"\s+(?:instructions?|prompts?|rules?|guidelines?|guidance|directives?|"
+            r"constraints?|restrictions?|filters?|safeguards?|polic(?:y|ies)|"
+            r"protocols?|context|messages?|commands?)",
             re.I,
         ),
         # verb + "the above / preceding / prior" (the object itself is the
