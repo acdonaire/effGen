@@ -35,6 +35,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Adapter modules that ship with effGen. Each defines an idempotent
+# ``_register()`` that adds its provider to :class:`ProviderRegistry` and runs
+# it once at import time.
+_BUILTIN_ADAPTER_MODULES = (
+    "effgen.models.anthropic_adapter",
+    "effgen.models.cerebras_adapter",
+    "effgen.models.fireworks_adapter",
+    "effgen.models.gemini_adapter",
+    "effgen.models.groq_adapter",
+    "effgen.models.hf_inference_adapter",
+    "effgen.models.openai_adapter",
+    "effgen.models.replicate_adapter",
+    "effgen.models.together_adapter",
+)
+
 
 class ProviderRegistry:
     """Singleton registry mapping providers → adapters + models."""
@@ -218,10 +233,137 @@ class ProviderRegistry:
         }))
 
     @classmethod
-    def reset(cls) -> None:
-        """Clear the registry (useful for testing)."""
+    def register_builtins(cls) -> list[str]:
+        """Register the provider adapters that ship with effGen.
+
+        Adapter modules register themselves the first time they are imported,
+        so importing them again after the registry has been emptied does
+        nothing — they are already in ``sys.modules``. This calls each module's
+        registration hook directly, which restores the built-in providers from
+        any registry state. It is idempotent.
+
+        Returns:
+            The built-in provider names, sorted. A module that cannot be
+            imported (an optional dependency is missing) is skipped, so a short
+            list means a provider is unavailable in this environment.
+        """
+        import importlib
+
+        registered: list[str] = []
+        for module_name in _BUILTIN_ADAPTER_MODULES:
+            try:
+                module = importlib.import_module(module_name)
+            except Exception:
+                logger.debug("Provider module %r unavailable", module_name, exc_info=True)
+                continue
+            register = getattr(module, "_register", None)
+            if not callable(register):
+                continue
+            # register() replaces the provider's record, so a changed (or new)
+            # record identifies which provider this module owns — including
+            # when it was already registered and nothing was added.
+            before = dict(cls._providers)
+            try:
+                register()
+            except Exception:
+                logger.debug("Provider module %r failed to register", module_name, exc_info=True)
+                continue
+            registered.extend(
+                name for name, rec in cls._providers.items() if before.get(name) is not rec
+            )
+        return sorted(set(registered))
+
+    @classmethod
+    def clear(cls) -> None:
+        """Remove every registration, leaving the registry empty.
+
+        Model lookups raise until something registers again; :meth:`reset`
+        returns the registry to the state effGen starts in.
+        """
         cls._providers.clear()
         cls._model_index.clear()
+
+    @classmethod
+    def reset(cls) -> None:
+        """Return the registry to the state effGen starts in.
+
+        Drops every registration — including the circuit breaker and bulkhead
+        held per provider — then registers the built-in provider adapters
+        again, so model lookups keep working afterwards. Use :meth:`clear` when
+        an empty registry is what you want.
+        """
+        cls.clear()
+        cls.register_builtins()
+
+    @classmethod
+    def snapshot(cls) -> dict[str, dict[str, Any]]:
+        """Return a copy of the current registrations.
+
+        Pass the result to :meth:`restore` to undo any registration,
+        de-registration, or in-place edit made in between — a model added to or
+        removed from a provider's catalog, a changed capability set, a tripped
+        circuit breaker. Adapter classes are shared with the live registry;
+        model metadata is copied one level deep.
+        """
+        return {
+            name: {
+                "adapter_cls": rec.get("adapter_cls"),
+                # The catalog object itself, so restore() can put the entries
+                # back where the adapter module reads them, and a copy of what
+                # it held.
+                "models_obj": rec.get("models"),
+                "models": {mid: dict(info) for mid, info in (rec.get("models") or {}).items()},
+                "env_keys": list(rec.get("env_keys") or []),
+                "capabilities": set(rec.get("capabilities") or set()),
+                "pricing": dict(rec.get("pricing") or {}),
+            }
+            for name, rec in cls._providers.items()
+        }
+
+    @staticmethod
+    def _restore_models(rec: dict[str, Any]) -> dict[str, dict]:
+        """Return the model catalog *rec* was registered with, contents restored.
+
+        A provider's catalog is usually the dict its adapter module defines, and
+        the adapter reads model metadata from that dict rather than from the
+        registry. Restoring the entries into the same object therefore undoes an
+        edit for the adapter too, instead of leaving it with a catalog the
+        registry no longer serves.
+        """
+        saved = rec.get("models") or {}
+        catalog = rec.get("models_obj")
+        if not isinstance(catalog, dict):
+            return {mid: dict(info) for mid, info in saved.items()}
+
+        for model_id in [mid for mid in catalog if mid not in saved]:
+            del catalog[model_id]
+        for model_id, info in saved.items():
+            current = catalog.get(model_id)
+            if isinstance(current, dict):
+                current.clear()
+                current.update(info)
+            else:
+                catalog[model_id] = dict(info)
+        return catalog
+
+    @classmethod
+    def restore(cls, snapshot: dict[str, dict[str, Any]]) -> None:
+        """Replace the current registrations with a :meth:`snapshot`.
+
+        Args:
+            snapshot: A mapping returned by :meth:`snapshot`. Its contents are
+                      copied, so the same snapshot can be restored repeatedly.
+        """
+        cls.clear()
+        for name, rec in snapshot.items():
+            cls.register(
+                name,
+                rec.get("adapter_cls"),
+                cls._restore_models(rec),
+                env_keys=list(rec.get("env_keys") or []),
+                capabilities=set(rec.get("capabilities") or set()),
+                pricing=dict(rec.get("pricing") or {}) or None,
+            )
 
     # ------------------------------------------------------------------
     # Reliability middleware — circuit breakers + bulkheads per provider

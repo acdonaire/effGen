@@ -262,10 +262,22 @@ class ModelLoader:
                 known_providers = sorted(ProviderRegistry.list_providers())
             except Exception:
                 known_providers = []
+            _known_engines = ", ".join(sorted(self._LOCAL_ENGINE_PREFIXES))
+            # No providers at all means the registry was emptied at runtime
+            # (ProviderRegistry.clear()); the prefix may well be valid, so name
+            # the call that brings the built-in providers back instead of
+            # blaming the model id.
+            if not known_providers:
+                raise ValueError(
+                    f"Cannot resolve provider prefix {_bad_prefix!r} in model id "
+                    f"{model_name!r}: the provider registry is empty — call "
+                    "ProviderRegistry.reset() to restore the built-in providers. "
+                    f"Known local engines: {_known_engines}."
+                )
             raise ValueError(
                 f"Unknown provider or engine prefix {_bad_prefix!r} in model id "
-                f"{model_name!r}. Known providers: {', '.join(known_providers) or 'none configured'}. "
-                f"Known local engines: {', '.join(sorted(self._LOCAL_ENGINE_PREFIXES))}."
+                f"{model_name!r}. Known providers: {', '.join(known_providers)}. "
+                f"Known local engines: {_known_engines}."
             )
 
         # Route / disambiguate bare cloud model ids by consulting the model
