@@ -21,6 +21,8 @@ from typing import Any
 
 from effgen.observability import get_logger as _get_obs_logger
 
+from .structured_output import _clean_json
+
 logger = logging.getLogger(__name__)
 _obs_log = _get_obs_logger(__name__)
 
@@ -274,6 +276,10 @@ class ReActStrategy(ToolCallingStrategy):
         - Markdown-wrapped JSON (```json ... ```)
         - Trailing commas  ({"key": "val",})
         - Unquoted keys    ({expression: "2+2"})
+
+        Argument values are left untouched: a repair applies only outside string
+        literals, so a query like ``"Paris, France: population"`` reaches the
+        tool exactly as the model wrote it.
         """
         text = raw.strip()
 
@@ -283,17 +289,7 @@ class ReActStrategy(ToolCallingStrategy):
             text = re.sub(r'\n?```\s*$', '', text)
             text = text.strip()
 
-        # Remove trailing commas before } or ]
-        text = re.sub(r',\s*([}\]])', r'\1', text)
-
-        # Quote unquoted keys
-        text = re.sub(
-            r'(?<=[{,])\s*([a-zA-Z_]\w*)\s*:',
-            r' "\1":',
-            text,
-        )
-
-        return text
+        return _clean_json(text)
 
     # -- Core parsing ------------------------------------------------------
 

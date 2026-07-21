@@ -587,3 +587,81 @@ def test_tool_discovery_nonempty():
     )
     for name in _ALL_TOOL_NAMES:
         assert issubclass(_ALL_TOOL_CLASSES[name], BaseTool)
+
+
+# ---------------------------------------------------------------------------
+# Tool-argument JSON cleaning
+# ---------------------------------------------------------------------------
+
+# The ReAct paths repair the JSON a small model writes for a tool call. The
+# repair must fix syntax only — an argument value is data and has to reach the
+# tool unchanged, commas, colons, braces and all.
+
+_ARG_VALUES = st.text(
+    alphabet=st.sampled_from(list('{}[]",:` \nabZ09')), min_size=0, max_size=30
+)
+_ARG_OBJECTS = st.dictionaries(
+    st.sampled_from(["query", "expression", "command", "text", "path", "url"]),
+    _ARG_VALUES | st.integers(-1000, 1000) | st.booleans() | st.none(),
+    min_size=1,
+    max_size=4,
+)
+
+
+@pytest.mark.fuzz
+@settings(max_examples=400, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(_ARG_OBJECTS, st.sampled_from(["{body}", "```json\n{body}\n```", "```\n{body}\n```"]))
+def test_clean_json_input_preserves_argument_values(args, wrap):
+    """Valid tool-call JSON survives cleaning with every value intact."""
+    import json
+
+    from effgen.core.agent_runtime import AgentRuntimeMixin
+    from effgen.core.tool_calling import ReActStrategy
+
+    raw = wrap.format(body=json.dumps(args))
+    for clean in (ReActStrategy.clean_json_input, AgentRuntimeMixin._clean_json_input):
+        assert json.loads(clean(raw)) == args
+
+
+@pytest.mark.fuzz
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('{"query": "Paris, France: population"}', {"query": "Paris, France: population"}),
+        ('{"command": "cd build, then: make all"}', {"command": "cd build, then: make all"}),
+        ('{"text": "Trailing, ] bracket"}', {"text": "Trailing, ] bracket"}),
+        # Syntax defects are still repaired.
+        ('{expression: "2+2"}', {"expression": "2+2"}),
+        ('{"expression": "2+2",}', {"expression": "2+2"}),
+        ('```json\n{"query": "Rome, Italy: history"}\n```', {"query": "Rome, Italy: history"}),
+    ],
+)
+def test_clean_json_input_repairs_syntax_not_data(raw, expected):
+    """Trailing commas and unquoted keys are repaired; string values are not."""
+    import json
+
+    from effgen.core.agent_runtime import AgentRuntimeMixin
+    from effgen.core.tool_calling import ReActStrategy
+
+    for clean in (ReActStrategy.clean_json_input, AgentRuntimeMixin._clean_json_input):
+        assert json.loads(clean(raw)) == expected
+
+
+@pytest.mark.fuzz
+def test_react_parse_keeps_comma_colon_argument():
+    """A ReAct tool call with a comma+colon argument parses into real arguments.
+
+    When the JSON cannot be parsed the parser falls back to handing the whole
+    raw string to the tool as ``__raw_input__``; a value containing a comma and
+    a colon must not push it onto that path.
+    """
+    from effgen.core.tool_calling import get_strategy
+
+    text = (
+        "Thought: I need the population.\n"
+        "Action: lookup\n"
+        'Action Input: {"query": "Paris, France: population", "exact": true}\n'
+    )
+    result = get_strategy(mode="react").parse_response(text, tools={"lookup": object()})
+    assert result.tool_name == "lookup"
+    assert result.arguments == {"query": "Paris, France: population", "exact": True}

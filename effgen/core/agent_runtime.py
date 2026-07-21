@@ -19,6 +19,7 @@ from ..utils.async_bridge import run_coroutine_sync
 from ..utils.structured_logging import (
     get_structured_logger,
 )
+from .structured_output import _clean_json
 
 if TYPE_CHECKING:
     from .messages import Message
@@ -402,6 +403,10 @@ class AgentRuntimeMixin:
         - Trailing commas  ({"key": "val",})
         - Unquoted keys    ({expression: "2+2"})
 
+        Argument values are left untouched: a repair applies only outside string
+        literals, so a query like ``"Paris, France: population"`` reaches the
+        tool exactly as the model wrote it.
+
         Returns the cleaned string (still needs json.loads).
         """
         text = raw.strip()
@@ -413,20 +418,7 @@ class AgentRuntimeMixin:
             text = re.sub(r'\n?```\s*$', '', text)
             text = text.strip()
 
-        # Remove trailing commas before } or ]
-        # e.g. {"key": "val",} -> {"key": "val"}
-        text = re.sub(r',\s*([}\]])', r'\1', text)
-
-        # Quote unquoted keys:  {expression: "2+2"} -> {"expression": "2+2"}
-        # Match word characters at the start of a key position (after { or ,)
-        # but only if they aren't already quoted
-        text = re.sub(
-            r'(?<=[{,])\s*([a-zA-Z_]\w*)\s*:',
-            r' "\1":',
-            text
-        )
-
-        return text
+        return _clean_json(text)
 
     @staticmethod
     def _sanitize_tool_input(tool_input: str, max_length: int = 10000) -> str:
