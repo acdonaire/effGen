@@ -49,7 +49,12 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
-from effgen.models._adapter_utils import normalize_finish_reason, provider_runtime_error
+from effgen.models._adapter_utils import (
+    attach_error_context,
+    normalize_finish_reason,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
 from effgen.models.base import (
@@ -61,6 +66,7 @@ from effgen.models.base import (
 )
 from effgen.models.errors import (
     BudgetExceededError,
+    InvalidRequestError,
     ModelAuthError,
     ModelNotFoundError,
     ModelTimeoutError,
@@ -113,7 +119,7 @@ class ReplicateAdapter(BaseModel):
             ``"meta/meta-llama-3-8b-instruct"``.  Defaults to
             ``"meta/meta-llama-3-8b-instruct"``.
         api_token: Replicate API token.  Falls back to ``REPLICATE_API_TOKEN``
-            env var.
+            env var.  ``api_key`` is accepted as an alias.
         timeout: Seconds to wait for a prediction to complete before raising
             :class:`~effgen.models.errors.ModelTimeoutError`.  Default 300s.
         poll_interval: Starting poll interval in seconds (grows with backoff).
@@ -156,6 +162,7 @@ class ReplicateAdapter(BaseModel):
         enable_cost_tracking: bool = True,
         warn_unknown_model: bool = True,
         rate_limit_storage: "SQLiteRateLimitStore | None" = None,
+        api_key: str | None = None,
         **kwargs: Any,
     ) -> None:
         info = REPLICATE_MODELS.get(model_name)
@@ -176,7 +183,9 @@ class ReplicateAdapter(BaseModel):
             context_length=(info or {}).get("context", 8_192),
         )
 
-        self._api_token = api_token
+        # ``api_key=`` is the name every other adapter uses; accept it here so
+        # a credential passed under that name is used, not dropped into kwargs.
+        self._api_token = api_token or api_key
         self.timeout = timeout
         self._initial_poll_interval = poll_interval
         self.max_retries = max_retries
@@ -431,7 +440,7 @@ class ReplicateAdapter(BaseModel):
             ModelAuthError: On authentication failure.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("ReplicateAdapter not loaded. Call load() first.")
+            raise not_loaded_error("replicate", self.model_name, "generate")
 
         if config is None:
             config = GenerationConfig()
@@ -483,9 +492,13 @@ class ReplicateAdapter(BaseModel):
                         message=str(exc),
                     ) from exc
                 if exc.status == 402:
-                    raise RuntimeError(
-                        "Replicate account has insufficient credits.  "
-                        "Add billing at https://replicate.com/account/billing#billing"
+                    raise InvalidRequestError(
+                        provider="replicate",
+                        model_name=self.model_name,
+                        message=(
+                            "the account has insufficient credits. Add billing at "
+                            "https://replicate.com/account/billing#billing"
+                        ),
                     ) from exc
                 if exc.status in (429, 500, 503) and attempt < self.max_retries:
                     wait = min(2 ** attempt, 30)
@@ -496,8 +509,18 @@ class ReplicateAdapter(BaseModel):
                     )
                     time.sleep(wait)
                     continue
-                raise RuntimeError(
-                    f"Replicate API error for model '{self.model_name}': {exc}"
+                raise provider_runtime_error(
+                    "replicate", self.model_name, "generate", exc,
+                    message=f"Replicate API error for model '{self.model_name}'",
+                ) from exc
+            except (ValueError, TypeError) as exc:
+                # The SDK rejects the request before sending it (most often a
+                # model reference that is not "owner/name[:version]"). Resending
+                # the same request cannot change that, so it fails fast.
+                raise InvalidRequestError(
+                    provider="replicate",
+                    model_name=self.model_name,
+                    message=str(exc),
                 ) from exc
             except Exception as exc:
                 last_exc = exc
@@ -510,22 +533,29 @@ class ReplicateAdapter(BaseModel):
                 ) from exc
 
         if prediction is None:
-            raise RuntimeError(
-                f"Replicate prediction could not be created for '{self.model_name}' "
-                f"after {self.max_retries} attempts: {last_exc}"
+            raise provider_runtime_error(
+                "replicate", self.model_name, "generate",
+                last_exc or RuntimeError("no prediction was returned"),
+                message=(
+                    f"Replicate prediction could not be created for "
+                    f"'{self.model_name}' after {self.max_retries} attempts"
+                ),
             )
 
         # Poll until complete
         prediction = self._poll_prediction(prediction)
 
         if prediction.status == "failed":
-            raise RuntimeError(
-                f"Replicate prediction failed for '{self.model_name}': "
-                f"{prediction.error}"
+            raise provider_runtime_error(
+                "replicate", self.model_name, "generate",
+                RuntimeError(str(prediction.error or "prediction failed")),
+                message=f"Replicate prediction failed for '{self.model_name}'",
             )
         if prediction.status == "canceled":
-            raise RuntimeError(
-                f"Replicate prediction was cancelled for '{self.model_name}'"
+            raise InvalidRequestError(
+                provider="replicate",
+                model_name=self.model_name,
+                message="the prediction was cancelled before it produced output",
             )
 
         # Assemble output text
@@ -701,7 +731,7 @@ class ReplicateAdapter(BaseModel):
             ModelAuthError: On authentication failure.
         """
         if not self._is_loaded or self._client is None:
-            raise RuntimeError("ReplicateAdapter not loaded. Call load() first.")
+            raise not_loaded_error("replicate", self.model_name, "generate_stream")
 
         if config is None:
             config = GenerationConfig()
@@ -718,11 +748,22 @@ class ReplicateAdapter(BaseModel):
         with timed_call("replicate", self.model_name) as _stream_timer:
             _first_token = True
             src = self._stream_sse(inp) if supports_streaming else self._stream_poll(inp)
-            for token in src:
-                if _first_token:
-                    _stream_timer.mark_first_token()
-                    _first_token = False
-                yield token
+            try:
+                for token in src:
+                    if _first_token:
+                        _stream_timer.mark_first_token()
+                        _first_token = False
+                    yield token
+            except Exception as exc:
+                # A transport-level failure (the SDK raises more than
+                # ReplicateError) reaches the caller classified, like every
+                # other adapter's stream.
+                if getattr(exc, "error_context", None) is not None:
+                    raise
+                raise provider_runtime_error(
+                    "replicate", self.model_name, "generate_stream", exc,
+                    message=f"Replicate streaming failed for '{self.model_name}'",
+                ) from exc
 
         self._account_stream_usage()
 
@@ -835,10 +876,14 @@ class ReplicateAdapter(BaseModel):
             self._last_stream_prediction = prediction
             stream_url = (prediction.urls or {}).get("stream")
             if not stream_url:
-                raise RuntimeError(
-                    f"Replicate model '{self.model_name}' did not return a stream "
-                    f"URL. Set supports_streaming=False for this model, or call "
-                    f"generate() instead of generate_stream()."
+                raise InvalidRequestError(
+                    provider="replicate",
+                    model_name=self.model_name,
+                    message=(
+                        "the model did not return a stream URL. Set "
+                        "supports_streaming=False for this model, or call "
+                        "generate() instead of generate_stream()."
+                    ),
                 )
             yield from self._read_sse(stream_url)
         except ReplicateError as exc:
@@ -855,12 +900,17 @@ class ReplicateAdapter(BaseModel):
                     message=str(exc),
                 ) from exc
             if exc.status == 402:
-                raise RuntimeError(
-                    "Replicate account has insufficient credits.  "
-                    "Add billing at https://replicate.com/account/billing#billing"
+                raise InvalidRequestError(
+                    provider="replicate",
+                    model_name=self.model_name,
+                    message=(
+                        "the account has insufficient credits. Add billing at "
+                        "https://replicate.com/account/billing#billing"
+                    ),
                 ) from exc
-            raise RuntimeError(
-                f"Replicate streaming error for '{self.model_name}': {exc}"
+            raise provider_runtime_error(
+                "replicate", self.model_name, "generate_stream", exc,
+                message=f"Replicate streaming error for '{self.model_name}'",
             ) from exc
 
     def _stream_poll(self, inp: dict[str, Any]) -> Iterator[str]:
@@ -885,8 +935,9 @@ class ReplicateAdapter(BaseModel):
                     model_name=self.model_name,
                     message=str(exc),
                 ) from exc
-            raise RuntimeError(
-                f"Replicate prediction creation failed for '{self.model_name}': {exc}"
+            raise provider_runtime_error(
+                "replicate", self.model_name, "generate_stream", exc,
+                message=f"Replicate prediction creation failed for '{self.model_name}'",
             ) from exc
 
         self._last_stream_prediction = prediction
@@ -923,9 +974,10 @@ class ReplicateAdapter(BaseModel):
             previous_output = list(output)
 
         if prediction.status == "failed":
-            raise RuntimeError(
-                f"Replicate prediction failed for '{self.model_name}': "
-                f"{prediction.error}"
+            raise provider_runtime_error(
+                "replicate", self.model_name, "generate_stream",
+                RuntimeError(str(prediction.error or "prediction failed")),
+                message=f"Replicate prediction failed for '{self.model_name}'",
             )
 
         # Flush any remaining tokens
@@ -987,10 +1039,15 @@ class ReplicateAdapter(BaseModel):
             GenerationResult with ``tool_calls`` populated.
         """
         if not self._info.get("supports_native_tools"):
-            raise NotImplementedError(
-                f"Model '{self.model_name}' does not support native tool calling.  "
-                f"Use an Agent with strategy='react' instead, or switch to "
-                f"a tool-capable model like 'ibm-granite/granite-3.3-8b-instruct'."
+            raise attach_error_context(
+                NotImplementedError(
+                    f"Model '{self.model_name}' does not support native tool "
+                    f"calling.  Use an Agent with strategy='react' instead, or "
+                    f"switch to a tool-capable model like "
+                    f"'ibm-granite/granite-3.3-8b-instruct'."
+                ),
+                "replicate", self.model_name, "generate_with_tools",
+                source=InvalidRequestError("replicate", self.model_name),
             )
 
         # Normalise tools to OpenAI function-calling schema

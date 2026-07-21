@@ -461,8 +461,11 @@ class TestGenerateMocked:
         exc = ReplicateError(status=402, title="Insufficient credit", detail="Add billing")
         adapter._client.predictions.create.side_effect = exc
 
-        with pytest.raises(RuntimeError, match="insufficient credits"):
+        from effgen.models.errors import InvalidRequestError
+        with pytest.raises(InvalidRequestError, match="insufficient credits") as exc_info:
             adapter.generate("Hi")
+        # A billing state does not clear on retry.
+        assert exc_info.value.error_context["retry_status"] == "non_retryable"
 
     def test_generate_usage_populated(self):
         adapter = self._make_loaded_adapter()
@@ -543,7 +546,8 @@ class TestStreamingMocked:
         pred.urls = {}
         adapter._client.predictions.create.return_value = pred
 
-        with pytest.raises(RuntimeError, match="did not return a stream URL"):
+        from effgen.models.errors import InvalidRequestError
+        with pytest.raises(InvalidRequestError, match="did not return a stream URL"):
             list(adapter.generate_stream("Hi"))
 
     def test_stream_sse_auth_error(self):
@@ -567,7 +571,8 @@ class TestStreamingMocked:
             status=402, title="Insufficient credit", detail="Add billing"
         )
 
-        with pytest.raises(RuntimeError, match="insufficient credits"):
+        from effgen.models.errors import InvalidRequestError
+        with pytest.raises(InvalidRequestError, match="insufficient credits"):
             list(adapter.generate_stream("Hi"))
 
     def test_stream_falls_back_when_sdk_internals_are_absent(self):
