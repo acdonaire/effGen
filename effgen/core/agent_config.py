@@ -1,0 +1,199 @@
+"""Input configuration for :class:`effgen.core.agent.Agent`.
+
+Holds the agent's execution-mode enum and the :class:`AgentConfig` dataclass
+that describes an agent before it runs — the model, tools, sampling defaults,
+memory/routing options, and callbacks — plus the ``run()`` keyword allow-list
+and the constructor guard that turns a stray model-loading option into an
+actionable message. This module imports nothing from ``agent.py`` so it stays a
+dependency-free leaf; ``agent.py`` re-exports these names, so
+``from effgen.core.agent import AgentMode, AgentConfig`` is unchanged.
+Behaviour is identical to the original in-module definitions.
+"""
+
+from __future__ import annotations
+
+import functools
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+from ..models.base import BaseModel
+from ..tools.base_tool import BaseTool
+
+
+class AgentMode(Enum):
+    """Agent execution modes."""
+    SINGLE = "single"  # Single agent execution
+    SUB_AGENTS = "sub_agents"  # Use sub-agents for complex tasks
+    AUTO = "auto"  # Automatically decide based on router
+
+
+@dataclass
+class AgentConfig:
+    """
+    Agent configuration.
+
+    Attributes:
+        name: Agent name/identifier. Optional — defaults to the model id (or
+            "agent" for a model instance) when omitted, so
+            ``AgentConfig(model=...)`` works without boilerplate.
+        model: Model instance or name
+        tools: List of available tools
+        system_prompt: System-level instructions
+        max_iterations: Maximum tool-use loop iterations
+        temperature: Generation temperature
+        top_p: Nucleus-sampling threshold; overridden per call by run(top_p=...)
+        top_k: Top-k sampling cutoff (providers that don't support it ignore it)
+        seed: Sampling seed. A fixed seed plus temperature=0 reproduces a
+            generation exactly on Gemini, Groq, and local engines
+            (transformers/vllm/gguf/mlx). OpenAI's chat models accept
+            ``seed`` and typically reproduce output, but the same
+            seed+temperature=0 request can still return a different
+            completion — OpenAI documents this as best-effort determinism,
+            not a guarantee, especially for reasoning-tier models. Treat an
+            OpenAI ``seed`` as "usually reproducible," not "always."
+        presence_penalty: Penalizes tokens already present anywhere in the text
+        frequency_penalty: Penalizes tokens proportionally to how often they
+            already appeared (the standard anti-repetition knob for long text)
+        repetition_penalty: Multiplicative repeat penalty used by local/HF engines
+        mode: Default execution mode for run()/run_async() when the call
+            site doesn't pass its own ``mode=``. Defaults to
+            ``AgentMode.SINGLE`` so a plain ``Agent(config).run(task)`` never
+            switches to sub-agent decomposition on its own; set to
+            ``AgentMode.AUTO`` to have the router decide per call, or pass
+            ``mode=`` on an individual ``run()`` call to override this
+            default just for that call.
+        enable_sub_agents: Enable sub-agent spawning
+        enable_memory: Enable memory systems
+        enable_streaming: Enable response streaming
+        max_context_length: Maximum context window
+        router_config: Configuration for sub-agent router
+        sub_agent_config: Configuration for sub-agent manager
+        model_config: Optional model engine configuration
+        require_model: Whether a string model must load at construction time.
+            Defaults to True so a typo'd id / missing key fails immediately
+            instead of building a working-looking agent that only crashes on
+            the first run(). Set False to defer loading (advanced use).
+        provider: Optional explicit provider for a string ``model`` (e.g.
+            "openai", "cerebras"). Equivalent to the "provider:model" prefix
+            and the CLI ``--provider`` flag; resolves bare ids that exist on
+            multiple providers.
+        raise_on_error: When True, run() raises the typed error on failure
+            instead of returning an AgentResponse with success=False. The same
+            failure raises regardless of which internal path (direct or tool
+            loop) produced it.
+    """
+    name: str = field(default="", kw_only=True)
+    model: BaseModel | str
+    tools: list[BaseTool] = field(default_factory=list)
+    system_prompt: str = "You are a helpful AI assistant."
+    max_iterations: int = 10
+    temperature: float = 0.7
+    # Default output-token budget for every run(). None lets the model pick a
+    # size-aware default; run(max_tokens=...) overrides it for a single call.
+    max_tokens: int | None = None
+    # Sampling controls. Pinned here they apply to every run(); a run(...)
+    # kwarg of the same name overrides them for a single call. seed and the
+    # penalties default to GenerationConfig's neutral values (no effect on
+    # generation) so existing agents are unaffected until a caller sets one.
+    top_p: float = 0.9
+    top_k: int = 50
+    seed: int | None = None
+    presence_penalty: float = 0.0
+    frequency_penalty: float = 0.0
+    repetition_penalty: float = 1.0
+    mode: AgentMode = AgentMode.SINGLE
+    enable_sub_agents: bool = True
+    enable_memory: bool = True
+    enable_streaming: bool = False
+    max_context_length: int | None = None
+    router_config: dict[str, Any] = field(default_factory=dict)
+    sub_agent_config: dict[str, Any] = field(default_factory=dict)
+    model_config: dict[str, Any] | None = None
+    require_model: bool = True
+    provider: str | None = None
+    raise_on_error: bool = False
+    system_prompt_template: str | None = None
+    verbose_tools: bool | None = None
+    fallback_chain: dict[str, list] | None = None
+    enable_fallback: bool = True
+    max_sub_agent_depth: int = 3
+    tool_calling_mode: str = "auto"  # "auto", "native", "react", "hybrid"
+    output_format: str | None = None  # Global default: "json", "yaml", "csv", or None
+    output_schema: dict[str, Any] | None = None  # Global default JSON Schema
+    guardrails: Any = None  # GuardrailChain, preset name (str), or None
+    memory_config: dict[str, Any] = field(default_factory=lambda: {
+        "short_term_max_tokens": 4096,
+        "short_term_max_messages": 100,
+        "long_term_backend": "sqlite",
+        "long_term_persist_path": None,
+        "auto_summarize": True,
+    })
+    # Multi-model support
+    models: list[BaseModel | str] | None = None  # Additional models for routing
+    speculative_execution: bool = False  # Run on 2 models, return first success
+    # Human-in-the-loop
+    approval_callback: Callable[[str, str], bool] | None = None
+    approval_mode: str = "never"  # "always", "first_time", "never", "dangerous_only"
+    approval_timeout: float = 0.0  # seconds; 0 = wait forever
+    clarification_callback: Callable[[str, list[str]], int] | None = None
+    input_callback: Callable[[str], str] | None = None
+    # Prompt caching: keep the system prompt at a fixed position so OpenAI
+    # can cache the prefix automatically across sequential calls.
+    stable_system_prompt: bool = True
+    # Anthropic explicit prompt caching via cache_control markers.
+    # cache_system_prompt=True: Agent marks the last block of the system message
+    #   with cache_control so it is cached across requests.
+    # cache_tools=True: Agent marks the last tool spec with cache_control.
+    # These flags have no effect when the model is not an AnthropicAdapter.
+    cache_system_prompt: bool = True
+    cache_tools: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            self.name = self.model if isinstance(self.model, str) else "agent"
+
+
+# Model-loading options belong to the engine (load_model), not the agent. Passing
+# one straight to AgentConfig otherwise raises a cryptic dataclass
+# "unexpected keyword argument 'engine'"; intercept it with an actionable hint.
+_MODEL_LOAD_KWARGS = frozenset({
+    "engine", "engine_config", "tensor_parallel_size", "gpu_memory_utilization",
+    "apply_chat_template", "quantization", "trust_remote_code",
+})
+
+# run()'s recognized **kwargs — generation controls plus the checkpoint/debug
+# knobs threaded through the tool loop. A name outside this set (and not
+# starting with "_", reserved for internal call-chain bookkeeping such as
+# resume()'s _resume_scratchpad) is almost always a typo, so run() rejects it
+# instead of silently ignoring it.
+_RUN_KWARGS = frozenset({
+    "debug", "max_tokens", "temperature", "top_p", "top_k", "seed",
+    "presence_penalty", "frequency_penalty", "repetition_penalty",
+    "stop_sequences", "reasoning_effort", "tools",
+    "checkpoint_dir", "checkpoint_interval", "max_iterations",
+})
+
+
+def _agentconfig_init_guard(_dataclass_init):
+    """Wrap AgentConfig.__init__ to translate a stray model-loading kwarg into a
+    one-line "here's how to do it" instead of a bare dataclass TypeError."""
+    @functools.wraps(_dataclass_init)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        bad = _MODEL_LOAD_KWARGS.intersection(kwargs)
+        if bad:
+            opt = sorted(bad)
+            raise TypeError(
+                f"AgentConfig does not accept model-loading option(s) {opt}: "
+                "they configure the engine, not the agent. Either load the model "
+                "first — load_model(model_id, engine=\"transformers\") — and pass "
+                "the instance as model=, or use "
+                "create_agent(preset, model_id, engine=\"transformers\"), which "
+                "routes these to load_model for you."
+            )
+        _dataclass_init(self, *args, **kwargs)
+    return __init__
+
+
+AgentConfig.__init__ = _agentconfig_init_guard(AgentConfig.__init__)
