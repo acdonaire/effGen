@@ -43,13 +43,13 @@ Interactive mode guides you through:
 from __future__ import annotations
 
 import argparse
-import asyncio
-import importlib.util
+import asyncio  # noqa: F401 - module attribute for command modules that import it from here
+import importlib.util  # noqa: F401 - module attribute for command modules
 import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime  # noqa: F401 - module attribute for command modules
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +62,7 @@ try:
     from rich.markdown import Markdown
     from rich.panel import Panel
     from rich.progress import Progress, SpinnerColumn, TextColumn  # noqa: F401 - module attrs
-    from rich.syntax import Syntax
+    from rich.syntax import Syntax  # noqa: F401 - availability shim / module attribute
     from rich.table import Table
     RICH_AVAILABLE = True
 except ImportError:
@@ -111,6 +111,7 @@ from effgen.cli.commands._shared import (  # noqa: F401 - re-export
     _checkpoint_run_kwargs,
     _invoked_command,
     _preflight_model_hint,
+    _print_group_help,
     _quickstart_suggest_model,
     _warn_unapplied_config_keys,
     filter_incompatible_tools,
@@ -125,9 +126,31 @@ from effgen.cli.commands.batch import (  # noqa: F401 - re-export
     _read_done_indices,
 )
 
+# The ``sessions`` and ``runs`` command handlers plus their formatting helpers.
+# Module-level free functions taking ``(args, cli)``; imported at module scope so
+# every name is an attribute of this module as soon as it finishes importing
+# (tests reach them as ``_main._handle_sessions_command`` / ``_main._fmt_cost``).
+from effgen.cli.commands.sessions import (  # noqa: F401 - re-export
+    _browse_sessions,
+    _fmt_cost,
+    _handle_runs_command,
+    _handle_sessions_command,
+    _one_line,
+    _render_session,
+    _session_matches,
+    _short_ts,
+)
+
+# The ``workflow`` command handler. A module-level free function taking
+# ``(args, cli)``; imported at module scope so it is an attribute of this module
+# as soon as it finishes importing (tests reach it as ``_main._handle_workflow_command``).
+from effgen.cli.commands.workflow import (  # noqa: F401 - re-export
+    _handle_workflow_command,
+)
+
 # Shared Rich theme + console factory (one palette across the whole CLI).
 from effgen.ui.tables import console_is_interactive, render_table
-from effgen.ui.theme import CODE_THEME
+from effgen.ui.theme import CODE_THEME  # noqa: F401 - module attribute for command modules
 from effgen.ui.theme import get_console as _get_console
 
 # ---------------------------------------------------------------------------
@@ -784,442 +807,75 @@ class CLIInterface:
                 logging.info("WebSocket client disconnected")
 
     def config_commands(self, args):
-        """
-        Configuration management commands.
-
-        Args:
-            args: Parsed command-line arguments
-        """
-        if args.config_command == 'show':
-            self._config_show(args)
-        elif args.config_command == 'validate':
-            self._config_validate(args)
-        elif args.config_command == 'init':
-            self._config_init(args)
-        elif args.config_command == 'set':
-            self._config_set(args)
-        elif args.config_command is None:
-            return _print_group_help(args)
-        else:
-            self.print_error(f"Unknown config command: {args.config_command}")
-            return 1
-
-        return 0
+        """Configuration management commands."""
+        from effgen.cli.commands.config import config_commands
+        return config_commands(self, args)
 
     def _config_set(self, args):
         """Handle 'effgen config set <key> <value>'."""
-        key: str = args.key
-        value_str: str = args.value
-
-        _supported_keys = ("budget.daily", "budget.monthly")
-        # Route budget.* keys to the cost tracker's budget config.
-        if key.startswith("budget."):
-            budget_key = key[len("budget."):]
-            if budget_key not in {"daily", "monthly"}:
-                hint = _onboarding.did_you_mean(key, _supported_keys, n=1, cutoff=0.5)
-                self.print_error(
-                    f"Unknown budget key: {key!r}. {hint + ' ' if hint else ''}"
-                    f"Supported: {', '.join(_supported_keys)}."
-                )
-                return
-            try:
-                value = float(value_str)
-            except ValueError:
-                self.print_error(f"Budget value must be a number, got: {value_str!r}")
-                return
-            from effgen.models._cost import _budget_config_path
-            budget_path = _budget_config_path()
-            budget_path.parent.mkdir(parents=True, exist_ok=True)
-            existing: dict = {}
-            if budget_path.exists():
-                try:
-                    existing = json.loads(budget_path.read_text())
-                except Exception:
-                    pass
-            existing[budget_key] = value
-            budget_path.write_text(json.dumps(existing, indent=2))
-            self.print_success(f"Set {key} = {value}")
-        else:
-            hint = _onboarding.did_you_mean(key, _supported_keys, n=1, cutoff=0.5)
-            self.print_error(
-                f"Unknown config key: {key!r}. {hint + ' ' if hint else ''}"
-                f"Supported: {', '.join(_supported_keys)}."
-            )
+        from effgen.cli.commands.config import config_set
+        return config_set(self, args)
 
     def _config_show(self, args):
         """Show current configuration."""
-        self.print_header("Configuration")
-
-        if args.file:
-            try:
-                config = self.config_loader.load_config(args.file)
-
-                if self.console:
-                    syntax = Syntax(
-                        json.dumps(config.to_dict(), indent=2),
-                        "json",
-                        theme=CODE_THEME,
-                        line_numbers=True
-                    )
-                    self.console.print(syntax)
-                else:
-                    print(json.dumps(config.to_dict(), indent=2))
-
-            except Exception as e:
-                self.print_error(f"Error loading config: {e}")
-        else:
-            self.print_warning("No configuration file specified")
-            self.print("Use: effgen config show --file <path>")
+        from effgen.cli.commands.config import config_show
+        return config_show(self, args)
 
     def _config_validate(self, args):
         """Validate configuration file."""
-        if not args.file:
-            self.print_error("Configuration file required")
-            return
-
-        try:
-            self.config_loader.load_config(args.file, validate=True)
-            self.print_success(f"Configuration is valid: {args.file}")
-        except Exception as e:
-            self.print_error(f"Configuration validation failed: {e}")
+        from effgen.cli.commands.config import config_validate
+        return config_validate(self, args)
 
     def _config_init(self, args):
         """Initialize a new configuration file."""
-        output_path = Path(args.output or "config.yaml")
-
-        if output_path.exists() and not args.force:
-            self.print_error(f"File already exists: {output_path}")
-            self.print("Use --force to overwrite")
-            return
-
-        # Create default configuration
-        default_config = {
-            "models": {
-                "default": "Qwen/Qwen2.5-3B-Instruct",
-                "phi3_mini": {
-                    "model_path": "microsoft/Phi-3-mini-4k-instruct",
-                    "temperature": 0.7,
-                    "max_tokens": 2048
-                }
-            },
-            "tools": {
-                "enabled": ["calculator", "web_search", "file_ops"]
-            },
-            "system_prompt": "You are a helpful AI assistant.",
-            "max_iterations": 10
-        }
-
-        import yaml
-        with open(output_path, 'w') as f:
-            yaml.dump(default_config, f, default_flow_style=False)
-
-        self.print_success(f"Configuration initialized: {output_path}")
+        from effgen.cli.commands.config import config_init
+        return config_init(self, args)
 
     def tools_commands(self, args):
-        """
-        Tool management commands.
-
-        Args:
-            args: Parsed command-line arguments
-        """
-        if args.tool_command == 'list':
-            return self._tools_list(args) or 0
-        elif args.tool_command == 'info':
-            return self._tools_info(args)
-        elif args.tool_command == 'test':
-            return self._tools_test(args)
-        elif args.tool_command is None:
-            return _print_group_help(args)
-        else:
-            self.print_error(f"Unknown tools command: {args.tool_command}")
-            return 1
+        """Tool management commands."""
+        from effgen.cli.commands.tools import tools_commands
+        return tools_commands(self, args)
 
     def _suggest_tool(self, name: str) -> None:
         """Print a 'tool not found' error with close-match suggestions."""
-        import difflib
-
-        self.print_error(f"Tool not found: {name}")
-        try:
-            available = self.tool_registry.list_tools()
-        except Exception:
-            available = []
-        close = difflib.get_close_matches(name, available, n=3, cutoff=0.5)
-        if close:
-            self.print(f"Did you mean: {', '.join(close)}?")
-        self.print("Run 'effgen tools list' to see all available tools.")
+        from effgen.cli.commands.tools import suggest_tool
+        return suggest_tool(self, name)
 
     def _tools_list(self, args):
         """List available tools."""
-        # Get tools (the registry auto-discovers built-ins on first access)
-        tools = self.tool_registry.list_tools()
-        category_filter = getattr(args, "category", None)
-
-        def _meta(name):
-            try:
-                return self.tool_registry.get_metadata(name)
-            except Exception as e:
-                logging.debug(f"Error getting metadata for {name}: {e}")
-                return None
-
-        if category_filter:
-            kept = []
-            for name in tools:
-                m = _meta(name)
-                if m and m.category.value == category_filter:
-                    kept.append(name)
-            tools = kept
-
-        # JSON output — machine-readable, no decorative header/table.
-        if getattr(args, "output_json", False):
-            out = []
-            for name in tools:
-                m = _meta(name)
-                if m is None:
-                    continue
-                out.append({
-                    "name": m.name,
-                    "category": m.category.value,
-                    "description": m.description,
-                    "version": getattr(m, "version", None),
-                })
-            print(json.dumps(out, indent=2))
-            return 0
-
-        self.print_header("Available Tools")
-
-        if not tools:
-            self.print_warning("No tools registered")
-            return 0
-
-        if self.console:
-            table = Table(title=f"Registered Tools ({len(tools)})")
-            table.add_column("Name", style="cyan")
-            table.add_column("Category", style="magenta")
-            table.add_column("Description", style="white")
-
-            for tool_name in tools:
-                try:
-                    metadata = self.tool_registry.get_metadata(tool_name)
-                    table.add_row(
-                        metadata.name,
-                        metadata.category.value,
-                        metadata.description[:50] + "..." if len(metadata.description) > 50 else metadata.description
-                    )
-                except Exception as e:
-                    logging.debug(f"Error getting metadata for {tool_name}: {e}")
-
-            self.console.print(table)
-        else:
-            for tool_name in tools:
-                print(f"- {tool_name}")
-        return 0
+        from effgen.cli.commands.tools import tools_list
+        return tools_list(self, args)
 
     def _example_input(self, metadata, tool=None) -> dict:
         """Build a runnable example input for a tool from its metadata."""
-        # Prefer a curated example (drop the illustrative 'output' field).
-        for ex in metadata.examples or []:
-            if isinstance(ex, dict):
-                example = {k: v for k, v in ex.items() if k != "output"}
-                if example:
-                    return example
-        # Otherwise synthesize from required parameters.
-        from effgen.tools.base_tool import ParameterType
-
-        sample = {
-            ParameterType.STRING: "example",
-            ParameterType.INTEGER: 1,
-            ParameterType.FLOAT: 1.0,
-            ParameterType.BOOLEAN: True,
-            ParameterType.ARRAY: [],
-            ParameterType.OBJECT: {},
-            ParameterType.ANY: "example",
-        }
-        example: dict = {}
-        # Mirror the printed schema (to_json_schema), which excludes developer-only
-        # toggles, so the copy-paste example never references a hidden parameter.
-        for p in metadata.model_facing_parameters:
-            if p.required or p.default is not None:
-                if p.enum:
-                    example[p.name] = p.enum[0]
-                elif p.default is not None:
-                    example[p.name] = p.default
-                else:
-                    example[p.name] = sample.get(p.type, "example")
-        return example
+        from effgen.cli.commands.tools import example_input
+        return example_input(self, metadata, tool)
 
     def _print_tool_usage(self, metadata, tool=None) -> None:
         """Print a tool's input schema and a copy-paste runnable example."""
-        self.print("\n[bold]Input schema:[/bold]" if self.console else "\nInput schema:")
-        schema = metadata.to_json_schema()
-        if self.console:
-            self.console.print(Syntax(json.dumps(schema, indent=2), "json", theme=CODE_THEME))
-        else:
-            print(json.dumps(schema, indent=2))
-
-        example = self._example_input(metadata, tool)
-        if example:
-            cmd = f"effgen tools test {metadata.name} -i '{json.dumps(example)}'"
-            self.print("\n[bold]Example:[/bold]" if self.console else "\nExample:")
-            self.print(f"  {cmd}")
+        from effgen.cli.commands.tools import print_tool_usage
+        return print_tool_usage(self, metadata, tool)
 
     def _tools_info(self, args):
         """Show detailed tool information."""
-        if not args.name:
-            self.print_error("Tool name required")
-            return 1
-
-        try:
-            # get_metadata auto-discovers built-ins, so info works standalone.
-            metadata = self.tool_registry.get_metadata(args.name)
-        except KeyError:
-            self._suggest_tool(args.name)
-            return 1
-        except Exception as e:
-            self.print_error(f"Error getting tool info: {e}")
-            return 1
-
-        self.print_header(f"Tool: {metadata.name}")
-        self.print(f"\n[bold]Description:[/bold] {metadata.description}" if self.console else f"\nDescription: {metadata.description}")
-        self.print(f"[bold]Category:[/bold] {metadata.category.value}" if self.console else f"Category: {metadata.category.value}")
-        self.print(f"[bold]Version:[/bold] {metadata.version}" if self.console else f"Version: {metadata.version}")
-
-        if metadata.tags:
-            self.print(f"[bold]Tags:[/bold] {', '.join(metadata.tags)}" if self.console else f"Tags: {', '.join(metadata.tags)}")
-
-        # Selector aliases, if this tool accepts natural operation names.
-        tool = None
-        try:
-            tool = self.tool_registry.get_tool_sync(args.name, initialize=False)
-        except Exception:
-            tool = None
-        aliases = getattr(tool, "operation_aliases", {}) if tool else {}
-        if aliases:
-            alias_str = ", ".join(f"{a} -> {c}" for a, c in sorted(aliases.items()))
-            self.print(f"[bold]Operation aliases:[/bold] {alias_str}" if self.console else f"Operation aliases: {alias_str}")
-
-        # Show parameters
-        if metadata.parameters:
-            self.print("\n[bold]Parameters:[/bold]" if self.console else "\nParameters:")
-            schema = metadata.to_json_schema()
-            if self.console:
-                self.console.print(Syntax(json.dumps(schema, indent=2), "json", theme=CODE_THEME))
-            else:
-                print(json.dumps(schema, indent=2))
-
-        # Show a runnable example.
-        example = self._example_input(metadata, tool)
-        if example:
-            cmd = f"effgen tools test {metadata.name} -i '{json.dumps(example)}'"
-            self.print("\n[bold]Example:[/bold]" if self.console else "\nExample:")
-            self.print(f"  {cmd}")
-
-        return 0
+        from effgen.cli.commands.tools import tools_info
+        return tools_info(self, args)
 
     def _tools_test(self, args):
         """Test a tool with sample input."""
-        if not args.name:
-            self.print_error("Tool name required")
-            return 1
-
-        try:
-            # Synchronous accessor: no asyncio.run boilerplate, and it auto-
-            # discovers built-ins so 'test' works without a prior 'list'.
-            tool = self.tool_registry.get_tool_sync(args.name)
-        except KeyError:
-            self._suggest_tool(args.name)
-            return 1
-        except Exception as e:
-            self.print_error(f"Error loading tool: {e}")
-            return 1
-
-        metadata = tool.metadata
-
-        # No input? Show the schema and a runnable example instead of guessing.
-        if not args.input:
-            self.print_header(f"Tool: {metadata.name}")
-            self.print_warning("No input provided. Supply one with -i/--input as JSON.")
-            self._print_tool_usage(metadata, tool)
-            return 1
-
-        # Parse input — must be a JSON object of parameters.
-        try:
-            input_data = json.loads(args.input)
-        except json.JSONDecodeError as e:
-            self.print_error(f"Input must be valid JSON: {e}")
-            self._print_tool_usage(metadata, tool)
-            return 1
-        if not isinstance(input_data, dict):
-            self.print_error("Input must be a JSON object of parameters, e.g. '{\"expression\": \"2+2\"}'.")
-            self._print_tool_usage(metadata, tool)
-            return 1
-
-        self.print_header(f"Testing Tool: {metadata.name}")
-        self.print(f"Input: {input_data}\n")
-        try:
-            result = asyncio.run(tool.execute(**input_data))
-        except Exception as e:
-            self.print_error(f"Error testing tool: {e}")
-            if getattr(args, "verbose", False):
-                import traceback
-                traceback.print_exc()
-            return 1
-
-        self.print("[bold]Result:[/bold]" if self.console else "Result:")
-        border = "green" if result.success else "red"
-        if self.console:
-            self.console.print(Panel(str(result), border_style=border))
-        else:
-            print(result)
-        return 0 if result.success else 1
+        from effgen.cli.commands.tools import tools_test
+        return tools_test(self, args)
 
     def models_commands(self, args):
-        """
-        Model management commands.
-
-        Args:
-            args: Parsed command-line arguments
-        """
-        if args.model_command == 'list':
-            return self._models_list(args) or 0
-        elif args.model_command == 'browse':
-            return self._models_browse(args) or 0
-        elif args.model_command == 'info':
-            return self._models_info(args) or 0
-        elif args.model_command == 'load':
-            self._models_load(args)
-        elif args.model_command == 'unload':
-            self._models_unload(args)
-        elif args.model_command == 'status':
-            self._models_status(args)
-        elif args.model_command == 'refresh':
-            return self._models_refresh(args) or 0
-        elif args.model_command is None:
-            return _print_group_help(args)
-        else:
-            self.print_error(f"Unknown models command: {args.model_command}")
-            return 1
-
-        return 0
+        """Model management commands."""
+        from effgen.cli.commands.models import models_commands
+        return models_commands(self, args)
 
     @staticmethod
     def _price_cell(rec) -> str:
         """Format a model's input/output price per 1M tokens for a table cell."""
-        pin, pout = rec.price_in_per_1m, rec.price_out_per_1m
-        # A genuinely nonzero published rate is shown as-is (mirrors
-        # ``_catalog_pricing`` in ``effgen.models._cost``, the single source of
-        # truth for how a $0 row is labeled).
-        if (pin or 0) > 0 or (pout or 0) > 0:
-            fmt = lambda v: ("?" if v is None else f"${v:g}")  # noqa: E731
-            return f"{fmt(pin)}/{fmt(pout)}"
-        # No nonzero rate: a genuine free tier reads "free"; a non-token billing
-        # note reads "metered"; anything else (including an explicit 0/0 with no
-        # free-tier flag) has no published price and reads "unpriced" rather than
-        # a fabricated "$0".
-        if rec.free_tier:
-            return "free"
-        if rec.price_note:
-            return "metered"
-        return "unpriced"
+        from effgen.cli.commands.models import price_cell
+        return price_cell(rec)
 
     # File extensions that count as actual model weights (an ".index.json" is a
     # shard manifest, not weights — a repo with only a manifest is still partial).
@@ -1229,1062 +885,102 @@ class CLIInterface:
     )
 
     def _local_cached_models(self) -> list[dict]:
-        """Models actually downloaded in the local HuggingFace cache (on disk).
-
-        Each entry carries a ``complete`` flag: a snapshot with no real weight
-        files (only an interrupted download, e.g. ``.incomplete`` blobs plus a
-        shard manifest) is reported as incomplete so it isn't mistaken for ready.
-        """
-        out: list[dict] = []
-        try:
-            from huggingface_hub import scan_cache_dir
-            info = scan_cache_dir()
-            for repo in sorted(info.repos, key=lambda r: r.repo_id):
-                if repo.repo_type != "model":
-                    continue
-                weight_files = {
-                    f.file_name
-                    for rev in repo.revisions
-                    for f in rev.files
-                    if f.file_name.endswith(self._WEIGHT_SUFFIXES)
-                    and not f.file_name.endswith(".index.json")
-                }
-                out.append({
-                    "id": repo.repo_id,
-                    "size_gb": repo.size_on_disk / (1024 ** 3),
-                    "path": str(repo.repo_path),
-                    "complete": bool(weight_files),
-                })
-        except Exception as e:  # noqa: BLE001 - cache scan is best-effort
-            logging.debug(f"HF cache scan failed: {e}")
-        return out
+        """Models actually downloaded in the local HuggingFace cache (on disk)."""
+        from effgen.cli.commands.models import local_cached_models
+        return local_cached_models(self)
 
     def _local_model_context_window(self, path: str) -> int | None:
         """Read the model's max context length from its on-disk ``config.json``."""
-        import glob
-        for cfg in glob.glob(os.path.join(path, "snapshots", "*", "config.json")):
-            try:
-                with open(cfg, encoding="utf-8") as fh:
-                    data = json.load(fh)
-            except Exception:
-                continue
-            for key in ("max_position_embeddings", "n_positions", "max_sequence_length"):
-                val = data.get(key)
-                if isinstance(val, int) and val > 0:
-                    return val
-        return None
+        from effgen.cli.commands.models import local_model_context_window
+        return local_model_context_window(self, path)
 
     def _models_list(self, args):
-        """List models from the drift-aware registry (not a static yaml).
-
-        Shows three views — the provider registry (the bundled, refreshable
-        catalog), the local HuggingFace cache (what's actually downloaded), and
-        a per-provider summary with auth readiness and the snapshot's
-        "verified on" date so users can tell when the data was last confirmed.
-        """
-        from effgen.models import _catalog, _refresh
-
-        provider_filter, prov_err = resolve_provider_name(getattr(args, "provider", None))
-        if prov_err:
-            self.print_error(prov_err)
-            return 1
-        free_only = bool(getattr(args, "free", False))
-        tools_only = bool(getattr(args, "tools", False))
-
-        providers = [provider_filter] if provider_filter else list(_catalog.known_providers())
-
-        def _records(prov: str):
-            recs = _catalog.list_models(prov)
-            if free_only:
-                recs = [r for r in recs if r.free_tier]
-            if tools_only:
-                recs = [r for r in recs if r.supports_tools]
-            return recs
-
-        # ---- JSON output ----------------------------------------------------
-        if getattr(args, "output_json", False):
-            payload: dict[str, Any] = {"providers": {}, "local_cache": self._local_cached_models()}
-            for prov in providers:
-                meta = _catalog.snapshot_meta(prov)
-                payload["providers"][prov] = {
-                    "verified_on": meta.get("verified_on"),
-                    "count": len(_catalog.list_models(prov)),
-                    "default_model": _catalog.default_model(prov),
-                    "auth_ready": _refresh.has_credentials(prov),
-                    "models": [
-                        {
-                            "id": r.id, "family": r.family,
-                            "context_window": r.context_window,
-                            "max_output": r.max_output,
-                            "price_in_per_1m": r.price_in_per_1m,
-                            "price_out_per_1m": r.price_out_per_1m,
-                            "supports_tools": r.supports_tools,
-                            "supports_vision": r.supports_vision,
-                            "supports_audio": r.supports_audio,
-                            "free_tier": r.free_tier, "deprecated": r.deprecated,
-                            "is_priced": r.is_priced,
-                            "price_source": r.price_source,
-                        }
-                        for r in _records(prov)
-                    ],
-                }
-            print(json.dumps(payload, indent=2))
-            return 0
-
-        # ---- Provider registry view ----------------------------------------
-        self.print_header("Available Models")
-
-        if provider_filter:
-            # Full per-model detail for one provider.
-            recs = _records(provider_filter)
-            meta = _catalog.snapshot_meta(provider_filter)
-            auth = "ready" if _refresh.has_credentials(provider_filter) else "no key"
-            verified = meta.get("verified_on") or "unknown"
-            default_id = _catalog.default_model(provider_filter)
-            if self._rich_tables():
-                title = (f"{provider_filter} — {len(recs)} models "
-                         f"(auth: {auth}, verified: {verified})")
-                table = Table(title=title)
-                table.add_column("Model ID", style="cyan", overflow="fold")
-                table.add_column("Context", style="white", justify="right", no_wrap=True)
-                table.add_column("Max Out", style="white", justify="right", no_wrap=True)
-                table.add_column("$/1M in/out", style="green", no_wrap=True, overflow="fold")
-                table.add_column("Tools", justify="center", no_wrap=True)
-                table.add_column("Vision", justify="center", no_wrap=True)
-                table.add_column("Free", justify="center", no_wrap=True)
-                table.add_column("Status", style="yellow")
-                for r in recs:
-                    status = "deprecated" if r.deprecated else ("default" if r.id == default_id else "")
-                    table.add_row(
-                        r.id,
-                        f"{r.context_window:,}" if r.context_window else "—",
-                        f"{r.max_output:,}" if r.max_output else "—",
-                        self._price_cell(r),
-                        "✓" if r.supports_tools else "",
-                        "✓" if r.supports_vision else "",
-                        "✓" if r.free_tier else "",
-                        status,
-                    )
-                self.console.print(table)
-                self.console.print(
-                    f"\n[dim]Pricing source: catalog snapshot. "
-                    f"Run [cyan]effgen models refresh --provider {provider_filter}[/cyan] "
-                    f"to update from the live API.[/dim]"
-                )
-            else:
-                id_w = min(max((len(r.id) for r in recs), default=8), 60)
-                print(f"{provider_filter} — {len(recs)} models "
-                      f"(auth: {auth}, verified: {verified})")
-                for r in recs:
-                    pin, pout = self._price_in_out_cells(r)
-                    mark = " *" if r.id == default_id else ""
-                    print(f"  {r.id:<{id_w}}  ctx={r.context_window or '-':>9}  "
-                          f"in={pin:>9}  out={pout:>9}  "
-                          f"{'tools' if r.supports_tools else '':<5} "
-                          f"{'vision' if r.supports_vision else ''}{mark}")
-            return 0
-
-        # Overview: per-provider summary + filtered flat table when filtering.
-        if free_only or tools_only:
-            label = "free-tier" if free_only else "tool-capable"
-            if tools_only and free_only:
-                label = "free + tool-capable"
-            if self._rich_tables():
-                table = Table(title=f"{label.capitalize()} models (all providers)")
-                table.add_column("Model ID", style="cyan", overflow="fold")
-                table.add_column("Provider", style="magenta", no_wrap=True)
-                table.add_column("Context", justify="right", no_wrap=True)
-                table.add_column("$/1M in/out", style="green", no_wrap=True, overflow="fold")
-                table.add_column("Tools", justify="center", no_wrap=True)
-                table.add_column("Free", justify="center", no_wrap=True)
-                for prov in providers:
-                    for r in _records(prov):
-                        table.add_row(
-                            r.id, prov,
-                            f"{r.context_window:,}" if r.context_window else "—",
-                            self._price_cell(r),
-                            "✓" if r.supports_tools else "",
-                            "✓" if r.free_tier else "",
-                        )
-                self.console.print(table)
-            else:
-                flat = [r for prov in providers for r in _records(prov)]
-                id_w = min(max((len(r.id) for r in flat), default=8), 60)
-                for r in flat:
-                    print(f"{r.id:<{id_w}}  {r.provider:<10}  "
-                          f"ctx={r.context_window or '-':>9}  {self._price_cell(r)}")
-            return 0
-
-        # Default overview: one row per provider.
-        stale = set(_catalog.stale_providers())
-        if self.console:
-            table = Table(title="Provider Registry (bundled catalog)")
-            table.add_column("Provider", style="cyan")
-            table.add_column("Models", justify="right")
-            table.add_column("Default", style="magenta", overflow="fold")
-            table.add_column("Auth", justify="center")
-            table.add_column("Verified", style="dim")
-            for prov in providers:
-                meta = _catalog.snapshot_meta(prov)
-                n = len(_catalog.list_models(prov))
-                auth = "[green]key[/green]" if _refresh.has_credentials(prov) else "[dim]—[/dim]"
-                verified = meta.get("verified_on") or "?"
-                if prov in stale:
-                    verified += " (stale)"
-                table.add_row(prov, str(n), _catalog.default_model(prov) or "—", auth, verified)
-            self.console.print(table)
-            self.console.print(
-                "\n[dim]Detail: [cyan]effgen models list --provider <name>[/cyan]  ·  "
-                "Filter: [cyan]--free[/cyan] / [cyan]--tools[/cyan]  ·  "
-                "Update: [cyan]effgen models refresh[/cyan][/dim]"
-            )
-        else:
-            for prov in providers:
-                n = len(_catalog.list_models(prov))
-                auth = "key" if _refresh.has_credentials(prov) else "-"
-                print(f"{prov:12s} {n:>4} models  default={_catalog.default_model(prov)}  auth={auth}")
-
-        # ---- Local HuggingFace cache view ----------------------------------
-        local = self._local_cached_models()
-        if local:
-            n_ready = sum(1 for m in local if m.get("complete", True))
-            if self.console:
-                ltable = Table(title=f"Local HuggingFace cache ({n_ready} ready)")
-                ltable.add_column("Model", style="cyan", overflow="fold")
-                ltable.add_column("Size", justify="right", style="white")
-                ltable.add_column("Status", justify="center")
-                for m in local:
-                    ready = m.get("complete", True)
-                    ltable.add_row(
-                        m["id"], f"{m['size_gb']:.1f} GB",
-                        "ready" if ready else "[yellow]incomplete[/yellow]",
-                    )
-                self.console.print(ltable)
-            else:
-                print("\nLocal HuggingFace cache:")
-                for m in local:
-                    tag = "" if m.get("complete", True) else "  (incomplete)"
-                    print(f"  {m['id']}  ({m['size_gb']:.1f} GB){tag}")
-        return 0
+        """List models from the drift-aware registry (not a static yaml)."""
+        from effgen.cli.commands.models import models_list
+        return models_list(self, args)
 
     def _rich_tables(self) -> bool:
-        """True when rich table rendering fits the destination (a real terminal).
-
-        Piped or redirected output narrows to a default width that truncates or
-        drops columns; there the catalog views emit complete, aligned plain text
-        instead so no model id or price is lost.
-        """
-        return bool(self.console) and bool(getattr(self.console, "is_terminal", False))
+        """True when rich table rendering fits the destination (a real terminal)."""
+        from effgen.cli.commands.models import rich_tables
+        return rich_tables(self)
 
     @staticmethod
     def _browse_filter_sort(recs, args):
-        """Apply the browse filters/sort to a list of catalog records.
-
-        Filters compose (a record must satisfy every one supplied); records with
-        no published input/output price are excluded by a ``--max-price-*``
-        ceiling rather than treated as free. Returns the filtered, sorted list.
-        """
-        search = (getattr(args, "search", None) or "").lower().strip()
-        min_ctx = getattr(args, "min_context", None)
-        max_pin = getattr(args, "max_price_in", None)
-        max_pout = getattr(args, "max_price_out", None)
-
-        def keep(r) -> bool:
-            if getattr(args, "free", False) and not r.free_tier:
-                return False
-            if getattr(args, "tools", False) and not r.supports_tools:
-                return False
-            if getattr(args, "vision", False) and not r.supports_vision:
-                return False
-            if getattr(args, "audio", False) and not r.supports_audio:
-                return False
-            if min_ctx is not None and (r.context_window or 0) < min_ctx:
-                return False
-            if max_pin is not None and (r.price_in_per_1m is None or r.price_in_per_1m > max_pin):
-                return False
-            if max_pout is not None and (r.price_out_per_1m is None or r.price_out_per_1m > max_pout):
-                return False
-            if search and search not in (
-                f"{r.id} {r.family} {r.provider}".lower()
-            ):
-                return False
-            return True
-
-        out = [r for r in recs if keep(r)]
-
-        sort = getattr(args, "sort", "provider") or "provider"
-        # A missing numeric value sorts last on an ascending sort (unknown price
-        # or context is worst-case), so it never masquerades as the cheapest.
-        big = float("inf")
-
-        def price_in(r):
-            return r.price_in_per_1m if r.price_in_per_1m is not None else big
-
-        def price_out(r):
-            return r.price_out_per_1m if r.price_out_per_1m is not None else big
-
-        keyers = {
-            "provider": lambda r: (r.provider, r.id.lower()),
-            "id": lambda r: r.id.lower(),
-            "context": lambda r: (r.context_window or 0, r.id.lower()),
-            "max-out": lambda r: (r.max_output or 0, r.id.lower()),
-            "price-in": lambda r: (price_in(r), r.id.lower()),
-            "price-out": lambda r: (price_out(r), r.id.lower()),
-        }
-        out.sort(key=keyers.get(sort, keyers["provider"]))
-        if getattr(args, "desc", False):
-            out.reverse()
-        return out
+        """Apply the browse filters/sort to a list of catalog records."""
+        from effgen.cli.commands.models import browse_filter_sort
+        return browse_filter_sort(recs, args)
 
     def _models_browse(self, args):
-        """Browse the full cross-provider catalog with search/filter/sort/paging.
-
-        Reads the bundled, refreshable catalog (the same source ``models list``
-        and ``models info`` use). Every provider's models appear in one table so
-        a single view answers "cheapest vision model over 128k context" without
-        leaving the terminal. Price labeling is exact: an unpriced row reads
-        ``unpriced``, a free tier reads ``free``.
-        """
-        from effgen.models import _catalog
-
-        provider_filter, prov_err = resolve_provider_name(getattr(args, "provider", None))
-        if prov_err:
-            self.print_error(prov_err)
-            return 1
-
-        recs = _catalog.list_models(provider_filter)
-        matched = self._browse_filter_sort(recs, args)
-        total = len(matched)
-
-        offset = max(0, getattr(args, "offset", 0) or 0)
-        limit = getattr(args, "limit", None)
-        page = matched[offset:offset + limit] if limit else matched[offset:]
-
-        include_local = bool(getattr(args, "include_local", False))
-        local = self._local_cached_models() if include_local else []
-
-        # The snapshot "verified on" date is per provider, not stamped on the
-        # bundled record; resolve it once per provider on the page so the JSON
-        # provenance field carries the same date the table footer and the
-        # dashboard show, rather than a null.
-        verified_by_provider: dict[str, str | None] = {}
-
-        def _verified_on(prov: str) -> str | None:
-            if prov not in verified_by_provider:
-                verified_by_provider[prov] = _catalog.snapshot_meta(prov).get("verified_on")
-            return verified_by_provider[prov]
-
-        # ---- JSON output ----------------------------------------------------
-        if getattr(args, "output_json", False):
-            payload: dict[str, Any] = {
-                "count": total,
-                "offset": offset,
-                "limit": limit,
-                "models": [
-                    {
-                        "id": r.id, "provider": r.provider, "family": r.family,
-                        "context_window": r.context_window, "max_output": r.max_output,
-                        "price_in_per_1m": r.price_in_per_1m,
-                        "price_out_per_1m": r.price_out_per_1m,
-                        "supports_tools": r.supports_tools,
-                        "supports_vision": r.supports_vision,
-                        "supports_audio": r.supports_audio,
-                        "free_tier": r.free_tier, "deprecated": r.deprecated,
-                        "is_priced": r.is_priced,
-                        "price_source": r.price_source,
-                        "verified_on": r.verified_on or _verified_on(r.provider),
-                    }
-                    for r in page
-                ],
-            }
-            if include_local:
-                payload["local_cache"] = local
-            print(json.dumps(payload, indent=2))
-            return 0
-
-        # ---- Human table ----------------------------------------------------
-        self.print_header("Model Catalog")
-        if not matched:
-            self.print("No models match those filters. Loosen a filter or run "
-                       "[cyan]effgen models browse[/cyan] with no filters." if self.console
-                       else "No models match those filters.")
-            return 0
-
-        # The cross-provider table carries nine columns; on a narrow terminal
-        # rich would starve the (foldable) Model ID column — the one field this
-        # view exists for — to keep the fixed numeric columns, folding or even
-        # hiding the id. Below this width the complete aligned plain-text table
-        # reads better and never drops an id or a price.
-        wide_enough = getattr(self.console, "width", 0) >= 100
-        if self._rich_tables() and wide_enough:
-            shown = f"showing {len(page)} of {total}"
-            if offset:
-                shown += f" (from #{offset + 1})"
-            table = Table(title=f"Models across providers — {shown}")
-            table.add_column("Provider", style="magenta", no_wrap=True)
-            table.add_column("Model ID", style="cyan", overflow="fold")
-            table.add_column("Context", justify="right", no_wrap=True)
-            table.add_column("Max Out", justify="right", no_wrap=True)
-            table.add_column("$/1M in", style="green", justify="right",
-                             no_wrap=True, overflow="fold")
-            table.add_column("$/1M out", style="green", justify="right",
-                             no_wrap=True, overflow="fold")
-            table.add_column("Tools", justify="center", no_wrap=True)
-            table.add_column("Vision", justify="center", no_wrap=True)
-            table.add_column("Free", justify="center", no_wrap=True)
-            for r in page:
-                pin, pout = self._price_in_out_cells(r)
-                table.add_row(
-                    r.provider, r.id,
-                    f"{r.context_window:,}" if r.context_window else "—",
-                    f"{r.max_output:,}" if r.max_output else "—",
-                    pin, pout,
-                    "✓" if r.supports_tools else "",
-                    "✓" if r.supports_vision else "",
-                    "✓" if r.free_tier else "",
-                )
-            self.console.print(table)
-            if limit and offset + limit < total:
-                self.console.print(
-                    f"\n[dim]More: [cyan]--offset {offset + limit}[/cyan] "
-                    f"for the next page.[/dim]"
-                )
-            self.console.print(
-                "\n[dim]Pricing source: catalog snapshot. "
-                "Update: [cyan]effgen models refresh[/cyan]  ·  "
-                "Detail: [cyan]effgen models info <id>[/cyan][/dim]"
-            )
-        else:
-            # Complete, aligned plain text for piped/redirected output — every
-            # model id and price in full, no width-driven truncation.
-            id_w = max((len(r.id) for r in page), default=8)
-            id_w = min(max(id_w, 8), 60)
-            prov_w = max((len(r.provider) for r in page), default=8)
-            header = (f"{'PROVIDER':<{prov_w}}  {'MODEL ID':<{id_w}}  "
-                      f"{'CONTEXT':>9}  {'MAXOUT':>7}  {'$/1M IN':>9}  "
-                      f"{'$/1M OUT':>9}  TOOLS  VIS  FREE")
-            print(header)
-            for r in page:
-                pin, pout = self._price_in_out_cells(r)
-                print(f"{r.provider:<{prov_w}}  {r.id:<{id_w}}  "
-                      f"{(f'{r.context_window:,}' if r.context_window else '-'):>9}  "
-                      f"{(f'{r.max_output:,}' if r.max_output else '-'):>7}  "
-                      f"{pin:>9}  {pout:>9}  "
-                      f"{'yes' if r.supports_tools else '-':>5}  "
-                      f"{'yes' if r.supports_vision else '-':>3}  "
-                      f"{'yes' if r.free_tier else '-':>4}")
-            print(f"\nshowing {len(page)} of {total}"
-                  + (f" (from #{offset + 1})" if offset else "")
-                  + "  ·  pricing from catalog snapshot")
-
-        if include_local and local:
-            if self.console:
-                self.console.print(f"\n[dim]Local cache: {len(local)} model(s) "
-                                   f"— [cyan]effgen models list[/cyan] for detail.[/dim]")
-            else:
-                print("\nLocal cache:")
-                for m in local:
-                    print(f"  {m['id']}  ({m['size_gb']:.1f} GB)")
-        return 0
+        """Browse the full cross-provider catalog with search/filter/sort/paging."""
+        from effgen.cli.commands.models import models_browse
+        return models_browse(self, args)
 
     @classmethod
     def _price_in_out_cells(cls, rec) -> tuple[str, str]:
-        """Return (input, output) price cells for the split-column browse table.
-
-        A published nonzero rate shows as ``$<n>``; a genuine free tier reads
-        ``free``, non-token billing reads ``metered``, and an unknown rate reads
-        ``unpriced`` — never a fabricated ``$0`` (mirrors :meth:`_price_cell`).
-        """
-        pin, pout = rec.price_in_per_1m, rec.price_out_per_1m
-        if (pin or 0) > 0 or (pout or 0) > 0:
-            fmt = lambda v: ("?" if v is None else f"${v:g}")  # noqa: E731
-            return fmt(pin), fmt(pout)
-        label = "free" if rec.free_tier else ("metered" if rec.price_note else "unpriced")
-        return label, label
+        """Return (input, output) price cells for the split-column browse table."""
+        from effgen.cli.commands.models import price_in_out_cells
+        return price_in_out_cells(rec)
 
     def _local_model_payload(self, entry: dict) -> dict:
         """Build the local-cache facts for one model: engines, size, ctx, status."""
-        import importlib.util
-        engines = ["transformers"]
-        if importlib.util.find_spec("vllm") is not None:
-            engines.append("vllm")
-        return {
-            "id": entry["id"],
-            "cached": True,
-            "complete": entry.get("complete", True),
-            "size_gb": entry["size_gb"],
-            "path": entry.get("path"),
-            "context_window": self._local_model_context_window(entry.get("path", "")),
-            "engines": engines,
-        }
+        from effgen.cli.commands.models import local_model_payload
+        return local_model_payload(self, entry)
 
     def _render_local_model_info(self, payload: dict) -> None:
         """Render the 'this model is in your local cache' block for `models info`."""
-        ctx = payload.get("context_window")
-        status = "ready" if payload.get("complete", True) else "incomplete download"
-        rows = {
-            "Local copy": "yes (HuggingFace cache)",
-            "Status": status,
-            "On-disk size": f"{payload['size_gb']:.1f} GB",
-            "Local engines": ", ".join(payload["engines"]),
-            "Context window": f"{ctx:,}" if ctx else "—",
-        }
-        run_hint = (f"effgen run -m {payload['id']} --engine transformers \"...\"")
-        if self.console:
-            from rich.table import Table
-            table = Table(show_header=False, title="Local cache")
-            table.add_column("Field", style="cyan")
-            table.add_column("Value", style="white", overflow="fold")
-            for k, v in rows.items():
-                table.add_row(k, str(v))
-            self.console.print(table)
-            self.console.print(f"\n[dim]Run locally: [cyan]{run_hint}[/cyan]"
-                               f"  ·  or [cyan]load_model(\"{payload['id']}\", "
-                               f"engine=\"transformers\")[/cyan][/dim]")
-        else:
-            print("\nLocal cache:")
-            for k, v in rows.items():
-                print(f"  {k}: {v}")
-            print(f"  Run locally: {run_hint}")
+        from effgen.cli.commands.models import render_local_model_info
+        return render_local_model_info(self, payload)
 
     def _models_info(self, args):
         """Show detailed information for one model from the registry."""
-        if not args.name:
-            self.print_error("Model name required")
-            return 1
-
-        from effgen.models import _catalog, _refresh
-        from effgen.models.model_loader import ModelLoader
-
-        # An engine-prefixed id (e.g. "transformers:Qwen/Qwen2.5-1.5B-Instruct")
-        # names a local engine + a bare repo id. Strip the prefix so the id
-        # matches the local cache and the catalog, and remember the engine so we
-        # can lead with the local view.
-        lookup_name = args.name
-        requested_engine = None
-        if ":" in lookup_name:
-            _prefix, _rest = lookup_name.split(":", 1)
-            if _prefix in ModelLoader._LOCAL_ENGINE_PREFIXES and _rest:
-                requested_engine = _prefix
-                lookup_name = _rest
-
-        # Is this id sitting in the local HF cache? If so we can describe it as
-        # locally-runnable even when the cloud catalog has no (or a different) row.
-        local_entry = next(
-            (m for m in self._local_cached_models() if m["id"] == lookup_name), None
-        )
-
-        # An explicit local-engine request is answered from the local cache: show
-        # the cached copy, or report a cache miss naming what is cached (rather
-        # than cloud catalog suggestions the engine can't run).
-        if requested_engine is not None:
-            if local_entry is not None:
-                local_payload = self._local_model_payload(local_entry)
-                if getattr(args, "output_json", False):
-                    print(json.dumps({"id": lookup_name, "provider": None,
-                                       "engine": requested_engine,
-                                       "local": local_payload}, indent=2))
-                    return 0
-                self.print_header(f"Model: {lookup_name} ({requested_engine})")
-                self._render_local_model_info(local_payload)
-                return 0
-            cached = [m["id"] for m in self._local_cached_models()]
-            if getattr(args, "output_json", False):
-                print(json.dumps({"id": lookup_name, "provider": None,
-                                   "engine": requested_engine, "local": None,
-                                   "cached_models": cached}, indent=2))
-                return 1
-            self.print_error(
-                f"Model '{lookup_name}' is not in the local cache, so the "
-                f"'{requested_engine}' engine can't run it yet."
-            )
-            if cached:
-                self.print("Locally cached models:")
-                for cid in cached:
-                    self.print(f"  {cid}")
-                self.print(f"\nDownload it first: effgen run -m {lookup_name} "
-                           f"--engine {requested_engine} \"...\" (with network access).")
-            return 1
-
-        rec = _catalog.lookup(lookup_name)
-        if rec is None:
-            if local_entry is not None:
-                # Downloaded locally but not in the cloud catalog: describe the local
-                # copy instead of a misleading "not found in catalog".
-                local_payload = self._local_model_payload(local_entry)
-                if getattr(args, "output_json", False):
-                    print(json.dumps({"id": args.name, "provider": None,
-                                       "local": local_payload}, indent=2))
-                    return 0
-                self.print_header(f"Model: {args.name} (local)")
-                self._render_local_model_info(local_payload)
-                return 0
-            # Helpful not-found: suggest the nearest catalog ids + provider:id form.
-            self.print_error(f"Model not found in catalog: {args.name}")
-            alts = _catalog.nearest_alternatives(args.name, n=5)
-            if alts:
-                self.print("Did you mean:")
-                for a in alts:
-                    self.print(f"  {a.provider}:{a.id}")
-            self.print("\nRun 'effgen models list' to browse the catalog, or "
-                       "'effgen models refresh' to update it.")
-            return 1
-
-        # The same model id can be served by more than one provider at different
-        # prices; surface every alternative so the choice of *where* to run it is
-        # visible (the resolved provider stays first).
-        others = [v for v in _catalog.variants(rec.id) if v.provider != rec.provider]
-
-        if getattr(args, "output_json", False):
-            print(json.dumps({
-                "id": rec.id, "provider": rec.provider, "display_name": rec.display_name,
-                "family": rec.family, "context_window": rec.context_window,
-                "max_output": rec.max_output, "price_in_per_1m": rec.price_in_per_1m,
-                "price_out_per_1m": rec.price_out_per_1m, "supports_tools": rec.supports_tools,
-                "supports_vision": rec.supports_vision, "supports_audio": rec.supports_audio,
-                "free_tier": rec.free_tier, "deprecated": rec.deprecated,
-                "rpm": rec.rpm, "tpm": rec.tpm, "rpd": rec.rpd,
-                "price_source": rec.price_source, "verified_on": rec.verified_on,
-                "notes": rec.notes,
-                "also_available": [
-                    {
-                        "provider": v.provider,
-                        "price_in_per_1m": v.price_in_per_1m,
-                        "price_out_per_1m": v.price_out_per_1m,
-                        "context_window": v.context_window,
-                        "supports_tools": v.supports_tools,
-                        "supports_vision": v.supports_vision,
-                        "free_tier": v.free_tier,
-                    }
-                    for v in others
-                ],
-                "local": self._local_model_payload(local_entry) if local_entry else None,
-            }, indent=2))
-            return 0
-
-        self.print_header(f"Model: {rec.provider}:{rec.id}")
-        meta = _catalog.snapshot_meta(rec.provider)
-        rows = {
-            "Provider": rec.provider,
-            "Display name": rec.display_name or rec.id,
-            "Family": rec.family or "—",
-            "Context window": f"{rec.context_window:,}" if rec.context_window else "—",
-            "Max output": f"{rec.max_output:,}" if rec.max_output else "—",
-            "Price ($/1M in / out)": self._price_cell(rec),
-            "Tool calling": "yes" if rec.supports_tools else "no",
-            "Vision": "yes" if rec.supports_vision else "no",
-            "Audio": "yes" if rec.supports_audio else "no",
-            "Free tier": "yes" if rec.free_tier else "no",
-            "Rate limits (rpm/tpm/rpd)": f"{rec.rpm or '—'} / {rec.tpm or '—'} / {rec.rpd or '—'}",
-            "Deprecated": "yes" if rec.deprecated else "no",
-            "Price source": rec.price_source,
-            "Verified on": rec.verified_on or meta.get("verified_on") or "unknown",
-            "Auth ready": "yes" if _refresh.has_credentials(rec.provider) else "no (set key)",
-        }
-        if self.console:
-            table = Table(show_header=False)
-            table.add_column("Field", style="cyan")
-            table.add_column("Value", style="white", overflow="fold")
-            for k, v in rows.items():
-                table.add_row(k, str(v))
-            self.console.print(table)
-        else:
-            for k, v in rows.items():
-                print(f"  {k}: {v}")
-
-        # When several providers serve this id, compare them so the analyst can
-        # pick where to run it (pin the choice with a ``provider:id`` form).
-        if others:
-            if self.console:
-                vtable = Table(title=f"Also served by ({len(others)} other provider(s))")
-                vtable.add_column("Provider", style="magenta", no_wrap=True)
-                vtable.add_column("$/1M in/out", style="green", no_wrap=True, overflow="fold")
-                vtable.add_column("Context", justify="right", no_wrap=True)
-                vtable.add_column("Tools", justify="center", no_wrap=True)
-                vtable.add_column("Vision", justify="center", no_wrap=True)
-                vtable.add_column("Free", justify="center", no_wrap=True)
-                for v in others:
-                    vtable.add_row(
-                        v.provider, self._price_cell(v),
-                        f"{v.context_window:,}" if v.context_window else "—",
-                        "✓" if v.supports_tools else "",
-                        "✓" if v.supports_vision else "",
-                        "✓" if v.free_tier else "",
-                    )
-                self.console.print(vtable)
-                self.console.print(
-                    f"\n[dim]Pin a provider: "
-                    f"[cyan]effgen run --provider <name> -m {rec.id}[/cyan][/dim]"
-                )
-            else:
-                names = ", ".join(v.provider for v in others)
-                print(f"\n  Also served by: {names} "
-                      f"(pin with 'provider:{rec.id}')")
-
-        cloud_hint = f"effgen run --provider {rec.provider} -m {rec.id} \"...\""
-        # If the same id is also downloaded locally, lead with the local engine
-        # path (the local block prints its own "Run locally" hint) and show the
-        # cloud invocation as an alternative — don't present it as cloud-only.
-        if local_entry is not None:
-            self._render_local_model_info(self._local_model_payload(local_entry))
-            if self.console:
-                self.console.print(f"\n[dim]Cloud alternative: [cyan]{cloud_hint}[/cyan][/dim]")
-            else:
-                print(f"\n  Cloud alternative: {cloud_hint}")
-        elif self.console:
-            self.console.print(f"\n[dim]Use: [cyan]{cloud_hint}[/cyan][/dim]")
-        return 0
+        from effgen.cli.commands.models import models_info
+        return models_info(self, args)
 
     def _models_load(self, args):
         """Pre-load a model into the model pool."""
-        from effgen.models.pool import ModelPool
-
-        model_name = args.name
-        engine = getattr(args, 'engine', None)
-        self.print(f"Loading model: {model_name}...")
-
-        try:
-            pool = ModelPool()
-            pool.get_or_load(model_name, engine=engine)
-            self.print_success(f"Model '{model_name}' loaded successfully")
-
-            # Show status
-            for entry in pool.status():
-                if entry["model_name"] == model_name:
-                    self.print(f"  GPU memory: ~{entry['gpu_memory_gb']:.1f} GB")
-        except Exception as e:
-            self.print_error(f"Failed to load model: {e}")
-            return 1
+        from effgen.cli.commands.models import models_load
+        return models_load(self, args)
 
     def _models_unload(self, args):
         """Unload a model from memory."""
-        from effgen.models.model_loader import ModelLoader
-
-        model_name = args.name
-        self.print(f"Unloading model: {model_name}...")
-
-        try:
-            loader = ModelLoader()
-            if model_name in loader.loaded_models:
-                loader.unload_model(model_name)
-                self.print_success(f"Model '{model_name}' unloaded")
-            else:
-                self.print_warning(f"Model '{model_name}' is not currently loaded")
-        except Exception as e:
-            self.print_error(f"Failed to unload model: {e}")
-            return 1
+        from effgen.cli.commands.models import models_unload
+        return models_unload(self, args)
 
     def _models_status(self, args):
         """Show loaded models and GPU memory status."""
-        if getattr(args, "output_json", False):
-            return self._models_status_json()
-
-        self.print_header("Model & GPU Status")
-
-        # GPU memory info — physical (driver) view across all processes, so this
-        # reflects which GPUs are actually free, not just this process's usage.
-        try:
-            from effgen.gpu.cuda_compat import per_gpu_status
-            gpus = per_gpu_status()
-            gib = 1024 ** 3
-            if gpus:
-                if self.console:
-                    from rich.table import Table
-                    gpu_table = Table(title="GPU Status (physical, all processes)")
-                    gpu_table.add_column("GPU", style="cyan")
-                    gpu_table.add_column("Name", style="white")
-                    gpu_table.add_column("Total", style="white")
-                    gpu_table.add_column("Used", style="yellow")
-                    gpu_table.add_column("Free", style="green")
-                    gpu_table.add_column("Util", justify="right")
-
-                    for g in gpus:
-                        util = f"{g.utilization_pct:.0f}%" if g.utilization_pct is not None else "—"
-                        gpu_table.add_row(
-                            str(g.index), g.name,
-                            f"{g.total_bytes / gib:.1f} GB",
-                            f"{g.used_bytes / gib:.1f} GB",
-                            f"{g.free_bytes / gib:.1f} GB",
-                            util,
-                        )
-                    self.console.print(gpu_table)
-                else:
-                    for g in gpus:
-                        util = f", {g.utilization_pct:.0f}% util" if g.utilization_pct is not None else ""
-                        print(f"GPU {g.index}: {g.name} — "
-                              f"{g.total_bytes / gib:.1f} GB total, "
-                              f"{g.used_bytes / gib:.1f} GB used, "
-                              f"{g.free_bytes / gib:.1f} GB free{util}")
-            else:
-                try:
-                    import torch
-                    if not torch.cuda.is_available():
-                        self.print_warning("CUDA not available")
-                    else:
-                        self.print_warning("Could not query GPU memory status")
-                except ImportError:
-                    self.print_warning("PyTorch not installed — cannot query GPU status")
-        except ImportError:
-            self.print_warning("PyTorch not installed — cannot query GPU status")
-
-        # Loaded models
-        from effgen.models.model_loader import ModelLoader
-        loader = ModelLoader()
-        loaded = loader.get_loaded_models()
-
-        if loaded:
-            self.print("")
-            self.print_header("Loaded Models")
-            for name, model in loaded.items():
-                status = "loaded" if model.is_loaded() else "unloaded"
-                self.print(f"  {name}: {status}")
-        else:
-            self.print("\nNo models currently loaded in this process.")
-
-        # Capability registry
-        from effgen.models.capabilities import list_registered_models
-        registered = list_registered_models()
-        self.print(f"\nCapability profiles registered: {len(registered)}")
+        from effgen.cli.commands.models import models_status
+        return models_status(self, args)
 
     def _models_status_json(self) -> int:
         """Emit the GPU table + loaded models as JSON for ops/edge tooling."""
-        gib = 1024 ** 3
-        gpu_list: list[dict] = []
-        cuda_available = True
-        try:
-            from effgen.gpu.cuda_compat import per_gpu_status
-            for g in per_gpu_status():
-                gpu_list.append({
-                    "index": g.index,
-                    "name": g.name,
-                    "total_gb": round(g.total_bytes / gib, 3),
-                    "used_gb": round(g.used_bytes / gib, 3),
-                    "free_gb": round(g.free_bytes / gib, 3),
-                    "utilization_pct": g.utilization_pct,
-                })
-            if not gpu_list:
-                try:
-                    import torch
-                    cuda_available = torch.cuda.is_available()
-                except ImportError:
-                    cuda_available = False
-        except ImportError:
-            cuda_available = False
-
-        from effgen.models.capabilities import list_registered_models
-        from effgen.models.model_loader import ModelLoader
-        loaded = ModelLoader().get_loaded_models()
-        loaded_list = [
-            {"name": name, "loaded": bool(model.is_loaded())}
-            for name, model in loaded.items()
-        ]
-        payload = {
-            "cuda_available": cuda_available,
-            "gpus": gpu_list,
-            "loaded_models": loaded_list,
-            "capability_profiles": len(list_registered_models()),
-        }
-        print(json.dumps(payload, indent=2))
-        return 0
+        from effgen.cli.commands.models import models_status_json
+        return models_status_json(self)
 
     def _models_refresh(self, args):
-        """Refresh the bundled model catalog from each provider's live API.
-
-        Fetches the live model list for the requested provider(s), reports what
-        was added / removed / changed versus the bundled snapshot, and (unless
-        ``--dry-run``) updates the snapshot so later runs see the fresh list
-        offline. Providers without a configured key are skipped with a note.
-        """
-        from effgen.models import _refresh
-
-        requested = getattr(args, "provider", None)
-        dry_run = bool(getattr(args, "dry_run", False))
-
-        if requested:
-            if requested not in _refresh.refreshable_providers():
-                self.print_error(
-                    f"Unknown provider '{requested}'. "
-                    f"Refreshable: {', '.join(_refresh.refreshable_providers())}"
-                )
-                return 1
-            providers = [requested]
-        else:
-            providers = _refresh.refreshable_providers()
-
-        self.print_header("Refresh model catalog" + (" (dry run)" if dry_run else ""))
-        any_done = False
-        had_error = False
-        for provider in providers:
-            if not _refresh.has_credentials(provider) and provider != "hf":
-                if requested:  # explicit request for a keyless provider is an error
-                    self.print_error(f"No API key for '{provider}'.")
-                    had_error = True
-                else:
-                    self.print(f"  {provider}: skipped (no key)")
-                continue
-            try:
-                rep = _refresh.refresh_models(provider, persist=not dry_run)
-            except Exception as e:  # noqa: BLE001 - report per-provider, keep going
-                self.print_error(f"{provider}: refresh failed: {e}")
-                had_error = True
-                continue
-            any_done = True
-            diff = rep["diff"]
-            n_add, n_rem, n_chg = (
-                len(diff["added"]), len(diff["removed"]), len(diff["changed"])
-            )
-            verb = "would update" if dry_run else "updated"
-            self.print_success(
-                f"{provider}: {rep['live_count']} live models "
-                f"(+{n_add} / -{n_rem} / ~{n_chg} changed) — {verb} snapshot"
-            )
-            for mid in diff["added"][:10]:
-                self.print(f"    + {mid}")
-            for mid in diff["removed"][:10]:
-                self.print(f"    - {mid}")
-
-        if had_error:
-            return 1
-        if not any_done:
-            self.print_warning(
-                "No providers refreshed. Set a provider API key, e.g. "
-                "OPENAI_API_KEY / CEREBRAS_API_KEY / GROQ_API_KEY."
-            )
-        return 0
+        """Refresh the bundled model catalog from each provider's live API."""
+        from effgen.cli.commands.models import models_refresh
+        return models_refresh(self, args)
 
     def examples_commands(self, args):
-        """
-        Run example scripts.
-
-        Args:
-            args: Parsed command-line arguments
-        """
-        if args.example_command == 'list':
-            return self._examples_list(args) or 0
-        elif args.example_command == 'run':
-            return self._examples_run(args) or 0
-        elif args.example_command is None:
-            return _print_group_help(args)
-        else:
-            self.print_error(f"Unknown examples command: {args.example_command}")
-            return 1
+        """Run example scripts."""
+        from effgen.cli.commands.examples import examples_commands
+        return examples_commands(self, args)
 
     @staticmethod
     def _find_examples_dir() -> "Path | None":
-        """Locate the bundled `examples/` directory.
-
-        Examples ship with the source tree (repo root), not inside the installed
-        `effgen` package, so probe several real locations rather than the old
-        package-relative path that was broken for every pip-installed user.
-        """
-        candidates = []
-        env_dir = os.environ.get("EFFGEN_EXAMPLES_DIR")
-        if env_dir:
-            candidates.append(Path(env_dir))
-        # repo root: effgen/cli/_main.py -> <repo>/examples
-        candidates.append(Path(__file__).resolve().parent.parent.parent / "examples")
-        # current working directory (running from a checkout)
-        candidates.append(Path.cwd() / "examples")
-        for c in candidates:
-            if c.is_dir() and any(c.rglob("*.py")):
-                return c
-        return None
+        """Locate the bundled `examples/` directory."""
+        from effgen.cli.commands.examples import find_examples_dir
+        return find_examples_dir()
 
     def _examples_list(self, args):
         """List available examples."""
-        self.print_header("Available Examples")
-
-        examples_dir = self._find_examples_dir()
-
-        if examples_dir is None:
-            self.print_warning("No examples directory found.")
-            self.print(
-                "Examples ship with the source repository, not the installed wheel.\n"
-                "Run from a cloned checkout (repo root), or set "
-                "EFFGEN_EXAMPLES_DIR=/path/to/examples."
-            )
-            return 0
-
-        # Examples are grouped into subdirectories (basic/, advanced/, …), so
-        # walk the tree and present each as its path relative to examples/.
-        examples = []
-        for file in examples_dir.rglob("*.py"):
-            if file.name.startswith("_"):
-                continue
-            rel = file.relative_to(examples_dir).with_suffix("")
-            examples.append(rel.as_posix())
-
-        if self.console:
-            table = Table(title=f"Example Scripts ({len(examples)})")
-            table.add_column("Name", style="cyan")
-            table.add_column("Command", style="magenta")
-
-            for example in sorted(examples):
-                table.add_row(example, f"effgen examples run {example}")
-
-            self.console.print(table)
-        else:
-            for example in sorted(examples):
-                print(f"- {example}")
+        from effgen.cli.commands.examples import examples_list
+        return examples_list(self, args)
 
     def _examples_run(self, args):
         """Run an example script."""
-        if not args.name:
-            self.print_error("Example name required")
-            return 1
-
-        examples_dir = self._find_examples_dir()
-        if examples_dir is None:
-            self.print_error(
-                "No examples directory found. Run from a source checkout or set "
-                "EFFGEN_EXAMPLES_DIR=/path/to/examples."
-            )
-            return 1
-        # Accept either a bare name or a subdir path (e.g. "basic/quickstart").
-        name = args.name[:-3] if args.name.endswith(".py") else args.name
-        example_path = (examples_dir / f"{name}.py").resolve()
-        # Path-traversal guard: stay within the examples directory.
-        try:
-            example_path.relative_to(examples_dir.resolve())
-        except ValueError:
-            self.print_error(f"Invalid example path: {args.name}")
-            return 1
-
-        if not example_path.exists():
-            # Try to match by basename across subdirectories for convenience.
-            matches = list(examples_dir.rglob(f"{Path(name).name}.py"))
-            if len(matches) == 1:
-                example_path = matches[0]
-            else:
-                self.print_error(f"Example not found: {args.name}")
-                if matches:
-                    self.print("Did you mean one of:")
-                    for m in matches:
-                        self.print(f"  {m.relative_to(examples_dir).with_suffix('').as_posix()}")
-                return 1
-
-        self.print_header(f"Running Example: {args.name}")
-        self.print()
-
-        # Load and run example
-        try:
-            spec = importlib.util.spec_from_file_location("example", example_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            # Run main function if exists
-            if hasattr(module, 'main'):
-                module.main()
-            else:
-                self.print_warning("Example does not have a main() function")
-
-        except Exception as e:
-            self.print_error(f"Error running example: {e}")
-            if getattr(args, 'verbose', False):
-                import traceback
-                traceback.print_exc()
-            return 1
-        return 0
+        from effgen.cli.commands.examples import examples_run
+        return examples_run(self, args)
 
 
 class _EffgenArgumentParser(argparse.ArgumentParser):
@@ -3965,177 +2661,6 @@ def _doctor_live_probe(providers: list[str], *, timeout: float = 30.0) -> dict[s
     return results
 
 
-def _handle_workflow_command(args, cli) -> int:
-    """Handle the 'workflow' CLI subcommand."""
-    from effgen.core.workflow import WorkflowDAG
-
-    wf_cmd = getattr(args, 'workflow_command', None)
-    json_mode = getattr(args, 'output_json', False)
-    if json_mode:
-        cli._human_to_stderr = True
-    show_diagram = getattr(args, 'diagram', False)
-
-    def _print_diagram(dag, node_results=None):
-        from effgen.ui.workflow_viz import workflow_diagram_lines
-        order = dag.topological_order()
-        levels = dag._compute_levels(order)
-        lines = workflow_diagram_lines(
-            dag.name,
-            [n.id for n in dag.nodes],
-            [e.to_dict() for e in dag.edges],
-            levels,
-            node_results=node_results,
-        )
-        for style, text in lines:
-            if cli.console and style:
-                cli.console.print(f"[{style}]{text}[/{style}]")
-            else:
-                cli.print(text)
-
-    if wf_cmd == 'validate':
-        try:
-            dag = WorkflowDAG.from_yaml(args.file)
-            order = dag.topological_order()
-            if json_mode:
-                print(json.dumps({
-                    "valid": True,
-                    "name": dag.name,
-                    "nodes": len(dag.nodes),
-                    "edges": len(dag.edges),
-                    "execution_order": order,
-                }, indent=2, ensure_ascii=False))
-                return 0
-            cli.print(f"Workflow '{dag.name}' is valid.")
-            cli.print(f"  Nodes: {len(dag.nodes)}")
-            cli.print(f"  Edges: {len(dag.edges)}")
-            cli.print(f"  Execution order: {' -> '.join(order)}")
-            if show_diagram:
-                cli.print("")
-                _print_diagram(dag)
-            return 0
-        except Exception as e:
-            if json_mode:
-                print(json.dumps({"valid": False, "error": str(e)}, indent=2, ensure_ascii=False))
-                return 1
-            cli.print(f"Validation failed: {e}")
-            return 1
-
-    elif wf_cmd == 'run':
-        try:
-            model_name = getattr(args, 'model', None)
-
-            def _agent_factory(nd):
-                from effgen.core.agent import Agent, AgentConfig
-                from effgen.models import load_model
-                agent_field = nd.get('agent')
-                explicit = model_name or nd.get('model')
-                if explicit:
-                    model = load_model(explicit)
-                elif agent_field:
-                    # No top-level -m/--model and no per-node 'model:' key: the
-                    # node's 'agent:' value is the natural place a user sets a
-                    # model id (e.g. `agent: gpt-5-nano`). Try it as one before
-                    # falling back to the local default; a value that does not
-                    # resolve to a real model fails loudly instead of silently
-                    # running a different (free, local) model with no warning.
-                    try:
-                        model = load_model(agent_field)
-                    except Exception as exc:
-                        raise ValueError(
-                            f"Workflow node '{nd['id']}' has agent: {agent_field!r}, "
-                            f"which does not resolve to a model ({exc}). Set a "
-                            "'model:' key on the node, or pass -m/--model, to "
-                            "choose its model explicitly."
-                        ) from exc
-                else:
-                    model = load_model('Qwen/Qwen2.5-1.5B-Instruct')
-                # A node may name a preset (research/coding/general/...) to get a
-                # ready-made tool-equipped agent; otherwise build a plain agent.
-                preset = nd.get('preset')
-                if preset:
-                    from effgen.presets import create_agent
-                    return create_agent(preset, model=model)
-                config = AgentConfig(
-                    name=agent_field or nd['id'],
-                    model=model,
-                    max_iterations=nd.get('max_iterations', 5),
-                )
-                return Agent(config)
-
-            quiet = getattr(args, 'quiet', False)
-            dag = WorkflowDAG.from_yaml(args.file, agent_factory=_agent_factory)
-            if not quiet:
-                cli.print(f"Running workflow '{dag.name}' ({len(dag.nodes)} nodes)...")
-
-            # Per-node ``task:`` strings declared in the YAML become each node's
-            # default input (so `effgen workflow run workflow.yaml` works with no
-            # flags). --input / --task then override or supplement them.
-            yaml_inputs: dict = {}
-            for node in dag.nodes:
-                node_task = node.metadata.get('task')
-                if node_task:
-                    yaml_inputs[node.id] = node_task
-
-            bare_task = getattr(args, 'task', None)
-            initial_inputs: dict | str = dict(yaml_inputs)
-            if getattr(args, 'input', None):
-                for node_id, task_str in args.input:
-                    initial_inputs[node_id] = task_str
-            if bare_task:
-                if dag.entry_nodes():
-                    for nid in dag.entry_nodes():
-                        initial_inputs[nid] = bare_task
-                elif not initial_inputs:
-                    initial_inputs = bare_task
-
-            try:
-                result = dag.run(initial_inputs=initial_inputs)
-            finally:
-                # Release each node's agent so we don't leak handles / emit
-                # garbage-collected-without-close warnings.
-                for node in dag.nodes:
-                    agent = getattr(node, "agent", None)
-                    if agent is not None and hasattr(agent, "close"):
-                        try:
-                            agent.close()
-                        except Exception:
-                            pass
-
-            if json_mode:
-                print(json.dumps(result.to_dict(), indent=2, default=str, ensure_ascii=False))
-                return 0 if result.success else 1
-
-            if not quiet:
-                cli.print(f"\nWorkflow {'succeeded' if result.success else 'FAILED'} "
-                          f"in {result.execution_time:.2f}s")
-
-                if show_diagram:
-                    cli.print("")
-                    _print_diagram(dag, node_results=result.node_results)
-                else:
-                    for nr in result.node_results:
-                        status = nr['status']
-                        cli.print(f"  [{status:>9s}] {nr['id']} ({nr['execution_time']:.2f}s)")
-
-                if result.success:
-                    # Show final outputs
-                    cli.print("\nOutputs:")
-                    for key, val in result.outputs.items():
-                        cli.print(f"  {key}: {str(val)[:200]}")
-
-            return 0 if result.success else 1
-
-        except Exception as e:
-            if json_mode:
-                print(json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False))
-                return 1
-            cli.print(f"Workflow execution failed: {e}")
-            return 1
-
-    else:
-        return _print_group_help(args)
-
-
 def _resolve_eval_suite(suite_arg: str, difficulty=None, max_cases=None):
     """Resolve a ``--suite`` argument to a ``TestSuite``.
 
@@ -4924,364 +3449,6 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
                 logging.debug(f"quickstart: agent close failed: {e}")
 
 
-def _short_ts(value: Any) -> str:
-    """Render a stored ISO timestamp as 'YYYY-MM-DD HH:MM' for a table cell."""
-    if not value:
-        return "—"
-    text = str(value)
-    try:
-        return datetime.fromisoformat(text).strftime("%Y-%m-%d %H:%M")
-    except ValueError:
-        return text[:16]
-
-
-def _fmt_cost(value: Any) -> str:
-    """Format a cost in USD, or '—' when the run was not priced.
-
-    Sub-cent amounts keep enough precision to stay distinguishable from a free
-    run, so a priced turn never reads as ``$0.0000``.
-    """
-    if not isinstance(value, int | float):
-        return "—"
-    if value == 0:
-        return "$0.00"
-    if value < 0.0001:
-        return f"${value:.6f}"
-    return f"${value:.4f}" if value < 1 else f"${value:.2f}"
-
-
-def _one_line(text: Any, width: int = 60) -> str:
-    """Collapse text to a single line no wider than *width*."""
-    if text is None:
-        return "—"
-    flat = " ".join(str(text).split())
-    if not flat:
-        return "—"
-    return flat if len(flat) <= width else flat[: width - 1] + "…"
-
-
-def _session_matches(entry: dict, mgr, *, search: str | None, model: str | None,
-                     since: str | None, until: str | None) -> bool:
-    """Whether a session summary passes the list filters."""
-    updated = str(entry.get("updated_at") or "")
-    if since and updated[:10] < since:
-        return False
-    if until and updated[:10] > until:
-        return False
-    if model and model.lower() not in str(entry.get("model") or "").lower():
-        return False
-    if search:
-        needle = search.lower()
-        if needle in str(entry.get("session_id", "")).lower() or \
-           needle in str(entry.get("agent_name", "")).lower():
-            return True
-        try:
-            session = mgr.get(entry["session_id"])
-        except Exception:  # noqa: BLE001 - an unreadable file simply cannot match
-            return False
-        return any(
-            needle in str(m.get("content", "")).lower() for m in session.messages
-        )
-    return True
-
-
-def _render_session(session, cli, *, last: int | None = None) -> None:
-    """Print a conversation with speaker labels and per-turn model/cost."""
-    messages = session.messages
-    shown = messages[-last:] if last and last > 0 else messages
-    cli.print_line(f"Session: {session.session_id}")
-    if session.agent_name:
-        cli.print_line(f"Agent:   {session.agent_name}")
-    if session.metadata.get("model"):
-        cli.print_line(f"Model:   {session.metadata['model']}")
-    cli.print_line(
-        f"Turns:   {len(messages)} message(s)"
-        + (f" (showing last {len(shown)})" if len(shown) != len(messages) else "")
-    )
-    cli.print("")
-    for m in shown:
-        meta = m.get("metadata") or {}
-        role = str(m.get("role", "?"))
-        stamp = _short_ts(m.get("timestamp"))
-        detail = []
-        if meta.get("model"):
-            detail.append(str(meta["model"]))
-        tokens = meta.get("tokens_used")
-        if tokens:
-            detail.append(f"{tokens} tok")
-        if isinstance(meta.get("cost_usd"), int | float):
-            detail.append(_fmt_cost(meta["cost_usd"]))
-        if isinstance(meta.get("latency_ms"), int | float):
-            detail.append(f"{meta['latency_ms']:.0f} ms")
-        suffix = ("  ·  " + "  ".join(detail)) if detail else ""
-        cli.print_line(f"--- {role} · {stamp}{suffix}", style="dim")
-        cli.print_data(str(m.get("content", "")))
-        cli.print("")
-
-
-def _browse_sessions(sessions: list[dict], mgr, cli) -> int:
-    """Offer the listed sessions for selection and read the chosen one.
-
-    On a non-interactive stdin the list is all that is printed, so the command
-    stays usable when piped or run from a script.
-    """
-    if not sessions:
-        return 0
-    if not sys.stdin.isatty():
-        cli.print("Read one with: effgen sessions show <id>")
-        return 0
-    cli.print("")
-    try:
-        choice = input("Open which session? (number, id, or Enter to quit): ").strip()
-    except (EOFError, KeyboardInterrupt):
-        cli.print("")
-        return 0
-    if not choice:
-        return 0
-    session_id = None
-    if choice.isdigit() and 1 <= int(choice) <= len(sessions):
-        session_id = sessions[int(choice) - 1]["session_id"]
-    else:
-        session_id = choice
-    try:
-        session = mgr.get(session_id)
-    except FileNotFoundError:
-        cli.print_line(f"Session not found: {session_id}")
-        return 1
-    cli.print("")
-    _render_session(session, cli)
-    cli.print_line(f"Continue this conversation: effgen chat --session-id {session.session_id}")
-    return 0
-
-
-def _handle_runs_command(args, cli) -> int:
-    """Handle 'effgen runs' subcommands over the run history store."""
-    import json as _json
-
-    from effgen.observability import run_log
-
-    cmd = getattr(args, 'runs_command', None)
-    if cmd == 'list':
-        status = getattr(args, 'status', None)
-        if status == 'failed':
-            status = 'error'
-        runs = run_log.read_runs(
-            limit=max(int(getattr(args, 'limit', 20) or 20), 1),
-            status=status,
-            model=getattr(args, 'model', None),
-            search=getattr(args, 'search', None),
-            since=getattr(args, 'since', None),
-            until=getattr(args, 'until', None),
-            session_id=getattr(args, 'session_filter', None),
-        )
-        if getattr(args, 'output_json', False):
-            print(_json.dumps({
-                "runs": runs,
-                "runs_dir": str(run_log.history_dir()),
-                "persisted": run_log.history_enabled(),
-            }, indent=2, default=str, ensure_ascii=False))
-            return 0
-        if not runs:
-            filtered = any((
-                status, getattr(args, 'model', None), getattr(args, 'search', None),
-                getattr(args, 'since', None), getattr(args, 'until', None),
-                getattr(args, 'session_filter', None),
-            ))
-            if filtered:
-                cli.print(
-                    "No runs match those filters. Widen them, or list everything "
-                    "with: effgen runs list"
-                )
-            else:
-                cli.print("No runs recorded yet. Run an agent (effgen run \"...\") and try again.")
-            if not run_log.history_enabled():
-                cli.print(
-                    "Run history is disabled (EFFGEN_RUN_HISTORY=0), so only runs "
-                    "from this process are visible."
-                )
-            return 0
-        render_table(
-            columns=["Run", "When", "Model", "Task", "Cost", "Time", "Status"],
-            rows=[
-                [
-                    r.get("run_id") or "—",
-                    _short_ts(r.get("ts")),
-                    _one_line(r.get("model"), 24),
-                    _one_line(r.get("task"), 40),
-                    _fmt_cost(r.get("cost_usd")),
-                    f"{r['duration_s']:.1f}s" if isinstance(r.get("duration_s"), int | float) else "—",
-                    r.get("status") or ("error" if r.get("error") else "ok"),
-                ]
-                for r in runs
-            ],
-            console=cli.console,
-            justify=["left", "left", "left", "left", "right", "right", "left"],
-            styles=["cyan", None, None, None, None, None, "yellow"],
-            caption=f"Stored in: {run_log.history_dir()}",
-        )
-        cli.print("Open one with: effgen runs show <run-id>")
-        return 0
-    if cmd == 'show':
-        record = run_log.get_run(args.run_id)
-        if record is None:
-            cli.print_line(f"Run not found: {args.run_id}")
-            cli.print("List the stored runs with: effgen runs list")
-            return 1
-        card_path = getattr(args, 'card', None)
-        if card_path:
-            from effgen.ui.report_html import ReportError, write_html_report
-            try:
-                written = write_html_report(
-                    card_path, record, kind="run", command=_invoked_command(),
-                )
-            except (ReportError, OSError) as exc:
-                cli.print_error(f"--card: could not write {card_path}: {exc}")
-                return 1
-            if not getattr(args, 'output_json', False):
-                cli.print(f"Summary card written to {written}")
-        if getattr(args, 'output_json', False):
-            print(_json.dumps(record, indent=2, default=str, ensure_ascii=False))
-            return 0
-        cli.print_line(f"Run:      {record.get('run_id') or '—'}")
-        cli.print_line(f"When:     {record.get('ts') or '—'}")
-        cli.print_line(f"Status:   {record.get('status') or '—'}")
-        cli.print_line(f"Model:    {record.get('model') or '—'}"
-                       + (f" ({record['provider']})" if record.get("provider") else ""))
-        if record.get("agent"):
-            cli.print_line(f"Agent:    {record['agent']}")
-        if record.get("session_id"):
-            cli.print_line(f"Session:  {record['session_id']}"
-                           f"   (read it with: effgen sessions show {record['session_id']})")
-        tokens = f"{record.get('input_tokens') or 0} in / {record.get('output_tokens') or 0} out"
-        cli.print_line(f"Tokens:   {tokens}")
-        cli.print_line(f"Cost:     {_fmt_cost(record.get('cost_usd'))}")
-        if isinstance(record.get("duration_s"), int | float):
-            cli.print_line(f"Duration: {record['duration_s']:.2f}s")
-        if record.get("task"):
-            cli.print("\nTask:")
-            cli.print_data(str(record["task"]))
-        if record.get("output"):
-            cli.print("\nAnswer:")
-            cli.print_data(str(record["output"]))
-        if record.get("error"):
-            cli.print("\nError:")
-            cli.print_data(str(record["error"]))
-        return 0
-    if cmd == 'cleanup':
-        removed = run_log.cleanup_runs(older_than_days=args.days)
-        cli.print(f"Removed {removed} run history file(s).")
-        return 0
-    return _print_group_help(args)
-
-
-def _handle_sessions_command(args, cli) -> int:
-    """Handle 'effgen sessions' subcommands."""
-    import json as _json
-
-    from effgen.core.session import SessionManager
-    from effgen.errors import CorruptStateError
-    mgr = SessionManager()
-    cmd = getattr(args, 'session_command', None)
-    if cmd in ('list', 'browse'):
-        sessions, unreadable = mgr.scan()
-        limit = getattr(args, 'limit', None)
-        if cmd == 'list':
-            sessions = [
-                s for s in sessions
-                if _session_matches(
-                    s, mgr,
-                    search=getattr(args, 'search', None),
-                    model=getattr(args, 'model', None),
-                    since=getattr(args, 'since', None),
-                    until=getattr(args, 'until', None),
-                )
-            ]
-        if limit and limit > 0:
-            sessions = sessions[:limit]
-        if getattr(args, 'output_json', False):
-            print(_json.dumps({
-                "sessions": sessions,
-                "unreadable": unreadable,
-                "sessions_dir": str(mgr.sessions_dir),
-            }, indent=2, default=str, ensure_ascii=False))
-            return 0
-        if not sessions and not unreadable:
-            cli.print(
-                "No sessions yet. Start one with: effgen chat  (or effgen run \"...\" "
-                "creates a session you can resume)."
-            )
-            return 0
-        if sessions:
-            render_table(
-                columns=["#", "Session", "Messages", "Model", "Cost", "Updated"],
-                rows=[
-                    [
-                        i,
-                        s['session_id'],
-                        s['messages'],
-                        _one_line(s.get('model'), 28),
-                        _fmt_cost(s.get('cost_usd')),
-                        _short_ts(s.get('updated_at')),
-                    ]
-                    for i, s in enumerate(sessions, start=1)
-                ],
-                console=cli.console,
-                justify=["right", "left", "right", "left", "right", "left"],
-                styles=[None, "cyan", "yellow", None, None, None],
-                caption=f"Stored in: {mgr.sessions_dir}",
-            )
-        if unreadable:
-            names = ", ".join(u["file"] for u in unreadable)
-            cli.print_warning(
-                f"{len(unreadable)} session file(s) could not be read and are not "
-                f"listed: {names}"
-            )
-        if cmd == 'browse':
-            return _browse_sessions(sessions, mgr, cli)
-        cli.print("Read one:  effgen sessions show <id>")
-        cli.print("Continue:  effgen chat --session-id <id>")
-        return 0
-    if cmd == 'show':
-        try:
-            session = mgr.get(args.session_id)
-        except FileNotFoundError:
-            cli.print_line(f"Session not found: {args.session_id}")
-            cli.print("List the stored sessions with: effgen sessions list")
-            return 1
-        except CorruptStateError as e:
-            cli.print(f"Error: {e}")
-            return 2
-        if getattr(args, 'output_json', False):
-            data = session.to_dict()
-            last = getattr(args, 'last', None)
-            if last and last > 0:
-                data["messages"] = data["messages"][-last:]
-            print(_json.dumps(data, indent=2, default=str, ensure_ascii=False))
-            return 0
-        _render_session(session, cli, last=getattr(args, 'last', None))
-        cli.print_line(f"Continue this conversation: effgen chat --session-id {session.session_id}")
-        return 0
-    if cmd == 'delete':
-        ok = mgr.delete(args.session_id)
-        cli.print("Deleted." if ok else f"Session not found: {args.session_id}")
-        return 0 if ok else 1
-    if cmd == 'export':
-        try:
-            cli.print_data(mgr.export(args.session_id, format=args.format))
-        except FileNotFoundError:
-            cli.print_line(f"Session not found: {args.session_id}")
-            return 1
-        except CorruptStateError as e:
-            cli.print(f"Error: {e}")
-            return 2
-        return 0
-    if cmd == 'cleanup':
-        n = mgr.cleanup(older_than_days=args.days)
-        cli.print(f"Removed {n} old session(s).")
-        return 0
-    return _print_group_help(args)
-
-
 def _handle_prompts_command(args, cli: "CLIInterface") -> int:
     """Handle 'effgen prompts' subcommands."""
     import json as _json
@@ -5480,19 +3647,6 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
     return 1
 
 
-
-
-def _print_group_help(args) -> int:
-    """Print a command group's help when it is invoked with no subcommand.
-
-    A bare group command (``effgen tools``, ``effgen models``, ...) has nothing
-    to do on its own, so it shows the group's usage and subcommand list instead
-    of an error, matching what ``--help`` prints.
-    """
-    parser = getattr(args, "_group_parser", None)
-    if parser is not None:
-        parser.print_help()
-    return 0
 
 
 def _extract_theme_arg(argv: list[str]) -> tuple[list[str], str | None]:
