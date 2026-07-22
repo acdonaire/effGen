@@ -143,6 +143,19 @@ def _warn_unapplied_config_keys(config: dict, cli: "CLIInterface") -> None:
     )
 
 
+def _print_group_help(args) -> int:
+    """Print a command group's help when it is invoked with no subcommand.
+
+    A bare group command (``effgen tools``, ``effgen models``, ...) has nothing
+    to do on its own, so it shows the group's usage and subcommand list instead
+    of an error, matching what ``--help`` prints.
+    """
+    parser = getattr(args, "_group_parser", None)
+    if parser is not None:
+        parser.print_help()
+    return 0
+
+
 def _invoked_command() -> str:
     """Return the command line that produced a result, for a report header."""
     return " ".join(["effgen", *sys.argv[1:]]).strip()
