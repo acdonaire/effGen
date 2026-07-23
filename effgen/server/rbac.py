@@ -72,6 +72,7 @@ class Role:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Role":
+        """Build a role from its dict form (missing fields get defaults)."""
         return cls(
             name=data["name"],
             allowed_tools=frozenset(data.get("allowed_tools", [])),
@@ -81,6 +82,7 @@ class Role:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "name": self.name,
             "allowed_tools": sorted(self.allowed_tools),

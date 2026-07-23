@@ -202,6 +202,7 @@ class DockerSandbox(SandboxBase):
         language: str,
         config: SandboxConfig,
     ) -> SandboxResult:
+        """Run *code* in a one-shot Docker container and return the captured result."""
         start = time.monotonic()
         tmp_dir = Path(tempfile.mkdtemp(prefix="effgen_sandbox_"))
         try:
@@ -406,6 +407,7 @@ class SubprocessSandbox(SandboxBase):
         language: str,
         config: SandboxConfig,
     ) -> SandboxResult:
+        """Run *code* in an isolated subprocess (user-namespace confinement when available)."""
         start = time.monotonic()
         try:
             cmd, net_isolated, fs_isolated = await self._build_cmd(language, config)
@@ -601,6 +603,7 @@ class FirecrackerSandbox(SandboxBase):
         language: str,
         config: SandboxConfig,
     ) -> SandboxResult:
+        """Not implemented: raises to report the Firecracker backend as unusable."""
         raise NotImplementedError(
             "FirecrackerSandbox is not yet implemented in this release. "
             "Use 'docker' or 'subprocess' backend instead."
@@ -612,9 +615,7 @@ class FirecrackerSandbox(SandboxBase):
 # ---------------------------------------------------------------------------
 
 class OffSandbox(SandboxBase):
-    """
-    NO sandbox. Executes code directly on the host with the privileges of the
-    effGen process.
+    """NO sandbox: executes code directly on the host with the effGen process's privileges.
 
     **This is unsafe and must only be enabled explicitly** via
     ``EFFGEN_SANDBOX_BACKEND=off``. It is never selected by auto-resolution.
@@ -638,6 +639,7 @@ class OffSandbox(SandboxBase):
         language: str,
         config: SandboxConfig,
     ) -> SandboxResult:
+        """Run *code* directly on the host with no isolation."""
         if not OffSandbox._warned:
             logger.warning(
                 "\n"

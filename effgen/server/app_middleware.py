@@ -204,10 +204,12 @@ async def _enforce_max_body_size(
 
 
 class MaxBodySizeMiddleware:
-    """Pure-ASGI middleware enforcing ``EFFGEN_MAX_BODY_BYTES`` on routes that
-    accept a body but are not already covered by :class:`RBACBudgetMiddleware`
-    (which enforces the same cap for ``/v1/chat/completions`` and
-    ``/v1/completions`` as part of its RBAC/budget replay). Add a path here
+    """Pure-ASGI middleware enforcing ``EFFGEN_MAX_BODY_BYTES`` on body routes.
+
+    Covers routes that accept a body but are not already covered by
+    :class:`RBACBudgetMiddleware` (which enforces the same cap for
+    ``/v1/chat/completions`` and ``/v1/completions`` as part of its
+    RBAC/budget replay). Add a path here
     whenever a new body-accepting route is mounted that doesn't need RBAC or
     budget enforcement, so the cap is never an allowlist of just the model
     endpoints.

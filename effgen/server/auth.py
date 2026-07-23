@@ -172,6 +172,7 @@ class TokenPayload:
 
     @classmethod
     def from_claims(cls, claims: dict[str, Any]) -> "TokenPayload":
+        """Build a payload from decoded JWT claims (``scope`` accepted for roles)."""
         aud = claims.get("aud", "")
         roles_raw = claims.get("roles", claims.get("scope", ""))
         if isinstance(roles_raw, str):

@@ -62,6 +62,8 @@ def _safe_query(query: str) -> str:
 
 @dataclass
 class AuditRecord:
+    """One audit-log entry: who called which endpoint, and the outcome."""
+
     ts: str
     principal: str
     roles: list[str]
@@ -74,6 +76,7 @@ class AuditRecord:
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_jsonl(self) -> str:
+        """Return the record as a single JSON line."""
         return json.dumps(asdict(self), ensure_ascii=False)
 
 
