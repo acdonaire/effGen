@@ -36,6 +36,7 @@ class ToolInputGuardrail(Guardrail):
         )
 
     def check(self, content: str, **kwargs: Any) -> GuardrailResult:
+        """Validate the JSON tool input against the tool's parameter schema."""
         tool = kwargs.get("tool")
         if tool is None:
             return GuardrailResult(passed=True)
@@ -94,6 +95,7 @@ class ToolOutputGuardrail(Guardrail):
         self.strip_pii = strip_pii
 
     def check(self, content: str, **kwargs: Any) -> GuardrailResult:
+        """Truncate over-long tool output and optionally strip PII from it."""
         modified = content
 
         # Truncate if too long
@@ -152,6 +154,7 @@ class ToolPermissionGuardrail(Guardrail):
         self.approval_callback = approval_callback
 
     def check(self, content: str, **kwargs: Any) -> GuardrailResult:
+        """Enforce the tool allow/deny lists and the approval requirement."""
         tool_name = kwargs.get("tool_name", "")
 
         # Check deny list first

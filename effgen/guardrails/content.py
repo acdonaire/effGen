@@ -53,6 +53,7 @@ class ToxicityGuardrail(Guardrail):
             self._blocked_words.update(w.lower() for w in extra_blocked_words)
 
     def check(self, content: str, **kwargs: Any) -> GuardrailResult:
+        """Fail on threat patterns or blocked words; pass otherwise."""
         lower = content.lower()
 
         # Check threat patterns
@@ -499,6 +500,7 @@ class PIIGuardrail(Guardrail):
         return checksum % 10 == 0
 
     def check(self, content: str, **kwargs: Any) -> GuardrailResult:
+        """Detect and redact PII/PHI; the result carries the redacted content."""
         counts: dict[str, int] = {}
         redacted = content
 
@@ -624,6 +626,7 @@ class LengthGuardrail(Guardrail):
         self.min_length = min_length
 
     def check(self, content: str, **kwargs: Any) -> GuardrailResult:
+        """Fail when the content length is outside the configured bounds."""
         length = len(content)
 
         if length > self.max_length:
@@ -672,6 +675,7 @@ class TopicGuardrail(Guardrail):
         self.blocked_topics = [t.lower() for t in (blocked_topics or [])]
 
     def check(self, content: str, **kwargs: Any) -> GuardrailResult:
+        """Fail on a blocked topic; warn when no allowed topic is mentioned."""
         lower = content.lower()
 
         # Check blocked topics

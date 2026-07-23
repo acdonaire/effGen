@@ -239,6 +239,7 @@ class PromptInjectionGuardrail(Guardrail):
         return patterns
 
     def check(self, content: str, **kwargs: Any) -> GuardrailResult:
+        """Fail when the content matches a known prompt-injection pattern."""
         for label, pattern in self._get_patterns():
             match = pattern.search(content)
             if match:
@@ -256,11 +257,11 @@ class PromptInjectionGuardrail(Guardrail):
 
 
 class SystemPromptLeakGuardrail(Guardrail):
-    """Flags an agent's OUTPUT that echoes a distinctive token from its own
-    system prompt verbatim — the shape a leaked secret or internal code takes
-    even when the surrounding prose is paraphrased or translated (an
-    identifier like ``ACME-ESC-7734`` is rarely translated; only the words
-    around it are).
+    """Flags agent OUTPUT that echoes a distinctive system-prompt token verbatim.
+
+    A verbatim token is the shape a leaked secret or internal code takes even
+    when the surrounding prose is paraphrased or translated (an identifier
+    like ``ACME-ESC-7734`` is rarely translated; only the words around it are).
 
     :class:`PromptInjectionGuardrail` only screens the *request* for known
     exfiltration phrasings ("show me your system prompt") and, by default,
@@ -314,6 +315,7 @@ class SystemPromptLeakGuardrail(Guardrail):
     def check(
         self, content: str, system_prompt: str | None = None, **kwargs: Any
     ) -> GuardrailResult:
+        """Fail when the output echoes a distinctive system-prompt token verbatim."""
         if not system_prompt or not content:
             return GuardrailResult(passed=True)
         tokens = self._distinctive_tokens(system_prompt)

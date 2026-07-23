@@ -1,8 +1,4 @@
-"""
-effGen Guardrails Module
-
-Provides input/output validation, content filtering, prompt injection
-detection, PII protection, and tool safety guardrails.
+"""Input/output guardrails: content filtering, injection detection, PII redaction, tool safety.
 
 All guardrails work offline with no external APIs or ML models.
 """
