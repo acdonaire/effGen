@@ -1,31 +1,39 @@
 # Tool Gallery
 
-Quick-reference for every built-in tool in effGen. Each entry has a one-line description and a minimal working snippet.
+Quick-reference for every built-in tool in effGen. Each entry has a one-line description and a minimal runnable snippet.
 
-> All tools accept a plain `dict` via `tool.execute({...})` or can be wired into an `Agent` for agentic use.
+> `execute()` is a coroutine that takes **keyword arguments** and returns a
+> `ToolResult` with `.success`, `.output`, and `.error`. In a plain script, drive
+> it with `asyncio.run(...)`; inside an `async` function, `await` it directly.
+> Any tool can also be wired into an `Agent` for agentic use — see the end of
+> this page.
 
 ---
 
 ## Core Utilities
 
 ### Calculator
-**Math expressions, unit conversions, and basic financial calculations.**
+**Math expressions, unit conversions, and basic statistics.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.calculator import Calculator
-result = Calculator().execute({"operation": "evaluate", "expression": "2 ** 10 + sqrt(144)"})
-print(result["data"])  # 1036.0
+
+result = asyncio.run(Calculator().execute(expression="2 ** 10 + sqrt(144)"))
+print(result.output["result"])  # 1036.0
 ```
 
 ### PythonREPL
 **Interactive Python execution with persistent state across calls.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.python_repl import PythonREPL
+
 repl = PythonREPL()
-repl.execute({"code": "x = [i**2 for i in range(5)]"})
-result = repl.execute({"code": "print(sum(x))"})
-print(result["data"]["output"])  # 30
+asyncio.run(repl.execute(code="x = [i**2 for i in range(5)]"))
+result = asyncio.run(repl.execute(code="print(sum(x))"))
+print(result.output["stdout"])  # 30
 ```
 
 Each `session_id` is backed by its own worker subprocess. At most
@@ -42,27 +50,33 @@ repl = PythonREPL(max_sessions=32)
 **Sandboxed multi-language code execution (Python, JavaScript, Bash).**
 
 ```python
+import asyncio
 from effgen.tools.builtin.code_executor import CodeExecutor
-result = CodeExecutor().execute({"language": "python", "code": "print('hello')"})
-print(result["data"]["stdout"])
+
+result = asyncio.run(CodeExecutor().execute(language="python", code="print('hello')"))
+print(result.output["stdout"])  # hello
 ```
 
 ### BashTool
 **Restricted shell command execution with allow/deny lists.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.bash_tool import BashTool
-result = BashTool().execute({"command": "ls -lh /tmp"})
-print(result["data"]["stdout"])
+
+result = asyncio.run(BashTool().execute(command="ls -lh /tmp"))
+print(result.output["stdout"])
 ```
 
 ### FileOps
 **Read, write, list, and search files on the local filesystem.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.file_ops import FileOperations
-result = FileOperations().execute({"operation": "read", "path": "README.md"})
-print(result["data"]["content"][:200])
+
+result = asyncio.run(FileOperations().execute(operation="read", path="README.md"))
+print(result.output["data"][:200])
 ```
 
 ---
@@ -73,9 +87,11 @@ print(result["data"]["content"][:200])
 **DuckDuckGo search with caching; no API key required.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.web_search import WebSearch
-result = WebSearch().execute({"query": "effGen AI framework", "max_results": 5})
-for r in result["data"]["results"]:
+
+result = asyncio.run(WebSearch().execute(query="effGen AI framework", num_results=5))
+for r in result.output:
     print(r["title"], r["url"])
 ```
 
@@ -83,27 +99,39 @@ for r in result["data"]["results"]:
 **Fetch and extract text content from any public URL.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.url_fetch import URLFetchTool
-result = URLFetchTool().execute({"url": "https://example.com"})
-print(result["data"]["text"][:500])
+
+result = asyncio.run(URLFetchTool().execute(url="https://example.com"))
+print(result.output["title"])       # Example Domain
+print(result.output["text"][:200])
 ```
 
 ### WikipediaTool
 **Search Wikipedia and retrieve article summaries; free API, no key needed.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.wikipedia_tool import WikipediaTool
-result = WikipediaTool().execute({"operation": "search", "query": "transformer neural network"})
-print(result["data"]["summary"][:300])
+
+result = asyncio.run(WikipediaTool().execute(
+    operation="summary", query="transformer neural network", sentences=2
+))
+print(result.output["title"])          # Transformer (deep learning)
+print(result.output["summary"][:300])
+# operation="search" returns a result list instead: [{"title", "snippet", "url"}, ...]
 ```
 
 ### HTTPTool
 **Generic HTTP GET/POST requests with headers and JSON body support.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.devops import HTTPTool
-result = HTTPTool().execute({"method": "GET", "url": "https://httpbin.org/get"})
-print(result["data"]["status_code"])
+
+result = asyncio.run(HTTPTool().execute(method="GET", url="https://httpbin.org/get"))
+print(result.output["status"])  # 200
+# result.output also carries "headers", "body", and parsed "json" when applicable
 ```
 
 ---
@@ -114,9 +142,13 @@ print(result["data"]["status_code"])
 **Search PubMed via NCBI E-utilities, fetch metadata, and retrieve abstracts. Built-in rate limiter (3 req/s; 10/s with `NCBI_API_KEY`).**
 
 ```python
+import asyncio
 from effgen.tools.builtin.pubmed import PubMedTool
-result = PubMedTool().execute({"operation": "search", "query": "CRISPR gene editing", "max_results": 5})
-for article in result["data"]["articles"]:
+
+result = asyncio.run(PubMedTool().execute(
+    operation="search", query="CRISPR gene editing", max_results=5
+))
+for article in result.output["results"]:
     print(article["pmid"], article["title"])
 ```
 
@@ -124,20 +156,28 @@ for article in result["data"]["articles"]:
 **Search arXiv papers, fetch metadata by ID, or download the PDF. Free, no auth.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.arxiv import ArXivTool
-result = ArXivTool().execute({"operation": "search", "query": "attention is all you need", "max_results": 3})
-for paper in result["data"]["papers"]:
-    print(paper["id"], paper["title"])
+
+result = asyncio.run(ArXivTool().execute(
+    operation="search", query="attention is all you need", max_results=3
+))
+for paper in result.output["results"]:
+    print(paper["arxiv_id"], paper["title"])
 ```
 
 ### SemanticScholarTool
 **Search papers, get details, retrieve citations and references from Semantic Scholar Graph API. Built-in backoff (100 req/5 min unauth).**
 
 ```python
+import asyncio
 from effgen.tools.builtin.semantic_scholar import SemanticScholarTool
-result = SemanticScholarTool().execute({"operation": "search", "query": "large language models survey"})
-for paper in result["data"]["papers"][:3]:
-    print(paper.get("paperId"), paper.get("title"))
+
+result = asyncio.run(SemanticScholarTool().execute(
+    operation="search", query="large language models survey", max_results=3
+))
+for paper in result.output["results"]:
+    print(paper["paperId"], paper["title"])
 ```
 
 ---
@@ -148,19 +188,25 @@ for paper in result["data"]["papers"][:3]:
 **Fetch, browse, and full-text search any RSS/Atom feed by URL. Handles malformed feeds without raising.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.rss import RSSFeedTool
-result = RSSFeedTool().execute({"operation": "latest", "url": "https://hnrss.org/frontpage", "n": 5})
-for item in result["data"]["items"]:
-    print(item["title"])
+
+result = asyncio.run(RSSFeedTool().execute(
+    operation="latest", url="https://hnrss.org/frontpage", n=5
+))
+for entry in result.output["entries"]:
+    print(entry["title"])
 ```
 
 ### NewsTool
 **Aggregate top headlines across curated reputable sources (BBC, Reuters, HN, NPR, Al Jazeera, etc.). Optional `NEWS_API_KEY` for NewsAPI.org.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.news import NewsTool
-result = NewsTool().execute({"operation": "top_headlines"})
-for article in result["data"]["articles"][:5]:
+
+result = asyncio.run(NewsTool().execute(operation="top_headlines", max_results=5))
+for article in result.output["articles"]:
     print(article["title"], "-", article["source"])
 ```
 
@@ -172,25 +218,28 @@ for article in result["data"]["articles"][:5]:
 **Fetch YouTube video captions/transcripts without a Google API key. Supports watch?v=, youtu.be/, and shorts/ URL formats.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.youtube_transcript import YouTubeTranscriptTool
-result = YouTubeTranscriptTool().execute({
-    "operation": "get_transcript",
-    "video_id": "dQw4w9WgXcQ",
-    "lang": "en"
-})
-print(result["data"]["transcript"][:500])
+
+result = asyncio.run(YouTubeTranscriptTool().execute(
+    operation="get_transcript", video_id="dQw4w9WgXcQ", lang="en"
+))
+print(result.output["data"]["full_text"][:200])
 ```
 
 ### YouTubeMetadataTool
 **Fetch video or channel metadata using yt-dlp in metadata-only mode. No auth required for public content.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.youtube_metadata import YouTubeMetadataTool
-result = YouTubeMetadataTool().execute({
-    "operation": "metadata",
-    "video_id": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-})
-print(result["data"].get("title"), result["data"].get("uploader"))
+
+result = asyncio.run(YouTubeMetadataTool().execute(
+    operation="metadata", video_id="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+))
+info = result.output["data"]
+print(info["title"], "|", info["uploader"])
+# Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) | Rick Astley
 ```
 
 ---
@@ -201,19 +250,29 @@ print(result["data"].get("title"), result["data"].get("uploader"))
 **Access Reddit top/hot posts, user submissions, and thread comments via public JSON endpoints. No OAuth required for reads. Sets `effGen/<version>` User-Agent; exponential backoff on 429.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.reddit import RedditTool
-result = RedditTool().execute({"operation": "subreddit_top", "subreddit": "python", "time": "day", "n": 5})
-for post in result["data"]["posts"]:
+
+result = asyncio.run(RedditTool().execute(
+    operation="subreddit_top", subreddit="python", time_filter="day", n=5
+))
+for post in result.output["data"]["posts"]:
     print(post["title"])
 ```
+
+Reddit rejects unauthenticated API traffic from some networks (data centers,
+cloud hosts). When that happens the result reports `success=False` with an
+error naming the HTTP 403 and the retry options.
 
 ### HackerNewsTool
 **Fetch top/new stories, story details, and user profiles from the Hacker News Firebase API. No auth required.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.hackernews import HackerNewsTool
-result = HackerNewsTool().execute({"operation": "top_stories", "n": 5})
-for story in result["data"]["stories"]:
+
+result = asyncio.run(HackerNewsTool().execute(operation="top_stories", n=5))
+for story in result.output["data"]["stories"]:
     print(story["title"], story.get("url", ""))
 ```
 
@@ -225,18 +284,24 @@ for story in result["data"]["stories"]:
 **Translate text between languages. Primary backend: LibreTranslate (configurable via `LIBRE_TRANSLATE_URL`). Offline fallback: `argostranslate` with language packs cached in `~/.effgen/argos/`.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.translate import TranslateTool
-result = TranslateTool().execute({"operation": "translate", "text": "Hello, world!", "source": "en", "target": "fr"})
-print(result["data"]["translated_text"])  # Bonjour le monde!
+
+result = asyncio.run(TranslateTool().execute(
+    operation="translate", text="Hello, world!", source="en", target="fr"
+))
+print(result.output["translated_text"])  # Bonjour, le monde !
 ```
 
 ### LanguageDetectTool
-**Detect the language of text or a batch of texts. Fully offline via `langdetect` — supports 55+ languages.**
+**Detect the language of text or a batch of texts. Offline via `langdetect` — supports 55+ languages.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.language_detect import LanguageDetectTool
-result = LanguageDetectTool().execute({"operation": "detect", "text": "Bonjour le monde"})
-print(result["data"]["language"], result["data"]["confidence"])  # fr 0.99...
+
+result = asyncio.run(LanguageDetectTool().execute(operation="detect", text="Bonjour le monde"))
+print(result.output["language"], result.output["confidence"])  # fr 1.0
 ```
 
 ---
@@ -244,23 +309,29 @@ print(result["data"]["language"], result["data"]["confidence"])  # fr 0.99...
 ## QR Codes
 
 ### QRGenerateTool
-**Generate QR codes locally from any text or URL. Returns a base64 PNG or saves to a file. No network required.**
+**Generate QR codes locally from any text or URL. Saves a PNG file or returns a base64 data URL. No network required.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.qr_generate import QRGenerateTool
-result = QRGenerateTool().execute({"operation": "generate", "data": "https://effgen.org", "data_url_return": True})
-# result["data"]["data_url"]  →  "data:image/png;base64,..."
-print("QR generated:", result["data"].get("data_url", "")[:40] + "...")
+
+result = asyncio.run(QRGenerateTool().execute(
+    operation="generate", data="https://effgen.org", output_path="/tmp/qr.png"
+))
+print(result.output["saved_path"])  # /tmp/qr.png
+# data_url_return=True instead returns result.output["data_url"] ("data:image/png;base64,...")
 ```
 
 ### QRReadTool
 **Decode QR codes and barcodes from an image file path or base64 PNG using `pyzbar` + Pillow, with OpenCV QR fallback when zbar is unavailable. Fully local.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.qr_read import QRReadTool
-result = QRReadTool().execute({"operation": "read", "image_path": "/tmp/qr.png"})
-for code in result["data"]["codes"]:
-    print(code["data"])
+
+result = asyncio.run(QRReadTool().execute(operation="read", image_path="/tmp/qr.png"))
+for code in result.output["codes"]:
+    print(code["data"])  # https://effgen.org
 ```
 
 ---
@@ -271,32 +342,36 @@ for code in result["data"]["codes"]:
 **Load CSV/JSON, inspect with head/describe, filter rows, and aggregate with pandas.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.data_analysis import DataFrameTool
-result = DataFrameTool().execute({"operation": "load", "path": "data.csv"})
-print(result["data"]["shape"])
+
+result = asyncio.run(DataFrameTool().execute(operation="head", file_path="/tmp/data.csv"))
+print(result.output["columns"])  # ['name', 'score']
+print(result.output["data"])     # first rows as a list of dicts
 ```
 
 ### PlotTool
 **Create line, bar, scatter, and histogram charts with matplotlib; returns a PNG file path.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.data_analysis import PlotTool
-result = PlotTool().execute({
-    "operation": "line",
-    "x": [1, 2, 3, 4],
-    "y": [1, 4, 9, 16],
-    "title": "Squares"
-})
-print(result["data"]["file"])
+
+result = asyncio.run(PlotTool().execute(
+    chart_type="line", x=[1, 2, 3, 4], y=[1, 4, 9, 16], title="Squares"
+))
+print(result.output["file_path"])  # /tmp/effgen_plot_....png
 ```
 
 ### StatsTool
 **Compute mean, median, std, correlation, and linear regression with NumPy.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.data_analysis import StatsTool
-result = StatsTool().execute({"operation": "mean", "data": [1, 2, 3, 4, 5]})
-print(result["data"]["mean"])  # 3.0
+
+result = asyncio.run(StatsTool().execute(operation="mean", data=[1, 2, 3, 4, 5]))
+print(result.output["result"])  # 3.0
 ```
 
 ---
@@ -304,30 +379,38 @@ print(result["data"]["mean"])  # 3.0
 ## Finance
 
 ### StockPriceTool
-**Fetch real-time stock prices and historical data via yfinance. Not financial advice.**
+**Fetch current stock quotes from Yahoo Finance. Not financial advice.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.finance import StockPriceTool
-result = StockPriceTool().execute({"operation": "price", "ticker": "AAPL"})
-print(result["data"]["price"])
+
+result = asyncio.run(StockPriceTool().execute(symbol="AAPL"))
+print(result.output["price"], result.output["currency"])  # e.g. 325.89 USD
 ```
 
 ### CurrencyConverterTool
 **Convert between 170+ currencies using frankfurter.app (ECB rates). No API key needed.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.finance import CurrencyConverterTool
-result = CurrencyConverterTool().execute({"amount": 100, "from_currency": "USD", "to_currency": "EUR"})
-print(result["data"]["converted"])
+
+result = asyncio.run(CurrencyConverterTool().execute(
+    amount=100, from_currency="USD", to_currency="EUR"
+))
+print(result.output["converted"])  # e.g. 87.66
 ```
 
 ### CryptoTool
 **Fetch cryptocurrency prices and market data from CoinGecko. No API key for basic use.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.finance import CryptoTool
-result = CryptoTool().execute({"operation": "price", "coin_id": "bitcoin", "vs_currency": "usd"})
-print(result["data"]["price"])
+
+result = asyncio.run(CryptoTool().execute(coin="bitcoin", vs_currency="usd"))
+print(result.output["price"])  # e.g. 65604.0
 ```
 
 ---
@@ -338,29 +421,33 @@ print(result["data"]["price"])
 **Read-only Git operations: status, log, diff, branch list, show.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.devops import GitTool
-result = GitTool().execute({"operation": "log", "repo_path": ".", "max_count": 5})
-for commit in result["data"]["commits"]:
-    print(commit["hash"][:8], commit["message"])
+
+result = asyncio.run(GitTool().execute(operation="log", cwd=".", n=5))
+print(result.output["stdout"])  # one "<hash> <subject>" line per commit
 ```
 
 ### DockerTool
-**Read-only Docker introspection: list containers, images, and fetch logs.**
+**Read-only Docker introspection: list containers, images, and fetch logs. Requires access to the Docker daemon socket.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.devops import DockerTool
-result = DockerTool().execute({"operation": "ps"})
-for c in result["data"]["containers"]:
-    print(c["name"], c["status"])
+
+result = asyncio.run(DockerTool().execute(operation="ps"))
+print(result.output["stdout"])  # `docker ps` table of running containers
 ```
 
 ### SystemInfoTool
 **CPU, memory, disk, and network usage via psutil.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.devops import SystemInfoTool
-result = SystemInfoTool().execute({"operation": "cpu"})
-print(result["data"]["cpu_percent"])
+
+result = asyncio.run(SystemInfoTool().execute(kind="cpu"))
+print(result.output["cpu"]["percent"])  # e.g. 10.7
 ```
 
 ---
@@ -371,36 +458,47 @@ print(result["data"]["cpu_percent"])
 **Parse, query (JSONPath), transform, and validate JSON data.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.json_tool import JSONTool
-result = JSONTool().execute({"operation": "query", "json_str": '{"a": [1,2,3]}', "path": "$.a[*]"})
-print(result["data"]["result"])  # [1, 2, 3]
+
+result = asyncio.run(JSONTool().execute(
+    operation="query", data='{"a": [1, 2, 3]}', query="$.a[*]"
+))
+print(result.output["result"])  # [1, 2, 3]
 ```
 
 ### DateTimeTool
 **Current time, timezone conversion, and date arithmetic.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.datetime_tool import DateTimeTool
-result = DateTimeTool().execute({"operation": "now", "timezone": "US/Eastern"})
-print(result["data"]["datetime"])
+
+result = asyncio.run(DateTimeTool().execute(operation="now", timezone="US/Eastern"))
+print(result.output["datetime"])  # e.g. 2026-07-23 04:04:57
 ```
 
 ### TextProcessingTool
 **Word count, regex find/replace, text comparison, and basic NLP operations.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.text_processing import TextProcessingTool
-result = TextProcessingTool().execute({"operation": "word_count", "text": "Hello world!"})
-print(result["data"]["word_count"])  # 2
+
+result = asyncio.run(TextProcessingTool().execute(operation="word_count", text="Hello world!"))
+print(result.output["word_count"])  # 2
 ```
 
 ### WeatherTool
 **Current weather and forecasts from Open-Meteo (free, no API key).**
 
 ```python
+import asyncio
 from effgen.tools.builtin.weather import WeatherTool
-result = WeatherTool().execute({"operation": "current", "location": "San Francisco"})
-print(result["data"]["temperature"], result["data"]["conditions"])
+
+result = asyncio.run(WeatherTool().execute(operation="current", location="San Francisco"))
+data = result.output["data"]
+print(data["temperature"], data["conditions"])  # e.g. 16.6 Clear sky
 ```
 
 ---
@@ -411,9 +509,11 @@ print(result["data"]["temperature"], result["data"]["conditions"])
 **Search Stack Overflow questions and answers via the Stack Exchange API.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.knowledge import StackOverflowTool
-result = StackOverflowTool().execute({"operation": "search", "query": "python async await", "limit": 3})
-for q in result["data"]["questions"]:
+
+result = asyncio.run(StackOverflowTool().execute(query="python async await", max_results=3))
+for q in result.output["results"]:
     print(q["title"])
 ```
 
@@ -421,19 +521,23 @@ for q in result["data"]["questions"]:
 **Search GitHub repositories, issues, and code via the public API.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.knowledge import GitHubTool
-result = GitHubTool().execute({"operation": "search_repos", "query": "effGen", "limit": 3})
-for repo in result["data"]["repositories"]:
-    print(repo["full_name"], repo["stargazers_count"])
+
+result = asyncio.run(GitHubTool().execute(query="effGen", kind="repositories", max_results=3))
+for repo in result.output["results"]:
+    print(repo["full_name"], repo["stars"])
 ```
 
 ### WolframAlphaTool
-**Query Wolfram Alpha for computation and factual answers. Requires `WOLFRAM_API_KEY`.**
+**Query Wolfram Alpha for computation and factual answers. Requires `WOLFRAM_ALPHA_APPID`.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.knowledge import WolframAlphaTool
-result = WolframAlphaTool().execute({"query": "integrate x^2 from 0 to 1"})
-print(result["data"]["result"])
+
+result = asyncio.run(WolframAlphaTool().execute(query="integrate x^2 from 0 to 1"))
+print(result.output["answer"])
 ```
 
 ---
@@ -444,22 +548,30 @@ print(result["data"]["result"])
 **Compose email drafts. Does NOT send — returns the draft for review.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.communication import EmailDraftTool
-result = EmailDraftTool().execute({
-    "to": ["alice@example.com"],
-    "subject": "Meeting tomorrow",
-    "body": "Hi Alice, can we meet at 10am?"
-})
-print(result["data"]["draft"])
+
+result = asyncio.run(EmailDraftTool().execute(
+    to=["alice@example.com"],
+    subject="Meeting tomorrow",
+    body="Hi Alice, can we meet at 10am?",
+))
+print(result.output["draft"])
+# To: alice@example.com
+# Subject: Meeting tomorrow
+#
+# Hi Alice, can we meet at 10am?
 ```
 
 ### SlackDraftTool
 **Compose Slack message drafts. Does NOT send — returns the draft for review.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.communication import SlackDraftTool
-result = SlackDraftTool().execute({"channel": "#general", "text": "Deployment complete!"})
-print(result["data"]["draft"])
+
+result = asyncio.run(SlackDraftTool().execute(channel="#general", text="Deployment complete!"))
+print(result.output["draft"])  # [#general]: Deployment complete!
 ```
 
 ---
@@ -474,7 +586,7 @@ from effgen.tools.builtin.openai_native import OpenAIWebSearchTool
 from effgen import load_model, Agent
 from effgen.core.agent import AgentConfig
 
-model = load_model("gpt-4o-mini", provider="openai")
+model = load_model("gpt-5-nano", provider="openai")
 agent = Agent(config=AgentConfig(name="a", model=model, tools=[OpenAIWebSearchTool()]))
 ```
 
@@ -507,12 +619,17 @@ See [anthropic_native.md](anthropic_native.md) for full docs.
 **Extract text from images using Tesseract (local) with OCR.space free API fallback.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.ocr import OCRTool
-result = OCRTool().execute({"operation": "extract", "image_path": "/tmp/scan.png", "lang": "eng"})
-print(result["data"]["text"])
+
+result = asyncio.run(OCRTool().execute(
+    operation="extract", image_path="/tmp/scan.png", lang="eng"
+))
+print(result.output["text"])
 ```
 
 System dep: `sudo apt-get install tesseract-ocr` / `brew install tesseract` / `choco install tesseract`.
+Without a backend the result reports `success=False` and the error lists the install options.
 See [ocr.md](ocr.md) for full docs.
 
 ---
@@ -523,9 +640,13 @@ See [ocr.md](ocr.md) for full docs.
 **Transcribe audio files locally via faster-whisper (CPU/GPU auto-detected); HuggingFace Inference fallback with HF_TOKEN.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.audio_transcribe import AudioTranscribeTool
-result = AudioTranscribeTool().execute({"operation": "transcribe", "audio_path": "/tmp/clip.mp3", "model_size": "base"})
-print(result["data"]["text"])
+
+result = asyncio.run(AudioTranscribeTool().execute(
+    operation="transcribe", audio_path="/tmp/clip.mp3", model_size="base"
+))
+print(result.output["text"])
 ```
 
 System dep (non-WAV formats): `sudo apt-get install ffmpeg` / `brew install ffmpeg`.
@@ -536,21 +657,26 @@ See [audio_transcribe.md](audio_transcribe.md) for full docs.
 ## Image Analysis
 
 ### ImageInfoTool
-**Extract image metadata (size, format, mode, EXIF, histogram) and perform local resize/thumbnail operations. Zero network.**
+**Extract image metadata (size, format, mode, EXIF, color stats) and perform local resize/thumbnail operations. Zero network.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.image_info import ImageInfoTool
-result = ImageInfoTool().execute({"operation": "info", "image_path": "/tmp/photo.jpg"})
-print(result["data"]["size"], result["data"]["format"], result["data"]["mode"])
+
+result = asyncio.run(ImageInfoTool().execute(operation="info", image_path="/tmp/photo.jpg"))
+data = result.output["data"]
+print(data["width"], data["height"], data["format"], data["mode"])  # e.g. 400 300 JPEG RGB
 ```
 
 ### ImageCaptionTool
 **Generate natural-language image descriptions via the effGen vision model router (Gemini / OpenAI / MLX-VLM).**
 
 ```python
+import asyncio
 from effgen.tools.builtin.image_caption import ImageCaptionTool
-result = ImageCaptionTool().execute({"operation": "caption", "image_path": "/tmp/photo.jpg"})
-print(result["data"]["caption"])
+
+result = asyncio.run(ImageCaptionTool().execute(operation="caption", image_path="/tmp/photo.jpg"))
+print(result.output["caption"])  # one-sentence description of the image
 ```
 
 See [image.md](image.md) for full docs.
@@ -563,9 +689,11 @@ See [image.md](image.md) for full docs.
 **Extract text, tables, and metadata from PDF files using pypdf (primary) + pdfplumber (table fallback).**
 
 ```python
+import asyncio
 from effgen.tools.builtin.pdf import PDFTool
-result = PDFTool().execute({"operation": "text", "path": "/tmp/paper.pdf"})
-print(result["data"]["text"][:500])
+
+result = asyncio.run(PDFTool().execute(operation="text", path="/tmp/paper.pdf"))
+print(result.output["text"][:500])
 # Also: metadata, tables, extract_images
 ```
 
@@ -573,9 +701,11 @@ print(result["data"]["text"][:500])
 **Parse Word documents (.docx) — text, paragraphs, tables, and metadata via python-docx.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.docx import DOCXTool
-result = DOCXTool().execute({"operation": "text", "path": "/tmp/report.docx"})
-print(result["data"]["text"])
+
+result = asyncio.run(DOCXTool().execute(operation="text", path="/tmp/report.docx"))
+print(result.output["text"])
 # Also: paragraphs, tables, metadata
 ```
 
@@ -583,12 +713,17 @@ print(result["data"]["text"])
 **Read Excel workbooks (.xlsx) — sheets, headers, and row data via openpyxl + pandas.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.excel import ExcelTool
-# List sheets
-sheets = ExcelTool().execute({"operation": "sheets", "path": "/tmp/data.xlsx"})
-# Read a sheet
-result = ExcelTool().execute({"operation": "read_sheet", "path": "/tmp/data.xlsx", "sheet_name": "Sheet1"})
-print(result["data"]["rows"][:3])
+
+tool = ExcelTool()
+sheets = asyncio.run(tool.execute(operation="sheets", path="/tmp/data.xlsx"))
+print(sheets.output["sheets"])  # ['Sheet1']
+
+result = asyncio.run(tool.execute(
+    operation="read_sheet", path="/tmp/data.xlsx", sheet_name="Sheet1"
+))
+print(result.output["rows"][:3])  # header row first, e.g. [['name', 'score'], ...]
 ```
 
 See [documents.md](documents.md) for full docs.
@@ -601,9 +736,12 @@ See [documents.md](documents.md) for full docs.
 **Fetch current conditions, 7-day forecasts, or historical weather from Open-Meteo (free, no auth).**
 
 ```python
+import asyncio
 from effgen.tools.builtin.weather import WeatherTool
-result = WeatherTool().execute({"operation": "current", "lat": 37.42, "lon": -122.08})
-print(result["data"]["temperature_c"], result["data"]["weather_description"])
+
+result = asyncio.run(WeatherTool().execute(operation="current", lat=37.42, lon=-122.08))
+data = result.output["data"]
+print(data["temperature"], data["conditions"])  # e.g. 18.0 Clear sky
 # Also: forecast (days=7), historical (start_date, end_date)
 ```
 
@@ -611,9 +749,14 @@ print(result["data"]["temperature_c"], result["data"]["weather_description"])
 **Forward/reverse geocoding via Nominatim (OpenStreetMap). Honors 1 req/s rate limit; sets effGen/<version> User-Agent.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.geocode import GeocodeTool
-result = GeocodeTool().execute({"operation": "geocode", "address": "1600 Amphitheatre Pkwy, Mountain View, CA"})
-print(result["data"]["lat"], result["data"]["lon"])
+
+result = asyncio.run(GeocodeTool().execute(
+    operation="geocode", address="1600 Amphitheatre Pkwy, Mountain View, CA"
+))
+data = result.output["data"]
+print(data["lat"], data["lon"])  # 37.4224858 -122.0855846
 # Also: reverse (lat, lon) → address
 ```
 
@@ -621,14 +764,13 @@ print(result["data"]["lat"], result["data"]["lon"])
 **Render static PNG maps from OpenStreetMap tiles using the staticmap library.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.maps import MapsTool
-result = MapsTool().execute({
-    "operation": "render",
-    "lat": 37.42, "lon": -122.08,
-    "zoom": 13,
-    "dest": "/tmp/map.png"
-})
-print(result["data"]["path"])
+
+result = asyncio.run(MapsTool().execute(
+    operation="render", lat=37.42, lon=-122.08, zoom=13, dest="/tmp/map.png"
+))
+print(result.output["data"]["file"])  # /tmp/map.png
 # Also: bounding_box (south, west, north, east)
 ```
 
@@ -642,23 +784,27 @@ See [weather.md](weather.md), [geocode.md](geocode.md), [maps.md](maps.md) for f
 **Send email via SMTP (stdlib smtplib, TLS on by default). Config: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.email_smtp import EmailSMTPTool
-result = EmailSMTPTool().execute({
-    "operation": "send",
-    "to": "alice@example.com",
-    "subject": "Hello from effGen",
-    "body": "This message was sent by an AI agent."
-})
-print(result["data"]["status"])
+
+result = asyncio.run(EmailSMTPTool().execute(
+    operation="send",
+    to="alice@example.com",
+    subject="Hello from effGen",
+    body="This message was sent by an AI agent.",
+))
+print(result.output["accepted"])  # ['alice@example.com']
 ```
 
 ### EmailIMAPTool
 **Read email via IMAP (stdlib imaplib). Config: IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASSWORD.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.email_imap import EmailIMAPTool
-result = EmailIMAPTool().execute({"operation": "fetch_recent", "folder": "INBOX", "n": 5})
-for msg in result["data"]["messages"]:
+
+result = asyncio.run(EmailIMAPTool().execute(operation="fetch_recent", folder="INBOX", n=5))
+for msg in result.output["data"]["messages"]:
     print(msg["subject"], msg["from"])
 # Also: list_folders, search, get
 ```
@@ -673,22 +819,24 @@ See [email.md](email.md) for full docs.
 **Post messages to Slack via incoming webhook URL (no OAuth). Config: SLACK_WEBHOOK_URL. URL is redacted in logs.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.slack_webhook import SlackWebhookTool
-result = SlackWebhookTool().execute({"operation": "post", "text": "Deployment complete!"})
-print(result["data"]["status"])
+
+result = asyncio.run(SlackWebhookTool().execute(operation="post", text="Deployment complete!"))
+print(result.output["data"]["ok"])  # True
 ```
 
 ### DiscordWebhookTool
 **Post messages to Discord via webhook URL. Config: DISCORD_WEBHOOK_URL. URL is redacted in logs.**
 
 ```python
+import asyncio
 from effgen.tools.builtin.discord_webhook import DiscordWebhookTool
-result = DiscordWebhookTool().execute({
-    "operation": "post",
-    "content": "Build passed!",
-    "username": "effGen Bot"
-})
-print(result["data"]["status"])
+
+result = asyncio.run(DiscordWebhookTool().execute(
+    operation="post", content="Build passed!", username="effGen Bot"
+))
+print(result.output["data"]["ok"])  # True
 ```
 
 See [webhooks.md](webhooks.md) for full docs.
@@ -711,10 +859,10 @@ agent = Agent(config=AgentConfig(
     name="researcher",
     model=model,
     tools=[ArXivTool(), TranslateTool(), HackerNewsTool()],
-    system_prompt="You are a research assistant."
+    system_prompt="You are a research assistant.",
 ))
-result = agent.run("Find recent HN posts about AI agents and summarize in French.")
-print(result.output)
+result = agent.run("Find the top Hacker News post right now and summarize it in one French sentence.")
+print(result.text)  # one French sentence summarizing the current top story
 ```
 
 ## Using Presets
