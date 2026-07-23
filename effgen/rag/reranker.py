@@ -47,7 +47,7 @@ class CrossEncoderReranker(Reranker):
     Requires `sentence-transformers`. If unavailable, acts as a pass-through.
     """
 
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2") -> None:
         self.model_name = model_name
         self._model = None
         self._available: bool | None = None
@@ -114,7 +114,7 @@ class LLMReranker(Reranker):
         "Rating (0-10):"
     )
 
-    def __init__(self, model: Any, max_passage_chars: int = 1000):
+    def __init__(self, model: Any, max_passage_chars: int = 1000) -> None:
         self.model = model
         self.max_passage_chars = max_passage_chars
 

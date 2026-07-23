@@ -130,7 +130,7 @@ class ShortTermMemory:
                  summarization_threshold: float = 0.8,
                  summary_length_ratio: float = 0.3,
                  keep_recent_messages: int = 10,
-                 model=None):
+                 model: Any = None) -> None:
         """
         Initialize short-term memory.
 
@@ -207,19 +207,19 @@ class ShortTermMemory:
 
         return message
 
-    def add_user_message(self, content: str, **kwargs) -> Message:
+    def add_user_message(self, content: str, **kwargs: Any) -> Message:
         """Convenience method to add user message."""
         return self.add_message(MessageRole.USER, content, **kwargs)
 
-    def add_assistant_message(self, content: str, **kwargs) -> Message:
+    def add_assistant_message(self, content: str, **kwargs: Any) -> Message:
         """Convenience method to add assistant message."""
         return self.add_message(MessageRole.ASSISTANT, content, **kwargs)
 
-    def add_system_message(self, content: str, **kwargs) -> Message:
+    def add_system_message(self, content: str, **kwargs: Any) -> Message:
         """Convenience method to add system message."""
         return self.add_message(MessageRole.SYSTEM, content, **kwargs)
 
-    def add_tool_message(self, content: str, **kwargs) -> Message:
+    def add_tool_message(self, content: str, **kwargs: Any) -> Message:
         """Convenience method to add tool message."""
         return self.add_message(MessageRole.TOOL, content, **kwargs)
 

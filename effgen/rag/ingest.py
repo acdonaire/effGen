@@ -529,7 +529,7 @@ class DocumentIngester:
         chunk_overlap: int = 100,
         dedupe: bool = True,
         show_progress: bool = True,
-    ):
+    ) -> None:
         self.chunker = chunker or RecursiveChunker(
             chunk_size=chunk_size, overlap=chunk_overlap
         )

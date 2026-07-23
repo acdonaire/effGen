@@ -190,7 +190,7 @@ class StorageBackend(ABC):
 class JSONStorageBackend(StorageBackend):
     """JSON file-based storage backend."""
 
-    def __init__(self, filepath: str | Path):
+    def __init__(self, filepath: str | Path) -> None:
         """
         Initialize JSON storage backend.
 
@@ -318,7 +318,7 @@ class JSONStorageBackend(StorageBackend):
 class SQLiteStorageBackend(StorageBackend):
     """SQLite database storage backend."""
 
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path) -> None:
         """
         Initialize SQLite storage backend.
 
@@ -597,7 +597,7 @@ class LongTermMemory:
                  backend: StorageBackend,
                  consolidation_interval: int = 100,
                  max_memories: int = 10000,
-                 min_importance_to_keep: ImportanceLevel = ImportanceLevel.LOW):
+                 min_importance_to_keep: ImportanceLevel = ImportanceLevel.LOW) -> None:
         """
         Initialize long-term memory.
 

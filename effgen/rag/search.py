@@ -105,7 +105,7 @@ class HybridSearchEngine:
         embedding_provider: EmbeddingProvider | None = None,
         weights: dict[str, float] | None = None,
         rrf_k: int = 60,
-    ):
+    ) -> None:
         self.chunks: list[IngestedChunk] = []
         self.weights = {"dense": 1.0, "sparse": 1.0, "keyword": 0.5}
         if weights:

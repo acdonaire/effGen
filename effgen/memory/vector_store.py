@@ -143,7 +143,7 @@ class EmbeddingProvider(ABC):
 class SentenceTransformerEmbedding(EmbeddingProvider):
     """Embedding provider using sentence-transformers."""
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         """
         Initialize sentence-transformers embedding.
 
@@ -188,7 +188,7 @@ class SimpleEmbedding(EmbeddingProvider):
     Fallback when other providers are not available.
     """
 
-    def __init__(self, max_features: int = 384):
+    def __init__(self, max_features: int = 384) -> None:
         """
         Initialize simple embedding.
 
@@ -284,7 +284,7 @@ class VectorStoreBackend(ABC):
 class FAISSBackend(VectorStoreBackend):
     """FAISS-based vector store backend."""
 
-    def __init__(self, embedding_dim: int):
+    def __init__(self, embedding_dim: int) -> None:
         """
         Initialize FAISS backend.
 
@@ -391,7 +391,7 @@ class FAISSBackend(VectorStoreBackend):
 class ChromaBackend(VectorStoreBackend):
     """Chroma-based vector store backend."""
 
-    def __init__(self, embedding_dim: int, persist_directory: str | None = None):
+    def __init__(self, embedding_dim: int, persist_directory: str | None = None) -> None:
         """
         Initialize Chroma backend.
 
@@ -491,7 +491,7 @@ class VectorMemoryStore:
                  embedding_provider: EmbeddingProvider | None = None,
                  persist_directory: str | Path | None = None,
                  consolidation_threshold: int = 1000,
-                 max_entries: int = 10000):
+                 max_entries: int = 10000) -> None:
         """
         Initialize vector memory store.
 

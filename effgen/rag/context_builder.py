@@ -57,7 +57,7 @@ class ContextBuilder:
         order: str = "relevance",
         include_citations: bool = True,
         separator: str = "\n\n---\n\n",
-    ):
+    ) -> None:
         self.max_tokens = max_tokens
         self.token_counter = token_counter or _default_token_counter
         self.per_source_limit = per_source_limit

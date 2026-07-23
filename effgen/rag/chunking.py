@@ -71,7 +71,7 @@ class SemanticChunker(ChunkingStrategy):
         max_chunk_size: int = 1000,
         min_sentences: int = 2,
         model_name: str = "all-MiniLM-L6-v2",
-    ):
+    ) -> None:
         self.similarity_threshold = similarity_threshold
         self.max_chunk_size = max_chunk_size
         self.min_sentences = min_sentences
@@ -217,7 +217,7 @@ class CodeChunker(ChunkingStrategy):
         language: str | None = None,
         max_chunk_size: int = 1500,
         fallback_chunk_size: int = 1000,
-    ):
+    ) -> None:
         self.language = language
         self.max_chunk_size = max_chunk_size
         self._fallback = FixedSizeChunker(
@@ -287,7 +287,7 @@ class TableChunker(ChunkingStrategy):
     _TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
     _SEP_LINE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$")
 
-    def __init__(self, max_chunk_size: int = 1000):
+    def __init__(self, max_chunk_size: int = 1000) -> None:
         self.max_chunk_size = max_chunk_size
         self._prose_chunker = FixedSizeChunker(chunk_size=max_chunk_size, overlap=100)
 
@@ -369,7 +369,7 @@ class HierarchicalChunker(ChunkingStrategy):
 
     _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 
-    def __init__(self, max_chunk_size: int = 1500):
+    def __init__(self, max_chunk_size: int = 1500) -> None:
         self.max_chunk_size = max_chunk_size
         self._fallback = FixedSizeChunker(chunk_size=max_chunk_size, overlap=100)
 
