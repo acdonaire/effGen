@@ -66,6 +66,7 @@ class ContextBuilder:
         self.separator = separator
 
     def build(self, results: list[SearchResult]) -> BuiltContext:
+        """Assemble search results into a token-budgeted context with citations."""
         if not results:
             return BuiltContext(text="", citations=[], used_chunks=[], total_tokens=0)
 

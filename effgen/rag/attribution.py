@@ -55,6 +55,7 @@ class Citation:
         return f"[{self.index}]"
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "index": self.index,
             "source": self.source,
@@ -75,6 +76,7 @@ class CitationTracker:
     citations: list[Citation] = field(default_factory=list)
 
     def add(self, citation: Citation) -> None:
+        """Record a citation."""
         self.citations.append(citation)
 
     def sources(self) -> list[str]:
@@ -99,9 +101,10 @@ class CitationTracker:
         return [c for c in self.citations if c.index in used]
 
     def verify(self, claim: str, min_overlap: float = 0.3) -> list[Citation]:
-        """
-        Rough claim-verification: returns citations whose `quote` shares
-        a minimum token overlap with the claim. Heuristic only.
+        """Return citations whose ``quote`` shares token overlap with *claim* (heuristic).
+
+        A citation counts as supporting when at least *min_overlap* of the
+        claim's tokens appear in its quote.
         """
         claim_tokens = set(re.findall(r"\b\w+\b", claim.lower()))
         if not claim_tokens:
@@ -117,4 +120,5 @@ class CitationTracker:
         return supporting
 
     def to_list(self) -> list[dict[str, Any]]:
+        """Return every citation as a JSON-serializable dict."""
         return [c.to_dict() for c in self.citations]

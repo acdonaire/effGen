@@ -46,6 +46,7 @@ class IngestedChunk:
             ).hexdigest()[:16]
 
     def to_document(self) -> Document:
+        """Convert the chunk to a :class:`Document` carrying source metadata."""
         md = dict(self.metadata)
         md.setdefault("source", self.source)
         md.setdefault("content_hash", self.content_hash)
@@ -70,6 +71,7 @@ class IngestSummary:
 
     @property
     def skipped_count(self) -> int:
+        """Number of files skipped."""
         return len(self.skipped)
 
     @property
@@ -79,6 +81,7 @@ class IngestSummary:
 
     @property
     def chunks_per_s(self) -> float:
+        """Indexing throughput in chunks per second (0.0 for an instant run)."""
         return self.indexed_chunks / self.elapsed_s if self.elapsed_s > 0 else 0.0
 
 
@@ -506,9 +509,9 @@ for _ext in _CODE_EXTENSIONS:
 # ---------------------------------------------------------------------------
 
 class DocumentIngester:
-    """
-    Ingest documents from a directory or list of paths, chunk them, and
-    return `IngestedChunk` objects ready for indexing.
+    """Load, chunk and deduplicate documents into indexable ``IngestedChunk`` objects.
+
+    Accepts a directory or a list of paths.
 
     Features:
     - Multi-format loaders (txt, md, json, jsonl, csv, html, pdf*, docx*, epub*, xlsx*)
@@ -554,6 +557,7 @@ class DocumentIngester:
             return items
 
     def supported_extensions(self) -> list[str]:
+        """Return the file extensions the ingester can load."""
         return sorted(LOADERS.keys())
 
     def ingest(

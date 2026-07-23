@@ -28,6 +28,7 @@ class Reranker:
         results: list[SearchResult],
         top_k: int | None = None,
     ) -> list[SearchResult]:
+        """Reorder *results* for *query*, optionally truncating to *top_k*."""
         raise NotImplementedError(
             f"{type(self).__name__} must implement rerank(). Use one of the "
             "concrete rerankers (CrossEncoderReranker, LLMReranker, "
@@ -75,6 +76,7 @@ class CrossEncoderReranker(Reranker):
         results: list[SearchResult],
         top_k: int | None = None,
     ) -> list[SearchResult]:
+        """Rescore with the cross-encoder and reorder (pass-through when absent)."""
         if not results:
             return results
         model = self._load()
@@ -161,6 +163,7 @@ class LLMReranker(Reranker):
         results: list[SearchResult],
         top_k: int | None = None,
     ) -> list[SearchResult]:
+        """Score each result with the judge model and reorder by that score."""
         if not results:
             return results
         for r in results:
@@ -247,6 +250,7 @@ class RuleBasedReranker(Reranker):
         results: list[SearchResult],
         top_k: int | None = None,
     ) -> list[SearchResult]:
+        """Add recency/authority/keyword/title boosts to each score and reorder."""
         for r in results:
             boost = (
                 self.recency_weight * self._recency_boost(r.metadata)

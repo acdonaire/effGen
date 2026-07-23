@@ -45,6 +45,7 @@ class SearchResult:
     rank: int = 0
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "chunk_id": self.chunk_id,
             "content": self.content,

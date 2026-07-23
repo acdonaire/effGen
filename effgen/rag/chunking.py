@@ -95,6 +95,7 @@ class SemanticChunker(ChunkingStrategy):
         return self._model
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
+        """Split on sentence-embedding similarity drops (fixed-size fallback)."""
         model = self._get_model()
         if not model:
             return self._fallback.chunk(text, doc_id)
@@ -225,12 +226,14 @@ class CodeChunker(ChunkingStrategy):
 
     @classmethod
     def detect_language(cls, filename_or_ext: str) -> str | None:
+        """Map a filename or extension to a known language id, or ``None``."""
         ext = filename_or_ext if filename_or_ext.startswith(".") else ""
         if not ext and "." in filename_or_ext:
             ext = "." + filename_or_ext.rsplit(".", 1)[-1]
         return _EXT_LANG.get(ext.lower())
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
+        """Split source code on function/class boundaries (fixed-size fallback)."""
         lang = self.language
         patterns = _LANG_PATTERNS.get(lang) if lang else None
         if not patterns:
@@ -275,9 +278,9 @@ class CodeChunker(ChunkingStrategy):
 # ---------------------------------------------------------------------------
 
 class TableChunker(ChunkingStrategy):
-    """
-    Detects markdown/pipe tables and keeps each table intact in a single
-    chunk. Non-table prose is chunked with FixedSizeChunker.
+    """Keeps each markdown/pipe table intact in a single chunk.
+
+    Non-table prose is chunked with FixedSizeChunker.
     """
 
     # A very permissive markdown table detector
@@ -289,6 +292,7 @@ class TableChunker(ChunkingStrategy):
         self._prose_chunker = FixedSizeChunker(chunk_size=max_chunk_size, overlap=100)
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
+        """Split prose normally while keeping each markdown table in one chunk."""
         lines = text.splitlines()
         blocks: list[tuple[str, str]] = []  # (kind, content)
         i = 0
@@ -370,6 +374,7 @@ class HierarchicalChunker(ChunkingStrategy):
         self._fallback = FixedSizeChunker(chunk_size=max_chunk_size, overlap=100)
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
+        """Split by heading hierarchy, stamping each chunk with its section path."""
         lines = text.splitlines()
         sections: list[tuple[list[str], list[str]]] = []  # (heading_path, body_lines)
         path: list[str] = []
