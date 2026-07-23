@@ -84,7 +84,7 @@ class ModelPool:
         self,
         config: PoolConfig | None = None,
         loader: ModelLoader | None = None,
-    ):
+    ) -> None:
         self.config = config or PoolConfig()
         self._loader = loader or ModelLoader()
         self._lock = threading.Lock()

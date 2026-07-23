@@ -733,7 +733,7 @@ class ModelRouter:
         fallback: RoutingPolicy | None = None,
         failover_hops: int = 3,
         retry_policy: Any | None = None,
-    ):
+    ) -> None:
         self.config = config or RoutingConfig()
         self._models: list[BaseModel] = list(models) if models else []
         self._capabilities: dict[str, ModelCapability] = {}

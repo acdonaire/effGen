@@ -156,8 +156,8 @@ class OpenAIAdapter(FunctionCallingModel):
         organization_id: str | None = None,
         max_retries: int = 3,
         timeout: int = 60,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         if model_name not in OPENAI_MODELS:
             # Informational fallback, not an actionable warning — a valid new
             # or hot-swapped model id just isn't in the bundled catalog yet.
@@ -598,7 +598,7 @@ class OpenAIAdapter(FunctionCallingModel):
         self,
         prompt: str,
         config: GenerationConfig | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """Generate a completion for *prompt*.
 
@@ -687,7 +687,7 @@ class OpenAIAdapter(FunctionCallingModel):
         self,
         prompt: str,
         config: GenerationConfig | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Iterator[str]:
         """Stream completions for *prompt*, yielding text chunks."""
         if not self._is_loaded:
@@ -744,7 +744,7 @@ class OpenAIAdapter(FunctionCallingModel):
         response_format: dict[str, Any],
         system_prompt: str | None = None,
         config: GenerationConfig | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response constrained to a JSON Schema (structured outputs v2).
 
@@ -830,7 +830,7 @@ class OpenAIAdapter(FunctionCallingModel):
         prompt: str,
         system_prompt: str,
         config: GenerationConfig | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """Generate with an explicit system prompt prepended first (for stable caching).
 
@@ -893,7 +893,7 @@ class OpenAIAdapter(FunctionCallingModel):
         tools: list[dict[str, Any]],
         config: GenerationConfig | None = None,
         messages: list[dict[str, Any]] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """Generate with OpenAI-native function / tool calling.
 
@@ -971,7 +971,7 @@ class OpenAIAdapter(FunctionCallingModel):
         system_prompt: str | None = None,
         config: GenerationConfig | None = None,
         previous_response_id: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """Generate using the OpenAI Responses API with server-side native tools.
 
@@ -1181,7 +1181,7 @@ class OpenAIAdapter(FunctionCallingModel):
         messages: list[dict[str, Any]],
         config: GenerationConfig | None = None,
         tools: list[dict[str, Any]] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """Multi-turn chat with optional tool calling.
 

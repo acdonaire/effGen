@@ -145,7 +145,7 @@ class ModelLoader:
         cache_dir: str | None = None,
         default_device: str = "auto",
         force_engine: str | None = None,
-    ):
+    ) -> None:
         """
         Initialize model loader.
 
@@ -168,7 +168,7 @@ class ModelLoader:
         self,
         model_name: str,
         engine_config: dict[str, Any] | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> BaseModel:
         """
         Load a model with automatic detection and configuration.
@@ -1132,7 +1132,7 @@ def load_model(
     gpu_memory_utilization: float | None = None,
     apply_chat_template: bool = True,
     provider: str | None = None,
-    **kwargs
+    **kwargs: Any
 ) -> BaseModel:
     """
     Convenience function to quickly load a model.

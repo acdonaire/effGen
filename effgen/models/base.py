@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
+from types import TracebackType
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
@@ -474,8 +475,8 @@ class BaseModel(ABC):
         model_name: str,
         model_type: ModelType,
         context_length: int | None = None,
-        **kwargs
-    ):
+        **kwargs: Any
+    ) -> None:
         """
         Initialize the base model.
 
@@ -513,7 +514,7 @@ class BaseModel(ABC):
         self,
         prompt: str,
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> GenerationResult:
         """
         Generate text from a prompt synchronously.
@@ -537,7 +538,7 @@ class BaseModel(ABC):
         self,
         prompt: str,
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> Iterator[str]:
         """
         Generate text from a prompt with token-by-token streaming.
@@ -666,13 +667,18 @@ class BaseModel(ABC):
 
         return True
 
-    def __enter__(self):
+    def __enter__(self) -> BaseModel:
         """Context manager entry."""
         if not self._is_loaded:
             self.load()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Context manager exit."""
         self.unload()
 
@@ -699,7 +705,7 @@ class BatchModel(BaseModel):
         self,
         prompts: list[str],
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> list[GenerationResult]:
         """
         Generate text for multiple prompts in a batch.
@@ -742,7 +748,7 @@ class FunctionCallingModel(BaseModel):
         prompt: str,
         tools: list[dict[str, Any]],
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> GenerationResult:
         """
         Generate text with tool/function calling support.

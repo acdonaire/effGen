@@ -111,8 +111,8 @@ class AnthropicAdapter(FunctionCallingModel):
         api_key: str | None = None,
         max_retries: int = 3,
         timeout: int = 60,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(
             model_name=model_name,
             model_type=ModelType.ANTHROPIC,
@@ -425,7 +425,7 @@ class AnthropicAdapter(FunctionCallingModel):
         prompt: str | list,
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """
         Generate text from a prompt.
@@ -533,7 +533,7 @@ class AnthropicAdapter(FunctionCallingModel):
         prompt: str | list,
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Iterator[str]:
         """
         Generate text with streaming output.
@@ -590,7 +590,7 @@ class AnthropicAdapter(FunctionCallingModel):
         prompt: str | list,
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Iterator[StreamChunk]:
         """
         Generate with streaming, yielding typed ``StreamChunk`` objects.
@@ -770,7 +770,7 @@ class AnthropicAdapter(FunctionCallingModel):
         tools: list[dict[str, Any]],
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """
         Generate text with tool use support.
@@ -858,7 +858,7 @@ class AnthropicAdapter(FunctionCallingModel):
         messages: list[dict],
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """
         Generate a response given a full conversation history.
