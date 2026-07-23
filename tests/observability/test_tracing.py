@@ -159,7 +159,9 @@ class TestTraceIdRatioSampler:
         """
         End-to-end sampler-honoured check: run 100 iteration spans with
         ParentBased(TraceIdRatio(0.5)). Sampled span count must fall inside
-        a generous binomial band (40..60) around the expected 50.
+        a three-sigma binomial band (35..65) around the expected 50, wide
+        enough that a fair sampler fails less than 0.3% of the time while an
+        always-on/always-off one still fails every time.
         """
         from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
             InMemorySpanExporter,
@@ -174,7 +176,7 @@ class TestTraceIdRatioSampler:
             with start_agent_iteration(preset="ratio_check", iteration=i):
                 pass
         spans = exporter.get_finished_spans()
-        assert 40 <= len(spans) <= 60, (
+        assert 35 <= len(spans) <= 65, (
             f"Expected ~50 sampled spans, got {len(spans)}"
         )
 
