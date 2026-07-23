@@ -93,6 +93,9 @@ from effgen._env import dotenv_disabled as _dotenv_disabled  # noqa: F401 - re-e
 from effgen._env import env_search_paths as _env_search_paths  # noqa: F401 - re-export
 from effgen._env import load_env as load_env_files
 
+# Branded bare-command landing (TTY-only; falls through to the wizard otherwise).
+from effgen.cli import landing as _landing
+
 # Tips, first-run welcome, "did you mean?" and teaching-error helpers.
 from effgen.cli import onboarding as _onboarding
 
@@ -195,6 +198,7 @@ from effgen.cli.commands.sessions import (  # noqa: F401 - re-export
 from effgen.cli.commands.workflow import (  # noqa: F401 - re-export
     _handle_workflow_command,
 )
+from effgen.ui.palette import glyph as _glyph
 
 # Shared Rich theme + console factory (one palette across the whole CLI).
 # ``console_is_interactive``/``render_table`` are re-exported so callers and
@@ -360,29 +364,36 @@ class CLIInterface:
         else:
             print(f"\n=== {text} ===", file=sys.stderr if self._human_to_stderr else None)
 
+    def _human_stream(self):
+        """The underlying text stream human output goes to (for glyph fallback)."""
+        return sys.stderr if self._human_to_stderr else sys.stdout
+
     def print_success(self, text: str) -> None:
         """Print success message."""
         console = self._human()
+        mark = _glyph("success", self._human_stream())
         if console:
-            console.print(f"[green]✓[/green] {text}")
+            console.print(f"[green]{mark}[/green] {text}")
         else:
-            print(f"✓ {text}", file=sys.stderr if self._human_to_stderr else None)
+            print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None)
 
     def print_error(self, text: str) -> None:
         """Print error message."""
         console = self._human()
+        mark = _glyph("error", self._human_stream())
         if console:
-            console.print(f"[red]✗[/red] {text}")
+            console.print(f"[red]{mark}[/red] {text}")
         else:
-            print(f"✗ {text}", file=sys.stderr if self._human_to_stderr else None)
+            print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None)
 
     def print_warning(self, text: str) -> None:
         """Print warning message."""
         console = self._human()
+        mark = _glyph("warning", self._human_stream())
         if console:
-            console.print(f"[effgen.warning]⚠[/effgen.warning] {text}")
+            console.print(f"[effgen.warning]{mark}[/effgen.warning] {text}")
         else:
-            print(f"⚠ {text}", file=sys.stderr if self._human_to_stderr else None)
+            print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None)
 
     def print_error_panel(self, message: str, *, title: str = "Error") -> None:
         """Render a failure as a red-bordered panel, or a styled line without rich.
@@ -2598,6 +2609,161 @@ def _extract_theme_arg(argv: list[str]) -> tuple[list[str], str | None]:
     return remaining, theme
 
 
+def _dispatch(args: argparse.Namespace, cli: "CLIInterface", parser: argparse.ArgumentParser) -> int:
+    """Route parsed *args* to the matching command handler and return its exit code.
+
+    One routing table shared by ``main()`` and the bare-command landing, so a
+    quick action chosen on the landing reaches the same handler as typing the
+    command directly.
+    """
+    if args.command == 'run':
+        exit_code = cli.run_agent(args)
+    elif args.command == 'chat':
+        exit_code = cli.chat_mode(args)
+    elif args.command == 'serve':
+        exit_code = cli.serve_api(args)
+    elif args.command == 'config':
+        exit_code = cli.config_commands(args)
+    elif args.command == 'tools':
+        exit_code = cli.tools_commands(args)
+    elif args.command == 'models':
+        exit_code = cli.models_commands(args)
+    elif args.command == 'examples':
+        exit_code = cli.examples_commands(args)
+    elif args.command == 'health':
+        # Fail-closed on privacy: contacting effgen.org / PyPI is opt-in.
+        remote = (
+            getattr(args, 'health_remote', False)
+            or os.environ.get("EFFGEN_HEALTH_REMOTE", "").strip().lower() in ("1", "true", "yes")
+        )
+        if not remote:
+            print("effgen health performs network checks against external services "
+                  "(effgen.org, docs.effgen.org, PyPI).")
+            print("These are not run without consent. Re-run with --remote (or set "
+                  "EFFGEN_HEALTH_REMOTE=1) to enable them.")
+            exit_code = 0
+        else:
+            from effgen.utils.health import HealthChecker
+            checker = HealthChecker()
+            all_passed = checker.print_results()
+            exit_code = 0 if all_passed else 1
+    elif args.command == 'doctor':
+        exit_code = _handle_doctor_command(args)
+    elif args.command == 'resume':
+        exit_code = _handle_resume_command(args, cli)
+    elif args.command == 'sessions':
+        exit_code = _handle_sessions_command(args, cli)
+    elif args.command == 'runs':
+        exit_code = _handle_runs_command(args, cli)
+    elif args.command == 'create-plugin':
+        exit_code = _create_plugin_scaffold(args.plugin_name, args.output_dir)
+    elif args.command == 'presets':
+        from effgen.presets import list_presets as _list_presets
+        from effgen.presets.registry import preset_tool_overhead
+        if getattr(args, 'output_json', False):
+            rows = []
+            for name, desc in _list_presets().items():
+                try:
+                    n_tools, approx = preset_tool_overhead(name)
+                except Exception:  # noqa: BLE001 - listing never fails on one preset
+                    n_tools, approx = 0, 0
+                rows.append({
+                    "name": name,
+                    "description": desc,
+                    "tool_count": n_tools,
+                    "approx_tokens_per_call": approx,
+                })
+            print(json.dumps(rows, indent=2, ensure_ascii=False))
+            exit_code = 0
+        else:
+            cli.print_header("Available Agent Presets")
+            for name, desc in _list_presets().items():
+                try:
+                    n_tools, approx = preset_tool_overhead(name)
+                except Exception:  # noqa: BLE001 - listing never fails on one preset
+                    n_tools, approx = 0, 0
+                if n_tools:
+                    overhead = f"{n_tools} tool{'s' if n_tools != 1 else ''} · ~{approx} tok/call"
+                else:
+                    overhead = "no tools"
+                cli.print(f"  {name:12s}  {overhead}")
+                cli.print(f"               {desc}")
+            cli.print(
+                "\n'~N tok/call' is the approximate tool-schema size sent on every "
+                "request — a tool-heavy preset costs more per call and can exceed "
+                "a small-context or rate-limited model."
+            )
+            cli.print("\nUsage: effgen run --preset <name> \"your task\"")
+            exit_code = 0
+    elif args.command in ('quickstart', 'tutorial'):
+        exit_code = _handle_quickstart_command(args, cli)
+    elif args.command == 'workflow':
+        exit_code = _handle_workflow_command(args, cli)
+    elif args.command == 'batch':
+        exit_code = _handle_batch_command(args, cli)
+    elif args.command == 'eval':
+        exit_code = _handle_eval_command(args, cli)
+    elif args.command == 'compare':
+        exit_code = _handle_compare_command(args, cli)
+    elif args.command == 'battle':
+        from effgen.cli.battle import run_battle_command
+        exit_code = run_battle_command(args)
+    elif args.command in ('top', 'monitor'):
+        from effgen.cli.monitor import run_monitor_command
+        exit_code = run_monitor_command(args)
+    elif args.command == 'cost':
+        exit_code = _handle_cost_command(args, cli)
+    elif args.command == 'report':
+        exit_code = _handle_report_command(args, cli)
+    elif args.command == 'prompts':
+        exit_code = _handle_prompts_command(args, cli)
+    elif args.command == 'loadtest':
+        func = getattr(args, 'func', None)
+        if func:
+            exit_code = func(args)
+        else:
+            from effgen.cli.loadtest import run_loadtest_command
+            exit_code = run_loadtest_command(args)
+    elif args.command == 'debug':
+        from effgen.debug.inspector import run_debug_cli
+        # Validate an explicit --provider up front (a typo like "grok"
+        # should fail fast with a suggestion), mirroring `run`/`chat`.
+        provider, prov_err = resolve_provider_name(getattr(args, 'provider', None))
+        if prov_err:
+            cli.print_error(prov_err)
+            exit_code = 1
+        else:
+            exit_code = run_debug_cli(
+                task=args.task,
+                preset=getattr(args, 'preset', None),
+                model=getattr(args, 'model', None),
+                provider=provider,
+                step=getattr(args, 'step', False),
+            )
+    elif args.command is None:
+        # No command - launch interactive wizard
+        # Create a namespace with default values for run command
+        class WizardArgs:
+            task = None
+            model = None
+            name = None
+            tools = None
+            config = None
+            system_prompt = None
+            temperature = None
+            max_iterations = None
+            mode = None
+            no_sub_agents = False
+            stream = False
+            output = None
+            verbose = getattr(args, 'verbose', False)
+        exit_code = cli.interactive_wizard(WizardArgs())
+    else:
+        parser.print_help()
+        exit_code = 0
+    return exit_code if exit_code is not None else 0
+
+
 def main() -> None:
     """Main entry point for CLI."""
     # Load .env early so all subcommands see API keys (see load_env_files).
@@ -2635,157 +2801,24 @@ def main() -> None:
     # Create CLI interface
     cli = CLIInterface()
 
+    # On a bare `effgen` at an interactive terminal, show the branded landing
+    # (logo + quick actions) instead of dropping straight into the wizard; the
+    # landing absorbs the first-run welcome. Every other path — a subcommand,
+    # piped/redirected output, --quiet, CI, no rich — keeps its current behavior.
+    show_landing = _landing.should_show(cli, args)
+
     # One-time friendly welcome on first interactive use (records a flag so it
-    # only ever shows once). Silent under --quiet / non-interactive / CI.
-    _onboarding.maybe_show_first_run_welcome(quiet=getattr(args, 'quiet', False))
+    # only ever shows once). Silent under --quiet / non-interactive / CI. Skipped
+    # when the landing will render it inline.
+    if not show_landing:
+        _onboarding.maybe_show_first_run_welcome(quiet=getattr(args, 'quiet', False))
 
     # Route to appropriate handler
     try:
-        if args.command == 'run':
-            exit_code = cli.run_agent(args)
-        elif args.command == 'chat':
-            exit_code = cli.chat_mode(args)
-        elif args.command == 'serve':
-            exit_code = cli.serve_api(args)
-        elif args.command == 'config':
-            exit_code = cli.config_commands(args)
-        elif args.command == 'tools':
-            exit_code = cli.tools_commands(args)
-        elif args.command == 'models':
-            exit_code = cli.models_commands(args)
-        elif args.command == 'examples':
-            exit_code = cli.examples_commands(args)
-        elif args.command == 'health':
-            # Fail-closed on privacy: contacting effgen.org / PyPI is opt-in.
-            remote = (
-                getattr(args, 'health_remote', False)
-                or os.environ.get("EFFGEN_HEALTH_REMOTE", "").strip().lower() in ("1", "true", "yes")
-            )
-            if not remote:
-                print("effgen health performs network checks against external services "
-                      "(effgen.org, docs.effgen.org, PyPI).")
-                print("These are not run without consent. Re-run with --remote (or set "
-                      "EFFGEN_HEALTH_REMOTE=1) to enable them.")
-                exit_code = 0
-            else:
-                from effgen.utils.health import HealthChecker
-                checker = HealthChecker()
-                all_passed = checker.print_results()
-                exit_code = 0 if all_passed else 1
-        elif args.command == 'doctor':
-            exit_code = _handle_doctor_command(args)
-        elif args.command == 'resume':
-            exit_code = _handle_resume_command(args, cli)
-        elif args.command == 'sessions':
-            exit_code = _handle_sessions_command(args, cli)
-        elif args.command == 'runs':
-            exit_code = _handle_runs_command(args, cli)
-        elif args.command == 'create-plugin':
-            exit_code = _create_plugin_scaffold(args.plugin_name, args.output_dir)
-        elif args.command == 'presets':
-            from effgen.presets import list_presets as _list_presets
-            from effgen.presets.registry import preset_tool_overhead
-            if getattr(args, 'output_json', False):
-                rows = []
-                for name, desc in _list_presets().items():
-                    try:
-                        n_tools, approx = preset_tool_overhead(name)
-                    except Exception:  # noqa: BLE001 - listing never fails on one preset
-                        n_tools, approx = 0, 0
-                    rows.append({
-                        "name": name,
-                        "description": desc,
-                        "tool_count": n_tools,
-                        "approx_tokens_per_call": approx,
-                    })
-                print(json.dumps(rows, indent=2, ensure_ascii=False))
-                exit_code = 0
-            else:
-                cli.print_header("Available Agent Presets")
-                for name, desc in _list_presets().items():
-                    try:
-                        n_tools, approx = preset_tool_overhead(name)
-                    except Exception:  # noqa: BLE001 - listing never fails on one preset
-                        n_tools, approx = 0, 0
-                    if n_tools:
-                        overhead = f"{n_tools} tool{'s' if n_tools != 1 else ''} · ~{approx} tok/call"
-                    else:
-                        overhead = "no tools"
-                    cli.print(f"  {name:12s}  {overhead}")
-                    cli.print(f"               {desc}")
-                cli.print(
-                    "\n'~N tok/call' is the approximate tool-schema size sent on every "
-                    "request — a tool-heavy preset costs more per call and can exceed "
-                    "a small-context or rate-limited model."
-                )
-                cli.print("\nUsage: effgen run --preset <name> \"your task\"")
-                exit_code = 0
-        elif args.command in ('quickstart', 'tutorial'):
-            exit_code = _handle_quickstart_command(args, cli)
-        elif args.command == 'workflow':
-            exit_code = _handle_workflow_command(args, cli)
-        elif args.command == 'batch':
-            exit_code = _handle_batch_command(args, cli)
-        elif args.command == 'eval':
-            exit_code = _handle_eval_command(args, cli)
-        elif args.command == 'compare':
-            exit_code = _handle_compare_command(args, cli)
-        elif args.command == 'battle':
-            from effgen.cli.battle import run_battle_command
-            exit_code = run_battle_command(args)
-        elif args.command in ('top', 'monitor'):
-            from effgen.cli.monitor import run_monitor_command
-            exit_code = run_monitor_command(args)
-        elif args.command == 'cost':
-            exit_code = _handle_cost_command(args, cli)
-        elif args.command == 'report':
-            exit_code = _handle_report_command(args, cli)
-        elif args.command == 'prompts':
-            exit_code = _handle_prompts_command(args, cli)
-        elif args.command == 'loadtest':
-            func = getattr(args, 'func', None)
-            if func:
-                exit_code = func(args)
-            else:
-                from effgen.cli.loadtest import run_loadtest_command
-                exit_code = run_loadtest_command(args)
-        elif args.command == 'debug':
-            from effgen.debug.inspector import run_debug_cli
-            # Validate an explicit --provider up front (a typo like "grok"
-            # should fail fast with a suggestion), mirroring `run`/`chat`.
-            provider, prov_err = resolve_provider_name(getattr(args, 'provider', None))
-            if prov_err:
-                cli.print_error(prov_err)
-                exit_code = 1
-            else:
-                exit_code = run_debug_cli(
-                    task=args.task,
-                    preset=getattr(args, 'preset', None),
-                    model=getattr(args, 'model', None),
-                    provider=provider,
-                    step=getattr(args, 'step', False),
-                )
-        elif args.command is None:
-            # No command - launch interactive wizard
-            # Create a namespace with default values for run command
-            class WizardArgs:
-                task = None
-                model = None
-                name = None
-                tools = None
-                config = None
-                system_prompt = None
-                temperature = None
-                max_iterations = None
-                mode = None
-                no_sub_agents = False
-                stream = False
-                output = None
-                verbose = getattr(args, 'verbose', False)
-            exit_code = cli.interactive_wizard(WizardArgs())
+        if show_landing:
+            exit_code = _landing.run(cli, parser, args, _dispatch)
         else:
-            parser.print_help()
-            exit_code = 0
+            exit_code = _dispatch(args, cli, parser)
 
         # A gentle, rotating tip at a natural moment — only after the commands a
         # human watches finish cleanly, never under --quiet / non-interactive /
