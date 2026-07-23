@@ -84,10 +84,12 @@ class LRUCache:
 
     @staticmethod
     def key(model: str, text: str) -> str:
+        """Return the cache key for *model* and *text* (SHA-256 of the text)."""
         h = hashlib.sha256(text.encode("utf-8")).hexdigest()
         return f"{model}:{h}"
 
     def get(self, model: str, text: str) -> list[float] | None:
+        """Return the cached vector for (*model*, *text*), or ``None`` on a miss."""
         k = self.key(model, text)
         with self._lock:
             val = self._data.get(k)
@@ -96,6 +98,7 @@ class LRUCache:
             return val
 
     def put(self, model: str, text: str, vec: list[float]) -> None:
+        """Store *vec* for (*model*, *text*), evicting the oldest entries past capacity."""
         k = self.key(model, text)
         with self._lock:
             self._data[k] = vec
@@ -128,6 +131,7 @@ class SQLiteCache:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def get(self, model: str, text: str) -> list[float] | None:
+        """Return the stored vector for (*model*, *text*), or ``None`` on a miss."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT vector, dim FROM embeddings WHERE model=? AND text_hash=?",
@@ -141,6 +145,7 @@ class SQLiteCache:
         return list(struct.unpack(f"{dim}f", blob))
 
     def put(self, model: str, text: str, vec: list[float]) -> None:
+        """Persist *vec* for (*model*, *text*), replacing any existing row."""
         import struct
 
         blob = struct.pack(f"{len(vec)}f", *vec)
@@ -174,6 +179,7 @@ class TFIDFEmbedder:
         return [t.lower() for t in _WORD_RE.findall(text)]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        """Return one L2-normalized hashed TF vector per input text."""
         out: list[list[float]] = []
         for text in texts:
             vec = [0.0] * self.dim
@@ -205,6 +211,7 @@ class SentenceTransformerEmbedder:
         self.model = SentenceTransformer(model_name)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        """Return one normalized sentence-transformer vector per input text."""
         vecs = self.model.encode(texts, normalize_embeddings=True)
         return [list(map(float, v)) for v in vecs]
 
@@ -281,6 +288,7 @@ class EmbeddingEngine:
             return backend
 
     def embed(self, texts: list[str], model: str = "text-embedding-small") -> list[list[float]]:
+        """Embed *texts* with *model*, serving repeats from the LRU/SQLite caches."""
         if not texts:
             return []
         resolved = self._resolve_model(model)
@@ -334,19 +342,27 @@ try:
     from pydantic import Field as _PydField
 
     class EmbeddingRequest(_PydBaseModel):
+        """Request body for ``POST /v1/embeddings``."""
+
         model: str = _PydField(default="text-embedding-small")
         input: str | list[str]
 
     class EmbeddingItem(_PydBaseModel):
+        """One embedding vector in the response ``data`` list."""
+
         object: str = "embedding"
         index: int
         embedding: list[float]
 
     class EmbeddingUsage(_PydBaseModel):
+        """Token usage counters for an embeddings request."""
+
         prompt_tokens: int = 0
         total_tokens: int = 0
 
     class EmbeddingResponse(_PydBaseModel):
+        """Response body for ``POST /v1/embeddings``."""
+
         object: str = "list"
         data: list[EmbeddingItem]
         model: str

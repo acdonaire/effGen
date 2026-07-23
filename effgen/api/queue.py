@@ -22,6 +22,8 @@ from typing import Any
 
 
 class RequestPriority(enum.IntEnum):
+    """Scheduling priority for a queued request (lower value serves first)."""
+
     HIGH = 0
     NORMAL = 1
     LOW = 2
@@ -37,6 +39,8 @@ class RequestTimeoutError(Exception):
 
 @dataclass(order=True)
 class QueuedRequest:
+    """A request waiting in the queue, ordered by priority then arrival."""
+
     # Ordering: priority first, then enqueue counter (FIFO within priority).
     priority: int
     seq: int
@@ -48,6 +52,7 @@ class QueuedRequest:
     future: "asyncio.Future[Any]" | None = field(compare=False, default=None)
 
     def expired(self, now: float | None = None) -> bool:
+        """True when the request's deadline (if any) has passed."""
         if self.deadline is None:
             return False
         return (now or time.time()) >= self.deadline
@@ -97,6 +102,7 @@ class RequestQueue:
 
     @property
     def full(self) -> bool:
+        """True when the queue holds ``max_size`` requests."""
         return self._size >= self.max_size
 
     async def enqueue(
@@ -183,11 +189,13 @@ class RequestQueue:
         return None
 
     async def close(self) -> None:
+        """Close the queue; waiting consumers wake and pending enqueues fail."""
         async with self._cond:
             self._closed = True
             self._cond.notify_all()
 
     def snapshot_stats(self) -> dict[str, Any]:
+        """Return queue counters plus the current size and closed flag."""
         return {
             **self.stats,
             "size": self._size,

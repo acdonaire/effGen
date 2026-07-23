@@ -23,6 +23,8 @@ def _hash_key(raw_key: str) -> str:
 
 @dataclass
 class Tenant:
+    """A tenant with its rate limit, token quota and model/tool allow-lists."""
+
     id: str
     name: str
     rate_limit_per_min: int = 60
@@ -33,14 +35,18 @@ class Tenant:
     created_at: float = field(default_factory=time.time)
 
     def allows_model(self, model: str) -> bool:
+        """True when *model* is allowed (an empty allow-list permits all)."""
         return not self.allowed_models or model in self.allowed_models
 
     def allows_tool(self, tool: str) -> bool:
+        """True when *tool* is allowed (an empty allow-list permits all)."""
         return not self.allowed_tools or tool in self.allowed_tools
 
 
 @dataclass
 class APIKey:
+    """A stored API-key record: only the SHA-256 hash of the key is kept."""
+
     id: str
     tenant_id: str
     key_hash: str
@@ -124,6 +130,7 @@ class TenantManager:
         allowed_tools: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Tenant:
+        """Create a tenant, persist it and return the record."""
         tenant = Tenant(
             id=tenant_id or secrets.token_hex(8),
             name=name,
@@ -153,6 +160,7 @@ class TenantManager:
         return tenant
 
     def get_tenant(self, tenant_id: str) -> Tenant | None:
+        """Return the tenant with *tenant_id*, or ``None`` when unknown."""
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM tenants WHERE id = ?", (tenant_id,)
@@ -171,11 +179,13 @@ class TenantManager:
         )
 
     def list_tenants(self) -> list[Tenant]:
+        """Return every stored tenant."""
         with self._connect() as conn:
             rows = conn.execute("SELECT id FROM tenants").fetchall()
         return [t for t in (self.get_tenant(r["id"]) for r in rows) if t]
 
     def delete_tenant(self, tenant_id: str) -> None:
+        """Delete a tenant along with its API keys and usage records."""
         with self._lock, self._connect() as conn:
             conn.execute("DELETE FROM api_keys WHERE tenant_id = ?", (tenant_id,))
             conn.execute("DELETE FROM usage WHERE tenant_id = ?", (tenant_id,))
@@ -219,6 +229,7 @@ class TenantManager:
         return record, raw_key
 
     def revoke_api_key(self, key_id: str) -> None:
+        """Mark the key *key_id* revoked; it no longer resolves to a tenant."""
         with self._lock, self._connect() as conn:
             conn.execute(
                 "UPDATE api_keys SET revoked = 1 WHERE id = ?", (key_id,)
@@ -238,6 +249,7 @@ class TenantManager:
         return self.get_tenant(row["tenant_id"])
 
     def list_keys(self, tenant_id: str) -> list[APIKey]:
+        """Return every API-key record (hashes, not raw keys) for a tenant."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM api_keys WHERE tenant_id = ?", (tenant_id,)
@@ -273,6 +285,7 @@ class TenantManager:
     # ------------------------------------------------------------------ usage
 
     def record_usage(self, tenant_id: str, tokens: int = 0) -> None:
+        """Add one request and *tokens* to the tenant's usage for today (UTC)."""
         day = time.strftime("%Y-%m-%d", time.gmtime())
         with self._lock, self._connect() as conn:
             conn.execute(
@@ -285,6 +298,7 @@ class TenantManager:
             conn.commit()
 
     def get_usage(self, tenant_id: str, day: str | None = None) -> dict[str, int]:
+        """Return ``{"tokens", "requests"}`` used by the tenant on *day* (default today)."""
         day = day or time.strftime("%Y-%m-%d", time.gmtime())
         with self._connect() as conn:
             row = conn.execute(
@@ -296,5 +310,6 @@ class TenantManager:
         return {"tokens": row["tokens"], "requests": row["requests"]}
 
     def check_quota(self, tenant: Tenant) -> bool:
+        """True while the tenant is under its daily token quota."""
         usage = self.get_usage(tenant.id)
         return usage["tokens"] < tenant.daily_token_quota

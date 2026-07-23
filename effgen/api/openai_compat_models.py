@@ -18,6 +18,7 @@ except Exception:  # pragma: no cover
     BaseModel = object  # type: ignore
 
     def Field(default=None, **kwargs):  # type: ignore
+        """Stand-in for ``pydantic.Field`` when pydantic is not installed."""
         return default
 
 
@@ -95,6 +96,8 @@ class RunnerResult:
 
 
 class ChatMessage(BaseModel):  # type: ignore[misc]
+    """One chat message in an OpenAI-compatible request."""
+
     role: str
     content: str | list[dict[str, Any]] | None = None
     name: str | None = None
@@ -103,6 +106,8 @@ class ChatMessage(BaseModel):  # type: ignore[misc]
 
 
 class ChatCompletionRequest(BaseModel):  # type: ignore[misc]
+    """Request body for ``POST /v1/chat/completions``."""
+
     model: str
     messages: list[ChatMessage]
     temperature: float | None = 1.0
@@ -124,6 +129,8 @@ class ChatCompletionRequest(BaseModel):  # type: ignore[misc]
 
 
 class CompletionRequest(BaseModel):  # type: ignore[misc]
+    """Request body for the legacy ``POST /v1/completions``."""
+
     model: str
     prompt: str | list[str]
     temperature: float | None = 1.0

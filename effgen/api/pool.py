@@ -29,6 +29,7 @@ class PooledAgent:
     request_count: int = 0
 
     def touch(self) -> None:
+        """Record a use: refresh the last-used time and bump the request count."""
         self.last_used_at = time.time()
         self.request_count += 1
 
@@ -86,6 +87,7 @@ class AgentPool:
             self._health_task = asyncio.create_task(self._health_loop())
 
     async def stop(self) -> None:
+        """Close the pool: stop health checks and destroy every agent."""
         async with self._cond:
             self._closed = True
             self._cond.notify_all()
@@ -132,6 +134,7 @@ class AgentPool:
                     raise asyncio.TimeoutError("AgentPool.acquire timed out")
 
     async def release(self, pa: PooledAgent) -> None:
+        """Return *pa* to the pool (an unhealthy surplus agent is destroyed)."""
         async with self._cond:
             pa.in_use = False
             if not pa.healthy and len(self._agents) > self.min_size:
@@ -203,6 +206,7 @@ class AgentPool:
     # ------------------------------------------------------------------ utilities
 
     def stats(self) -> dict:
+        """Return pool counters: total/in-use/healthy agents and size bounds."""
         return {
             "total": len(self._agents),
             "in_use": sum(1 for a in self._agents if a.in_use),

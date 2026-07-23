@@ -187,6 +187,7 @@ def build_text_completion(
     completion_tokens: int | None = None,
     finish_reason: str = "stop",
 ) -> dict[str, Any]:
+    """Build a legacy ``text_completion`` response envelope for *text*."""
     if completion_tokens is None:
         completion_tokens = _approx_tokens(text)
     return {
