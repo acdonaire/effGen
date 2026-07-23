@@ -38,7 +38,7 @@ class AgentState:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
-    def add_message(self, role: str, content: str, metadata: dict | None = None):
+    def add_message(self, role: str, content: str, metadata: dict | None = None) -> None:
         """Add a message to conversation history."""
         self.conversation_history.append({
             "role": role,
@@ -48,7 +48,7 @@ class AgentState:
         })
         self.updated_at = datetime.now()
 
-    def add_tool_call(self, tool_name: str, args: dict, result: Any, error: str | None = None):
+    def add_tool_call(self, tool_name: str, args: dict, result: Any, error: str | None = None) -> None:
         """Record a tool call."""
         self.tool_history.append({
             "tool": tool_name,
@@ -59,7 +59,7 @@ class AgentState:
         })
         self.updated_at = datetime.now()
 
-    def save(self, filepath: str, format: str = "json"):
+    def save(self, filepath: str, format: str = "json") -> None:
         """Save state to file."""
         self.updated_at = datetime.now()
 
@@ -92,7 +92,7 @@ class AgentState:
         """Convert state to dictionary."""
         return asdict(self)
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         """Clear conversation and tool history."""
         self.conversation_history = []
         self.tool_history = []

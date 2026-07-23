@@ -192,7 +192,7 @@ class SessionManager:
     Provides list / get / delete / cleanup operations used by the CLI.
     """
 
-    def __init__(self, sessions_dir: str | None = None):
+    def __init__(self, sessions_dir: str | None = None) -> None:
         self.sessions_dir = os.path.abspath(
             os.path.expanduser(sessions_dir or _default_session_dir())
         )

@@ -157,7 +157,7 @@ class WorkflowDAG:
     Executes independent nodes in parallel via ``asyncio.gather``.
     """
 
-    def __init__(self, name: str = "workflow"):
+    def __init__(self, name: str = "workflow") -> None:
         self.name = name
         self._nodes: dict[str, WorkflowNode] = {}
         self._edges: list[WorkflowEdge] = []

@@ -98,7 +98,7 @@ class SharedState:
         state.get("workflow", "status")  # -> "running"
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._data: dict[str, dict[str, Any]] = {}
         self._locks: dict[str, threading.RLock] = {}
         self._global_lock = threading.RLock()  # protects _data / _locks dicts

@@ -191,7 +191,7 @@ class SubAgentManager:
     def __init__(self,
                  parent_agent: Any = None,
                  config: dict[str, Any] | None = None,
-                 execution_tracker: ExecutionTracker | None = None):
+                 execution_tracker: ExecutionTracker | None = None) -> None:
         """
         Initialize sub-agent manager.
 
@@ -700,7 +700,7 @@ class SubAgentManager:
         """Get number of active sub-agents."""
         return len([a for a in self.active_sub_agents.values() if a["status"] == "running"])
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clear tracked sub-agent state.
 
         Sub-agents are short-lived child agents that are closed as soon as their

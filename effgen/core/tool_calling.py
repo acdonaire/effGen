@@ -637,7 +637,7 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
 class HybridStrategy(ToolCallingStrategy):
     """Try native function calling first, fall back to ReAct on parse failure."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._native = NativeFunctionCallingStrategy()
         self._react = ReActStrategy()
 

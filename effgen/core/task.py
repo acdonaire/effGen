@@ -85,24 +85,24 @@ class Task:
     assigned_agent: str | None = None
     parent_task_id: str | None = None
 
-    def start(self):
+    def start(self) -> None:
         """Mark task as started."""
         self.status = TaskStatus.RUNNING
         self.started_at = datetime.now()
 
-    def complete(self, result: Any):
+    def complete(self, result: Any) -> None:
         """Mark task as completed with result."""
         self.status = TaskStatus.COMPLETED
         self.completed_at = datetime.now()
         self.result = result
 
-    def fail(self, error: str):
+    def fail(self, error: str) -> None:
         """Mark task as failed with error."""
         self.status = TaskStatus.FAILED
         self.completed_at = datetime.now()
         self.error = error
 
-    def cancel(self):
+    def cancel(self) -> None:
         """Cancel the task."""
         self.status = TaskStatus.CANCELLED
         self.completed_at = datetime.now()
@@ -117,7 +117,7 @@ class Task:
         """Check if task is in a terminal state."""
         return self.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]
 
-    def add_subtask(self, subtask: SubTask):
+    def add_subtask(self, subtask: SubTask) -> None:
         """Add a subtask to this task."""
         self.subtasks.append(subtask)
         self.is_decomposed = True
