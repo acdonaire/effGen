@@ -98,7 +98,7 @@ class OpenAIWebSearchTool(OpenAINativeTool):
         self,
         search_context_size: str = "medium",
         user_location: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         if search_context_size not in ("low", "medium", "high"):
             raise ValueError(
                 f"search_context_size must be 'low', 'medium', or 'high', "
@@ -161,7 +161,7 @@ class OpenAICodeInterpreterTool(OpenAINativeTool):
             ``{"type": "auto"}`` which lets OpenAI choose the runtime.
     """
 
-    def __init__(self, container: dict[str, Any] | None = None):
+    def __init__(self, container: dict[str, Any] | None = None) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="openai_code_interpreter",
@@ -224,7 +224,7 @@ class OpenAIFileSearchTool(OpenAINativeTool):
         max_num_results: int = 10,
         ranking_options: dict[str, Any] | None = None,
         filters: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         if max_num_results < 1 or max_num_results > 50:
             raise ValueError(f"max_num_results must be between 1 and 50, got {max_num_results}")
         super().__init__(

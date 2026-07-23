@@ -97,7 +97,7 @@ class FileOperations(BaseTool):
         "write": _DATA_READ_EXTS | {".py", ".js", ".ts", ".html", ".css", ".sh", ".sql"},
     }
 
-    def __init__(self, allowed_directories: list[str] | None = None):
+    def __init__(self, allowed_directories: list[str] | None = None) -> None:
         """
         Initialize file operations tool.
 

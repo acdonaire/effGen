@@ -68,7 +68,7 @@ from .arxiv import ArXivTool as ArxivTool  # noqa: F401,E402
 class StackOverflowTool(BaseTool):
     """Search Stack Overflow via the free Stack Exchange API (no key)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="stackoverflow",
@@ -135,7 +135,7 @@ class StackOverflowTool(BaseTool):
 class GitHubTool(BaseTool):
     """Search GitHub public repos and issues via the free unauthenticated API."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="github",
@@ -238,7 +238,7 @@ class WolframAlphaTool(BaseTool):
     ``WOLFRAM_ALPHA_APPID`` environment variable.
     """
 
-    def __init__(self, app_id: str | None = None):
+    def __init__(self, app_id: str | None = None) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="wolfram_alpha",

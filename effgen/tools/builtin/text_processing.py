@@ -54,7 +54,7 @@ class TextProcessingTool(BaseTool):
         "comparison": "compare",
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="text_processing",

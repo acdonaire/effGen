@@ -57,7 +57,7 @@ class WikipediaTool(BaseTool):
     - Content length control
     """
 
-    def __init__(self, language: str = "en"):
+    def __init__(self, language: str = "en") -> None:
         """
         Initialize Wikipedia tool.
 

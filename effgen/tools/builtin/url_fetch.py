@@ -98,7 +98,7 @@ class URLFetchTool(BaseTool):
         timeout: int = 15,
         allow_private: bool = False,
         max_redirects: int = 5,
-    ):
+    ) -> None:
         """
         Initialize the URL Fetch tool.
 

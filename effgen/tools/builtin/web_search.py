@@ -51,7 +51,7 @@ class WebSearch(BaseTool):
     - Google: Requires API key and CSE ID, official Google results
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the web search tool."""
         super().__init__(
             metadata=ToolMetadata(

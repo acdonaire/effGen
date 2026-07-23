@@ -86,7 +86,7 @@ class StockPriceTool(BaseTool):
     Fallback: Yahoo Finance v8 public chart API (free, no key).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="stock_price",
@@ -178,7 +178,7 @@ class StockPriceTool(BaseTool):
 class CurrencyConverterTool(BaseTool):
     """Convert between currencies using the free frankfurter.app API (ECB data)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="currency_converter",
@@ -267,7 +267,7 @@ class CurrencyConverterTool(BaseTool):
 class CryptoTool(BaseTool):
     """Fetch cryptocurrency prices via the free CoinGecko public API."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="crypto_price",

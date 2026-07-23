@@ -76,7 +76,7 @@ class EmbeddingProvider:
 class SentenceTransformerEmbedding(EmbeddingProvider):
     """Sentence Transformers embedding provider."""
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         self.model_name = model_name
         self._model = None
 
@@ -103,7 +103,7 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
 class SimpleEmbedding(EmbeddingProvider):
     """Simple TF-IDF based embedding for environments without sentence-transformers."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._vectorizer = None
         self._fitted = False
 
@@ -123,7 +123,7 @@ class SimpleEmbedding(EmbeddingProvider):
                 )
         return self._vectorizer
 
-    def fit(self, texts: list[str]):
+    def fit(self, texts: list[str]) -> None:
         """Fit the TF-IDF vocabulary on *texts*."""
         vectorizer = self._get_vectorizer()
         vectorizer.fit(texts)
@@ -164,7 +164,7 @@ class ChunkingStrategy:
 class FixedSizeChunker(ChunkingStrategy):
     """Fixed-size chunks with overlap."""
 
-    def __init__(self, chunk_size: int = 500, overlap: int = 100):
+    def __init__(self, chunk_size: int = 500, overlap: int = 100) -> None:
         self.chunk_size = chunk_size
         self.overlap = overlap
 
@@ -210,7 +210,7 @@ class FixedSizeChunker(ChunkingStrategy):
 class SentenceChunker(ChunkingStrategy):
     """Sentence-based chunking: groups sentences up to max_chunk_size."""
 
-    def __init__(self, max_chunk_size: int = 500, overlap_sentences: int = 1):
+    def __init__(self, max_chunk_size: int = 500, overlap_sentences: int = 1) -> None:
         self.max_chunk_size = max_chunk_size
         self.overlap_sentences = overlap_sentences
 
@@ -262,7 +262,7 @@ class SentenceChunker(ChunkingStrategy):
 class ParagraphChunker(ChunkingStrategy):
     """Paragraph-based chunking: splits on double newlines."""
 
-    def __init__(self, max_chunk_size: int = 1000):
+    def __init__(self, max_chunk_size: int = 1000) -> None:
         self.max_chunk_size = max_chunk_size
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
@@ -304,7 +304,7 @@ class RecursiveChunker(ChunkingStrategy):
     """Recursive character text splitter: tries multiple separators in order."""
 
     def __init__(self, chunk_size: int = 500, overlap: int = 100,
-                 separators: list[str] | None = None):
+                 separators: list[str] | None = None) -> None:
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.separators = separators or ["\n\n", "\n", ". ", " ", ""]
@@ -503,7 +503,7 @@ DOCUMENT_LOADERS = {
 class SimpleBM25:
     """Simple BM25 scoring for hybrid search. No external dependencies."""
 
-    def __init__(self, k1: float = 1.5, b: float = 0.75):
+    def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
         self.k1 = k1
         self.b = b
         self._doc_freqs: dict[str, int] = Counter()
@@ -516,7 +516,7 @@ class SimpleBM25:
     def _tokenize(text: str) -> list[str]:
         return re.findall(r'\b\w+\b', text.lower())
 
-    def index(self, documents: list[str]):
+    def index(self, documents: list[str]) -> None:
         """Index a list of document strings."""
         self._tokenized_docs = [self._tokenize(d) for d in documents]
         self._n_docs = len(documents)
@@ -594,7 +594,7 @@ class Retrieval(BaseTool):
         allow_pickle: bool = False,
         default_top_k: int = 5,
         diversity: float = 0.0,
-    ):
+    ) -> None:
         """
         Initialize the retrieval tool.
 
@@ -1082,7 +1082,7 @@ class Retrieval(BaseTool):
     # file extension.
     _JSON_INDEX_MARKER = "effgen-retrieval-index-v1"
 
-    def save_index(self, path: str | None = None):
+    def save_index(self, path: str | None = None) -> None:
         """Save the index to disk as JSON (safe to load anywhere).
 
         The previous format was a Python pickle, which is unsafe to load from an
@@ -1165,7 +1165,7 @@ class Retrieval(BaseTool):
         self._rebuild_bm25_index()
         logger.info(f"Loaded index from {path} with {len(self.documents)} documents")
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all documents from the index."""
         self.documents = {}
         self.embeddings_matrix = None

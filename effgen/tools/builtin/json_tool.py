@@ -54,7 +54,7 @@ class JSONTool(BaseTool):
         "fields": "keys",
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="json_tool",
