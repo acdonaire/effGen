@@ -111,7 +111,7 @@ class DebugAgent:
         trace = result.metadata["debug_trace"]
     """
 
-    def __init__(self, config: Any):
+    def __init__(self, config: Any) -> None:
         """
         Args:
             config: AgentConfig instance (same as Agent.__init__)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -92,10 +93,10 @@ class TestSuite:
                 cases.append(TestCase.from_dict(json.loads(line)))
         return cases
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[TestCase]:
         return iter(self.test_cases)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.test_cases)
 
     def filter(self, **kwargs: Any) -> list[TestCase]:

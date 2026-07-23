@@ -57,7 +57,7 @@ class Guardrail(ABC):
         name: str = "",
         positions: list[GuardrailPosition] | None = None,
         enabled: bool = True,
-    ):
+    ) -> None:
         self.name = name or self.__class__.__name__
         self.positions = positions or [
             GuardrailPosition.INPUT,
@@ -92,7 +92,7 @@ class GuardrailChain:
     guardrails receive the modified version.
     """
 
-    def __init__(self, guardrails: list[Guardrail] | None = None):
+    def __init__(self, guardrails: list[Guardrail] | None = None) -> None:
         self.guardrails: list[Guardrail] = guardrails or []
 
     def add(self, guardrail: Guardrail) -> GuardrailChain:

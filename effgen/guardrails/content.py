@@ -42,7 +42,7 @@ class ToxicityGuardrail(Guardrail):
         extra_blocked_words: list[str] | None = None,
         positions: list[GuardrailPosition] | None = None,
         enabled: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             name="ToxicityGuardrail",
             positions=positions or [GuardrailPosition.INPUT, GuardrailPosition.OUTPUT],
@@ -417,7 +417,7 @@ class PIIGuardrail(Guardrail):
         strict: bool = False,
         positions: list[GuardrailPosition] | None = None,
         enabled: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             name="PIIGuardrail",
             positions=positions or [
@@ -616,7 +616,7 @@ class LengthGuardrail(Guardrail):
         min_length: int = 0,
         positions: list[GuardrailPosition] | None = None,
         enabled: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             name="LengthGuardrail",
             positions=positions or [GuardrailPosition.INPUT, GuardrailPosition.OUTPUT],
@@ -665,7 +665,7 @@ class TopicGuardrail(Guardrail):
         blocked_topics: list[str] | None = None,
         positions: list[GuardrailPosition] | None = None,
         enabled: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             name="TopicGuardrail",
             positions=positions or [GuardrailPosition.INPUT],

@@ -6,6 +6,8 @@ Provides pre-configured guardrail chains for common use cases.
 
 from __future__ import annotations
 
+from typing import Any
+
 from .base import GuardrailChain, GuardrailPosition
 from .content import LengthGuardrail, PIIGuardrail, ToxicityGuardrail
 from .injection import PromptInjectionGuardrail, SystemPromptLeakGuardrail
@@ -162,7 +164,7 @@ _PRESET_ALIASES = {
 }
 
 
-def get_guardrail_preset(name: str, **kwargs) -> GuardrailChain:
+def get_guardrail_preset(name: str, **kwargs: Any) -> GuardrailChain:
     """Get a guardrail chain by preset name.
 
     Args:

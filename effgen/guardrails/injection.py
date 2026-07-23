@@ -200,7 +200,7 @@ class PromptInjectionGuardrail(Guardrail):
         sensitivity: str = "medium",
         positions: list[GuardrailPosition] | None = None,
         enabled: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             name="PromptInjectionGuardrail",
             positions=positions or [GuardrailPosition.INPUT],
@@ -293,7 +293,7 @@ class SystemPromptLeakGuardrail(Guardrail):
         min_token_length: int = 6,
         positions: list[GuardrailPosition] | None = None,
         enabled: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             name="SystemPromptLeakGuardrail",
             positions=positions or [GuardrailPosition.OUTPUT],

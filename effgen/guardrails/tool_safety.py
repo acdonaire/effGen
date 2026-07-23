@@ -28,7 +28,7 @@ class ToolInputGuardrail(Guardrail):
     def __init__(
         self,
         enabled: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             name="ToolInputGuardrail",
             positions=[GuardrailPosition.TOOL_INPUT],
@@ -85,7 +85,7 @@ class ToolOutputGuardrail(Guardrail):
         max_output_length: int = 100_000,
         strip_pii: bool = False,
         enabled: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             name="ToolOutputGuardrail",
             positions=[GuardrailPosition.TOOL_OUTPUT],
@@ -142,7 +142,7 @@ class ToolPermissionGuardrail(Guardrail):
         require_approval: list[str] | None = None,
         approval_callback: Any | None = None,
         enabled: bool = True,
-    ):
+    ) -> None:
         super().__init__(
             name="ToolPermissionGuardrail",
             positions=[GuardrailPosition.TOOL_INPUT],

@@ -13,6 +13,8 @@ Usage:
 
 from __future__ import annotations
 
+from typing import Any
+
 from .base import Domain
 
 # Domain-appropriate query templates. The base ``Domain`` default templates are
@@ -70,7 +72,7 @@ _SCIENCE_TEMPLATES = [
 ]
 
 
-def TechDomain(**overrides) -> Domain:  # noqa: N802
+def TechDomain(**overrides: Any) -> Domain:  # noqa: N802
     """Software engineering, programming, and DevOps domain."""
     defaults = {
         "name": "tech",
@@ -93,7 +95,7 @@ def TechDomain(**overrides) -> Domain:  # noqa: N802
     return Domain(**defaults)
 
 
-def ScienceDomain(**overrides) -> Domain:  # noqa: N802
+def ScienceDomain(**overrides: Any) -> Domain:  # noqa: N802
     """Physics, chemistry, biology, and general science domain."""
     defaults = {
         "name": "science",
@@ -118,7 +120,7 @@ def ScienceDomain(**overrides) -> Domain:  # noqa: N802
     return Domain(**defaults)
 
 
-def FinanceDomain(**overrides) -> Domain:  # noqa: N802
+def FinanceDomain(**overrides: Any) -> Domain:  # noqa: N802
     """Markets, banking, crypto, and personal finance domain."""
     defaults = {
         "name": "finance",
@@ -143,7 +145,7 @@ def FinanceDomain(**overrides) -> Domain:  # noqa: N802
     return Domain(**defaults)
 
 
-def HealthDomain(**overrides) -> Domain:  # noqa: N802
+def HealthDomain(**overrides: Any) -> Domain:  # noqa: N802
     """Medical, wellness, and nutrition domain.
 
     This is a consumer health-information assistant. It uses the ``standard``
@@ -179,7 +181,7 @@ def HealthDomain(**overrides) -> Domain:  # noqa: N802
     return Domain(**defaults)
 
 
-def LegalDomain(**overrides) -> Domain:  # noqa: N802
+def LegalDomain(**overrides: Any) -> Domain:  # noqa: N802
     """Law, regulations, and compliance domain."""
     defaults = {
         "name": "legal",

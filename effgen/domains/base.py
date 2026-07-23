@@ -116,7 +116,7 @@ class Domain:
     # Build a runnable agent
     # ------------------------------------------------------------------
 
-    def to_agent(self, model: Any = None, **overrides: Any):
+    def to_agent(self, model: Any = None, **overrides: Any) -> Any:
         """Build a runnable :class:`~effgen.core.agent.Agent` from this domain.
 
         Wires the domain's ``system_prompt``, ``tool_names`` (resolved through
