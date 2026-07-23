@@ -1,8 +1,4 @@
-"""
-effGen Prompt Playground
-
-Interactive REPL and non-interactive CLI for exploring prompt templates.
-
+"""Interactive REPL and non-interactive CLI for exploring prompt templates.
 REPL commands:
   select <name>           — pick a prompt from the registry
   set <key> <value>       — bind a variable (JSON-decoded if possible)

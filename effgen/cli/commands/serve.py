@@ -33,6 +33,8 @@ try:
     from pydantic import ConfigDict as _PydanticConfigDict
 
     class TaskRequest(_PydanticBaseModel):
+        """Request body for the ``POST /run`` convenience route."""
+
         model_config = _PydanticConfigDict(extra="ignore")
 
         task: str
@@ -44,6 +46,8 @@ try:
         stream: bool = False
 
     class TaskResponse(_PydanticBaseModel):
+        """Response body for the ``POST /run`` convenience route."""
+
         model_config = _PydanticConfigDict(extra="ignore")
 
         output: str
@@ -224,8 +228,10 @@ def serve_api(cli, args):
 
 
 def register_convenience_routes(cli, app: Any) -> None:
-    """Attach the legacy ``/run``, ``/tools``, ``/``, ``/slo``, ``/ws``
-    routes onto the secure app from ``create_app``.
+    """Attach the legacy convenience routes onto the secure app.
+
+    Adds ``/run``, ``/tools``, ``/``, ``/slo`` and ``/ws`` to the app built by
+    ``create_app``.
 
     Auth for these is provided by the app's ``AuthMiddleware`` (so they
     honor the same static-key / OIDC / dev posture as ``/v1``); they do not

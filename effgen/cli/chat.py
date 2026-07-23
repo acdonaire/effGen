@@ -261,6 +261,7 @@ class ChatREPL:
 
     @property
     def tool_count(self) -> int:
+        """Number of tools attached to the running agent (0 before startup)."""
         agent = self.agent
         if agent is None:
             return 0
@@ -433,6 +434,7 @@ class ChatREPL:
     # Main loop
     # ------------------------------------------------------------------
     def run(self) -> int:
+        """Run the chat loop until exit; returns the process exit code."""
         # The banner is interactive chrome; a piped run stays answer-only.
         if self.interactive:
             self._banner()

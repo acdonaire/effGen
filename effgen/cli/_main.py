@@ -478,8 +478,11 @@ class CLIInterface:
         return chat_mode(self, args)
 
     def serve_api(self, args):
-        """Start the effGen API server (OpenAI-compatible ``/v1`` app plus the
-        ``/run``, ``/tools``, ``/``, ``/slo``, ``/ws`` convenience routes)."""
+        """Start the effGen API server.
+
+        Serves the OpenAI-compatible ``/v1`` app plus the ``/run``, ``/tools``,
+        ``/``, ``/slo``, ``/ws`` convenience routes.
+        """
         from effgen.cli.commands.serve import serve_api
         return serve_api(self, args)
 

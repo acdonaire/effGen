@@ -50,6 +50,7 @@ class HealthStatus:
 
     @property
     def ok(self) -> bool:
+        """True when the reported status reads healthy (ok/healthy/up/ready)."""
         return self.status.lower() in ("ok", "healthy", "up", "ready")
 
 
@@ -303,6 +304,7 @@ class EffGenClient:
         model: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
+        """Asynchronous ``chat()``: send one user message and return the response."""
         body: dict = {
             "model": model or "effgen-default",
             "messages": [{"role": "user", "content": message}],
@@ -316,6 +318,7 @@ class EffGenClient:
     async def aembed(
         self, texts: list[str], model: str = "text-embedding-3-small"
     ) -> list[list[float]]:
+        """Asynchronous ``embed()``: return one embedding vector per input text."""
         payload = await self._request_async(
             "POST", "/v1/embeddings", {"model": model, "input": texts}
         )
@@ -324,6 +327,7 @@ class EffGenClient:
         return [item["embedding"] for item in payload["data"]]
 
     async def ahealth(self) -> HealthStatus:
+        """Asynchronous ``health()``: return the server's health status."""
         payload = await self._request_async("GET", "/health")
         if isinstance(payload, dict):
             return HealthStatus(status=str(payload.get("status", "unknown")), details=payload)
