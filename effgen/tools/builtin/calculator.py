@@ -162,7 +162,7 @@ class Calculator(BaseTool):
         },
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the calculator."""
         super().__init__(
             metadata=ToolMetadata(

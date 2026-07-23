@@ -48,7 +48,7 @@ class DataFrameTool(BaseTool):
       * ``aggregate`` — group by column, compute aggregation
     """
 
-    def __init__(self, allowed_directories: list[str] | None = None):
+    def __init__(self, allowed_directories: list[str] | None = None) -> None:
         """Args:
             allowed_directories: Roots a data file may be read from. By default
                 any path is allowed except protected system and credential
@@ -206,7 +206,7 @@ class DataFrameTool(BaseTool):
 class PlotTool(BaseTool):
     """Generate simple charts using matplotlib and save to a temp file."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="plot",
@@ -330,7 +330,7 @@ class PlotTool(BaseTool):
 class StatsTool(BaseTool):
     """Compute basic statistics: mean, median, std, correlation, regression."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="stats",

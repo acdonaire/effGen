@@ -218,7 +218,7 @@ class BashTool(BaseTool):
         strip_env_vars: set[str] | None = None,
         allow_command_substitution: bool = False,
         max_output_size: int = DEFAULT_MAX_OUTPUT,
-    ):
+    ) -> None:
         """
         Initialize the Bash tool.
 

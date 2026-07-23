@@ -100,7 +100,7 @@ class AgenticSearch(BaseTool):
         context_lines: int = 5,
         max_results: int = 10,
         supported_extensions: list[str] | None = None,
-    ):
+    ) -> None:
         """
         Initialize the agentic search tool.
 
@@ -262,7 +262,7 @@ class AgenticSearch(BaseTool):
         else:
             logger.warning("Neither ripgrep nor grep found")
 
-    def set_data_path(self, path: str):
+    def set_data_path(self, path: str) -> None:
         """Set the data path for searching."""
         if not os.path.exists(path):
             raise FileNotFoundError(f"Data path not found: {path}")

@@ -261,7 +261,7 @@ class PythonREPL(BaseTool):
         max_memory_mb: int | None = DEFAULT_MAX_MEMORY_MB,
         allow_unrestricted: bool = False,
         max_sessions: int | None = None,
-    ):
+    ) -> None:
         """Initialize the Python REPL.
 
         Args:

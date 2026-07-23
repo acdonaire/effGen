@@ -55,7 +55,7 @@ class GitTool(BaseTool):
 
     ALLOWED = {"status", "log", "diff", "branch", "show", "remote"}
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="git",
@@ -143,7 +143,7 @@ class DockerTool(BaseTool):
 
     ALLOWED = {"ps", "images", "logs", "version", "info"}
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="docker",
@@ -216,7 +216,7 @@ class DockerTool(BaseTool):
 class SystemInfoTool(BaseTool):
     """CPU, memory, disk, and network info via psutil."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="system_info",
@@ -286,7 +286,7 @@ class SystemInfoTool(BaseTool):
 class HTTPTool(BaseTool):
     """Make simple HTTP GET/POST requests."""
 
-    def __init__(self, allow_private: bool = False):
+    def __init__(self, allow_private: bool = False) -> None:
         """Args:
             allow_private: Allow requests to private/loopback/link-local/metadata
                 addresses. Default ``False`` blocks them (SSRF protection); the

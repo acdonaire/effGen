@@ -101,7 +101,7 @@ class CodeExecutor(BaseTool):
         "sh": "bash:5",
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the code executor."""
         super().__init__(
             metadata=ToolMetadata(

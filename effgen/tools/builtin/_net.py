@@ -161,7 +161,7 @@ def safe_urlopen(
     allow_private: bool = False,
     allowed_hosts: set[str] | None = None,
     max_redirects: int = 5,
-):
+) -> Any:
     """SSRF-safe drop-in for ``urllib.request.urlopen``.
 
     Validates the target (and every redirect hop) before connecting and returns
@@ -211,7 +211,7 @@ def safe_requests_get(
     allowed_hosts: set[str] | None = None,
     max_redirects: int = 5,
     **kwargs: Any,
-):
+) -> Any:
     """SSRF-safe ``requests.get`` with manual, re-validated redirect following.
 
     ``requests_module`` is the imported ``requests`` module (passed in so this

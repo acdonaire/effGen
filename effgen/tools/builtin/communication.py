@@ -28,7 +28,7 @@ SAFETY_NOTE = "DRAFT ONLY — this tool does not send anything."
 class EmailDraftTool(BaseTool):
     """Draft an email. Does NOT send — returns formatted text for review."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="email_draft",
@@ -130,7 +130,7 @@ class EmailDraftTool(BaseTool):
 class SlackDraftTool(BaseTool):
     """Draft a Slack message. Does NOT send."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="slack_draft",
@@ -205,7 +205,7 @@ class SlackDraftTool(BaseTool):
 class NotificationTool(BaseTool):
     """Show a local desktop notification via plyer (optional dependency)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             metadata=ToolMetadata(
                 name="notification",
