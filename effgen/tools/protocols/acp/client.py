@@ -14,6 +14,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from types import TracebackType
 from typing import Any
 
 import httpx
@@ -78,7 +79,7 @@ class ACPAuthHandler:
 class TokenAuthHandler(ACPAuthHandler):
     """Capability token authentication handler."""
 
-    def __init__(self, token: CapabilityToken):
+    def __init__(self, token: CapabilityToken) -> None:
         """
         Initialize token auth handler.
 
@@ -98,7 +99,7 @@ class TokenAuthHandler(ACPAuthHandler):
 class APIKeyAuthHandler(ACPAuthHandler):
     """API key authentication handler."""
 
-    def __init__(self, api_key: str, header_name: str = "X-API-Key"):
+    def __init__(self, api_key: str, header_name: str = "X-API-Key") -> None:
         """
         Initialize API key auth handler.
 
@@ -118,7 +119,7 @@ class APIKeyAuthHandler(ACPAuthHandler):
 class BearerAuthHandler(ACPAuthHandler):
     """Bearer token authentication handler."""
 
-    def __init__(self, token: str):
+    def __init__(self, token: str) -> None:
         """
         Initialize bearer auth handler.
 
@@ -153,7 +154,7 @@ class ACPClient:
         config: ACPClientConfig | None = None,
         auth_handler: ACPAuthHandler | None = None,
         manifest: AgentManifest | None = None,
-    ):
+    ) -> None:
         """
         Initialize ACP client.
 
@@ -646,12 +647,17 @@ class ACPClient:
         """
         return self.manifest.get_capability(name)
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> ACPClient:
         """Async context manager entry."""
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Async context manager exit."""
         await self.disconnect()
 
@@ -669,7 +675,7 @@ class ACPDiscoveryClient:
         discovery_url: str,
         auth_handler: ACPAuthHandler | None = None,
         timeout: int = 10,
-    ):
+    ) -> None:
         """
         Initialize discovery client.
 

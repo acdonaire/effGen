@@ -551,7 +551,7 @@ class ACPProtocolHandler:
     task tracking, and manifest management.
     """
 
-    def __init__(self, manifest: AgentManifest):
+    def __init__(self, manifest: AgentManifest) -> None:
         """
         Initialize ACP protocol handler.
 

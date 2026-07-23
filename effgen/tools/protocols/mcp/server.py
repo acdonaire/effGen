@@ -70,7 +70,7 @@ class MCPServer:
         version: str,
         tools_registry: ToolRegistry | None = None,
         enable_sampling: bool = False,
-    ):
+    ) -> None:
         """
         Initialize MCP server.
 
@@ -459,13 +459,13 @@ def create_server(
     )
 
 
-async def main_stdio():
+async def main_stdio() -> None:
     """Main entry point for STDIO server."""
     server = create_server()
     await server.run_stdio()
 
 
-async def main_http(host: str = "127.0.0.1", port: int = 8000):
+async def main_http(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Main entry point for HTTP server."""
     server = create_server()
     await server.run_http(host, port)

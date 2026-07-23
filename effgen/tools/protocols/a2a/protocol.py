@@ -497,7 +497,7 @@ class A2AProtocolHandler:
     lifecycle management, and message handling.
     """
 
-    def __init__(self, version: str = "1.0"):
+    def __init__(self, version: str = "1.0") -> None:
         """
         Initialize A2A protocol handler.
 

@@ -13,6 +13,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import TracebackType
 from typing import Any
 
 import httpx
@@ -72,7 +73,7 @@ class AuthHandler:
 class BearerAuthHandler(AuthHandler):
     """Bearer token authentication handler."""
 
-    def __init__(self, token: str):
+    def __init__(self, token: str) -> None:
         """
         Initialize bearer auth handler.
 
@@ -96,7 +97,7 @@ class OAuth2AuthHandler(AuthHandler):
         client_secret: str,
         token_url: str,
         scopes: list[str] | None = None,
-    ):
+    ) -> None:
         """
         Initialize OAuth2 auth handler.
 
@@ -149,7 +150,7 @@ class OAuth2AuthHandler(AuthHandler):
 class APIKeyAuthHandler(AuthHandler):
     """API key authentication handler."""
 
-    def __init__(self, api_key: str, header_name: str = "X-API-Key"):
+    def __init__(self, api_key: str, header_name: str = "X-API-Key") -> None:
         """
         Initialize API key auth handler.
 
@@ -184,7 +185,7 @@ class A2AClient:
         agent_card: AgentCard,
         config: A2AClientConfig | None = None,
         auth_handler: AuthHandler | None = None,
-    ):
+    ) -> None:
         """
         Initialize A2A client.
 
@@ -539,12 +540,17 @@ class A2AClient:
         """
         return [cap.name for cap in self.agent_card.capabilities]
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> A2AClient:
         """Async context manager entry."""
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Async context manager exit."""
         await self.disconnect()
 

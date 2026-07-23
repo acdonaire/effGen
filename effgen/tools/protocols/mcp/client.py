@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Any
 
 import httpx
@@ -64,7 +66,7 @@ class MCPTransport:
 class StdioTransport(MCPTransport):
     """STDIO transport for MCP (subprocess communication)."""
 
-    def __init__(self, command: str, args: list[str], env: dict[str, str] | None = None):
+    def __init__(self, command: str, args: list[str], env: dict[str, str] | None = None) -> None:
         """
         Initialize STDIO transport.
 
@@ -140,7 +142,7 @@ class StdioTransport(MCPTransport):
 class HTTPTransport(MCPTransport):
     """HTTP transport for MCP (concurrent-safe)."""
 
-    def __init__(self, url: str, timeout: int = 30):
+    def __init__(self, url: str, timeout: int = 30) -> None:
         """
         Initialize HTTP transport.
 
@@ -218,7 +220,7 @@ class SSETransport(MCPTransport):
         timeout: int = 30,
         max_retries: int = 5,
         auth_headers: dict[str, str] | None = None,
-    ):
+    ) -> None:
         """
         Initialize SSE transport.
 
@@ -333,7 +335,7 @@ class MCPToolBridge(BaseTool):
     Allows MCP-discovered tools to be used transparently in the agent's tool set.
     """
 
-    def __init__(self, mcp_tool: MCPTool, client: "MCPClient"):
+    def __init__(self, mcp_tool: MCPTool, client: "MCPClient") -> None:
         """
         Initialize MCP tool bridge.
 
@@ -402,7 +404,7 @@ class MCPClient:
         max_reconnect_attempts: int = 5,
         reconnect_base_delay: float = 1.0,
         health_check_interval: float = 30.0,
-    ):
+    ) -> None:
         """
         Initialize MCP client.
 
@@ -768,7 +770,7 @@ class MCPClient:
         return context
 
     async def subscribe_resource(
-        self, uri: str, callback=None
+        self, uri: str, callback: Callable | None = None
     ) -> None:
         """
         Subscribe to resource updates (polls for changes).
@@ -810,11 +812,16 @@ class MCPClient:
             "resources_count": len(self.resources),
         }
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> MCPClient:
         """Async context manager entry."""
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Async context manager exit."""
         await self.disconnect()

@@ -264,7 +264,7 @@ class MCPProtocolHandler:
     Supports requests, responses, notifications, and errors.
     """
 
-    def __init__(self, version: str = "1.0"):
+    def __init__(self, version: str = "1.0") -> None:
         """
         Initialize protocol handler.
 

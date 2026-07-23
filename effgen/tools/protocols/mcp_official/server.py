@@ -112,7 +112,7 @@ class EffGenMCPServer:
         allowed_tools: list[str] | None = None,
         blocked_tools: list[str] | None = None,
         config: EffGenMCPServerConfig | None = None,
-    ):
+    ) -> None:
         """
         Initialize EffGen MCP server.
 
@@ -460,7 +460,7 @@ def create_server(
     )
 
 
-async def main_stdio():
+async def main_stdio() -> None:
     """Main entry point for STDIO server."""
     server = create_server()
     await server.run_stdio()
@@ -470,7 +470,7 @@ async def main_http(
     host: str = "127.0.0.1",
     port: int = 8000,
     transport: str = "streamable-http"
-):
+) -> None:
     """Main entry point for HTTP server."""
     server = create_server()
     await server.run_http(host, port, transport)

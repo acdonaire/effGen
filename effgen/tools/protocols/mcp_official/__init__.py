@@ -78,6 +78,7 @@ async with EffGenMCPClient(config) as client:
 """
 
 import warnings
+from typing import Any, NoReturn
 
 # Check if MCP SDK is installed
 try:
@@ -128,7 +129,7 @@ else:
     # Define placeholder classes that raise helpful errors
     class _MCPNotAvailable:
         """Placeholder class when MCP is not installed."""
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ImportError(
                 "MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0"
             )
@@ -138,27 +139,27 @@ else:
     EffGenMCPClient = _MCPNotAvailable
     MCPServerConfig = _MCPNotAvailable
 
-    def create_server(*args, **kwargs):
+    def create_server(*args: Any, **kwargs: Any) -> NoReturn:  # type: ignore[misc]
         """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
-    def create_client(*args, **kwargs):
+    def create_client(*args: Any, **kwargs: Any) -> NoReturn:  # type: ignore[misc]
         """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
-    def create_stdio_client(*args, **kwargs):
+    def create_stdio_client(*args: Any, **kwargs: Any) -> NoReturn:  # type: ignore[misc]
         """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
-    def create_http_client(*args, **kwargs):
+    def create_http_client(*args: Any, **kwargs: Any) -> NoReturn:  # type: ignore[misc]
         """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
-    def main_stdio(*args, **kwargs):
+    def main_stdio(*args: Any, **kwargs: Any) -> NoReturn:  # type: ignore[misc]
         """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
-    def main_http(*args, **kwargs):
+    def main_http(*args: Any, **kwargs: Any) -> NoReturn:  # type: ignore[misc]
         """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 

@@ -90,7 +90,7 @@ class ACPCapabilityRegistry:
     Manages capability definitions and execution handlers for the ACP server.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize capability registry."""
         self._capabilities: dict[str, CapabilityDefinition] = {}
         self._handlers: dict[str, CapabilityHandler] = {}
@@ -226,7 +226,7 @@ def capability(
     output_schema: dict[str, Any] | None = None,
     version: str = "1.0.0",
     metadata: dict[str, Any] | None = None,
-):
+) -> Callable[[CapabilityHandler], CapabilityHandler]:
     """
     Decorator for registering capability handlers.
 
@@ -296,7 +296,7 @@ class ACPServer:
         version: str,
         description: str,
         config: ACPServerConfig | None = None,
-    ):
+    ) -> None:
         """
         Initialize ACP server.
 
@@ -792,7 +792,7 @@ class ACPServer:
         except Exception as e:
             raise RuntimeError(f"BeeAI unregistration failed: {e}")
 
-    def create_app(self):
+    def create_app(self) -> Any:
         """
         Create a FastAPI application exposing ACP endpoints.
 
@@ -882,7 +882,7 @@ class ACPServer:
 
         return app
 
-    def run(self, **kwargs):
+    def run(self, **kwargs: Any) -> None:
         """
         Run the ACP server using uvicorn.
 
