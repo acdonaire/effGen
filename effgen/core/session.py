@@ -103,6 +103,7 @@ class Session:
 
     # ------------------------------------------------------------------ messages
     def add_message(self, role: str, content: str, **meta: Any) -> None:
+        """Append a message with a timestamp and refresh ``updated_at``."""
         self.messages.append({
             "role": role,
             "content": content,
@@ -112,17 +113,21 @@ class Session:
         self.updated_at = datetime.now().isoformat()
 
     def add_user_message(self, content: str) -> None:
+        """Append a user message."""
         self.add_message("user", content)
 
     def add_assistant_message(self, content: str) -> None:
+        """Append an assistant message."""
         self.add_message("assistant", content)
 
     # ------------------------------------------------------------------ persistence
     def to_dict(self) -> dict[str, Any]:
+        """Return the session as a JSON-serializable dict."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Session":
+        """Rebuild a session from ``to_dict()`` output (unknown fields ignored)."""
         # Load forgivingly so sessions saved by older/newer effGen builds (which may
         # carry since-renamed fields) still reload instead of raising a cryptic
         # TypeError. See effgen.core._compat.load_from_dict.
@@ -131,6 +136,7 @@ class Session:
         return load_from_dict(cls, data, label="Session")
 
     def save(self, sessions_dir: str | None = None) -> str:
+        """Write the session to ``<sessions_dir>/<id>.json`` atomically; returns the path."""
         sessions_dir = sessions_dir or _default_session_dir()
         os.makedirs(sessions_dir, exist_ok=True)
         path = os.path.join(sessions_dir, f"{self.session_id}.json")
@@ -149,6 +155,7 @@ class Session:
         session_id: str,
         sessions_dir: str | None = None,
     ) -> "Session":
+        """Load the session *session_id* from disk (``FileNotFoundError`` if absent)."""
         sessions_dir = sessions_dir or _default_session_dir()
         path = os.path.join(sessions_dir, f"{session_id}.json")
         if not os.path.exists(path):
@@ -169,6 +176,7 @@ class Session:
         agent_name: str = "",
         sessions_dir: str | None = None,
     ) -> "Session":
+        """Load *session_id* when it exists, otherwise create a new session."""
         if session_id:
             try:
                 return cls.load(session_id, sessions_dir)
@@ -237,9 +245,11 @@ class SessionManager:
         return sessions
 
     def get(self, session_id: str) -> Session:
+        """Load and return the session *session_id*."""
         return Session.load(session_id, self.sessions_dir)
 
     def delete(self, session_id: str) -> bool:
+        """Delete the stored session file; returns whether it existed."""
         path = os.path.join(self.sessions_dir, f"{session_id}.json")
         if os.path.exists(path):
             os.remove(path)
@@ -247,6 +257,7 @@ class SessionManager:
         return False
 
     def export(self, session_id: str, format: str = "json") -> str:
+        """Render a session as ``json`` or plain ``text``."""
         session = self.get(session_id)
         if format == "json":
             return json.dumps(session.to_dict(), indent=2, default=str)

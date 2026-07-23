@@ -107,11 +107,13 @@ class ToolResultCache:
             self._cache[k] = (result, time.time())
 
     def clear(self) -> None:
+        """Remove every cached tool result."""
         with self._lock:
             self._cache.clear()
 
     @property
     def stats(self) -> dict[str, int]:
+        """Hit/miss counters and the current cache size."""
         return {"hits": self._hits, "misses": self._misses, "size": len(self._cache)}
 
 

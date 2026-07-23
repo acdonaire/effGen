@@ -1,8 +1,6 @@
-"""
-Batch Execution Engine for effGen.
+"""Run many queries in parallel with concurrency control, retries and file I/O.
 
-Execute multiple queries in parallel with concurrency control,
-retry logic, progress tracking, and file-based I/O.
+Includes retry logic, progress tracking, and file-based input/output.
 
 Usage:
     from effgen.core.batch import BatchRunner, BatchConfig
@@ -231,6 +229,7 @@ class BatchResult:
         return self.succeeded / self.total if self.total > 0 else 0.0
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the batch summary as a JSON-serializable dict."""
         return {
             "total": self.total,
             "succeeded": self.succeeded,

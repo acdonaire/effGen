@@ -264,6 +264,7 @@ class ReActStrategy(ToolCallingStrategy):
 
     @property
     def name(self) -> str:
+        """Strategy identifier: ``"react"``."""
         return "react"
 
     # -- Shared JSON-cleaning helpers (also used by Agent) -----------------
@@ -476,6 +477,7 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
 
     @property
     def name(self) -> str:
+        """Strategy identifier: ``"native"``."""
         return "native"
 
     def parse_response(self, text: str, tools: dict[str, Any] | None = None) -> ToolCallResult:
@@ -641,6 +643,7 @@ class HybridStrategy(ToolCallingStrategy):
 
     @property
     def name(self) -> str:
+        """Strategy identifier: ``"hybrid"``."""
         return "hybrid"
 
     def parse_response(self, text: str, tools: dict[str, Any] | None = None) -> ToolCallResult:

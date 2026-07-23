@@ -54,6 +54,7 @@ class StateMutation:
     agent_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the mutation as a JSON-serializable dict."""
         return {
             "mutation_id": self.mutation_id,
             "namespace": self.namespace,

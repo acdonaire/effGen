@@ -1,7 +1,6 @@
-"""
-EffGen Core Module
+"""Core agent system: the Agent, routing, sub-agents, sessions and workflows.
 
-This module contains the core agent system components:
+Components:
 - Agent: Main agent class with ReAct loop and sub-agent support
 - Router: Intelligent routing for sub-agent decisions
 - SubAgentManager: Sub-agent lifecycle management

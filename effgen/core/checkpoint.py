@@ -53,10 +53,12 @@ class Checkpoint:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the checkpoint as a JSON-serializable dict."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Checkpoint":
+        """Rebuild a checkpoint from ``to_dict()`` output (unknown fields ignored)."""
         # Load forgivingly so checkpoints written by a different effGen build (which
         # may carry since-renamed fields) still resume instead of raising a cryptic
         # TypeError. See effgen.core._compat.load_from_dict.

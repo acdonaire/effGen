@@ -1,5 +1,4 @@
-"""
-Agent Lifecycle Management for effGen.
+"""Agent lifecycle: state machine, pre-warmed pools, registry, timeouts and cancellation.
 
 Provides:
 - AgentLifecycleState: state machine for agent lifecycle
@@ -96,6 +95,7 @@ class AgentEntry:
 
     @property
     def is_active(self) -> bool:
+        """True while the agent has not completed, failed or terminated."""
         return self.state in (
             AgentLifecycleState.CREATED,
             AgentLifecycleState.INITIALIZING,
@@ -106,6 +106,7 @@ class AgentEntry:
 
     @property
     def elapsed(self) -> float | None:
+        """Seconds since the agent started (``None`` before it starts)."""
         if self.started_at is None:
             return None
         end = self.completed_at or time.time()
@@ -113,6 +114,7 @@ class AgentEntry:
 
     @property
     def is_timed_out(self) -> bool:
+        """True when a positive timeout is configured and has elapsed."""
         if self.timeout <= 0 or self.started_at is None:
             return False
         return (time.time() - self.started_at) > self.timeout
@@ -127,6 +129,7 @@ class AgentEntry:
         logger.debug("Agent %s cancelled", self.agent_id)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the entry's state and timing as a JSON-serializable dict."""
         return {
             "agent_id": self.agent_id,
             "state": self.state.value,

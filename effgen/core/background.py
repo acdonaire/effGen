@@ -39,6 +39,8 @@ def _redact(text: str) -> str:
 
 
 class TaskStatus(str, Enum):
+    """Lifecycle state of a background task."""
+
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     PAUSED = "PAUSED"
@@ -56,6 +58,8 @@ class _PrioritizedItem:
 
 @dataclass
 class BackgroundTask:
+    """A queued or running task with its status, progress and result."""
+
     task_id: str
     task_text: str
     status: TaskStatus = TaskStatus.PENDING
@@ -248,14 +252,17 @@ class BackgroundTaskRunner:
         return task
 
     def get_status(self, task_id: str) -> TaskStatus:
+        """Return the current status of the task *task_id*."""
         with self._state.lock:
             return self._require_task(task_id).status
 
     def get_task(self, task_id: str) -> BackgroundTask:
+        """Return the task record for *task_id* (raises ``KeyError`` if unknown)."""
         with self._state.lock:
             return self._require_task(task_id)
 
     def get_result(self, task_id: str, wait: bool = False, timeout: float | None = None) -> Any:
+        """Return the task's result, optionally blocking until it finishes."""
         s = self._state
         if wait:
             deadline = None if timeout is None else time.time() + timeout
@@ -275,11 +282,13 @@ class BackgroundTaskRunner:
             return self._require_task(task_id).result
 
     def list_tasks(self) -> list[BackgroundTask]:
+        """Return every known task, whatever its status."""
         with self._state.lock:
             return list(self._state.tasks.values())
 
     # ------------------------------------------------------------------ control
     def cancel(self, task_id: str) -> bool:
+        """Cancel a pending or running task; returns whether a cancel was issued."""
         s = self._state
         with s.lock:
             task = s.tasks.get(task_id)
@@ -297,6 +306,7 @@ class BackgroundTaskRunner:
             return False
 
     def pause(self, task_id: str) -> bool:
+        """Pause a running task at its next checkpoint; returns whether it paused."""
         s = self._state
         with s.lock:
             task = s.tasks.get(task_id)
@@ -307,6 +317,7 @@ class BackgroundTaskRunner:
             return True
 
     def resume(self, task_id: str) -> bool:
+        """Resume a paused task; returns whether it was resumed."""
         s = self._state
         with s.lock:
             task = s.tasks.get(task_id)
@@ -317,6 +328,7 @@ class BackgroundTaskRunner:
             return True
 
     def shutdown(self, wait: bool = False) -> None:
+        """Stop the workers (optionally joining them); repeat calls are no-ops."""
         # `finalizer()` runs `_request_shutdown(state)` exactly once and
         # de-registers the atexit hook.
         self._finalizer()

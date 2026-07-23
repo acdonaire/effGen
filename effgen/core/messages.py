@@ -21,6 +21,8 @@ from effgen.errors import InvalidMultimodalContent
 # ---------------------------------------------------------------------------
 
 class Role(Enum):
+    """Author of a message: system, user, assistant, or tool."""
+
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
@@ -49,6 +51,8 @@ _VALID_AUDIO_MIMES = {
 
 @dataclass
 class TextPart:
+    """Plain-text content within a message."""
+
     text: str
     type: Literal["text"] = field(default="text", init=False)
 
@@ -59,6 +63,8 @@ class TextPart:
 
 @dataclass
 class ImagePart:
+    """Image content as raw bytes with its MIME type."""
+
     image: bytes
     mime: str
     meta: dict[str, Any] = field(default_factory=dict)
@@ -80,6 +86,8 @@ class ImagePart:
 
 @dataclass
 class AudioPart:
+    """Audio content as raw bytes with its MIME type and optional duration."""
+
     audio: bytes
     mime: str
     duration_s: float | None = None
@@ -101,6 +109,8 @@ class AudioPart:
 
 @dataclass
 class VideoPart:
+    """Video content as sampled frames (image bytes) at a given FPS."""
+
     frames: list[bytes]
     fps: float
     mime: str
@@ -133,6 +143,8 @@ class VideoPart:
 
 @dataclass
 class ToolCallPart:
+    """A tool invocation requested by the assistant (name plus arguments)."""
+
     tool_call_id: str
     name: str
     arguments: dict[str, Any]
@@ -149,6 +161,8 @@ class ToolCallPart:
 
 @dataclass
 class ToolResultPart:
+    """The result returned for an earlier tool call."""
+
     tool_call_id: str
     result: Any
     is_error: bool = False
@@ -240,14 +254,17 @@ class Message:
 
     @property
     def has_image(self) -> bool:
+        """True when any content part is an image."""
         return any(isinstance(p, ImagePart) for p in self.content)
 
     @property
     def has_audio(self) -> bool:
+        """True when any content part is audio."""
         return any(isinstance(p, AudioPart) for p in self.content)
 
     @property
     def has_video(self) -> bool:
+        """True when any content part is video frames."""
         return any(isinstance(p, VideoPart) for p in self.content)
 
     # ------------------------------------------------------------------
@@ -263,14 +280,17 @@ class Message:
 
     @classmethod
     def user(cls, text: str, **kwargs: Any) -> "Message":
+        """Create a text-only user message."""
         return cls.from_str(Role.USER, text, **kwargs)
 
     @classmethod
     def assistant(cls, text: str, **kwargs: Any) -> "Message":
+        """Create a text-only assistant message."""
         return cls.from_str(Role.ASSISTANT, text, **kwargs)
 
     @classmethod
     def system(cls, text: str, **kwargs: Any) -> "Message":
+        """Create a text-only system message."""
         return cls.from_str(Role.SYSTEM, text, **kwargs)
 
     # ------------------------------------------------------------------
@@ -278,6 +298,7 @@ class Message:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the message as a JSON-serializable dict (binary parts base64-encoded)."""
         parts = []
         for part in self.content:
             if isinstance(part, TextPart):

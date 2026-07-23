@@ -528,11 +528,13 @@ Question: {task}
 
     @property
     def execution_tracker(self) -> ExecutionTracker:
+        """The tracker recording this agent's runs (per-call override aware)."""
         override = _tracker_override_var.get()
         return override if override is not None else self._default_execution_tracker
 
     @execution_tracker.setter
     def execution_tracker(self, value: ExecutionTracker) -> None:
+        """Replace the tracker (the per-call override when one is active)."""
         if _tracker_override_var.get() is not None:
             _tracker_override_var.set(value)
         else:
@@ -1491,16 +1493,19 @@ Question: {task}
         return self._bg_runner.get_result(task_id, wait=wait, timeout=timeout)
 
     def cancel_task(self, task_id: str) -> bool:
+        """Cancel a background task; returns ``False`` when it cannot be cancelled."""
         if self._bg_runner is None:
             return False
         return self._bg_runner.cancel(task_id)
 
     def pause_task(self, task_id: str) -> bool:
+        """Pause a running background task; returns whether it was paused."""
         if self._bg_runner is None:
             return False
         return self._bg_runner.pause(task_id)
 
     def resume_task(self, task_id: str) -> bool:
+        """Resume a paused background task; returns whether it was resumed."""
         if self._bg_runner is None:
             return False
         return self._bg_runner.resume(task_id)

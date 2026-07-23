@@ -71,6 +71,7 @@ class WorkflowEdge:
     condition: Callable[[Any], bool] | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "source": self.source,
             "target": self.target,
@@ -106,6 +107,7 @@ class WorkflowNode:
     execution_time: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "id": self.id,
             "tools": self.tools,
@@ -137,6 +139,7 @@ class WorkflowResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict (output values truncated to 200 chars)."""
         return {
             "success": self.success,
             "outputs": {k: str(v)[:200] for k, v in self.outputs.items()},
@@ -724,17 +727,21 @@ class WorkflowDAG:
     # -- Introspection --
 
     def get_node(self, node_id: str) -> WorkflowNode | None:
+        """Return the node with id *node_id*, or ``None`` when absent."""
         return self._nodes.get(node_id)
 
     @property
     def nodes(self) -> list[WorkflowNode]:
+        """All nodes in insertion order."""
         return list(self._nodes.values())
 
     @property
     def edges(self) -> list[WorkflowEdge]:
+        """All edges in insertion order."""
         return list(self._edges)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the DAG (nodes, edges, topological order) as a serializable dict."""
         return {
             "name": self.name,
             "nodes": [n.to_dict() for n in self._nodes.values()],
