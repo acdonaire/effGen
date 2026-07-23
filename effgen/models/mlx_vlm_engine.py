@@ -46,8 +46,8 @@ class MLXVLMEngine(MLXEngine):
         trust_remote_code: bool = True,
         apply_chat_template: bool = True,
         system_prompt: str | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize MLX-VLM engine.
 
@@ -211,7 +211,7 @@ class MLXVLMEngine(MLXEngine):
         system_prompt: str | None = None,
         skip_chat_template: bool = False,
         images: list | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """
         Generate text from a prompt and optional images.
@@ -335,7 +335,7 @@ class MLXVLMEngine(MLXEngine):
         system_prompt: str | None = None,
         skip_chat_template: bool = False,
         images: list | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Iterator[str]:
         """
         Generate text with streaming output.
@@ -385,7 +385,7 @@ class MLXVLMEngine(MLXEngine):
         system_prompt: str | None = None,
         skip_chat_template: bool = False,
         images_list: list[list] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> list[GenerationResult]:
         """
         Generate text for multiple prompts, optionally with per-prompt images.

@@ -208,8 +208,8 @@ class TransformersEngine(BatchModel):
         max_memory: dict[int, str] | None = None,
         offload_folder: str | None = None,
         require_gpu: bool = False,
-        **kwargs
-    ):
+        **kwargs: Any
+    ) -> None:
         """
         Initialize Transformers engine.
 
@@ -758,7 +758,7 @@ class TransformersEngine(BatchModel):
         self,
         prompt: str,
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> GenerationResult:
         """
         Generate text from a prompt.
@@ -924,7 +924,7 @@ class TransformersEngine(BatchModel):
         self,
         prompt: str,
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> Iterator[str]:
         """
         Generate text with streaming output.
@@ -1059,7 +1059,7 @@ class TransformersEngine(BatchModel):
         self,
         prompts: list[str],
         config: GenerationConfig | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> list[GenerationResult]:
         """
         Generate text for multiple prompts in a batch.

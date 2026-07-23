@@ -60,8 +60,8 @@ class MLXEngine(BatchModel):
         system_prompt: str | None = None,
         adapter_path: str | None = None,
         lazy_load: bool = False,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize MLX engine.
 
@@ -276,7 +276,7 @@ class MLXEngine(BatchModel):
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
         skip_chat_template: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> GenerationResult:
         """
         Generate text from a prompt.
@@ -374,7 +374,7 @@ class MLXEngine(BatchModel):
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
         skip_chat_template: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> Iterator[str]:
         """
         Generate text with streaming output.
@@ -464,7 +464,7 @@ class MLXEngine(BatchModel):
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
         skip_chat_template: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> list[GenerationResult]:
         """
         Generate text for multiple prompts.

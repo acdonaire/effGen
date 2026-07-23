@@ -21,6 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from queue import Empty, Queue
+from types import TracebackType
 from typing import Any
 
 from .base import BaseModel, BatchModel, GenerationConfig, GenerationResult
@@ -88,7 +89,12 @@ class ContinuousBatcher:
     def __enter__(self) -> "ContinuousBatcher":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.shutdown()
 
     # ------------------------------------------------------------------ worker

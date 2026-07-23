@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from typing import Any
 
 import torch
 
@@ -81,8 +82,8 @@ class VLLMEngine(BatchModel):
         use_tqdm: bool = True,
         apply_chat_template: bool = True,
         system_prompt: str | None = None,
-        **kwargs
-    ):
+        **kwargs: Any
+    ) -> None:
         """
         Initialize vLLM engine.
 
@@ -399,7 +400,7 @@ class VLLMEngine(BatchModel):
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
         skip_chat_template: bool = False,
-        **kwargs
+        **kwargs: Any
     ) -> GenerationResult:
         """
         Generate text from a prompt.
@@ -475,7 +476,7 @@ class VLLMEngine(BatchModel):
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
         skip_chat_template: bool = False,
-        **kwargs
+        **kwargs: Any
     ) -> Iterator[str]:
         """
         Generate text with streaming output.
@@ -527,7 +528,7 @@ class VLLMEngine(BatchModel):
         config: GenerationConfig | None = None,
         system_prompt: str | None = None,
         skip_chat_template: bool = False,
-        **kwargs
+        **kwargs: Any
     ) -> list[GenerationResult]:
         """
         Generate text for multiple prompts in a batch.
