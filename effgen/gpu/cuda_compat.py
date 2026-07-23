@@ -324,6 +324,7 @@ class CudaStatus:
 
     @property
     def is_mismatch(self) -> bool:
+        """True when the installed torch CUDA build does not match the driver."""
         return self.mismatch
 
 

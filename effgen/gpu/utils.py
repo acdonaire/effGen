@@ -1,8 +1,4 @@
-"""
-GPU Utility Functions for effGen Framework
-
-This module provides utility functions for GPU operations including memory estimation,
-device selection, compatibility checks, and various helper functions for GPU management.
+"""GPU utilities: memory estimation, device selection and compatibility checks.
 
 Author: effGen Team
 License: Apache-2.0
@@ -845,20 +841,20 @@ def estimate_tokens_per_second(
 # Convenience functions for common operations
 
 def gb_to_bytes(gb: float) -> int:
-    """Convert GB to bytes"""
+    """Convert GB to bytes."""
     return int(gb * GB)
 
 
 def bytes_to_gb(bytes_val: int) -> float:
-    """Convert bytes to GB"""
+    """Convert bytes to GB."""
     return bytes_val / GB
 
 
 def mb_to_bytes(mb: float) -> int:
-    """Convert MB to bytes"""
+    """Convert MB to bytes."""
     return int(mb * MB)
 
 
 def bytes_to_mb(bytes_val: int) -> float:
-    """Convert bytes to MB"""
+    """Convert bytes to MB."""
     return bytes_val / MB

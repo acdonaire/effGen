@@ -1,9 +1,7 @@
-"""
-GPU Allocator for effGen Framework
+"""GPU allocation and resource management for multi-GPU deployments.
 
-This module provides intelligent GPU allocation and resource management for
-multi-GPU deployments. It supports various allocation strategies, tensor/pipeline
-parallelism, and prevents resource overallocation.
+Supports multiple allocation strategies and tensor/pipeline parallelism, and
+prevents resource overallocation.
 
 Author: effGen Team
 License: Apache-2.0
@@ -50,7 +48,7 @@ def _device_free_memory(device_id: int, total_memory: int) -> int:
 
 
 class AllocationStrategy(Enum):
-    """GPU allocation strategies"""
+    """GPU allocation strategies."""
     GREEDY = "greedy"  # Fill GPUs sequentially
     BALANCED = "balanced"  # Distribute evenly across GPUs
     OPTIMIZE = "optimize"  # Minimize inter-GPU communication
@@ -58,7 +56,7 @@ class AllocationStrategy(Enum):
 
 
 class ParallelismType(Enum):
-    """Types of model parallelism"""
+    """Types of model parallelism."""
     TENSOR = "tensor"  # Tensor parallelism (split layers across GPUs)
     PIPELINE = "pipeline"  # Pipeline parallelism (different layers on different GPUs)
     DATA = "data"  # Data parallelism (replicate model, split batches)
@@ -67,7 +65,7 @@ class ParallelismType(Enum):
 
 @dataclass
 class GPUInfo:
-    """Information about a single GPU"""
+    """Information about a single GPU."""
     device_id: int
     name: str
     total_memory: int  # in bytes
@@ -78,12 +76,12 @@ class GPUInfo:
 
     @property
     def used_memory(self) -> int:
-        """Calculate used memory in bytes"""
+        """Calculate used memory in bytes."""
         return self.total_memory - self.available_memory
 
     @property
     def memory_utilization(self) -> float:
-        """Calculate memory utilization (0.0 to 1.0)"""
+        """Calculate memory utilization (0.0 to 1.0)."""
         if self.total_memory == 0:
             return 0.0
         return self.used_memory / self.total_memory
@@ -91,7 +89,7 @@ class GPUInfo:
 
 @dataclass
 class AllocationRequest:
-    """Request for GPU allocation"""
+    """Request for GPU allocation."""
     requester_id: str
     memory_required: int  # in bytes
     num_gpus: int = 1
@@ -104,7 +102,7 @@ class AllocationRequest:
 
 @dataclass
 class Allocation:
-    """Represents an active GPU allocation"""
+    """Represents an active GPU allocation."""
     requester_id: str
     device_ids: list[int]
     memory_allocated: dict[int, int]  # device_id -> memory in bytes
@@ -160,7 +158,7 @@ class GPUAllocator:
         )
 
     def is_cuda_available(self) -> bool:
-        """Check if CUDA is available"""
+        """Check if CUDA is available."""
         if not TORCH_AVAILABLE:
             return False
         return torch.cuda.is_available()
@@ -589,7 +587,7 @@ class GPUAllocator:
         return sum(info.total_memory for info in self._devices.values())
 
     def reset(self) -> None:
-        """Clear all allocations and reset state"""
+        """Clear all allocations and reset state."""
         with self._lock:
             requester_ids = list(self._allocations.keys())
             for requester_id in requester_ids:

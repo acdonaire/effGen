@@ -1,3 +1,5 @@
+"""Hardware platform detection: Apple Silicon, CUDA, MLX availability."""
+
 from effgen.hardware.platform import (
     HardwarePlatform,
     get_best_local_backend,

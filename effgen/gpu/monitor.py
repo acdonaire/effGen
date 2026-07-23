@@ -1,9 +1,7 @@
-"""
-GPU Monitor for effGen Framework
+"""Real-time GPU monitoring: VRAM, utilization, temperature, power and alerts.
 
-This module provides real-time GPU monitoring capabilities including VRAM usage,
-utilization, temperature, power consumption, and active process tracking. It includes
-an alert system for threshold breaches and comprehensive metrics logging.
+Tracks per-GPU metrics and active processes, and raises alerts on threshold
+breaches.
 
 Author: effGen Team
 License: Apache-2.0
@@ -42,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 class MetricType(Enum):
-    """Types of GPU metrics"""
+    """Types of GPU metrics."""
     VRAM_USAGE = "vram_usage"
     VRAM_UTILIZATION = "vram_utilization"
     GPU_UTILIZATION = "gpu_utilization"
@@ -52,7 +50,7 @@ class MetricType(Enum):
 
 
 class AlertLevel(Enum):
-    """Alert severity levels"""
+    """Alert severity levels."""
     INFO = "info"
     WARNING = "warning"
     CRITICAL = "critical"
@@ -60,7 +58,7 @@ class AlertLevel(Enum):
 
 @dataclass
 class GPUMetrics:
-    """Metrics for a single GPU at a point in time"""
+    """Metrics for a single GPU at a point in time."""
     device_id: int
     timestamp: float
     vram_total: int  # bytes
@@ -76,23 +74,23 @@ class GPUMetrics:
 
     @property
     def vram_used_gb(self) -> float:
-        """VRAM used in GB"""
+        """VRAM used in GB."""
         return self.vram_used / (1024**3)
 
     @property
     def vram_total_gb(self) -> float:
-        """Total VRAM in GB"""
+        """Total VRAM in GB."""
         return self.vram_total / (1024**3)
 
     @property
     def vram_free_gb(self) -> float:
-        """Free VRAM in GB"""
+        """Free VRAM in GB."""
         return self.vram_free / (1024**3)
 
 
 @dataclass
 class Alert:
-    """Alert for threshold breach"""
+    """Alert for threshold breach."""
     device_id: int
     metric_type: MetricType
     level: AlertLevel
@@ -104,7 +102,7 @@ class Alert:
 
 @dataclass
 class MonitorConfig:
-    """Configuration for GPU monitor"""
+    """Configuration for GPU monitor."""
     update_interval: float = 1.0  # seconds
     enable_alerts: bool = True
     enable_logging: bool = True
@@ -210,7 +208,7 @@ class GPUMonitor:
                 logger.info(f"Discovered GPU {i} (PyTorch)")
 
     def start(self) -> None:
-        """Start monitoring in background thread"""
+        """Start monitoring in background thread."""
         if self._running:
             logger.warning("Monitor already running")
             return
@@ -230,7 +228,7 @@ class GPUMonitor:
         logger.info("GPU monitoring started")
 
     def stop(self) -> None:
-        """Stop monitoring"""
+        """Stop monitoring."""
         if not self._running:
             return
 
@@ -627,7 +625,7 @@ class GPUMonitor:
             return alerts
 
     def clear_alerts(self) -> None:
-        """Clear all alerts"""
+        """Clear all alerts."""
         with self._lock:
             self._alerts.clear()
         logger.info("Alerts cleared")

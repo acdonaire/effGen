@@ -1,8 +1,7 @@
-"""
-GPU Management Module for effGen Framework
+"""GPU management: allocation strategies, real-time monitoring and utility helpers.
 
-This module provides comprehensive GPU management capabilities including:
-- Intelligent GPU allocation with multiple strategies
+Includes:
+- GPU allocation with multiple strategies
 - Real-time GPU monitoring with alerts
 - Utility functions for GPU operations and memory estimation
 
