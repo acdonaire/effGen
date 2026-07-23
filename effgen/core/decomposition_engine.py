@@ -158,7 +158,7 @@ Format your response as JSON:
 
 Respond with ONLY the JSON, no additional text."""
 
-    def __init__(self, llm_client: Any | None = None, config: dict[str, Any] | None = None):
+    def __init__(self, llm_client: Any | None = None, config: dict[str, Any] | None = None) -> None:
         """
         Initialize decomposition engine.
 

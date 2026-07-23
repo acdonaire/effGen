@@ -81,7 +81,7 @@ class ClarificationDetector:
         self,
         choice_callback: Callable[[str, list[str]], int] | None = None,
         input_callback: Callable[[str], str] | None = None,
-    ):
+    ) -> None:
         self.choice_callback = choice_callback
         self.input_callback = input_callback
 

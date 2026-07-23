@@ -184,7 +184,7 @@ class BackgroundTaskRunner:
     manager for prompt cleanup.
     """
 
-    def __init__(self, agent: Any, max_workers: int = 1):
+    def __init__(self, agent: Any, max_workers: int = 1) -> None:
         self.agent = agent
         self.max_workers = max_workers
         self._state = _RunnerState(agent)

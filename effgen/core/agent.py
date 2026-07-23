@@ -22,7 +22,8 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..memory.long_term import (
     ImportanceLevel,
@@ -191,7 +192,7 @@ Begin!
 Question: {task}
 {scratchpad}"""
 
-    def __init__(self, config: AgentConfig | None = None, session_id: str | None = None):
+    def __init__(self, config: AgentConfig | None = None, session_id: str | None = None) -> None:
         """
         Initialize agent.
 
@@ -746,7 +747,7 @@ Question: {task}
             output_schema: dict[str, Any] | None = None,
             output_model: Any = None,
             inputs: list[Any] | None = None,
-            **kwargs) -> AgentResponse:
+            **kwargs: Any) -> AgentResponse:
         """
         Execute a task.
 
@@ -1401,7 +1402,7 @@ Question: {task}
         history += "=== End of Previous Context ===\n"
         return history if turn_num > 0 or summaries else ""
 
-    def add_tool(self, tool: BaseTool):
+    def add_tool(self, tool: BaseTool) -> None:
         """
         Add a tool to the agent.
 
@@ -1410,7 +1411,7 @@ Question: {task}
         """
         self.tools[tool.name] = tool
 
-    def remove_tool(self, tool_name: str):
+    def remove_tool(self, tool_name: str) -> None:
         """
         Remove a tool from the agent.
 
@@ -1420,7 +1421,7 @@ Question: {task}
         if tool_name in self.tools:
             del self.tools[tool_name]
 
-    def reset_memory(self):
+    def reset_memory(self) -> None:
         """Clear conversation and tool history."""
         self.state.clear_history()
         self.short_term_memory.clear()
@@ -1428,7 +1429,7 @@ Question: {task}
             self.long_term_memory.end_session()
             self.long_term_memory.start_session(name=self.name)
 
-    def save_state(self, filepath: str, format: str = "json"):
+    def save_state(self, filepath: str, format: str = "json") -> None:
         """
         Save agent state.
 
@@ -1438,7 +1439,7 @@ Question: {task}
         """
         self.state.save(filepath, format)
 
-    def load_state(self, filepath: str, format: str = "json"):
+    def load_state(self, filepath: str, format: str = "json") -> None:
         """
         Load agent state.
 
@@ -1449,7 +1450,7 @@ Question: {task}
         self.state = AgentState.load(filepath, format)
 
     # ------------------------------------------------------------------ Resume
-    def resume(self, checkpoint_id: str | None = None, checkpoint_dir: str = "./checkpoints", **kwargs) -> "AgentResponse":
+    def resume(self, checkpoint_id: str | None = None, checkpoint_dir: str = "./checkpoints", **kwargs: Any) -> "AgentResponse":
         """
         Resume execution from a checkpoint.
 
@@ -1471,7 +1472,7 @@ Question: {task}
         kwargs.setdefault("checkpoint_dir", checkpoint_dir)
         return self.run(cp.task, **kwargs)
 
-    def run_background(self, task: str, priority: int = 5, **run_kwargs) -> str:
+    def run_background(self, task: str, priority: int = 5, **run_kwargs: Any) -> str:
         """
         Submit a task to the background runner and return its id.
         """
@@ -1480,13 +1481,13 @@ Question: {task}
             self._bg_runner = BackgroundTaskRunner(self, max_workers=1)
         return self._bg_runner.submit(task, priority=priority, **run_kwargs)
 
-    def get_task_status(self, task_id: str):
+    def get_task_status(self, task_id: str) -> Any:
         """Return the status of a background task."""
         if self._bg_runner is None:
             raise RuntimeError("No background runner active")
         return self._bg_runner.get_status(task_id)
 
-    def get_task_result(self, task_id: str, wait: bool = False, timeout: float | None = None):
+    def get_task_result(self, task_id: str, wait: bool = False, timeout: float | None = None) -> Any:
         """Return the result of a background task (optionally blocking)."""
         if self._bg_runner is None:
             raise RuntimeError("No background runner active")
@@ -1547,7 +1548,7 @@ Provide a well-structured, comprehensive response that integrates all findings."
                        output_schema: dict[str, Any] | None = None,
                        output_model: Any = None,
                        inputs: list[Any] | None = None,
-                       **kwargs) -> AgentResponse:
+                       **kwargs: Any) -> AgentResponse:
         """
         Truly asynchronous version of run().
 
@@ -1611,16 +1612,21 @@ Provide a well-structured, comprehensive response that integrates all findings."
                 logger.debug("Failed to close long-term memory", exc_info=True)
         logger.debug(f"Agent '{self.name}' closed")
 
-    def __enter__(self):
+    def __enter__(self) -> Agent:
         """Sync context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> Literal[False]:
         """Sync context manager exit — clean up resources."""
         self.close()
         return False
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Agent:
         """Async context manager entry."""
         return self
 
@@ -1634,7 +1640,12 @@ Provide a well-structured, comprehensive response that integrates all findings."
         """
         self.close()
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> Literal[False]:
         """Async context manager exit — clean up resources."""
         await self.aclose()
         return False

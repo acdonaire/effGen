@@ -82,7 +82,7 @@ class CheckpointManager:
         self,
         checkpoint_dir: str = "./checkpoints",
         backend: str = "filesystem",
-    ):
+    ) -> None:
         self.backend = backend
         self.checkpoint_dir = os.path.abspath(os.path.expanduser(checkpoint_dir))
         os.makedirs(self.checkpoint_dir, exist_ok=True)

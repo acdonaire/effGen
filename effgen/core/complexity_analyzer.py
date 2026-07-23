@@ -102,7 +102,7 @@ class ComplexityAnalyzer:
         "very_complex": ["synthesize", "design", "create strategy", "optimize", "architect", "comprehensive"]
     }
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """
         Initialize complexity analyzer.
 
@@ -110,7 +110,7 @@ class ComplexityAnalyzer:
             config: Optional configuration with custom weights
         """
         self.config = config or {}
-        self.weights = self.config.get("weights", self.DEFAULT_WEIGHTS)
+        self.weights: dict[str, float] = self.config.get("weights", self.DEFAULT_WEIGHTS)
 
         # Ensure weights sum to 1.0
         weight_sum = sum(self.weights.values())
@@ -581,7 +581,7 @@ class ComplexityAnalyzer:
             more_complex = "1" if score1.overall > score2.overall else "2"
             return f"Task {more_complex} is significantly more complex ({diff:.1f} point difference)"
 
-    def calibrate_weights(self, training_data: list[dict[str, Any]]):
+    def calibrate_weights(self, training_data: list[dict[str, Any]]) -> dict[str, float]:
         """
         Calibrate the analyzer's feature weights from labelled examples.
 

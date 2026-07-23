@@ -153,7 +153,7 @@ class AgentStreamingMixin:
                on_answer: Callable[[str], None] | None = None,
                inputs: list[Any] | None = None,
                include_events: bool = False,
-               **kwargs) -> "Iterator[str] | Iterator[StreamEvent]":
+               **kwargs: Any) -> "Iterator[str] | Iterator[StreamEvent]":
         """
         Stream a response incrementally using real model streaming.
 
