@@ -139,21 +139,27 @@ else:
     MCPServerConfig = _MCPNotAvailable
 
     def create_server(*args, **kwargs):
+        """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
     def create_client(*args, **kwargs):
+        """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
     def create_stdio_client(*args, **kwargs):
+        """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
     def create_http_client(*args, **kwargs):
+        """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
     def main_stdio(*args, **kwargs):
+        """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
     def main_http(*args, **kwargs):
+        """Raise ``ImportError``: the MCP SDK is not installed."""
         raise ImportError("MCP SDK not installed. Please install with: pip install mcp[cli]>=1.0.0")
 
     __all__ = [

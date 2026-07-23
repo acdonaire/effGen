@@ -36,8 +36,10 @@ _REDIRECT_CODES = (301, 302, 303, 307, 308)
 
 
 class BlockedURLError(ValueError):
-    """Raised when a URL targets a non-public/internal address or a pinned-host
-    mismatch. Subclasses ValueError so existing tool error handling catches it."""
+    """Raised for a URL targeting a non-public address or a pinned-host mismatch.
+
+    Subclasses ValueError so existing tool error handling catches it.
+    """
 
 
 def is_blocked_ip(addr: ipaddress._BaseAddress) -> bool:

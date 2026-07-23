@@ -101,6 +101,7 @@ class GoogleSearchTool(GeminiNativeTool):
         )
 
     def to_gemini_tool(self) -> Any:
+        """Return the SDK ``Tool`` that enables server-side Google Search."""
         from google.genai import types  # type: ignore[import]
         return types.Tool(google_search=types.GoogleSearch())
 
@@ -145,6 +146,7 @@ class GeminiUrlContextTool(GeminiNativeTool):
         )
 
     def to_gemini_tool(self) -> Any:
+        """Return the SDK ``Tool`` that enables server-side URL context fetching."""
         from google.genai import types  # type: ignore[import]
         return types.Tool(url_context=types.UrlContext())
 
@@ -189,5 +191,6 @@ class GeminiCodeExecutionTool(GeminiNativeTool):
         )
 
     def to_gemini_tool(self) -> Any:
+        """Return the SDK ``Tool`` that enables server-side code execution."""
         from google.genai import types  # type: ignore[import]
         return types.Tool(code_execution=types.ToolCodeExecution())

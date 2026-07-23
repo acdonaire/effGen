@@ -531,6 +531,7 @@ class ImageCaptionTool(BaseTool):
         )
 
     def validate_parameters(self, **kwargs: Any) -> tuple[bool, str | None]:
+        """Validate parameters, letting raw ``image_bytes`` pass the string check."""
         if isinstance(kwargs.get("image_bytes"), bytes | bytearray):
             kwargs = dict(kwargs)
             kwargs["image_bytes"] = "__raw_bytes__"

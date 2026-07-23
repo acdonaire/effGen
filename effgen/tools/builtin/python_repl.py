@@ -163,6 +163,7 @@ class _Worker:
 
 
 def signal_SIGKILL() -> int:
+    """Return the platform's ``SIGKILL`` signal number."""
     import signal
 
     return signal.SIGKILL

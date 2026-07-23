@@ -419,6 +419,7 @@ def _run_one(namespace: dict, req: dict) -> dict:
 
 
 def main() -> int:
+    """Worker loop: read one JSON request per stdin line, write one JSON reply."""
     _install_parent_death_signal()
     _install_audit_hook()
     namespace: dict = {}

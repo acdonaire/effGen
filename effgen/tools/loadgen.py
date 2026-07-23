@@ -77,6 +77,8 @@ _MULTI_TOOL_EXPRESSIONS: list[str] = [
 
 
 class LoadScenario(str, Enum):
+    """Prompt mix used by the load generator."""
+
     FIXED = "fixed"
     SYNTHETIC = "synthetic"
     MULTI_TOOL = "multi_tool"
@@ -184,6 +186,7 @@ class LoadReport:
     raw_results: list[RequestResult] = field(default_factory=list, repr=False)
 
     def to_dict(self, include_raw: bool = False) -> dict[str, Any]:
+        """Return the report as a JSON-serializable dict (raw samples optional)."""
         drain_s = round(self.duration - self.requested_duration, 3)
         d = {
             "scenario": self.scenario,

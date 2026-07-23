@@ -93,9 +93,10 @@ _DENY_FILENAME_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 
 def is_credential_filename(name: str) -> bool:
-    """True if *name* (a bare filename, not a full path) matches a common
-    credentials-file shape (``.env``, ``id_rsa``, ``credentials``, ...) — the
-    same coverage :data:`_DENY_FILENAME_PATTERNS` gives the deny-list default
+    """True when the bare filename *name* looks like a credentials file.
+
+    Matches common credentials-file shapes (``.env``, ``id_rsa``,
+    ``credentials``, ...) — the same coverage :data:`_DENY_FILENAME_PATTERNS` gives the deny-list default
     above, exposed for tools (e.g. ``FileOperations``) that enforce their own
     allow-/deny-list confinement but want the same filename awareness.
     """

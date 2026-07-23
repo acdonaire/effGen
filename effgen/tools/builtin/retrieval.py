@@ -94,6 +94,7 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
         return self._model
 
     def embed(self, texts: list[str]) -> np.ndarray:
+        """Return one sentence-transformer vector per input text."""
         model = self._load_model()
         embeddings = model.encode(texts, convert_to_numpy=True)
         return embeddings
@@ -123,11 +124,13 @@ class SimpleEmbedding(EmbeddingProvider):
         return self._vectorizer
 
     def fit(self, texts: list[str]):
+        """Fit the TF-IDF vocabulary on *texts*."""
         vectorizer = self._get_vectorizer()
         vectorizer.fit(texts)
         self._fitted = True
 
     def embed(self, texts: list[str]) -> np.ndarray:
+        """Return one TF-IDF vector per input text (fits on first call)."""
         vectorizer = self._get_vectorizer()
         if not self._fitted:
             embeddings = vectorizer.fit_transform(texts).toarray()
@@ -145,6 +148,7 @@ class ChunkingStrategy:
     """Base chunking strategy."""
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
+        """Split *text* into :class:`Document` chunks."""
         raise NotImplementedError("Subclasses must implement chunk()")
 
     def split_text(self, text: str) -> list[str]:
@@ -165,6 +169,7 @@ class FixedSizeChunker(ChunkingStrategy):
         self.overlap = overlap
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
+        """Split into fixed-size character windows with the configured overlap."""
         chunks = []
         start = 0
         chunk_num = 0
@@ -213,6 +218,7 @@ class SentenceChunker(ChunkingStrategy):
         return re.split(r'(?<=[.!?])\s+', text.strip())
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
+        """Group whole sentences into chunks up to the size limit."""
         sentences = self._split_sentences(text)
         if not sentences:
             return [Document(id=f"{doc_id}_chunk_0", content=text, metadata={"parent_doc_id": doc_id, "chunking": "sentence"})]
@@ -260,6 +266,7 @@ class ParagraphChunker(ChunkingStrategy):
         self.max_chunk_size = max_chunk_size
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
+        """Group whole paragraphs into chunks up to the size limit."""
         paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
         if not paragraphs:
             return [Document(id=f"{doc_id}_chunk_0", content=text, metadata={"parent_doc_id": doc_id, "chunking": "paragraph"})]
@@ -340,6 +347,7 @@ class RecursiveChunker(ChunkingStrategy):
         return result
 
     def chunk(self, text: str, doc_id: str = "doc") -> list[Document]:
+        """Split by trying each separator in order until pieces fit the limit."""
         pieces = self._split(text, self.separators)
         chunks = []
         for i, piece in enumerate(pieces):
