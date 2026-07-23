@@ -218,10 +218,12 @@ def get_model_info(model_name: str) -> dict:
 
 
 def supports_thinking(model_name: str) -> bool:
+    """True when the catalog marks *model_name* as supporting extended thinking."""
     return get_model_info(model_name).get("supports_thinking", False)
 
 
 def get_context_length(model_name: str) -> int:
+    """Return the context window size (tokens) for *model_name*."""
     return get_model_info(model_name)["context"]
 
 

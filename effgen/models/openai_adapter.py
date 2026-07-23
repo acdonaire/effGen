@@ -1248,9 +1248,11 @@ class OpenAIAdapter(FunctionCallingModel):
     # ------------------------------------------------------------------
 
     def supports_function_calling(self) -> bool:
+        """True: OpenAI chat models support native function calling."""
         return True
 
     def supports_tool_calling(self) -> bool:
+        """True when the catalog marks this model as supporting native tools."""
         return OPENAI_MODELS.get(self.model_name, {}).get("supports_native_tools", True)
 
     def is_reasoning_model(self) -> bool:
@@ -1280,15 +1282,19 @@ class OpenAIAdapter(FunctionCallingModel):
     # ------------------------------------------------------------------
 
     def get_context_length(self) -> int:
+        """Return the model's context window size in tokens."""
         return self._context_length
 
     def get_total_cost(self) -> float:
+        """Cumulative cost (USD) charged to this adapter instance."""
         return self.total_cost
 
     def get_total_tokens(self) -> int:
+        """Cumulative tokens (prompt + completion) used by this adapter instance."""
         return self.total_tokens
 
     def reset_usage_stats(self) -> None:
+        """Reset the cumulative cost and token counters to zero."""
         self.total_cost = 0.0
         self.total_tokens = 0
         logger.info("Usage statistics reset")
@@ -1298,6 +1304,7 @@ class OpenAIAdapter(FunctionCallingModel):
     # ------------------------------------------------------------------
 
     def unload(self) -> None:
+        """Close the client and mark the adapter unloaded."""
         if self.client is not None:
             logger.info(
                 f"Closing OpenAI client. Total cost: ${self.total_cost:.6f}, "

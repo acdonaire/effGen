@@ -719,9 +719,7 @@ def streaming_models() -> list[str]:
 
 
 def refresh_models(api_token: str | None = None) -> dict[str, Any]:
-    """
-    Fetch the live Replicate language-models catalog and compare with the
-    bundled registry.  Returns a drift report.
+    """Fetch the live Replicate catalog and report drift against the bundled registry.
 
     This function makes live HTTP requests to the Replicate API.  It does NOT
     modify the in-memory ``REPLICATE_MODELS`` dict — it only reports drift so

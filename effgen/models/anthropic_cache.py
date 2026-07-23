@@ -142,9 +142,10 @@ def validate_breakpoint_count(
     messages: list[dict] | None,
     tools: list[dict] | None,
 ) -> None:
-    """
-    Raise ``ValueError`` if the total ``cache_control`` marker count exceeds
-    ``MAX_CACHE_BREAKPOINTS`` (4).
+    """Reject requests carrying more than ``MAX_CACHE_BREAKPOINTS`` (4) cache markers.
+
+    Raises ``ValueError`` when the total ``cache_control`` marker count across
+    system/messages/tools exceeds the limit.
 
     Removal priority if you need to trim: system-prompt last block > last tool
     spec > message blocks.
@@ -162,9 +163,7 @@ def apply_cache_to_system(
     system_prompt: str | list[dict],
     ttl: CacheTTL = "5m",
 ) -> list[dict]:
-    """
-    Convert *system_prompt* to a list of content blocks with ``cache_control``
-    on the **last** block.
+    """Convert *system_prompt* to content blocks with ``cache_control`` on the last one.
 
     If the input is already a list, the last block is marked and a new list is
     returned (originals are not mutated).  A plain string becomes a single

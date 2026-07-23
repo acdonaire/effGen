@@ -319,6 +319,7 @@ class HFInferenceAdapter(BaseModel):
         return TokenCount(count=count, model_name=self.model_name)
 
     def get_context_length(self) -> int:
+        """Return the model's context window size (8192 when unknown)."""
         return self._info.get("context", 8_192)
 
     # ------------------------------------------------------------------
@@ -1096,12 +1097,15 @@ class HFInferenceAdapter(BaseModel):
     # ------------------------------------------------------------------
 
     def supports_tool_calling(self) -> bool:
+        """True when the catalog marks this model as supporting native tools."""
         return bool(self._info.get("supports_native_tools", False))
 
     def supports_streaming(self) -> bool:
+        """True: HF Inference chat endpoints stream."""
         return True
 
     def get_endpoint_url(self) -> str | None:
+        """Return the dedicated-endpoint URL, or ``None`` for serverless."""
         return self._endpoint_url
 
     # ------------------------------------------------------------------

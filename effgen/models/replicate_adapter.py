@@ -296,6 +296,7 @@ class ReplicateAdapter(BaseModel):
         return TokenCount(count=count, model_name=self.model_name)
 
     def get_context_length(self) -> int:
+        """Return the model's context window size (8192 when unknown)."""
         return self._info.get("context", 8_192)
 
     # ------------------------------------------------------------------
@@ -1097,12 +1098,15 @@ class ReplicateAdapter(BaseModel):
     # ------------------------------------------------------------------
 
     def supports_tool_calling(self) -> bool:
+        """True when the catalog marks this model as supporting native tools."""
         return bool(self._info.get("supports_native_tools", False))
 
     def supports_streaming(self) -> bool:
+        """True when the catalog marks this model as streaming-capable."""
         return bool(self._info.get("supports_streaming", True))
 
     def get_cost_per_second(self) -> float:
+        """Hardware cost per second (USD) for time-billed models; 0.0 if token-billed."""
         return float(self._info.get("cost_per_second_usd", 0.0))
 
 

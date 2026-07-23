@@ -137,6 +137,7 @@ class AnthropicAdapter(FunctionCallingModel):
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def load(self) -> None:
+        """Initialize the Anthropic client (raises when the SDK is not installed)."""
         try:
             from anthropic import Anthropic
         except ImportError as e:
@@ -174,6 +175,7 @@ class AnthropicAdapter(FunctionCallingModel):
             raise RuntimeError(f"Anthropic initialization failed: {e}") from e
 
     def unload(self) -> None:
+        """Close the client and mark the adapter unloaded."""
         if self.client is not None:
             logger.info(
                 f"Closing Anthropic client. Total cost: ${self.total_cost:.4f}, "
@@ -938,14 +940,17 @@ class AnthropicAdapter(FunctionCallingModel):
     # ── Capabilities ──────────────────────────────────────────────────────
 
     def supports_function_calling(self) -> bool:
+        """True when the model supports native tool/function calling."""
         return get_model_info(self.model_name).get("supports_native_tools", True)
 
     def supports_tool_calling(self) -> bool:
+        """Alias for :meth:`supports_function_calling`."""
         return self.supports_function_calling()
 
     # ── Token counting ────────────────────────────────────────────────────
 
     def count_tokens(self, text: str) -> TokenCount:
+        """Count tokens via the Anthropic API (length/4 approximation on failure)."""
         if not self._is_loaded:
             raise not_loaded_error("anthropic", self.model_name, "count_tokens")
 
@@ -962,15 +967,19 @@ class AnthropicAdapter(FunctionCallingModel):
     # ── Context / usage ───────────────────────────────────────────────────
 
     def get_context_length(self) -> int:
+        """Return the model's context window size in tokens."""
         return self._context_length
 
     def get_total_cost(self) -> float:
+        """Cumulative cost (USD) charged to this adapter instance."""
         return self.total_cost
 
     def get_total_tokens(self) -> int:
+        """Cumulative tokens (prompt + completion) used by this adapter instance."""
         return self.total_tokens
 
     def reset_usage_stats(self) -> None:
+        """Reset the cumulative cost and token counters to zero."""
         self.total_cost = 0.0
         self.total_tokens = 0
         logger.info("Usage statistics reset")

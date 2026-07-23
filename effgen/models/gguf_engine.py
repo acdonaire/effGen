@@ -60,6 +60,7 @@ class GGUFEngine(BaseModel):
 
     # ------------------------------------------------------------------ load/unload
     def load(self) -> None:
+        """Load the GGUF file with llama-cpp-python (raises when absent)."""
         try:
             from llama_cpp import Llama  # type: ignore
         except ImportError as exc:
@@ -91,6 +92,7 @@ class GGUFEngine(BaseModel):
         }
 
     def unload(self) -> None:
+        """Release the llama.cpp model handle."""
         self._llm = None
         self._is_loaded = False
 
@@ -117,6 +119,7 @@ class GGUFEngine(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
+        """Generate a completion for *prompt* and stamp usage metadata."""
         if not self._is_loaded:
             self.load()
         params = self._to_kwargs(config)
@@ -150,6 +153,7 @@ class GGUFEngine(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[str]:
+        """Yield completion text chunks for *prompt* as they are produced."""
         if not self._is_loaded:
             self.load()
         params = self._to_kwargs(config)
@@ -166,6 +170,7 @@ class GGUFEngine(BaseModel):
             ) from exc
 
     def count_tokens(self, text: str) -> TokenCount:
+        """Tokenize *text* with the model's own tokenizer and return the count."""
         if not self._is_loaded:
             self.load()
         try:
@@ -178,4 +183,5 @@ class GGUFEngine(BaseModel):
         return TokenCount(count=len(tokens), model_name=self.model_name)
 
     def get_context_length(self) -> int:
+        """Return the configured context window size (``n_ctx``)."""
         return self.n_ctx

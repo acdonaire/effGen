@@ -170,6 +170,7 @@ class MLXVLMAdapter(BaseModel):
 
     @property
     def loaded(self) -> bool:
+        """True while the MLX-VLM engine is loaded."""
         return self._is_loaded and self._engine is not None
 
     # ------------------------------------------------------------------
