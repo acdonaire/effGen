@@ -22,6 +22,8 @@ from effgen.cli.commands._shared import _print_group_help, resolve_provider_name
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
 
+logger = logging.getLogger(__name__)
+
 
 def models_commands(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Model management commands.
@@ -100,7 +102,7 @@ def local_cached_models(cli: "CLIInterface") -> list[dict]:
                 "complete": bool(weight_files),
             })
     except Exception as e:  # noqa: BLE001 - cache scan is best-effort
-        logging.debug(f"HF cache scan failed: {e}")
+        logger.debug(f"HF cache scan failed: {e}")
     return out
 
 

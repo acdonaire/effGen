@@ -33,6 +33,8 @@ from effgen.cli.commands._shared import (
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
 
+logger = logging.getLogger(__name__)
+
 
 def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
     """
@@ -597,7 +599,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                         try:
                             tools.append(cli.tool_registry.get_tool_sync(name))
                         except Exception as e:
-                            logging.debug(f"Failed to load default tool {name}: {e}")
+                            logger.debug(f"Failed to load default tool {name}: {e}")
 
             # Create agent configuration
             agent_config = AgentConfig(
@@ -843,7 +845,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             try:
                 agent.close()
             except Exception as e:
-                logging.debug(f"Agent close failed: {e}")
+                logger.debug(f"Agent close failed: {e}")
 
 
 def stream_tokens(cli: "CLIInterface", token_iter: Iterable[str], *, animate: bool) -> str:

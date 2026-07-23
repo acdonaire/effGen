@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
 
+logger = logging.getLogger(__name__)
+
 
 def tools_commands(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Tool management commands.
@@ -65,7 +67,7 @@ def tools_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         try:
             return cli.tool_registry.get_metadata(name)
         except Exception as e:
-            logging.debug(f"Error getting metadata for {name}: {e}")
+            logger.debug(f"Error getting metadata for {name}: {e}")
             return None
 
     if category_filter:
@@ -113,7 +115,7 @@ def tools_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                     metadata.description[:50] + "..." if len(metadata.description) > 50 else metadata.description
                 )
             except Exception as e:
-                logging.debug(f"Error getting metadata for {tool_name}: {e}")
+                logger.debug(f"Error getting metadata for {tool_name}: {e}")
 
         cli.console.print(table)
     else:

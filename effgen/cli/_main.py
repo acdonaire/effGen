@@ -206,6 +206,8 @@ from effgen.ui.tables import (  # noqa: F401 - re-export
 from effgen.ui.theme import CODE_THEME  # noqa: F401 - module attribute for command modules
 from effgen.ui.theme import get_console as _get_console
 
+logger = logging.getLogger(__name__)
+
 # Commands that render their own failures (a classified message pointing at the
 # fix, a red error panel). For these, a raw ``<timestamp> - <logger> - ERROR``
 # console line from the library beneath the framed message is duplicate noise at
@@ -2203,7 +2205,7 @@ def _handle_resume_command(args, cli) -> int:
         try:
             agent.close()
         except Exception as e:  # noqa: BLE001
-            logging.debug(f"Agent close after resume failed: {e}")
+            logger.debug(f"Agent close after resume failed: {e}")
 
 
 def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
@@ -2264,7 +2266,7 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
                 try:
                     tools.append(cli.tool_registry.get_tool_sync("calculator"))
                 except Exception as e:  # noqa: BLE001
-                    logging.debug(f"quickstart: calculator load failed: {e}")
+                    logger.debug(f"quickstart: calculator load failed: {e}")
 
         agent_config = AgentConfig(
             name="quickstart-agent",
@@ -2365,7 +2367,7 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
             try:
                 agent.close()
             except Exception as e:  # noqa: BLE001
-                logging.debug(f"quickstart: agent close failed: {e}")
+                logger.debug(f"quickstart: agent close failed: {e}")
 
 
 def _handle_prompts_command(args, cli: "CLIInterface") -> int:

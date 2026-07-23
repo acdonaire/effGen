@@ -63,6 +63,8 @@ except Exception:  # pragma: no cover - pydantic always present with [server]
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
 
+logger = logging.getLogger(__name__)
+
 
 def _general_purpose_tool_names(registry: Any, limit: int = 5) -> list:
     """Pick up to *limit* model-agnostic tool names for the convenience routes.
@@ -275,7 +277,7 @@ def register_convenience_routes(cli: "CLIInterface", app: Any) -> None:
                     try:
                         tools.append(await app.state.cli.tool_registry.get_tool(name))
                     except Exception as tool_err:  # noqa: BLE001
-                        logging.debug("Failed to load tool %s: %s", name, tool_err)
+                        logger.debug("Failed to load tool %s: %s", name, tool_err)
                 agent_instance = _main.Agent(_main.AgentConfig(
                     name="api-agent",
                     model=model_id,
@@ -299,7 +301,7 @@ def register_convenience_routes(cli: "CLIInterface", app: Any) -> None:
                 },
             })
         except Exception as e:  # noqa: BLE001
-            logging.exception("Error running task")
+            logger.exception("Error running task")
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/slo")
@@ -407,4 +409,4 @@ def register_convenience_routes(cli: "CLIInterface", app: Any) -> None:
                 finally:
                     agent_instance.close()  # release per-turn agent resources
         except WebSocketDisconnect:
-            logging.info("WebSocket client disconnected")
+            logger.info("WebSocket client disconnected")
