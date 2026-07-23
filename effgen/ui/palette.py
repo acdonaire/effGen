@@ -21,6 +21,9 @@ Nothing here imports anything heavier than the standard library.
 
 from __future__ import annotations
 
+import sys
+from typing import Any
+
 # ---------------------------------------------------------------------------
 # Status → semantic role. One mapping shared by every surface.
 # ---------------------------------------------------------------------------
@@ -284,3 +287,134 @@ DASHBOARD_LIGHT: dict[str, str] = {
     # Light-theme bar fills are dark, so white label ink reads on them.
     "wf-label": "#ffffff",
 }
+
+
+# ---------------------------------------------------------------------------
+# Brand identity — the named product colors, one table for both surfaces.
+# ---------------------------------------------------------------------------
+#
+# These are the *named* identity colors. Their values point at the ones the
+# dashboard already uses (see DASHBOARD_DARK/LIGHT), so the terminal wordmark and
+# the web wordmark cannot drift apart. A test cross-checks this lockstep.
+BRAND_COLORS: dict[str, str] = {
+    "bolt-indigo": "#818cf8",  # == DASHBOARD_DARK["accent"]
+    "bolt-cyan": "#22d3ee",  # == DASHBOARD_DARK["accent2"]
+    "bolt-indigo-dark": "#4f46e5",  # == DASHBOARD_LIGHT["accent"]
+    "bolt-cyan-dark": "#0e7490",  # == DASHBOARD_LIGHT["accent2"]
+}
+
+# The indigo→cyan ramp the logo gradient interpolates across, per surface tone.
+# The endpoints are the named brand colors above; the middle stops are chosen to
+# read as a smooth sweep in a truecolor/256-color terminal.
+BRAND_GRADIENT_STOPS: tuple[str, ...] = ("#818cf8", "#6ea2f2", "#4dbdf0", "#22d3ee")
+_BRAND_GRADIENT_LIGHT: tuple[str, ...] = ("#4f46e5", "#3a6fd8", "#1f8fc0", "#0e7490")
+
+# 16-color terminals cannot show the hex ramp, so each theme names two ANSI
+# stand-ins (documented as the approximations of indigo/cyan). ``monochrome``
+# opts out of hue entirely — the logo is rendered bold instead.
+_BRAND_NAMED_RAMP: dict[str, tuple[str, ...]] = {
+    "default": ("magenta", "cyan"),
+    "high-contrast": ("bright_magenta", "bright_cyan"),
+    "light": ("magenta", "blue"),
+    "monochrome": (),
+}
+
+
+def brand_gradient_stops(theme: str | None = None) -> tuple[str, ...]:
+    """Truecolor hex stops for the logo gradient under *theme*.
+
+    Returns an empty tuple for ``monochrome`` (no hue), the darker light-surface
+    ramp for ``light``, and the indigo→cyan ramp otherwise.
+    """
+    resolved = normalize_theme_name(theme) or DEFAULT_THEME_NAME
+    if resolved == "monochrome":
+        return ()
+    if resolved == "light":
+        return _BRAND_GRADIENT_LIGHT
+    return BRAND_GRADIENT_STOPS
+
+
+def brand_named_ramp(theme: str | None = None) -> tuple[str, ...]:
+    """The two ANSI stand-in colors for the logo on a 16-color terminal."""
+    resolved = normalize_theme_name(theme) or DEFAULT_THEME_NAME
+    return _BRAND_NAMED_RAMP.get(resolved, _BRAND_NAMED_RAMP["default"])
+
+
+# ---------------------------------------------------------------------------
+# Canonical glyph table — one source for every semantic glyph the CLI prints,
+# with a pure-ASCII fallback for streams that cannot encode the Unicode form.
+# ---------------------------------------------------------------------------
+#
+# On a UTF-8 terminal ``glyph(name)`` returns the same character the CLI has
+# always printed, so routing existing literals through it is byte-preserving.
+# On a non-UTF-8 stream (e.g. ``PYTHONIOENCODING=ascii`` or a legacy codepage)
+# it returns the ASCII stand-in instead of raising ``UnicodeEncodeError``.
+GLYPHS: dict[str, str] = {
+    "success": "✓",
+    "error": "✗",
+    "warning": "⚠",
+    "info": "ℹ",
+    "tip": "💡",
+    "welcome": "👋",
+    "reasoning": "🧠",
+    "tool": "🔧",
+    "running": "◐",
+    "pending": "○",
+    "skipped": "⊘",
+    "done": "●",
+    "bullet": "•",
+    "arrow": "→",
+    "prompt": "❯",
+    "bolt": "⚡",
+}
+
+GLYPHS_ASCII: dict[str, str] = {
+    "success": "+",
+    "error": "x",
+    "warning": "!",
+    "info": "i",
+    "tip": "*",
+    "welcome": "",
+    "reasoning": "",
+    "tool": "",
+    "running": "*",
+    "pending": "o",
+    "skipped": "-",
+    "done": "*",
+    "bullet": "-",
+    "arrow": "->",
+    "prompt": ">",
+    "bolt": ">",
+}
+
+# The characters a terminal must be able to encode for the Unicode presentation
+# (glyph table + logo art). If any of these fail to encode, fall back to ASCII.
+_UNICODE_PROBE = "".join(GLYPHS.values()) + "▀▄█·"
+
+
+def supports_unicode(stream: Any = None) -> bool:
+    """True when *stream* (default ``stdout``) can encode the CLI's Unicode glyphs.
+
+    Selects between the Unicode and ASCII presentations by asking the stream's
+    encoding to encode a probe string, rather than guessing from the platform.
+    A stream with no discoverable encoding is treated as ASCII-only.
+    """
+    out = stream if stream is not None else sys.stdout
+    encoding = getattr(out, "encoding", None)
+    if not encoding:
+        return False
+    try:
+        _UNICODE_PROBE.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
+def glyph(name: str, stream: Any = None) -> str:
+    """Return the semantic glyph *name*, ASCII stand-in when *stream* is not UTF-8.
+
+    Unknown names return ``""`` so a caller never prints a stray placeholder.
+    """
+    if supports_unicode(stream):
+        return GLYPHS.get(name, "")
+    return GLYPHS_ASCII.get(name, "")
