@@ -17,7 +17,7 @@ try:
 except Exception:  # pragma: no cover
     BaseModel = object  # type: ignore
 
-    def Field(default=None, **kwargs):  # type: ignore
+    def Field(default: Any = None, **kwargs: Any) -> Any:  # type: ignore
         """Stand-in for ``pydantic.Field`` when pydantic is not installed."""
         return default
 

@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 class ValidationError(Exception):
     """Configuration validation error."""
 
-    def __init__(self, message: str, errors: list[str] | None = None):
+    def __init__(self, message: str, errors: list[str] | None = None) -> None:
         """
         Initialize validation error.
 
@@ -85,7 +85,7 @@ class ConfigValidator:
     - Security (no plaintext secrets in non-key files)
     """
 
-    def __init__(self, schema_dir: Path | None = None):
+    def __init__(self, schema_dir: Path | None = None) -> None:
         """
         Initialize validator.
 

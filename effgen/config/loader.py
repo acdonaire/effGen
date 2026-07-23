@@ -21,7 +21,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from types import TracebackType
+from typing import Any, Literal
 
 import yaml
 
@@ -111,7 +112,7 @@ class ConfigFileHandler(FileSystemEventHandler if WATCHDOG_AVAILABLE else object
     File system event handler for configuration hot reloading.
     """
 
-    def __init__(self, loader: "ConfigLoader", callback: Callable | None = None):
+    def __init__(self, loader: "ConfigLoader", callback: Callable | None = None) -> None:
         """
         Initialize handler.
 
@@ -123,7 +124,7 @@ class ConfigFileHandler(FileSystemEventHandler if WATCHDOG_AVAILABLE else object
         self.callback = callback
         self.last_modified = {}
 
-    def on_modified(self, event):
+    def on_modified(self, event: Any) -> None:
         """Handle file modification event."""
         if event.is_directory:
             return
@@ -187,7 +188,7 @@ class ConfigLoader:
         reload_callback: Callable | None = None,
         use_secret_manager: bool = False,
         secret_manager_type: str | None = None,
-    ):
+    ) -> None:
         """
         Initialize ConfigLoader.
 
@@ -614,11 +615,16 @@ class ConfigLoader:
             self._observer = None
             logger.info("Hot reload stopped")
 
-    def __enter__(self):
+    def __enter__(self) -> ConfigLoader:
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> Literal[False]:
         """Context manager exit."""
         self.stop()
         return False
