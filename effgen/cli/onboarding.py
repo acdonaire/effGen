@@ -40,6 +40,7 @@ __all__ = [
     "pick_tip",
     "maybe_print_tip",
     "first_run_pending",
+    "mark_welcomed",
     "maybe_show_first_run_welcome",
     "suggest",
     "did_you_mean",
@@ -197,24 +198,64 @@ def first_run_pending() -> bool:
     return not _state_file(".welcomed").exists()
 
 
+def mark_welcomed() -> None:
+    """Record the one-time welcome flag so it never shows again."""
+    flag = _state_file(".welcomed")
+    try:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text("1\n")
+    except Exception:  # noqa: BLE001 - never let state IO break a command
+        pass
+
+
+def _render_welcome_panel() -> bool:
+    """Render the welcome inside a branded panel on the real terminal.
+
+    Returns False (so the caller prints the plain text instead) when ``rich`` is
+    unavailable or no console can be built.
+    """
+    from effgen.ui.theme import get_console, rich_available
+
+    if not rich_available():
+        return False
+    console = get_console()
+    if console is None:
+        return False
+    from rich.panel import Panel
+    from rich.text import Text
+
+    from effgen.ui import brand
+
+    title = brand.wordmark(stream=getattr(console, "file", None))
+    console.print(
+        Panel(
+            Text(_WELCOME_TEXT.strip()),
+            title=f"[effgen.title]{title}[/effgen.title]",
+            border_style="effgen.accent",
+            padding=(1, 2),
+        )
+    )
+    return True
+
+
 def maybe_show_first_run_welcome(*, quiet: bool = False, stream: Any = None) -> bool:
     """Show the one-time welcome on first interactive use; return True if shown.
 
     Records a flag under ``~/.effgen`` so it never shows again. Silent under
     ``--quiet``/non-interactive/CI (but still records the flag so a later
-    interactive run does not surprise the user with a stale welcome).
+    interactive run does not surprise the user with a stale welcome). On a real
+    terminal the welcome is drawn in a branded panel; when an explicit *stream*
+    is given (or ``rich`` is absent) the plain text is written to it.
     """
     flag = _state_file(".welcomed")
     if flag.exists():
         return False
     # Mark as welcomed regardless, so we never nag across contexts.
-    try:
-        flag.parent.mkdir(parents=True, exist_ok=True)
-        flag.write_text("1\n")
-    except Exception:  # noqa: BLE001
-        pass
+    mark_welcomed()
     if quiet or not is_interactive():
         return False
+    if stream is None and _render_welcome_panel():
+        return True
     out = stream if stream is not None else sys.stdout
     try:
         print(_WELCOME_TEXT, file=out)

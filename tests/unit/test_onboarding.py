@@ -116,6 +116,32 @@ def test_first_run_welcome_silent_when_quiet_but_records_flag(isolated_home, mon
     assert ob.first_run_pending() is False
 
 
+def test_mark_welcomed_is_idempotent(isolated_home):
+    assert ob.first_run_pending() is True
+    ob.mark_welcomed()
+    assert ob.first_run_pending() is False
+    ob.mark_welcomed()  # no error on a second call
+    assert ob.first_run_pending() is False
+
+
+def test_first_run_welcome_branded_panel_keeps_content(isolated_home, monkeypatch):
+    # With no explicit stream and rich available, the welcome renders inside a
+    # branded panel — the welcome text and the doctor pointer must survive.
+    from rich.console import Console
+
+    from effgen.ui.theme import get_theme
+
+    buf = io.StringIO()
+    panel_console = Console(file=buf, force_terminal=True, width=90, theme=get_theme())
+    monkeypatch.setattr(ob, "is_interactive", lambda: True)
+    monkeypatch.setattr("effgen.ui.theme.get_console", lambda **kw: panel_console)
+    assert ob.maybe_show_first_run_welcome(quiet=False, stream=None) is True
+    out = buf.getvalue()
+    assert "Welcome to effGen" in out
+    assert "effgen doctor" in out
+    assert ob.first_run_pending() is False
+
+
 # --------------------------------------------------------------------------- #
 # did you mean
 # --------------------------------------------------------------------------- #
