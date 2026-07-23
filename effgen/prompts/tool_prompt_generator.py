@@ -33,7 +33,7 @@ class ToolPromptGenerator:
         "gemma": ["gemma"],
     }
 
-    def __init__(self, tools: list[BaseTool], model_name: str | None = None):
+    def __init__(self, tools: list[BaseTool], model_name: str | None = None) -> None:
         """
         Initialize the generator.
 

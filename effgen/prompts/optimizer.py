@@ -174,7 +174,7 @@ class PromptOptimizer:
         r'(?:please\s+)?(?:make sure|ensure|be sure)\s+(?:to\s+)?',  # Redundant politeness
     ]
 
-    def __init__(self, config: OptimizationConfig | None = None):
+    def __init__(self, config: OptimizationConfig | None = None) -> None:
         """
         Initialize optimizer
 

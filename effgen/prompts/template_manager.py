@@ -41,7 +41,7 @@ class PromptTemplate:
         if self.updated_at is None:
             self.updated_at = datetime.now()
 
-    def render(self, **kwargs) -> str:
+    def render(self, **kwargs: Any) -> str:
         """Render template with provided variables."""
         template = Template(self.template)
         return template.render(**kwargs)
@@ -52,7 +52,7 @@ class PromptTemplate:
         parsed = env.parse(self.template)
         return list(meta.find_undeclared_variables(parsed))
 
-    def validate_inputs(self, **kwargs) -> bool:
+    def validate_inputs(self, **kwargs: Any) -> bool:
         """Validate that all required variables are provided."""
         required = set(self.get_required_variables())
         provided = set(kwargs.keys())
@@ -155,7 +155,7 @@ class TemplateManager:
     - Variable extraction and validation
     """
 
-    def __init__(self, template_dir: str | None = None, load_defaults: bool = True):
+    def __init__(self, template_dir: str | None = None, load_defaults: bool = True) -> None:
         """
         Initialize template manager
 
@@ -335,7 +335,7 @@ class TemplateManager:
         num_examples: int = 3,
         example_style: str = "default",
         example_filter: dict[str, Any] | None = None,
-        **kwargs
+        **kwargs: Any
     ) -> str:
         """
         Render a template with variables and optional examples.

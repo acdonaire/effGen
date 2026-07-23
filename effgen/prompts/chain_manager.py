@@ -191,7 +191,7 @@ class ChainStep:
     error: str | None = None
     retries: int = 0
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset step to initial state."""
         self.status = StepStatus.PENDING
         self.result = None
@@ -240,7 +240,7 @@ class ChainState:
     metadata: dict[str, Any] = field(default_factory=dict)
     iteration_count: int = 0
 
-    def set_variable(self, name: str, value: Any):
+    def set_variable(self, name: str, value: Any) -> None:
         """Set a variable in the chain state."""
         self.variables[name] = value
         logger.debug(f"Set variable '{name}': {str(value)[:100]}")
@@ -249,7 +249,7 @@ class ChainState:
         """Get a variable from the chain state."""
         return self.variables.get(name, default)
 
-    def set_step_result(self, step_name: str, result: Any):
+    def set_step_result(self, step_name: str, result: Any) -> None:
         """Store result from a step."""
         self.step_results[step_name] = result
         logger.debug(f"Stored result for step '{step_name}'")
@@ -328,7 +328,7 @@ class PromptChain:
     early_stopping_condition: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def add_step(self, step: ChainStep):
+    def add_step(self, step: ChainStep) -> None:
         """Add a step to the chain."""
         self.steps.append(step)
 
@@ -339,7 +339,7 @@ class PromptChain:
                 return step
         return None
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset all steps to initial state."""
         for step in self.steps:
             step.reset()
@@ -383,7 +383,7 @@ class ChainManager:
     - Hybrid chains (combination of above)
     """
 
-    def __init__(self, executor: Callable | None = None):
+    def __init__(self, executor: Callable | None = None) -> None:
         """
         Initialize chain manager
 
@@ -402,17 +402,17 @@ class ChainManager:
         logger.warning("Using default executor - no actual execution")
         return f"[SIMULATED] {prompt}"
 
-    def set_executor(self, executor: Callable):
+    def set_executor(self, executor: Callable) -> None:
         """Set the prompt executor function."""
         self.executor = executor
         logger.info("Executor function set")
 
-    def register_tool(self, name: str, tool_func: Callable):
+    def register_tool(self, name: str, tool_func: Callable) -> None:
         """Register a tool function."""
         self.tool_registry[name] = tool_func
         logger.debug(f"Registered tool: {name}")
 
-    def register_function(self, name: str, func: Callable):
+    def register_function(self, name: str, func: Callable) -> None:
         """Register a custom function."""
         self.function_registry[name] = func
         logger.debug(f"Registered function: {name}")
@@ -443,7 +443,7 @@ class ChainManager:
             logger.error(f"Failed to load chain from {filepath}: {e}")
             raise
 
-    def add_chain(self, chain: PromptChain):
+    def add_chain(self, chain: PromptChain) -> None:
         """Add a chain to the manager."""
         self.chains[chain.name] = chain
         logger.debug(f"Added chain: {chain.name}")
@@ -804,7 +804,7 @@ class ChainManager:
         self.add_chain(chain)
         return chain
 
-    def save_chain(self, chain: PromptChain, filepath: str | Path):
+    def save_chain(self, chain: PromptChain, filepath: str | Path) -> None:
         """
         Save chain to YAML file.
 

@@ -61,7 +61,7 @@ class AgentSystemPromptBuilder:
     6. Fallback instructions
     """
 
-    def __init__(self, model_name: str | None = None):
+    def __init__(self, model_name: str | None = None) -> None:
         """
         Initialize the prompt builder.
 
