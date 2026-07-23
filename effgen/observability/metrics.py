@@ -60,9 +60,7 @@ def _default_buckets() -> tuple[float, ...]:
 
 @dataclass
 class LabeledHistogram:
-    """
-    A Prometheus-style histogram with configurable bucket boundaries
-    and arbitrary label sets.
+    """A Prometheus-style histogram with configurable buckets and arbitrary labels.
 
     Thread-safe via a per-instance lock.
     """
@@ -203,6 +201,7 @@ class LabeledCounter:
         return self._data.get(key, 0.0)
 
     def reset(self) -> None:
+        """Clear every labeled series."""
         with self._lock:
             self._data.clear()
 
@@ -224,9 +223,9 @@ class LabeledCounter:
 
 @dataclass
 class LabeledGauge:
-    """
-    A Prometheus-style gauge (value can go up or down) with arbitrary label
-    sets. Unlike :class:`LabeledCounter`, ``set()`` replaces the value for a
+    """A Prometheus-style gauge (up or down) with arbitrary label sets.
+
+    Unlike :class:`LabeledCounter`, ``set()`` replaces the value for a
     label set rather than accumulating it — suited to point-in-time state
     like a circuit breaker's current state or a bulkhead's current occupancy.
 
@@ -255,6 +254,7 @@ class LabeledGauge:
         return self._data.get(key)
 
     def reset(self) -> None:
+        """Clear every labeled series."""
         with self._lock:
             self._data.clear()
 

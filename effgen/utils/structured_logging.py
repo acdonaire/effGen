@@ -85,9 +85,9 @@ def LogRunContext(
     agent_name: str | None = None,
     session_id: str | None = None,
 ):
-    """
-    Context manager that sets run-level identifiers for all log entries
-    within its scope. Nesting is supported — inner contexts override outer.
+    """Set run-level identifiers on every log entry within the scope.
+
+    Nesting is supported — inner contexts override outer.
 
     Args:
         run_id: Unique ID for this Agent.run() invocation
@@ -119,12 +119,14 @@ def LogRunContext(
 # ---------------------------------------------------------------------------
 
 class EffGenJSONFormatter(logging.Formatter):
-    """
-    JSON formatter that automatically injects effGen context fields
-    (run_id, workflow_id, agent_name, session_id) into every log line.
+    """JSON formatter that injects effGen context fields into every log line.
+
+    The injected fields are ``run_id``, ``workflow_id``, ``agent_name`` and
+    ``session_id``.
     """
 
     def format(self, record: logging.LogRecord) -> str:
+        """Render *record* as one JSON line with the active run-context fields."""
         data: dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
@@ -202,15 +204,19 @@ class StructuredLogger:
     # -- Standard log levels (delegates to stdlib) --
 
     def debug(self, msg: str, **extra: Any) -> None:
+        """Log at DEBUG with *extra* as structured fields."""
         self._log(logging.DEBUG, msg, **extra)
 
     def info(self, msg: str, **extra: Any) -> None:
+        """Log at INFO with *extra* as structured fields."""
         self._log(logging.INFO, msg, **extra)
 
     def warning(self, msg: str, **extra: Any) -> None:
+        """Log at WARNING with *extra* as structured fields."""
         self._log(logging.WARNING, msg, **extra)
 
     def error(self, msg: str, **extra: Any) -> None:
+        """Log at ERROR with *extra* as structured fields."""
         self._log(logging.ERROR, msg, **extra)
 
     # -- Domain-specific convenience methods --
@@ -329,9 +335,9 @@ def setup_json_logging(
     level: str | int = "INFO",
     logger_name: str | None = None,
 ) -> None:
-    """
-    Configure a logger (or the root logger) to emit JSON-formatted lines
-    using EffGenJSONFormatter.
+    """Configure a logger (or the root logger) to emit JSON lines.
+
+    Installs an ``EffGenJSONFormatter`` stream handler.
 
     Args:
         level: Log level

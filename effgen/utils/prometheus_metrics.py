@@ -41,6 +41,7 @@ class Counter:
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def inc(self, amount: float = 1.0, labels: dict[str, str] | None = None) -> None:
+        """Add *amount* to the counter (to the labeled series when *labels* given)."""
         with self._lock:
             if labels:
                 key = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
@@ -49,17 +50,20 @@ class Counter:
                 self._value += amount
 
     def get(self, labels: dict[str, str] | None = None) -> float:
+        """Return the current value (of the labeled series when *labels* given)."""
         if labels:
             key = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
             return self._labels.get(key, 0.0)
         return self._value
 
     def reset(self) -> None:
+        """Zero the counter and drop every labeled series."""
         with self._lock:
             self._value = 0.0
             self._labels.clear()
 
     def export(self) -> str:
+        """Return Prometheus text-format lines for this counter."""
         lines = [f"# HELP {self.name} {self.help}", f"# TYPE {self.name} counter"]
         if self._value > 0:
             lines.append(f"{self.name} {self._value}")
@@ -84,6 +88,7 @@ class Histogram:
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def observe(self, value: float, labels: dict[str, str] | None = None) -> None:
+        """Record one observation (in the labeled series when *labels* given)."""
         with self._lock:
             if labels:
                 key = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
@@ -96,6 +101,7 @@ class Histogram:
                 self._values.append(value)
 
     def get_avg(self, labels: dict[str, str] | None = None) -> float:
+        """Return the mean of observed values (0.0 with no observations)."""
         if labels:
             key = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
             count = self._labels_count.get(key, 0)
@@ -118,6 +124,7 @@ class Histogram:
         return values[idx]
 
     def reset(self) -> None:
+        """Drop every observation, plain and labeled."""
         with self._lock:
             self._sum = 0.0
             self._count = 0
@@ -127,6 +134,7 @@ class Histogram:
             self._labels_values.clear()
 
     def export(self) -> str:
+        """Return Prometheus text-format lines for this histogram."""
         lines = [f"# HELP {self.name} {self.help}", f"# TYPE {self.name} histogram"]
         if self._count > 0:
             lines.append(f"{self.name}_sum {self._sum}")
@@ -147,6 +155,7 @@ class Gauge:
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def set(self, value: float, labels: dict[str, str] | None = None) -> None:
+        """Set the gauge (the labeled series when *labels* given) to *value*."""
         with self._lock:
             if labels:
                 key = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
@@ -155,6 +164,7 @@ class Gauge:
                 self._value = value
 
     def inc(self, amount: float = 1.0, labels: dict[str, str] | None = None) -> None:
+        """Add *amount* to the gauge (to the labeled series when *labels* given)."""
         with self._lock:
             if labels:
                 key = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
@@ -163,6 +173,7 @@ class Gauge:
                 self._value += amount
 
     def dec(self, amount: float = 1.0, labels: dict[str, str] | None = None) -> None:
+        """Subtract *amount* from the gauge (from the labeled series when given)."""
         with self._lock:
             if labels:
                 key = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
@@ -171,17 +182,20 @@ class Gauge:
                 self._value -= amount
 
     def get(self, labels: dict[str, str] | None = None) -> float:
+        """Return the current value (of the labeled series when *labels* given)."""
         if labels:
             key = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
             return self._labels.get(key, 0.0)
         return self._value
 
     def reset(self) -> None:
+        """Zero the gauge and drop every labeled series."""
         with self._lock:
             self._value = 0.0
             self._labels.clear()
 
     def export(self) -> str:
+        """Return Prometheus text-format lines for this gauge."""
         lines = [f"# HELP {self.name} {self.help}", f"# TYPE {self.name} gauge"]
         if self._value != 0.0:
             lines.append(f"{self.name} {self._value}")

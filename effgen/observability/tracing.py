@@ -173,6 +173,7 @@ if _OTEL_AVAILABLE:
             links=None,
             trace_state=None,
         ) -> SamplingResult:
+            """Record and sample every span."""
             return SamplingResult(
                 decision=Decision.RECORD_AND_SAMPLE,
                 attributes=attributes,
@@ -180,6 +181,7 @@ if _OTEL_AVAILABLE:
             )
 
         def get_description(self) -> str:  # noqa: D401
+            """Return the sampler's description string."""
             return "AlwaysOnSampler"
 
     class AlwaysOffSampler(Sampler):
@@ -195,6 +197,7 @@ if _OTEL_AVAILABLE:
             links=None,
             trace_state=None,
         ) -> SamplingResult:
+            """Drop every span."""
             return SamplingResult(
                 decision=Decision.DROP,
                 attributes=attributes,
@@ -202,6 +205,7 @@ if _OTEL_AVAILABLE:
             )
 
         def get_description(self) -> str:  # noqa: D401
+            """Return the sampler's description string."""
             return "AlwaysOffSampler"
 
     class TraceIdRatioSampler(Sampler):
@@ -223,6 +227,7 @@ if _OTEL_AVAILABLE:
 
         @property
         def ratio(self) -> float:
+            """The configured sampling ratio in [0.0, 1.0]."""
             return self._ratio
 
         def should_sample(
@@ -235,6 +240,7 @@ if _OTEL_AVAILABLE:
             links=None,
             trace_state=None,
         ) -> SamplingResult:
+            """Sample when the trace ID falls under the ratio threshold."""
             decision = (
                 Decision.RECORD_AND_SAMPLE
                 if trace_id < self._threshold
@@ -247,6 +253,7 @@ if _OTEL_AVAILABLE:
             )
 
         def get_description(self) -> str:  # noqa: D401
+            """Return the sampler's description string."""
             return f"TraceIdRatioSampler({self._ratio:.4f})"
 
     class RateLimitedSampler(Sampler):
@@ -272,6 +279,7 @@ if _OTEL_AVAILABLE:
 
         @property
         def per_second(self) -> float:
+            """The maximum number of sampled traces per second."""
             return self._per_second
 
         def _refill(self, now: float) -> None:
@@ -293,6 +301,7 @@ if _OTEL_AVAILABLE:
             links=None,
             trace_state=None,
         ) -> SamplingResult:
+            """Sample while a token is available; drop once the budget is spent."""
             now = time.monotonic()
             with self._lock:
                 self._refill(now)
@@ -308,6 +317,7 @@ if _OTEL_AVAILABLE:
             )
 
         def get_description(self) -> str:  # noqa: D401
+            """Return the sampler's description string."""
             return f"RateLimitedSampler({self._per_second}/s)"
 
     class ParentBasedSampler(Sampler):
@@ -332,6 +342,7 @@ if _OTEL_AVAILABLE:
 
         @property
         def root(self) -> Sampler:
+            """The sampler used for root spans."""
             return self._root
 
         def should_sample(
@@ -344,6 +355,7 @@ if _OTEL_AVAILABLE:
             links=None,
             trace_state=None,
         ) -> SamplingResult:
+            """Follow the parent span's decision (the root sampler for roots)."""
             return self._sdk_parent_based.should_sample(
                 parent_context,
                 trace_id,
@@ -355,50 +367,69 @@ if _OTEL_AVAILABLE:
             )
 
         def get_description(self) -> str:  # noqa: D401
+            """Return the sampler's description string."""
             return f"ParentBasedSampler(root={self._root.get_description()})"
 
 else:
     # Stub classes when OTel is not installed
 
     class AlwaysOnSampler:  # type: ignore[no-redef]
+        """No-op stand-in when OpenTelemetry is not installed."""
+
         def get_description(self) -> str:
+            """Return the sampler's description string."""
             return "AlwaysOnSampler(no-op)"
 
     class AlwaysOffSampler:  # type: ignore[no-redef]
+        """No-op stand-in when OpenTelemetry is not installed."""
+
         def get_description(self) -> str:
+            """Return the sampler's description string."""
             return "AlwaysOffSampler(no-op)"
 
     class TraceIdRatioSampler:  # type: ignore[no-redef]
+        """No-op stand-in when OpenTelemetry is not installed."""
+
         def __init__(self, ratio: float) -> None:
             self._ratio = ratio
 
         @property
         def ratio(self) -> float:
+            """The configured sampling ratio in [0.0, 1.0]."""
             return self._ratio
 
         def get_description(self) -> str:
+            """Return the sampler's description string."""
             return f"TraceIdRatioSampler({self._ratio:.4f})"
 
     class RateLimitedSampler:  # type: ignore[no-redef]
+        """No-op stand-in when OpenTelemetry is not installed."""
+
         def __init__(self, per_second: float) -> None:
             self._per_second = per_second
 
         @property
         def per_second(self) -> float:
+            """The maximum number of sampled traces per second."""
             return self._per_second
 
         def get_description(self) -> str:
+            """Return the sampler's description string."""
             return f"RateLimitedSampler({self._per_second}/s)"
 
     class ParentBasedSampler:  # type: ignore[no-redef]
+        """No-op stand-in when OpenTelemetry is not installed."""
+
         def __init__(self, root: Any) -> None:
             self._root = root
 
         @property
         def root(self) -> Any:
+            """The sampler used for root spans."""
             return self._root
 
         def get_description(self) -> str:
+            """Return the sampler's description string."""
             return f"ParentBasedSampler(root={self._root.get_description()})"
 
 

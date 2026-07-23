@@ -53,6 +53,8 @@ _TIMEOUT = 15  # seconds — explicit, never None
 # ---------------------------------------------------------------------------
 
 class AlertSeverity(str, Enum):
+    """Severity level of an alert: info, warning, or critical."""
+
     INFO = "info"
     WARNING = "warning"
     CRITICAL = "critical"
@@ -87,6 +89,7 @@ class Alert:
     """UNIX timestamp when the alert was created."""
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         d = asdict(self)
         d["severity"] = self.severity.value
         return d
@@ -363,8 +366,9 @@ def check_slo_and_alert(
     burn_rate_threshold: float = 1.0,
     severity: AlertSeverity = AlertSeverity.CRITICAL,
 ) -> dict[str, Any] | None:
-    """
-    Evaluate one SLO's current burn rate against *tracker* and fire an alert
+    """Check one SLO's burn rate and fire a webhook alert when it crosses the threshold.
+
+    Evaluates the SLO's current burn rate against *tracker* and fires an alert
     via *webhook* when it exceeds *burn_rate_threshold*.
 
     This is the reusable form of the "read the live meter, decide, fire" loop

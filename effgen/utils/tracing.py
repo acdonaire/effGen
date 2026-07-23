@@ -89,26 +89,27 @@ class NoOpSpan:
     """No-op span when OpenTelemetry is not installed."""
 
     def set_attribute(self, key: str, value: Any) -> None:
-        pass
+        """No-op."""
 
     def add_event(self, name: str, attributes: dict[str, Any] | None = None) -> None:
-        pass
+        """No-op."""
 
     def set_status(self, status: Any, description: str | None = None) -> None:
-        pass
+        """No-op."""
 
     def record_exception(self, exception: Exception) -> None:
-        pass
+        """No-op."""
 
     def update_name(self, name: str) -> None:
-        pass
+        """No-op."""
 
     @property
     def is_recording(self) -> bool:
+        """Always ``False``: nothing is recorded."""
         return False
 
     def end(self) -> None:
-        pass
+        """No-op."""
 
     def __enter__(self):
         return self
@@ -121,10 +122,12 @@ class NoOpTracer:
     """No-op tracer when OpenTelemetry is not installed."""
 
     def start_as_current_span(self, name: str, **kwargs) -> NoOpSpan:
+        """Return a no-op span."""
         return NoOpSpan()
 
     @contextmanager
     def start_span(self, name: str, **kwargs):
+        """Yield a no-op span."""
         yield NoOpSpan()
 
 
@@ -292,9 +295,7 @@ def get_trace_context() -> Any:
 
 
 def attach_trace_context(ctx: Any) -> Any:
-    """
-    Attach a parent trace context (e.g. from orchestrator) so child spans
-    are linked to the parent trace.
+    """Attach a parent trace context so child spans link to the parent trace.
 
     Args:
         ctx: Context object from get_trace_context()

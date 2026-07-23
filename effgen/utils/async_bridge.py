@@ -46,8 +46,10 @@ _blocked_loops_lock = threading.Lock()
 
 
 def is_loop_blocked(loop: asyncio.AbstractEventLoop | None) -> bool:
-    """True when *loop*'s owning thread is synchronously blocked inside a
-    :func:`run_coroutine_sync` bridge and cannot service scheduled callbacks.
+    """True when *loop* cannot service callbacks because its thread is bridge-blocked.
+
+    The owning thread is synchronously blocked inside a
+    :func:`run_coroutine_sync` bridge.
 
     A caller about to marshal work onto *loop* via
     ``asyncio.run_coroutine_threadsafe`` should check this first: if it is
