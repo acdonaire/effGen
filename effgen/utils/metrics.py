@@ -48,6 +48,7 @@ import statistics
 import threading
 import time
 from collections import defaultdict, deque
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -125,7 +126,7 @@ class ExecutionMetric:
     success: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def finish(self, success: bool = True, **metadata) -> None:
+    def finish(self, success: bool = True, **metadata: Any) -> None:
         """
         Mark the execution as finished.
 
@@ -196,7 +197,7 @@ class MetricsCollector:
         enable_resource_monitoring: bool = True,
         resource_sample_interval: float = 1.0,
         max_history_size: int = 10000,
-    ):
+    ) -> None:
         """
         Initialize the metrics collector.
 
@@ -292,7 +293,7 @@ class MetricsCollector:
         )
 
     @contextmanager
-    def track_execution(self, name: str, **metadata):
+    def track_execution(self, name: str, **metadata: Any) -> Iterator[ExecutionMetric]:
         """
         Context manager for tracking execution time.
 
@@ -334,7 +335,7 @@ class MetricsCollector:
         model: str,
         prompt_tokens: int,
         completion_tokens: int,
-        **metadata
+        **metadata: Any,
     ) -> TokenMetric:
         """
         Record token usage for a model call.

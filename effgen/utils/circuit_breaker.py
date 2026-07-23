@@ -51,7 +51,7 @@ class CircuitBreaker:
         failure_threshold: int = 3,
         cooldown_seconds: float = 60.0,
         persist_path: str | None = None,
-    ):
+    ) -> None:
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
         self._circuits: dict[str, _CoreCircuitBreaker] = {}

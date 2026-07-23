@@ -34,6 +34,7 @@ import json
 import logging
 import threading
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -84,7 +85,7 @@ def LogRunContext(
     workflow_id: str | None = None,
     agent_name: str | None = None,
     session_id: str | None = None,
-):
+) -> Iterator[None]:
     """Set run-level identifiers on every log entry within the scope.
 
     Nesting is supported — inner contexts override outer.
@@ -197,7 +198,7 @@ class StructuredLogger:
     Context fields (run_id, agent_name, etc.) are automatically injected.
     """
 
-    def __init__(self, name: str, json_mode: bool = False):
+    def __init__(self, name: str, json_mode: bool = False) -> None:
         self._logger = logging.getLogger(name)
         self._json_mode = json_mode
 

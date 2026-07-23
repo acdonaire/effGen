@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -111,22 +112,22 @@ class NoOpSpan:
     def end(self) -> None:
         """No-op."""
 
-    def __enter__(self):
+    def __enter__(self) -> NoOpSpan:
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: Any) -> None:
         pass
 
 
 class NoOpTracer:
     """No-op tracer when OpenTelemetry is not installed."""
 
-    def start_as_current_span(self, name: str, **kwargs) -> NoOpSpan:
+    def start_as_current_span(self, name: str, **kwargs: Any) -> NoOpSpan:
         """Return a no-op span."""
         return NoOpSpan()
 
     @contextmanager
-    def start_span(self, name: str, **kwargs):
+    def start_span(self, name: str, **kwargs: Any) -> Iterator[NoOpSpan]:
         """Yield a no-op span."""
         yield NoOpSpan()
 
@@ -230,7 +231,7 @@ def shutdown_tracing() -> None:
 # Span helpers — create child spans with standard effGen attributes
 # ---------------------------------------------------------------------------
 
-def trace_agent_run(agent_name: str, task: str, run_id: str | None = None):
+def trace_agent_run(agent_name: str, task: str, run_id: str | None = None) -> Any:
     """
     Create a span for an agent run.
 
@@ -246,7 +247,7 @@ def trace_agent_run(agent_name: str, task: str, run_id: str | None = None):
     return tracer.start_as_current_span("agent.run", attributes=attrs)
 
 
-def trace_agent_iterate(agent_name: str, iteration: int):
+def trace_agent_iterate(agent_name: str, iteration: int) -> Any:
     """Create a child span for a ReAct iteration."""
     tracer = get_tracer()
     return tracer.start_as_current_span(
@@ -258,7 +259,7 @@ def trace_agent_iterate(agent_name: str, iteration: int):
     )
 
 
-def trace_tool_execute(tool_name: str, tool_input: str):
+def trace_tool_execute(tool_name: str, tool_input: str) -> Any:
     """Create a child span for a tool execution."""
     tracer = get_tracer()
     return tracer.start_as_current_span(
@@ -270,7 +271,7 @@ def trace_tool_execute(tool_name: str, tool_input: str):
     )
 
 
-def trace_model_generate(model_name: str, prompt_tokens: int = 0):
+def trace_model_generate(model_name: str, prompt_tokens: int = 0) -> Any:
     """Create a child span for model generation."""
     tracer = get_tracer()
     attrs: dict[str, Any] = {"effgen.model.name": model_name}

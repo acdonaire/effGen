@@ -169,9 +169,9 @@ if _OTEL_AVAILABLE:
             trace_id: int,
             name: str,
             kind: SpanKind | None = None,
-            attributes=None,
-            links=None,
-            trace_state=None,
+            attributes: Any = None,
+            links: Any = None,
+            trace_state: Any = None,
         ) -> SamplingResult:
             """Record and sample every span."""
             return SamplingResult(
@@ -193,9 +193,9 @@ if _OTEL_AVAILABLE:
             trace_id: int,
             name: str,
             kind: SpanKind | None = None,
-            attributes=None,
-            links=None,
-            trace_state=None,
+            attributes: Any = None,
+            links: Any = None,
+            trace_state: Any = None,
         ) -> SamplingResult:
             """Drop every span."""
             return SamplingResult(
@@ -236,9 +236,9 @@ if _OTEL_AVAILABLE:
             trace_id: int,
             name: str,
             kind: SpanKind | None = None,
-            attributes=None,
-            links=None,
-            trace_state=None,
+            attributes: Any = None,
+            links: Any = None,
+            trace_state: Any = None,
         ) -> SamplingResult:
             """Sample when the trace ID falls under the ratio threshold."""
             decision = (
@@ -297,9 +297,9 @@ if _OTEL_AVAILABLE:
             trace_id: int,
             name: str,
             kind: SpanKind | None = None,
-            attributes=None,
-            links=None,
-            trace_state=None,
+            attributes: Any = None,
+            links: Any = None,
+            trace_state: Any = None,
         ) -> SamplingResult:
             """Sample while a token is available; drop once the budget is spent."""
             now = time.monotonic()
@@ -351,9 +351,9 @@ if _OTEL_AVAILABLE:
             trace_id: int,
             name: str,
             kind: SpanKind | None = None,
-            attributes=None,
-            links=None,
-            trace_state=None,
+            attributes: Any = None,
+            links: Any = None,
+            trace_state: Any = None,
         ) -> SamplingResult:
             """Follow the parent span's decision (the root sampler for roots)."""
             return self._sdk_parent_based.should_sample(

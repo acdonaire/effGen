@@ -47,9 +47,12 @@ import logging.handlers
 import sys
 import threading
 import traceback
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from types import TracebackType
+from typing import Any
 
 try:
     from rich.console import Console  # noqa: F401
@@ -87,7 +90,7 @@ class StructuredFormatter(logging.Formatter):
     parse and analyze with log aggregation tools.
     """
 
-    def __init__(self, include_extra: bool = True):
+    def __init__(self, include_extra: bool = True) -> None:
         """
         Initialize the structured formatter.
 
@@ -161,7 +164,7 @@ class ColoredFormatter(logging.Formatter):
         'RESET': '\033[0m'        # Reset
     }
 
-    def __init__(self, fmt: str | None = None, use_colors: bool = True):
+    def __init__(self, fmt: str | None = None, use_colors: bool = True) -> None:
         """
         Initialize the colored formatter.
 
@@ -211,7 +214,7 @@ class LoggerManager:
                     cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the logger manager."""
         if self._initialized:
             return
@@ -475,7 +478,7 @@ def set_log_level(level: str | int) -> None:
 
 
 @contextmanager
-def LogContext(**kwargs):
+def LogContext(**kwargs: Any) -> Iterator[None]:
     """
     Context manager for adding structured logging context.
 
@@ -512,7 +515,7 @@ def log_exception(
     exception: Exception,
     message: str = "An error occurred",
     level: int = logging.ERROR,
-    **extra_fields
+    **extra_fields: Any,
 ) -> None:
     """
     Log an exception with full traceback and additional context.
@@ -549,7 +552,7 @@ class PerformanceLogger:
     function execution times.
     """
 
-    def __init__(self, logger: logging.Logger | None = None, level: int = logging.INFO):
+    def __init__(self, logger: logging.Logger | None = None, level: int = logging.INFO) -> None:
         """
         Initialize the performance logger.
 
@@ -561,7 +564,7 @@ class PerformanceLogger:
         self.level = level
         self.start_time: float | None = None
 
-    def __call__(self, func):
+    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
         """
         Decorator usage.
 
@@ -585,7 +588,7 @@ class PerformanceLogger:
                 )
         return wrapper
 
-    def __enter__(self):
+    def __enter__(self) -> PerformanceLogger:
         """
         Context manager entry.
 
@@ -597,7 +600,12 @@ class PerformanceLogger:
         self.start_time = time.time()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Context manager exit."""
         import time
         if self.start_time:
@@ -610,7 +618,7 @@ class PerformanceLogger:
 
 
 # Convenience functions for common logging patterns
-def log_agent_start(logger: logging.Logger, agent_id: str, **metadata) -> None:
+def log_agent_start(logger: logging.Logger, agent_id: str, **metadata: Any) -> None:
     """Log agent startup with metadata."""
     logger.info(
         f"Agent started: {agent_id}",
@@ -618,7 +626,7 @@ def log_agent_start(logger: logging.Logger, agent_id: str, **metadata) -> None:
     )
 
 
-def log_agent_stop(logger: logging.Logger, agent_id: str, **metadata) -> None:
+def log_agent_stop(logger: logging.Logger, agent_id: str, **metadata: Any) -> None:
     """Log agent shutdown with metadata."""
     logger.info(
         f"Agent stopped: {agent_id}",
@@ -626,7 +634,7 @@ def log_agent_stop(logger: logging.Logger, agent_id: str, **metadata) -> None:
     )
 
 
-def log_task_start(logger: logging.Logger, task_id: str, **metadata) -> None:
+def log_task_start(logger: logging.Logger, task_id: str, **metadata: Any) -> None:
     """Log task start with metadata."""
     logger.info(
         f"Task started: {task_id}",
@@ -634,7 +642,7 @@ def log_task_start(logger: logging.Logger, task_id: str, **metadata) -> None:
     )
 
 
-def log_task_complete(logger: logging.Logger, task_id: str, **metadata) -> None:
+def log_task_complete(logger: logging.Logger, task_id: str, **metadata: Any) -> None:
     """Log task completion with metadata."""
     logger.info(
         f"Task completed: {task_id}",
@@ -642,7 +650,7 @@ def log_task_complete(logger: logging.Logger, task_id: str, **metadata) -> None:
     )
 
 
-def log_task_error(logger: logging.Logger, task_id: str, error: Exception, **metadata) -> None:
+def log_task_error(logger: logging.Logger, task_id: str, error: Exception, **metadata: Any) -> None:
     """Log task error with metadata."""
     log_exception(
         logger,
@@ -654,7 +662,7 @@ def log_task_error(logger: logging.Logger, task_id: str, error: Exception, **met
     )
 
 
-def log_tool_call(logger: logging.Logger, tool_name: str, **metadata) -> None:
+def log_tool_call(logger: logging.Logger, tool_name: str, **metadata: Any) -> None:
     """Log tool invocation with metadata."""
     logger.debug(
         f"Tool called: {tool_name}",
@@ -662,7 +670,7 @@ def log_tool_call(logger: logging.Logger, tool_name: str, **metadata) -> None:
     )
 
 
-def log_model_inference(logger: logging.Logger, model_name: str, **metadata) -> None:
+def log_model_inference(logger: logging.Logger, model_name: str, **metadata: Any) -> None:
     """Log model inference with metadata."""
     logger.debug(
         f"Model inference: {model_name}",

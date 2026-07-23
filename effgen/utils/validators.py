@@ -72,7 +72,7 @@ class ValidationError(Exception):
         field: str | None = None,
         value: Any = None,
         errors: list[str] | None = None
-    ):
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.field = field
@@ -730,7 +730,7 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
 # Decorator Validators
 # ============================================================================
 
-def require_type(*expected_types: type):
+def require_type(*expected_types: type) -> Callable[[Callable], Callable]:
     """
     Decorator to validate function argument types.
 
@@ -758,7 +758,7 @@ def require_type(*expected_types: type):
     return decorator
 
 
-def validate_input(**validators: Callable):
+def validate_input(**validators: Callable) -> Callable[[Callable], Callable]:
     """
     Decorator to validate function arguments using custom validators.
 
@@ -805,7 +805,7 @@ def validate_input(**validators: Callable):
     return decorator
 
 
-def validate_output(validator: Callable):
+def validate_output(validator: Callable) -> Callable[[Callable], Callable]:
     """
     Decorator to validate function return value.
 

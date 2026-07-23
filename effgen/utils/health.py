@@ -62,7 +62,7 @@ class HealthChecker:
     PYPI_URL = "https://pypi.org/pypi/effgen/json"
     TIMEOUT = 10
 
-    def __init__(self, urls: list[str] | None = None, timeout: int = 8):
+    def __init__(self, urls: list[str] | None = None, timeout: int = 8) -> None:
         self.urls = urls or self.DEFAULT_URLS
         self.timeout = timeout
 

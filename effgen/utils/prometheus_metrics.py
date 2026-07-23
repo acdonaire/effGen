@@ -212,7 +212,7 @@ class EffGenMetrics:
     Labels: agent_name, model_name, tool_name
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # --- Counters ---
         self.total_requests = Counter(
             "effgen_requests_total",
