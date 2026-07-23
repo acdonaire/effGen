@@ -11,6 +11,7 @@ import os
 import tempfile
 import time
 import traceback
+from types import TracebackType
 from typing import Any
 
 try:
@@ -49,7 +50,7 @@ class DockerSandbox(BaseSandbox):
     def __init__(self,
                  config: SandboxConfig | None = None,
                  docker_client: Any | None = None,
-                 custom_images: dict[str, str] | None = None):
+                 custom_images: dict[str, str] | None = None) -> None:
         """
         Initialize Docker sandbox.
 
@@ -391,11 +392,16 @@ class DockerSandbox(BaseSandbox):
         except Exception as e:
             logger.warning(f"Docker cleanup failed: {e}")
 
-    def __enter__(self):
+    def __enter__(self) -> "DockerSandbox":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Context manager exit with cleanup."""
         self.cleanup()
 
@@ -407,12 +413,12 @@ class DockerManager:
     Handles Docker client lifecycle, image management, and cleanup.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize Docker manager."""
         if not DOCKER_AVAILABLE:
             raise RuntimeError("Docker library is not available")
 
-        self.client = None
+        self.client: Any = None
         self._ensure_docker()
 
     def _ensure_docker(self) -> None:
@@ -537,11 +543,16 @@ class DockerManager:
             logger.warning(f"Could not get Docker stats: {e}")
             return {}
 
-    def __enter__(self):
+    def __enter__(self) -> "DockerManager":
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Context manager exit."""
         if self.client:
             self.client.close()

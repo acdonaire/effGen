@@ -90,7 +90,7 @@ class SandboxConfig:
                  max_output_size: int = 1024 * 1024,  # 1MB
                  working_dir: str | None = None,
                  env_vars: dict[str, str] | None = None,
-                 custom_allow_imports: set | None = None):
+                 custom_allow_imports: set | None = None) -> None:
         """
         Initialize sandbox configuration.
 
@@ -141,7 +141,7 @@ class BaseSandbox(ABC):
     and implement the execute method.
     """
 
-    def __init__(self, config: SandboxConfig | None = None):
+    def __init__(self, config: SandboxConfig | None = None) -> None:
         """
         Initialize sandbox.
 
@@ -467,7 +467,7 @@ class CodeExecutor:
 
     def __init__(self,
                  sandbox_type: str = "local",
-                 config: SandboxConfig | None = None):
+                 config: SandboxConfig | None = None) -> None:
         """
         Initialize code executor.
 
@@ -564,7 +564,7 @@ class CodeExecutor:
                           code: str,
                           language: str = "python",
                           max_retries: int = 3,
-                          **kwargs) -> ExecutionResult:
+                          **kwargs: Any) -> ExecutionResult:
         """
         Execute code with automatic retry on transient failures.
 
@@ -635,7 +635,7 @@ class ExecutionPool:
     def __init__(self,
                  sandbox_type: str = "local",
                  config: SandboxConfig | None = None,
-                 pool_size: int = 4):
+                 pool_size: int = 4) -> None:
         """
         Initialize execution pool.
 
@@ -659,7 +659,7 @@ class ExecutionPool:
     def execute(self,
                code: str,
                language: str = "python",
-               **kwargs) -> ExecutionResult:
+               **kwargs: Any) -> ExecutionResult:
         """
         Execute code using an available executor from the pool.
 
@@ -692,7 +692,7 @@ class ExecutionPool:
 
     def execute_batch(self,
                      code_snippets: list[tuple[str, str]],
-                     **kwargs) -> list[ExecutionResult]:
+                     **kwargs: Any) -> list[ExecutionResult]:
         """
         Execute multiple code snippets.
 
@@ -731,7 +731,7 @@ class ExecutionHistory:
     Track execution history for debugging and analysis.
     """
 
-    def __init__(self, max_history: int = 1000):
+    def __init__(self, max_history: int = 1000) -> None:
         """
         Initialize execution history.
 
@@ -828,7 +828,7 @@ class CodeExecutorWithHistory(CodeExecutor):
     def __init__(self,
                  sandbox_type: str = "local",
                  config: SandboxConfig | None = None,
-                 max_history: int = 1000):
+                 max_history: int = 1000) -> None:
         """
         Initialize executor with history tracking.
 
@@ -843,7 +843,7 @@ class CodeExecutorWithHistory(CodeExecutor):
     def execute(self,
                code: str,
                language: str = "python",
-               **kwargs) -> ExecutionResult:
+               **kwargs: Any) -> ExecutionResult:
         """
         Execute code and record to history.
 

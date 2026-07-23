@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from threading import Event, Lock, Thread
+from types import TracebackType
 from typing import Any
 
 try:
@@ -147,7 +148,7 @@ class GPUMonitor:
         >>> monitor.stop()
     """
 
-    def __init__(self, config: MonitorConfig | None = None):
+    def __init__(self, config: MonitorConfig | None = None) -> None:
         """
         Initialize GPU monitor.
 
@@ -679,12 +680,17 @@ class GPUMonitor:
 
             return summary
 
-    def __enter__(self):
+    def __enter__(self) -> GPUMonitor:
         """Context manager entry"""
         self.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Context manager exit"""
         self.stop()
 

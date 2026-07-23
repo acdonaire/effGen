@@ -79,7 +79,7 @@ class PythonValidator:
     def __init__(self,
                  allow_imports: set[str] | None = None,
                  allow_file_ops: bool = False,
-                 allow_network: bool = False):
+                 allow_network: bool = False) -> None:
         """
         Initialize Python validator.
 
@@ -277,7 +277,7 @@ class JavaScriptValidator:
         r'__filename',
     ]
 
-    def __init__(self, allow_network: bool = False, allow_file_ops: bool = False):
+    def __init__(self, allow_network: bool = False, allow_file_ops: bool = False) -> None:
         """
         Initialize JavaScript validator.
 
@@ -346,7 +346,7 @@ class BashValidator:
         'ssh', 'scp', 'ftp', 'rsync'
     }
 
-    def __init__(self, allow_network: bool = False):
+    def __init__(self, allow_network: bool = False) -> None:
         """
         Initialize Bash validator.
 
@@ -422,7 +422,7 @@ class CodeValidator:
     def __init__(self,
                  allow_network: bool = False,
                  allow_file_ops: bool = False,
-                 custom_allow_imports: set[str] | None = None):
+                 custom_allow_imports: set[str] | None = None) -> None:
         """
         Initialize code validator.
 

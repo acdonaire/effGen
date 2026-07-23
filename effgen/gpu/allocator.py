@@ -135,7 +135,7 @@ class GPUAllocator:
         >>> allocator.deallocate("agent_1")
     """
 
-    def __init__(self, enable_monitoring: bool = True):
+    def __init__(self, enable_monitoring: bool = True) -> None:
         """
         Initialize GPU allocator.
 
