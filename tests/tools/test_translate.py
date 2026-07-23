@@ -41,7 +41,15 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-_TRANSIENT_MARKERS = ("timeout", "timed out", "connection", "network", "429", "rate limit")
+_TRANSIENT_MARKERS = (
+    "timeout",
+    "timed out",
+    "connection",
+    "network",
+    "429",
+    "rate limit",
+    "service unavailable",
+)
 
 
 def _ok(result) -> dict:
@@ -113,6 +121,21 @@ def test_translate_mock_available_pairs():
     pair_keys = {(p["source"], p["target"]) for p in out["pairs"]}
     assert ("en", "fr") in pair_keys
     assert ("en", "es") in pair_keys
+
+
+def test_available_pairs_no_backend_fails_closed():
+    """Zero pairs (LibreTranslate down, no Argos packs) is a failure, not an empty success."""
+    with (
+        patch(
+            "effgen.tools.builtin.translate._libre_available_pairs",
+            side_effect=ConnectionError("LibreTranslate /languages error: down"),
+        ),
+        patch("effgen.tools.builtin.translate._argos_available_pairs", return_value=[]),
+    ):
+        r = _run(TranslateTool().execute(operation="available_pairs"))
+    assert not r.success
+    assert "unavailable" in r.error.lower()
+    assert "LIBRE_TRANSLATE_URL" in r.error
 
 
 def test_argos_cache_dir_is_pinned_to_effgen_cache(tmp_path, monkeypatch):

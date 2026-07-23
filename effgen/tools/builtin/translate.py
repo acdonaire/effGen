@@ -358,6 +358,15 @@ def _available_pairs() -> dict[str, Any]:
         source = "argostranslate"
         pairs = _argos_available_pairs()
 
+    if not pairs:
+        raise TranslateServiceUnavailable(
+            "Translation service unavailable: no language pairs. "
+            f"LibreTranslate failed: {libre_error}; "
+            "no Argos language packs are installed. "
+            "Set LIBRE_TRANSLATE_URL to a reachable LibreTranslate instance, "
+            "or install an Argos language pack."
+        )
+
     return {
         "success": True,
         "data": {
