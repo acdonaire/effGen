@@ -36,7 +36,6 @@ class ScoringMode(Enum):
 
 @dataclass
 class TestCase:
-    __test__ = False  # not a pytest test class
     """A single evaluation test case.
 
     Attributes:
@@ -50,6 +49,9 @@ class TestCase:
         difficulty: Difficulty level (a plain string like ``"easy"`` is coerced).
         metadata: Extra data (e.g. multi-turn conversation history).
     """
+
+    __test__ = False  # not a pytest test class
+
     query: str = ""
     expected_output: str = ""
     expected_tools: list[str] = field(default_factory=list)
@@ -235,6 +237,7 @@ class SuiteResults:
         }
 
     def to_json(self, indent: int = 2) -> str:
+        """Return the JSON rendering of :meth:`summary`."""
         return json.dumps(self.summary(), indent=indent, ensure_ascii=False)
 
     def to_markdown(self) -> str:

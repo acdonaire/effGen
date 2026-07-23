@@ -57,12 +57,14 @@ class RegressionAlert:
 
     @property
     def delta(self) -> float:
+        """Relative change from the baseline value (0.0 when the baseline is 0)."""
         if self.baseline_value == 0:
             return 0.0
         return (self.current_value - self.baseline_value) / abs(self.baseline_value)
 
     @property
     def severity(self) -> str:
+        """``warning``/``high``/``critical`` by how far the delta exceeds the threshold."""
         d = abs(self.delta)
         if d > self.threshold * 3:
             return "critical"
@@ -121,6 +123,7 @@ class ComparisonReport:
         return any(a.blocking for a in self.alerts)
 
     def to_markdown(self) -> str:
+        """Render the report as Markdown: status, metric table, alerts."""
         lines = [
             f"# Regression Report: {self.suite}",
             "",
@@ -162,6 +165,7 @@ class ComparisonReport:
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "suite": self.suite,
             "baseline_version": self.baseline_version,

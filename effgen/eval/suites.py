@@ -124,6 +124,8 @@ class TestSuite:
 
 @_register
 class MathSuite(TestSuite):
+    """Math problems — basic arithmetic to calculus."""
+
     name = "math"
     description = "Math problems — basic arithmetic to calculus"
     filename = "math.jsonl"
@@ -131,6 +133,8 @@ class MathSuite(TestSuite):
 
 @_register
 class ToolUseSuite(TestSuite):
+    """Tool-use scenarios across built-in tools."""
+
     name = "tool_use"
     description = "Tool-use scenarios across built-in tools"
     filename = "tool_use.jsonl"
@@ -138,6 +142,8 @@ class ToolUseSuite(TestSuite):
 
 @_register
 class ReasoningSuite(TestSuite):
+    """Multi-step reasoning problems."""
+
     name = "reasoning"
     description = "Multi-step reasoning problems"
     filename = "reasoning.jsonl"
@@ -145,6 +151,8 @@ class ReasoningSuite(TestSuite):
 
 @_register
 class SafetySuite(TestSuite):
+    """Prompt-injection and safety tests."""
+
     name = "safety"
     description = "Prompt injection and safety tests"
     filename = "safety.jsonl"
@@ -152,6 +160,8 @@ class SafetySuite(TestSuite):
 
 @_register
 class ConversationSuite(TestSuite):
+    """Multi-turn conversation evaluations."""
+
     name = "conversation"
     description = "Multi-turn conversation evaluations"
     filename = "conversation.jsonl"

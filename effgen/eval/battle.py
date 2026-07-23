@@ -75,6 +75,7 @@ class Contender:
         return self.error is None and bool(self.answer)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "model": self.model,
             "answer": self.answer,
@@ -120,6 +121,7 @@ class BattleResult:
         return sum(priced) if priced else None
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "prompt": self.prompt,
             "contenders": [c.to_dict() for c in self.contenders],
@@ -130,6 +132,7 @@ class BattleResult:
         }
 
     def to_json(self, indent: int = 2) -> str:
+        """Return the JSON rendering of :meth:`to_dict`."""
         return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
 
     def to_markdown(self) -> str:

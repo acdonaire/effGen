@@ -197,6 +197,7 @@ class ComparisonMatrix:
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return per-model scores plus the recommendations as a serializable dict."""
         return {
             "scores": [
                 {
@@ -225,6 +226,7 @@ class ComparisonMatrix:
         }
 
     def to_json(self, indent: int = 2) -> str:
+        """Return the JSON rendering of :meth:`to_dict`."""
         return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
 
 
