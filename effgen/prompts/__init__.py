@@ -1,8 +1,6 @@
-"""
-Prompt Engineering System for Small Language Models
+"""Prompt management, chaining and optimization tuned for small language models.
 
-Provides comprehensive prompt management, chaining, and optimization
-specifically designed for SLMs (1B-7B parameter models).
+Designed for SLMs in the 1B-7B parameter range.
 """
 
 from .agent_system_prompt import AgentSystemPromptBuilder

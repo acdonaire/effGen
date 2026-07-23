@@ -24,6 +24,8 @@ _SESSIONS_DIR = Path.home() / ".effgen" / "playground"
 
 @dataclass
 class RunEntry:
+    """One playground run: the model, the rendered prompt, and its output."""
+
     model: str
     rendered: str
     output: str
@@ -32,6 +34,8 @@ class RunEntry:
 
 @dataclass
 class PlaygroundSession:
+    """Prompt-playground state: selected prompt, variables and history."""
+
     prompt_name: str = ""
     variables: dict[str, Any] = field(default_factory=dict)
     render_history: list[str] = field(default_factory=list)
@@ -42,13 +46,16 @@ class PlaygroundSession:
     # ------------------------------------------------------------------
 
     def touch(self) -> None:
+        """Refresh ``updated_at``."""
         self.updated_at = _utcnow()
 
     def set_var(self, key: str, value: Any) -> None:
+        """Set a template variable."""
         self.variables[key] = value
         self.touch()
 
     def unset_var(self, key: str) -> bool:
+        """Remove a template variable; returns whether it existed."""
         if key in self.variables:
             del self.variables[key]
             self.touch()
@@ -56,10 +63,12 @@ class PlaygroundSession:
         return False
 
     def add_render(self, rendered: str) -> None:
+        """Record a rendered prompt."""
         self.render_history.append(rendered)
         self.touch()
 
     def add_run(self, model: str, rendered: str, output: str) -> None:
+        """Record a model run."""
         self.run_history.append(RunEntry(model=model, rendered=rendered, output=output))
         self.touch()
 
@@ -99,6 +108,7 @@ class PlaygroundSession:
         return d
 
     def summary(self) -> str:
+        """Return a one-line summary of the session's contents."""
         return (
             f"prompt={self.prompt_name!r}  "
             f"vars={len(self.variables)}  "

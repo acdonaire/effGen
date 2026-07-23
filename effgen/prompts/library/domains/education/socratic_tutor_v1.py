@@ -1,6 +1,4 @@
-"""
-Education prompt: Socratic Tutor — guides a learner to the answer with
-questions instead of handing it over.
+"""Education prompt: guide a learner to the answer with questions, not the answer itself.
 
 Inputs: subject (str), question (str), student_level (str)
 """

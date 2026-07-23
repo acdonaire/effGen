@@ -52,6 +52,8 @@ class RunOutput:
 
 @dataclass
 class EvalResult:
+    """Outcome of one prompt evaluation (golden render or live model run)."""
+
     name: str
     passed: bool
     kind: str  # 'golden' | 'live'
@@ -62,15 +64,20 @@ class EvalResult:
 
 @dataclass
 class EvalReport:
+    """Collected evaluation results with pass/fail views and a text table."""
+
     results: list[EvalResult] = field(default_factory=list)
 
     def passed(self) -> list[EvalResult]:
+        """The results that passed."""
         return [r for r in self.results if r.passed]
 
     def failed(self) -> list[EvalResult]:
+        """The results that failed."""
         return [r for r in self.results if not r.passed]
 
     def as_table(self) -> str:
+        """Render the results as an aligned plain-text table."""
         if not self.results:
             return "No prompts evaluated — registry is empty.\n"
         lines = [f"{'Name':<45} {'Kind':<8} {'Status'}"]
@@ -224,6 +231,7 @@ class PromptEval:
     # ------------------------------------------------------------------
 
     def eval_all_golden(self, prompts: list[LibraryPrompt]) -> EvalReport:
+        """Run the golden-render check for every prompt and collect a report."""
         report = EvalReport()
         for p in prompts:
             report.results.append(self.eval_golden(p))
@@ -232,6 +240,7 @@ class PromptEval:
     def eval_all_live(
         self, prompts: list[LibraryPrompt], model: str, delay: float = 35.0
     ) -> EvalReport:
+        """Run each prompt against a live *model*, pausing *delay* seconds between runs."""
         report = EvalReport()
         for i, p in enumerate(prompts):
             if i > 0 and delay > 0:

@@ -1,8 +1,4 @@
-"""
-effGen Prompt Library
-
-A curated, domain-organized catalog of prompt templates with evaluation harness.
-
+"""A curated, domain-organized catalog of prompt templates with an evaluation harness.
 Usage:
     from effgen.prompts.library import registry, LibraryPrompt
     prompts = registry.search(domain="research")

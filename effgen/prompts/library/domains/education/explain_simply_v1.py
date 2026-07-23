@@ -1,6 +1,4 @@
-"""
-Education prompt: Explain Simply — explain a concept for a given audience using
-an everyday analogy.
+"""Education prompt: explain a concept for a given audience using an everyday analogy.
 
 Inputs: concept (str), audience (str)
 """

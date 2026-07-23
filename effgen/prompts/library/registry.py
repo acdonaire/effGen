@@ -39,6 +39,7 @@ class PromptRegistry:
         self._discovered = False
 
     def register(self, prompt: LibraryPrompt) -> None:
+        """Add *prompt* to the registry (an existing prompt of the same name is replaced)."""
         self._validate_prompt(prompt)
         if prompt.name in self._prompts:
             logger.warning("Overwriting prompt %s in registry", prompt.name)
@@ -85,6 +86,7 @@ class PromptRegistry:
             ) from exc
 
     def get(self, name: str) -> LibraryPrompt:
+        """Return the prompt *name* (raises ``KeyError`` when absent)."""
         self._ensure_discovered()
         if name not in self._prompts:
             raise KeyError(f"Prompt '{name}' not found in registry")
@@ -96,6 +98,7 @@ class PromptRegistry:
         variant: str | None = None,
         tags: list[str] | None = None,
     ) -> list[LibraryPrompt]:
+        """Return prompts filtered by domain/variant/tags, sorted by name."""
         self._ensure_discovered()
         results: list[LibraryPrompt] = []
         for p in self._prompts.values():
@@ -109,10 +112,12 @@ class PromptRegistry:
         return sorted(results, key=lambda p: p.name)
 
     def all(self) -> list[LibraryPrompt]:
+        """Return every registered prompt, sorted by name."""
         self._ensure_discovered()
         return sorted(self._prompts.values(), key=lambda p: p.name)
 
     def domains(self) -> list[str]:
+        """Return the sorted set of domains that have prompts."""
         self._ensure_discovered()
         return sorted({p.domain for p in self._prompts.values()})
 

@@ -1,1 +1,1 @@
-# Domain packages are discovered automatically by PromptRegistry.
+"""Domain prompt packages (discovered automatically by ``PromptRegistry``)."""

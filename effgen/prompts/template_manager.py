@@ -1,8 +1,6 @@
-"""
-Template Manager for Prompt Engineering
+"""Prompt template management: rendering, few-shot selection, SLM tuning, versioning.
 
-Provides comprehensive template management with Jinja2 support, dynamic example selection,
-template optimization for SLMs, and versioning capabilities.
+Templates render with Jinja2 and support dynamic few-shot example selection.
 """
 
 from __future__ import annotations
@@ -24,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PromptTemplate:
-    """Represents a prompt template with metadata"""
+    """Represents a prompt template with metadata."""
 
     name: str
     template: str
@@ -44,18 +42,18 @@ class PromptTemplate:
             self.updated_at = datetime.now()
 
     def render(self, **kwargs) -> str:
-        """Render template with provided variables"""
+        """Render template with provided variables."""
         template = Template(self.template)
         return template.render(**kwargs)
 
     def get_required_variables(self) -> list[str]:
-        """Extract required variables from template"""
+        """Extract required variables from template."""
         env = Environment()
         parsed = env.parse(self.template)
         return list(meta.find_undeclared_variables(parsed))
 
     def validate_inputs(self, **kwargs) -> bool:
-        """Validate that all required variables are provided"""
+        """Validate that all required variables are provided."""
         required = set(self.get_required_variables())
         provided = set(kwargs.keys())
         missing = required - provided
@@ -66,7 +64,7 @@ class PromptTemplate:
         return True
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary representation"""
+        """Convert to dictionary representation."""
         return {
             'name': self.name,
             'template': self.template,
@@ -82,7 +80,7 @@ class PromptTemplate:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'PromptTemplate':
-        """Create from dictionary representation"""
+        """Create from dictionary representation."""
         if 'created_at' in data and data['created_at']:
             data['created_at'] = datetime.fromisoformat(data['created_at'])
         if 'updated_at' in data and data['updated_at']:
@@ -92,7 +90,7 @@ class PromptTemplate:
 
 @dataclass
 class FewShotExample:
-    """Represents a few-shot example"""
+    """Represents a few-shot example."""
 
     input: str
     output: str
@@ -102,7 +100,7 @@ class FewShotExample:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def format(self, style: str = "default") -> str:
-        """Format example for inclusion in prompt"""
+        """Format example for inclusion in prompt."""
         if style == "default":
             result = f"Input: {self.input}\nOutput: {self.output}"
             if self.context:
@@ -131,7 +129,7 @@ class FewShotExample:
         return f"Input: {self.input}\nOutput: {self.output}"
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary"""
+        """Convert to dictionary."""
         return {
             'input': self.input,
             'output': self.output,
@@ -143,7 +141,7 @@ class FewShotExample:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'FewShotExample':
-        """Create from dictionary"""
+        """Create from dictionary."""
         return cls(**data)
 
 
@@ -199,7 +197,7 @@ class TemplateManager:
 
     def load_from_yaml(self, filepath: str | Path) -> None:
         """
-        Load templates from YAML file
+        Load templates from YAML file.
 
         Args:
             filepath: Path to YAML file
@@ -231,7 +229,7 @@ class TemplateManager:
 
     def load_from_directory(self, directory: str | Path | None = None) -> None:
         """
-        Load all YAML templates from directory
+        Load all YAML templates from directory.
 
         Args:
             directory: Directory to load from (defaults to template_dir)
@@ -262,7 +260,7 @@ class TemplateManager:
 
     def add_template(self, template: PromptTemplate) -> None:
         """
-        Add or update a template
+        Add or update a template.
 
         Args:
             template: Template to add
@@ -282,7 +280,7 @@ class TemplateManager:
 
     def get_template(self, name: str, version: str | None = None) -> PromptTemplate | None:
         """
-        Get template by name and optionally version
+        Get template by name and optionally version.
 
         Args:
             name: Template name
@@ -313,7 +311,7 @@ class TemplateManager:
 
     def list_templates(self, tag: str | None = None) -> list[str]:
         """
-        List available template names
+        List available template names.
 
         Args:
             tag: Filter by tag
@@ -340,7 +338,7 @@ class TemplateManager:
         **kwargs
     ) -> str:
         """
-        Render a template with variables and optional examples
+        Render a template with variables and optional examples.
 
         Args:
             name: Template name
@@ -398,7 +396,7 @@ class TemplateManager:
         diversity_mode: str = "random"
     ) -> list[FewShotExample]:
         """
-        Select few-shot examples for a template
+        Select few-shot examples for a template.
 
         Args:
             template_name: Template name
@@ -488,7 +486,7 @@ class TemplateManager:
         use_bullet_points: bool = True
     ) -> PromptTemplate:
         """
-        Optimize template for Small Language Models
+        Optimize template for Small Language Models.
 
         Args:
             template: Template to optimize
@@ -559,7 +557,7 @@ class TemplateManager:
         description: str | None = None
     ) -> PromptTemplate:
         """
-        Create a template for prompt chaining
+        Create a template for prompt chaining.
 
         Args:
             name: Chain template name
@@ -594,7 +592,7 @@ class TemplateManager:
         filepath: str | Path
     ) -> None:
         """
-        Save template to YAML file
+        Save template to YAML file.
 
         Args:
             template: Template to save
@@ -616,7 +614,7 @@ class TemplateManager:
         filepath: str | Path
     ) -> None:
         """
-        Export all templates to single YAML file
+        Export all templates to single YAML file.
 
         Args:
             filepath: Output file path
@@ -637,7 +635,7 @@ class TemplateManager:
         logger.info(f"Exported {len(self.templates)} templates to {filepath}")
 
     def get_template_stats(self) -> dict[str, Any]:
-        """Get statistics about loaded templates"""
+        """Get statistics about loaded templates."""
         return {
             'total_templates': len(self.templates),
             'total_versions': sum(len(v) for v in self.template_versions.values()),

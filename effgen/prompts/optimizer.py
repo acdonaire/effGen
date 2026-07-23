@@ -1,8 +1,4 @@
-"""
-Prompt Optimizer for Small Language Models
-
-Implements SLM-specific optimization techniques including prompt compression,
-instruction clarity enhancement, context management, and format optimization.
+"""Prompt optimization for small models: compression, clarity, context and format.
 """
 
 from __future__ import annotations
@@ -17,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModelSize(Enum):
-    """Model size categories"""
+    """Model size categories."""
     TINY = "tiny"  # < 1B parameters
     SMALL = "small"  # 1-3B parameters
     MEDIUM = "medium"  # 3-7B parameters
@@ -26,7 +22,7 @@ class ModelSize(Enum):
 
 @dataclass
 class OptimizationConfig:
-    """Configuration for prompt optimization"""
+    """Configuration for prompt optimization."""
 
     model_size: ModelSize = ModelSize.SMALL
     max_prompt_tokens: int = 1024
@@ -42,7 +38,7 @@ class OptimizationConfig:
 
     @classmethod
     def for_model_size(cls, model_size: ModelSize) -> 'OptimizationConfig':
-        """Get optimization config for model size"""
+        """Get optimization config for model size."""
         configs = {
             ModelSize.TINY: cls(
                 model_size=ModelSize.TINY,
@@ -90,7 +86,7 @@ class OptimizationConfig:
 
 @dataclass
 class OptimizationResult:
-    """Result of prompt optimization"""
+    """Result of prompt optimization."""
 
     original_prompt: str
     optimized_prompt: str
@@ -101,11 +97,11 @@ class OptimizationResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def get_savings(self) -> int:
-        """Get token savings"""
+        """Get token savings."""
         return self.original_tokens - self.optimized_tokens
 
     def get_compression_percentage(self) -> float:
-        """Get compression percentage"""
+        """Get compression percentage."""
         return (1.0 - self.compression_ratio) * 100
 
 
@@ -121,7 +117,7 @@ class PromptOptimizer:
     Example:
         >>> optimizer = PromptOptimizer()
         >>> result = optimizer.optimize("Could you please summarize this text?")
-        >>> result.optimized_prompt   # shorter, SLM-friendly prompt
+        >>> result.optimized_prompt   # restructured, SLM-friendly prompt
         >>> result.get_compression_percentage()
 
     The individual stage methods (``compress_prompt``, ``optimize_chain_depth``,
@@ -195,7 +191,7 @@ class PromptOptimizer:
         preserve_format: bool = False
     ) -> OptimizationResult:
         """
-        Optimize a prompt for SLMs
+        Optimize a prompt for SLMs.
 
         Args:
             prompt: Original prompt
@@ -267,7 +263,7 @@ class PromptOptimizer:
 
     def compress_prompt(self, prompt: str) -> str:
         """
-        Compress prompt by removing redundancy and using shorter expressions
+        Compress prompt by removing redundancy and using shorter expressions.
 
         Args:
             prompt: Prompt to compress
@@ -289,7 +285,7 @@ class PromptOptimizer:
 
     def simplify_language(self, prompt: str) -> str:
         """
-        Simplify language for better SLM comprehension
+        Simplify language for better SLM comprehension.
 
         Args:
             prompt: Prompt to simplify
@@ -332,7 +328,7 @@ class PromptOptimizer:
 
     def remove_redundancy(self, prompt: str) -> str:
         """
-        Remove redundant information and repetition
+        Remove redundant information and repetition.
 
         Args:
             prompt: Prompt to clean
@@ -374,7 +370,7 @@ class PromptOptimizer:
 
     def format_as_bullet_points(self, prompt: str) -> str:
         """
-        Convert instructions to bullet point format
+        Convert instructions to bullet point format.
 
         Args:
             prompt: Prompt to format
@@ -407,7 +403,7 @@ class PromptOptimizer:
 
     def structure_for_clarity(self, prompt: str) -> str:
         """
-        Structure prompt for maximum clarity
+        Structure prompt for maximum clarity.
 
         Args:
             prompt: Prompt to structure
@@ -459,7 +455,7 @@ class PromptOptimizer:
 
     def estimate_token_count(self, text: str) -> int:
         """
-        Estimate token count for text
+        Estimate token count for text.
 
         Uses rough heuristic: ~4 characters per token for English
 
@@ -480,7 +476,7 @@ class PromptOptimizer:
 
     def truncate_to_limit(self, text: str, max_tokens: int) -> str:
         """
-        Truncate text to fit within token limit
+        Truncate text to fit within token limit.
 
         Args:
             text: Text to truncate
@@ -520,7 +516,7 @@ class PromptOptimizer:
 
     def ensure_within_context(self, prompt: str, context: str | None = None) -> tuple[str, str | None]:
         """
-        Ensure prompt and context fit within model's context window
+        Ensure prompt and context fit within model's context window.
 
         Args:
             prompt: Main prompt
@@ -553,7 +549,7 @@ class PromptOptimizer:
 
     def optimize_for_task(self, prompt: str, task_type: str = "general") -> OptimizationResult:
         """
-        Optimize prompt for specific task type
+        Optimize prompt for specific task type.
 
         Args:
             prompt: Prompt to optimize
@@ -590,7 +586,7 @@ class PromptOptimizer:
         max_examples: int | None = None
     ) -> list[dict[str, str]]:
         """
-        Select optimal few-shot examples for task
+        Select optimal few-shot examples for task.
 
         Args:
             examples: Available examples
@@ -627,7 +623,7 @@ class PromptOptimizer:
 
     def optimize_chain_depth(self, chain_length: int) -> int:
         """
-        Optimize chain depth for model capabilities
+        Optimize chain depth for model capabilities.
 
         Args:
             chain_length: Desired chain length
@@ -648,7 +644,7 @@ class PromptOptimizer:
 
 def create_optimizer_for_model(model_name: str) -> PromptOptimizer:
     """
-    Create optimizer configured for specific model
+    Create optimizer configured for specific model.
 
     Args:
         model_name: Name of the model

@@ -1,8 +1,6 @@
-"""
-Prompt Chain Manager
+"""Orchestrates prompt chains: sequential, conditional, iterative and parallel steps.
 
-Orchestrates complex prompt chains with support for sequential, conditional,
-iterative, and parallel execution patterns optimized for Small Language Models.
+Execution patterns are tuned for small language models.
 """
 
 from __future__ import annotations
@@ -152,7 +150,7 @@ def safe_eval_condition(expression: str, names: dict[str, Any]) -> bool:
 
 
 class ChainType(Enum):
-    """Types of prompt chains"""
+    """Types of prompt chains."""
     SEQUENTIAL = "sequential"
     CONDITIONAL = "conditional"
     ITERATIVE = "iterative"
@@ -161,7 +159,7 @@ class ChainType(Enum):
 
 
 class StepStatus(Enum):
-    """Status of a chain step"""
+    """Status of a chain step."""
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -171,7 +169,7 @@ class StepStatus(Enum):
 
 @dataclass
 class ChainStep:
-    """Represents a single step in a prompt chain"""
+    """Represents a single step in a prompt chain."""
 
     name: str
     type: str = "prompt"  # prompt, tool, function, parallel_group
@@ -194,14 +192,14 @@ class ChainStep:
     retries: int = 0
 
     def reset(self):
-        """Reset step to initial state"""
+        """Reset step to initial state."""
         self.status = StepStatus.PENDING
         self.result = None
         self.error = None
         self.retries = 0
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary"""
+        """Convert to dictionary."""
         return {
             'name': self.name,
             'type': self.type,
@@ -219,7 +217,7 @@ class ChainStep:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'ChainStep':
-        """Create from dictionary"""
+        """Create from dictionary."""
         # Remove runtime state if present
         data = {k: v for k, v in data.items() if k not in ['status', 'result', 'error', 'retries']}
 
@@ -235,7 +233,7 @@ class ChainStep:
 
 @dataclass
 class ChainState:
-    """Manages state during chain execution"""
+    """Manages state during chain execution."""
 
     variables: dict[str, Any] = field(default_factory=dict)
     step_results: dict[str, Any] = field(default_factory=dict)
@@ -243,25 +241,25 @@ class ChainState:
     iteration_count: int = 0
 
     def set_variable(self, name: str, value: Any):
-        """Set a variable in the chain state"""
+        """Set a variable in the chain state."""
         self.variables[name] = value
         logger.debug(f"Set variable '{name}': {str(value)[:100]}")
 
     def get_variable(self, name: str, default: Any = None) -> Any:
-        """Get a variable from the chain state"""
+        """Get a variable from the chain state."""
         return self.variables.get(name, default)
 
     def set_step_result(self, step_name: str, result: Any):
-        """Store result from a step"""
+        """Store result from a step."""
         self.step_results[step_name] = result
         logger.debug(f"Stored result for step '{step_name}'")
 
     def get_step_result(self, step_name: str, default: Any = None) -> Any:
-        """Get result from a previous step"""
+        """Get result from a previous step."""
         return self.step_results.get(step_name, default)
 
     def interpolate_string(self, text: str) -> str:
-        """Interpolate variables in a string using {variable} syntax"""
+        """Interpolate variables in a string using {variable} syntax."""
         if not text:
             return text
 
@@ -284,7 +282,7 @@ class ChainState:
 
     def evaluate_condition(self, condition: str) -> bool:
         """
-        Evaluate a condition expression
+        Evaluate a condition expression.
 
         Supports simple comparisons and variable checks
         Examples:
@@ -309,7 +307,7 @@ class ChainState:
             return False
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary"""
+        """Convert to dictionary."""
         return {
             'variables': self.variables,
             'step_results': self.step_results,
@@ -320,7 +318,7 @@ class ChainState:
 
 @dataclass
 class PromptChain:
-    """Represents a complete prompt chain"""
+    """Represents a complete prompt chain."""
 
     name: str
     description: str | None = None
@@ -331,23 +329,23 @@ class PromptChain:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def add_step(self, step: ChainStep):
-        """Add a step to the chain"""
+        """Add a step to the chain."""
         self.steps.append(step)
 
     def get_step(self, name: str) -> ChainStep | None:
-        """Get a step by name"""
+        """Get a step by name."""
         for step in self.steps:
             if step.name == name:
                 return step
         return None
 
     def reset(self):
-        """Reset all steps to initial state"""
+        """Reset all steps to initial state."""
         for step in self.steps:
             step.reset()
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary"""
+        """Convert to dictionary."""
         return {
             'name': self.name,
             'description': self.description,
@@ -360,7 +358,7 @@ class PromptChain:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'PromptChain':
-        """Create from dictionary"""
+        """Create from dictionary."""
         chain_type = ChainType(data.get('chain_type', 'sequential'))
         steps = [ChainStep.from_dict(s) for s in data.get('steps', [])]
 
@@ -405,23 +403,23 @@ class ChainManager:
         return f"[SIMULATED] {prompt}"
 
     def set_executor(self, executor: Callable):
-        """Set the prompt executor function"""
+        """Set the prompt executor function."""
         self.executor = executor
         logger.info("Executor function set")
 
     def register_tool(self, name: str, tool_func: Callable):
-        """Register a tool function"""
+        """Register a tool function."""
         self.tool_registry[name] = tool_func
         logger.debug(f"Registered tool: {name}")
 
     def register_function(self, name: str, func: Callable):
-        """Register a custom function"""
+        """Register a custom function."""
         self.function_registry[name] = func
         logger.debug(f"Registered function: {name}")
 
     def load_chain_from_yaml(self, filepath: str | Path) -> PromptChain:
         """
-        Load chain definition from YAML file
+        Load chain definition from YAML file.
 
         Args:
             filepath: Path to YAML file
@@ -446,12 +444,12 @@ class ChainManager:
             raise
 
     def add_chain(self, chain: PromptChain):
-        """Add a chain to the manager"""
+        """Add a chain to the manager."""
         self.chains[chain.name] = chain
         logger.debug(f"Added chain: {chain.name}")
 
     def get_chain(self, name: str) -> PromptChain | None:
-        """Get a chain by name"""
+        """Get a chain by name."""
         return self.chains.get(name)
 
     async def execute_chain(
@@ -461,7 +459,7 @@ class ChainManager:
         callbacks: dict[str, Callable] | None = None
     ) -> ChainState:
         """
-        Execute a prompt chain
+        Execute a prompt chain.
 
         Args:
             chain: Chain name or PromptChain object
@@ -744,7 +742,7 @@ class ChainManager:
         callbacks: dict[str, Callable] | None = None
     ) -> ChainState:
         """
-        Synchronous wrapper for execute_chain
+        Synchronous wrapper for execute_chain.
 
         Args:
             chain: Chain name or PromptChain object
@@ -769,7 +767,7 @@ class ChainManager:
         description: str | None = None
     ) -> PromptChain:
         """
-        Create a simple sequential chain from a list of prompts
+        Create a simple sequential chain from a list of prompts.
 
         Args:
             name: Chain name
@@ -808,7 +806,7 @@ class ChainManager:
 
     def save_chain(self, chain: PromptChain, filepath: str | Path):
         """
-        Save chain to YAML file
+        Save chain to YAML file.
 
         Args:
             chain: Chain to save
@@ -823,7 +821,7 @@ class ChainManager:
 
 
 def create_default_chain_manager(executor: Callable | None = None) -> ChainManager:
-    """Create chain manager with default configuration"""
+    """Create chain manager with default configuration."""
     manager = ChainManager(executor=executor)
     logger.info("Created default chain manager")
     return manager
