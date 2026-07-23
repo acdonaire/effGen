@@ -130,12 +130,10 @@ class TestLiteratureReview:
         )
         from effgen.prompts.library.eval import PromptEval
 
-        output = "\n".join(
-            [
-                "1. Ho et al. (2020), Denoising Diffusion Probabilistic Models.",
-                "2. Dhariwal and Nichol (2021), Diffusion Models Beat GANs.",
-                "3. Rombach et al. (2022), High-Resolution Image Synthesis with Latent Diffusion Models.",
-            ]
+        output = (
+            "1. Ho et al. (2020), Denoising Diffusion Probabilistic Models.\n"
+            "2. Dhariwal and Nichol (2021), Diffusion Models Beat GANs.\n"
+            "3. Rombach et al. (2022), High-Resolution Image Synthesis with Latent Diffusion Models."
         )
         evaluator = PromptEval()
         ok, msg = evaluator._check_shape(output, lit_review_zero_shot.expected_shape)

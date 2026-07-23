@@ -594,9 +594,26 @@ module = [
     "docker.*",
     "faiss.*",
     "chromadb.*",
-    "qdrant_client.*",
 ]
 ignore_missing_imports = true
+
+# Fully annotated modules: every function signature must stay complete. Extend
+# this list as more subpackages reach full signature coverage.
+[[tool.mypy.overrides]]
+module = [
+    "effgen",
+    "effgen.completion",
+    "effgen.errors",
+    "effgen._env",
+    "effgen._logging_setup",
+    "effgen.cache.*",
+    "effgen.dashboard.*",
+    "effgen.playground.*",
+    "effgen.presets.*",
+    "effgen.webui.*",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
 
 # pytest - Testing Framework
 [tool.pytest.ini_options]
@@ -723,6 +740,11 @@ select = [
     "B",   # flake8-bugbear
     "C4",  # flake8-comprehensions
     "UP",  # pyupgrade
+    "ISC", # flake8-implicit-str-concat
+    "FLY", # flynt (str.join of literals -> f-string)
+    "LOG", # flake8-logging
+    "T10", # flake8-debugger (no stray breakpoints)
+    "YTT", # flake8-2020 (sys.version misuse)
 ]
 ignore = [
     "E501",   # line too long (handled by black)
