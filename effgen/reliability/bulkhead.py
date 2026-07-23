@@ -43,6 +43,7 @@ import contextlib
 import functools
 import logging
 import threading
+from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -120,7 +121,7 @@ class Bulkhead:
     # ------------------------------------------------------------------
 
     @contextlib.contextmanager
-    def acquire(self):
+    def acquire(self) -> Iterator[None]:
         """Synchronous context manager that acquires a bulkhead permit.
 
         Raises:
@@ -152,7 +153,7 @@ class Bulkhead:
                 self._active -= 1
             self._semaphore.release()
 
-    def guard(self):
+    def guard(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Decorator that wraps a *synchronous* function with this bulkhead."""
 
         def decorator(fn):
@@ -176,7 +177,7 @@ class Bulkhead:
         return self._async_semaphore
 
     @contextlib.asynccontextmanager
-    async def async_acquire(self):
+    async def async_acquire(self) -> AsyncIterator[None]:
         """Async context manager that acquires a bulkhead permit.
 
         Raises:
@@ -214,7 +215,7 @@ class Bulkhead:
         except BulkheadFull:
             raise
 
-    def async_guard(self):
+    def async_guard(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Decorator that wraps an *async* function with this bulkhead."""
 
         def decorator(fn):

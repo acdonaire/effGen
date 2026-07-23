@@ -32,7 +32,7 @@ class BudgetExceeded(Exception):
     Surfaced by the API server as HTTP 429 (Too Many Requests).
     """
 
-    def __init__(self, reason: str, status_code: int = 429):
+    def __init__(self, reason: str, status_code: int = 429) -> None:
         super().__init__(reason)
         self.status_code = status_code
 

@@ -36,6 +36,7 @@ import builtins
 import contextlib
 import signal
 import threading
+from collections.abc import Callable, Iterator
 from typing import Any
 
 __all__ = [
@@ -210,7 +211,7 @@ class _AsyncTimeoutContext:
 
 
 @contextlib.contextmanager
-def with_timeout(seconds: float, operation: str = "operation"):
+def with_timeout(seconds: float, operation: str = "operation") -> Iterator["_SyncTimeoutContext"]:
     """Synchronous context manager that enforces a wall-clock timeout.
 
     Args:
@@ -248,7 +249,7 @@ def async_timeout(seconds: float, operation: str = "operation") -> _AsyncTimeout
     return _AsyncTimeoutContext(seconds, operation)
 
 
-def apply_timeout(fn, seconds: float, operation: str | None = None):
+def apply_timeout(fn: Callable[..., Any], seconds: float, operation: str | None = None) -> Callable[..., Any]:
     """Wrap *fn* so it raises :class:`TimeoutError` after *seconds* seconds.
 
     Works for both regular functions and coroutines.

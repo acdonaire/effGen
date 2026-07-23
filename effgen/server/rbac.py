@@ -181,7 +181,7 @@ def reset_registry(roles: list[Role] | None = None) -> None:
 class PolicyDenied(Exception):
     """Raised when an RBAC policy check fails."""
 
-    def __init__(self, reason: str, status_code: int = 403):
+    def __init__(self, reason: str, status_code: int = 403) -> None:
         super().__init__(reason)
         self.status_code = status_code
 
@@ -320,7 +320,7 @@ def resolve_policy(
 def get_rbac_dependency(
     require_tool: str | None = None,
     require_model: str | None = None,
-):  # noqa: ANN201
+) -> Any:
     """Return a FastAPI Depends-compatible callable that enforces RBAC.
 
     Usage::

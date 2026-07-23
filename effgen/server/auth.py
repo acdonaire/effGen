@@ -152,7 +152,7 @@ def _discover_jwks_uri(issuer: str) -> str:
 class AuthError(Exception):
     """Raised when a JWT cannot be validated."""
 
-    def __init__(self, message: str, status_code: int = 401):
+    def __init__(self, message: str, status_code: int = 401) -> None:
         super().__init__(message)
         self.status_code = status_code
 
@@ -394,7 +394,7 @@ def _is_playground_static(path: str) -> bool:
     return path.startswith("/playground/") and path.endswith(_STATIC_ASSET_SUFFIXES)
 
 
-def get_auth_dependency():  # noqa: ANN201
+def get_auth_dependency() -> Any:
     """Return a FastAPI Depends-compatible callable for JWT auth.
 
     Usage::

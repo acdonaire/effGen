@@ -261,7 +261,7 @@ def _emit_retry_event(attempt: int, reason: str, delay_s: float) -> None:
 DEFAULT_RETRY = Retry()
 
 
-def retryable(policy: Retry = DEFAULT_RETRY):
+def retryable(policy: Retry = DEFAULT_RETRY) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator factory that wraps a sync or async function with *policy*.
 
     Usage::
