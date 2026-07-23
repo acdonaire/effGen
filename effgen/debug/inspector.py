@@ -40,6 +40,7 @@ class DebugIteration:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "iteration": self.iteration,
             "raw_prompt": self.raw_prompt,
@@ -69,6 +70,7 @@ class DebugTrace:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "task": self.task,
             "agent_name": self.agent_name,
@@ -99,9 +101,7 @@ class DebugTrace:
 # ---------------------------------------------------------------------------
 
 class DebugAgent:
-    """
-    Thin wrapper around :class:`effgen.core.agent.Agent` that captures a
-    full DebugTrace for every run.
+    """Wrapper around :class:`effgen.core.agent.Agent` that records a DebugTrace per run.
 
     Usage::
 

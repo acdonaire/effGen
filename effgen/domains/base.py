@@ -148,6 +148,7 @@ class Domain:
         return create_agent(domain=self, model=model, **overrides)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable dict representation."""
         return {
             "name": self.name,
             "keywords": self.keywords,

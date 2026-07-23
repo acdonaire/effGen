@@ -249,8 +249,7 @@ def async_timeout(seconds: float, operation: str = "operation") -> _AsyncTimeout
 
 
 def apply_timeout(fn, seconds: float, operation: str | None = None):
-    """Return a wrapper around *fn* that raises :class:`TimeoutError` if it
-    runs longer than *seconds* seconds.
+    """Wrap *fn* so it raises :class:`TimeoutError` after *seconds* seconds.
 
     Works for both regular functions and coroutines.
 

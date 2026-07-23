@@ -137,6 +137,7 @@ class AudioPreprocessor:
         self._constraints = _PROVIDER_CONSTRAINTS.get(self.provider, {})
 
     def prepare(self, part: AudioPart) -> AudioPart:
+        """Validate *part* against the provider's audio constraints and return it."""
         constraints = self._constraints
         if not constraints:
             return part

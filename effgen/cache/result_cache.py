@@ -24,6 +24,8 @@ EmbedFn = Callable[[str], "list[float]"]
 
 @dataclass
 class ResultCacheEntry:
+    """A cached result with its query, optional embedding and TTL."""
+
     key: str
     query: str
     value: Any
@@ -34,6 +36,7 @@ class ResultCacheEntry:
     tool: str | None = None
 
     def is_expired(self, now: float | None = None) -> bool:
+        """True when the entry has outlived its TTL (a ``None`` TTL never expires)."""
         if self.ttl is None:
             return False
         now = now if now is not None else time.time()
@@ -95,6 +98,7 @@ class ResultCache:
     # ------------------------------------------------------------------ keys
     @staticmethod
     def make_key(query: str, *extra: Any) -> str:
+        """Return the cache key for *query* (case/whitespace-insensitive) plus *extra*."""
         h = hashlib.sha256()
         h.update(query.strip().lower().encode("utf-8"))
         for item in extra:
@@ -214,6 +218,7 @@ class ResultCache:
         return None
 
     def invalidate(self, query: str, *, tool: str | None = None) -> bool:
+        """Drop the exact-match entry for *query*; returns whether one was removed."""
         cache_key = self.make_key(query, tool or "")
         with self._lock:
             return self._entries.pop(cache_key, None) is not None
@@ -227,6 +232,7 @@ class ResultCache:
             return len(keys)
 
     def clear(self) -> None:
+        """Remove every entry and reset the hit/miss counters."""
         with self._lock:
             self._entries.clear()
             self._hits = 0
@@ -238,6 +244,7 @@ class ResultCache:
             return len(self._entries)
 
     def stats(self) -> dict[str, Any]:
+        """Return size, capacity and exact/semantic hit counters with the hit rate."""
         with self._lock:
             total = self._hits + self._semantic_hits + self._misses
             return {

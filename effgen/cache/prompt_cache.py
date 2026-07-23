@@ -33,6 +33,7 @@ class PromptCacheEntry:
     ttl: float | None = None
 
     def is_expired(self, now: float | None = None) -> bool:
+        """True when the entry has outlived its TTL (a ``None`` TTL never expires)."""
         if self.ttl is None:
             return False
         now = now if now is not None else time.time()
@@ -106,6 +107,7 @@ class PromptCache:
             return entry.payload
 
     def contains(self, key: str) -> bool:
+        """True when *key* is cached and not expired."""
         with self._lock:
             entry = self._entries.get(key)
             if entry is None or entry.is_expired():
@@ -113,10 +115,12 @@ class PromptCache:
             return True
 
     def invalidate(self, key: str) -> bool:
+        """Drop *key* from the cache; returns whether an entry was removed."""
         with self._lock:
             return self._entries.pop(key, None) is not None
 
     def clear(self) -> None:
+        """Remove every entry and reset the hit/miss counters."""
         with self._lock:
             self._entries.clear()
             self._hits = 0
@@ -127,6 +131,7 @@ class PromptCache:
             return len(self._entries)
 
     def stats(self) -> dict[str, Any]:
+        """Return size, capacity and hit/miss counters with the hit rate."""
         with self._lock:
             total = self._hits + self._misses
             return {

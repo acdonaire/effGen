@@ -1,5 +1,4 @@
-"""
-effGen Reliability Primitives.
+"""Reliability primitives: timeouts, retries, circuit breakers, bulkheads, hedging, chaos.
 
 Provides reliability patterns:
 - :class:`~effgen.reliability.timeouts.TimeoutConfig` — explicit timeouts for every path

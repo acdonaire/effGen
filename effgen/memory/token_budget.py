@@ -42,10 +42,12 @@ class TokenBudget:
             self.shares = {k: v / total for k, v in self.shares.items()}
 
     def allocate(self, section: str) -> int:
+        """Return the token cap for *section* (0 for an unknown section)."""
         share = self.shares.get(section, 0.0)
         return max(0, int(self.context_length * share))
 
     def allocations(self) -> dict[str, int]:
+        """Return the token cap for every configured section."""
         return {k: self.allocate(k) for k in self.shares}
 
     def reserve(self, section: str, tokens: int) -> None:
