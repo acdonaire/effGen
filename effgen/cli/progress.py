@@ -247,7 +247,7 @@ class LiveStatus:
         reasoning: bool = False,
         tracker: Any = None,
         hint: str | None = None,
-    ):
+    ) -> None:
         self.console = console
         self.tracker = tracker
         self.state = _StatusState(model_label, reasoning, hint=hint)
@@ -568,7 +568,7 @@ class StepProgress:
         total: int | None,
         description: str = "Working",
         animate: bool = True,
-    ):
+    ) -> None:
         self.total = total
         self.description = description
         self.console = console

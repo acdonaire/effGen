@@ -245,7 +245,7 @@ def setup_logging(
     verbose: bool = False,
     log_file: str | None = None,
     quiet: bool = False,
-):
+) -> None:
     """
     Configure logging for CLI.
 
@@ -290,7 +290,7 @@ def setup_logging(
 class CLIInterface:
     """Main CLI interface for effGen."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize CLI interface."""
         self.console = _get_console() if RICH_AVAILABLE else None
         self.config_loader = ConfigLoader()
@@ -316,7 +316,7 @@ class CLIInterface:
             no_animation=getattr(args, 'no_animation', False),
         )
 
-    def print(self, *args, **kwargs):
+    def print(self, *args: Any, **kwargs: Any) -> None:
         """Print with rich formatting if available."""
         console = self._human()
         if console:
@@ -324,7 +324,7 @@ class CLIInterface:
         else:
             print(*args, file=sys.stderr if self._human_to_stderr else None, **kwargs)
 
-    def print_data(self, text: str):
+    def print_data(self, text: str) -> None:
         """Write *text* to stdout byte-for-byte.
 
         Used for output that is data rather than chatter — an exported session,
@@ -337,7 +337,7 @@ class CLIInterface:
             sys.stdout.write("\n")
         sys.stdout.flush()
 
-    def print_line(self, text: str, style: str | None = None):
+    def print_line(self, text: str, style: str | None = None) -> None:
         """Print one line with no markup parsing and no value highlighting.
 
         Stored values such as model ids, timestamps and durations stay intact
@@ -350,7 +350,7 @@ class CLIInterface:
         else:
             print(text, file=sys.stderr if self._human_to_stderr else None)
 
-    def print_header(self, text: str):
+    def print_header(self, text: str) -> None:
         """Print a header."""
         console = self._human()
         if console:
@@ -358,7 +358,7 @@ class CLIInterface:
         else:
             print(f"\n=== {text} ===", file=sys.stderr if self._human_to_stderr else None)
 
-    def print_success(self, text: str):
+    def print_success(self, text: str) -> None:
         """Print success message."""
         console = self._human()
         if console:
@@ -366,7 +366,7 @@ class CLIInterface:
         else:
             print(f"✓ {text}", file=sys.stderr if self._human_to_stderr else None)
 
-    def print_error(self, text: str):
+    def print_error(self, text: str) -> None:
         """Print error message."""
         console = self._human()
         if console:
@@ -374,7 +374,7 @@ class CLIInterface:
         else:
             print(f"✗ {text}", file=sys.stderr if self._human_to_stderr else None)
 
-    def print_warning(self, text: str):
+    def print_warning(self, text: str) -> None:
         """Print warning message."""
         console = self._human()
         if console:
@@ -382,7 +382,7 @@ class CLIInterface:
         else:
             print(f"⚠ {text}", file=sys.stderr if self._human_to_stderr else None)
 
-    def print_error_panel(self, message: str, *, title: str = "Error"):
+    def print_error_panel(self, message: str, *, title: str = "Error") -> None:
         """Render a failure as a red-bordered panel, or a styled line without rich.
 
         A run that fails at generation and a run that fails to load its model
@@ -400,7 +400,7 @@ class CLIInterface:
         else:
             self.print_error(message)
 
-    def interactive_wizard(self, args):
+    def interactive_wizard(self, args: Any) -> int | None:
         """
         Interactive setup wizard for configuring and running agents.
 
@@ -421,7 +421,7 @@ class CLIInterface:
 
         return interactive_wizard(self, args)
 
-    def run_agent(self, args):
+    def run_agent(self, args: argparse.Namespace) -> int | None:
         """
         Run an agent with a task.
 
@@ -464,7 +464,7 @@ class CLIInterface:
 
         return table
 
-    def chat_mode(self, args):
+    def chat_mode(self, args: argparse.Namespace) -> int | None:
         """Interactive chat REPL.
 
         Delegates to :class:`effgen.cli.chat.ChatREPL`, which provides streaming
@@ -477,7 +477,7 @@ class CLIInterface:
 
         return chat_mode(self, args)
 
-    def serve_api(self, args):
+    def serve_api(self, args: argparse.Namespace) -> int | None:
         """Start the effGen API server.
 
         Serves the OpenAI-compatible ``/v1`` app plus the ``/run``, ``/tools``,
@@ -492,7 +492,7 @@ class CLIInterface:
         from effgen.cli.commands.serve import register_convenience_routes
         return register_convenience_routes(self, app)
 
-    def config_commands(self, args):
+    def config_commands(self, args: argparse.Namespace) -> int | None:
         """Configuration management commands."""
         from effgen.cli.commands.config import config_commands
         return config_commands(self, args)
@@ -517,7 +517,7 @@ class CLIInterface:
         from effgen.cli.commands.config import config_init
         return config_init(self, args)
 
-    def tools_commands(self, args):
+    def tools_commands(self, args: argparse.Namespace) -> int | None:
         """Tool management commands."""
         from effgen.cli.commands.tools import tools_commands
         return tools_commands(self, args)
@@ -542,17 +542,17 @@ class CLIInterface:
         from effgen.cli.commands.tools import print_tool_usage
         return print_tool_usage(self, metadata, tool)
 
-    def _tools_info(self, args):
+    def _tools_info(self, args: argparse.Namespace) -> int | None:
         """Show detailed tool information."""
         from effgen.cli.commands.tools import tools_info
         return tools_info(self, args)
 
-    def _tools_test(self, args):
+    def _tools_test(self, args: argparse.Namespace) -> int | None:
         """Test a tool with sample input."""
         from effgen.cli.commands.tools import tools_test
         return tools_test(self, args)
 
-    def models_commands(self, args):
+    def models_commands(self, args: argparse.Namespace) -> int | None:
         """Model management commands."""
         from effgen.cli.commands.models import models_commands
         return models_commands(self, args)
@@ -647,7 +647,7 @@ class CLIInterface:
         from effgen.cli.commands.models import models_refresh
         return models_refresh(self, args)
 
-    def examples_commands(self, args):
+    def examples_commands(self, args: argparse.Namespace) -> int | None:
         """Run example scripts."""
         from effgen.cli.commands.examples import examples_commands
         return examples_commands(self, args)
@@ -724,7 +724,7 @@ class _EffgenArgumentParser(argparse.ArgumentParser):
         super().error(message)
 
 
-def create_parser():
+def create_parser() -> argparse.ArgumentParser:
     """Create argument parser for CLI."""
     # Drive --preset choices from the preset registry so all 9 presets are
     # accepted (rag/media/multimodal/notify were previously rejected).
@@ -2596,7 +2596,7 @@ def _extract_theme_arg(argv: list[str]) -> tuple[list[str], str | None]:
     return remaining, theme
 
 
-def main():
+def main() -> None:
     """Main entry point for CLI."""
     # Load .env early so all subcommands see API keys (see load_env_files).
     load_env_files()
@@ -2809,7 +2809,7 @@ def main():
         sys.exit(1)
 
 
-def agent_main():
+def agent_main() -> None:
     """
     Entry point for effgen-agent CLI (similar to smolagent).
 
@@ -2847,7 +2847,7 @@ def agent_main():
     main()
 
 
-def web_agent_main():
+def web_agent_main() -> None:
     """
     Entry point for web agent CLI (effgen-web).
 

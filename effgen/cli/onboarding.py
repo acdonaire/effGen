@@ -24,7 +24,9 @@ import difflib
 import json
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 # Reuse the CLI-wide environment helpers so the whole tool agrees on what
 # "interactive" and "CI" mean.
@@ -139,7 +141,7 @@ def pick_tip(index: int | None = None) -> str:
 _TIP_THROTTLE = 3
 
 
-def maybe_print_tip(*, quiet: bool = False, force: bool = False, stream=None) -> bool:
+def maybe_print_tip(*, quiet: bool = False, force: bool = False, stream: Any = None) -> bool:
     """Print one rotating ``💡 Tip:`` line at a natural moment, if appropriate.
 
     Returns True if a tip was printed. Non-spammy: only shows on an interactive
@@ -195,7 +197,7 @@ def first_run_pending() -> bool:
     return not _state_file(".welcomed").exists()
 
 
-def maybe_show_first_run_welcome(*, quiet: bool = False, stream=None) -> bool:
+def maybe_show_first_run_welcome(*, quiet: bool = False, stream: Any = None) -> bool:
     """Show the one-time welcome on first interactive use; return True if shown.
 
     Records a flag under ``~/.effgen`` so it never shows again. Silent under
@@ -225,7 +227,7 @@ def maybe_show_first_run_welcome(*, quiet: bool = False, stream=None) -> bool:
 # "Did you mean …?" — shared fuzzy suggester
 # ---------------------------------------------------------------------------
 
-def suggest(name: str, candidates, *, n: int = 1, cutoff: float = 0.6) -> list[str]:
+def suggest(name: str, candidates: Iterable[str], *, n: int = 1, cutoff: float = 0.6) -> list[str]:
     """Return up to *n* candidates closest to *name* (case-insensitive)."""
     if not name or not candidates:
         return []
@@ -252,7 +254,7 @@ def suggest(name: str, candidates, *, n: int = 1, cutoff: float = 0.6) -> list[s
     return out[:n]
 
 
-def did_you_mean(name: str, candidates, *, n: int = 1, cutoff: float = 0.6) -> str:
+def did_you_mean(name: str, candidates: Iterable[str], *, n: int = 1, cutoff: float = 0.6) -> str:
     """Format a "Did you mean 'x'?" clause, or ``""`` if nothing is close."""
     matches = suggest(name, candidates, n=n, cutoff=cutoff)
     if not matches:

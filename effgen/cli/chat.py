@@ -65,7 +65,7 @@ class ChatREPL:
 
     DEFAULT_MODEL = "Qwen/Qwen2.5-3B-Instruct"
 
-    def __init__(self, cli: Any, args: Any):
+    def __init__(self, cli: Any, args: Any) -> None:
         self.cli = cli
         self.args = args
         self.console = getattr(cli, "console", None)
