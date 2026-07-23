@@ -350,7 +350,7 @@ class BaseTool(ABC):
     # callers can use the obvious verb instead of memorizing the exact enum.
     operation_aliases: dict[str, str] = {}
 
-    def __init__(self, metadata: ToolMetadata):
+    def __init__(self, metadata: ToolMetadata) -> None:
         """
         Initialize the tool with metadata.
 
@@ -433,7 +433,7 @@ class BaseTool(ABC):
         """Get tool dependencies (names of other required tools)."""
         return self._dependencies
 
-    def validate_parameters(self, **kwargs) -> tuple[bool, str | None]:
+    def validate_parameters(self, **kwargs: Any) -> tuple[bool, str | None]:
         """
         Validate input parameters against the tool's parameter specifications.
 
@@ -552,7 +552,7 @@ class BaseTool(ABC):
                     coerced[name] = parsed
         return coerced
 
-    async def execute(self, **kwargs) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """
         Execute the tool with parameter validation and error handling.
 

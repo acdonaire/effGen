@@ -58,7 +58,7 @@ class ToolPlugin:
         version: str | None = None,
         description: str | None = None,
         tools: list[type[BaseTool] | BaseTool] | None = None,
-    ):
+    ) -> None:
         # Constructor args take priority, then class-level attrs, then defaults
         if name is not None:
             self.name = name
@@ -106,7 +106,7 @@ class ToolPlugin:
 class PluginManager:
     """Discovers and loads tool plugins from multiple sources."""
 
-    def __init__(self, registry: ToolRegistry | None = None):
+    def __init__(self, registry: ToolRegistry | None = None) -> None:
         self.registry = registry or get_registry()
         self._loaded: dict[str, ToolPlugin] = {}
 

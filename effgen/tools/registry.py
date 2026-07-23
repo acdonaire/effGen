@@ -74,7 +74,7 @@ class ToolRegistry:
         result = await tool.execute(param="value")
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the tool registry."""
         # A registered entry is either a class (constructed fresh on first
         # lookup) or a zero-arg factory closing over a pre-built instance

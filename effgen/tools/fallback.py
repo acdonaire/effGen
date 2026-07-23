@@ -28,7 +28,7 @@ class ToolFallbackChain:
         "web_search": ["agentic_search"],
     }
 
-    def __init__(self, custom_chains: dict[str, list[str]] | None = None):
+    def __init__(self, custom_chains: dict[str, list[str]] | None = None) -> None:
         """
         Initialize with default chains, optionally merged with custom ones.
 
