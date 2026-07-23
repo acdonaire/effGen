@@ -28,11 +28,28 @@ def _skip_if_hf_credits_exhausted(exc: BaseException) -> None:
         pytest.skip(f"HuggingFace Inference credits exhausted: {exc}")
 
 
+def _skip_if_hf_model_rotated_out(exc: BaseException) -> None:
+    # HF serverless rotates models in/out of the free tier; when the happy-path
+    # model is not currently served the adapter raises a typed
+    # ModelUnavailableError naming alternatives. That is provider-side state,
+    # not an effGen regression, so the happy-path tests skip with the reason.
+    # The typed-error tests below call the adapter directly (no helper) and
+    # still assert the raise.
+    msg = str(exc)
+    if "model_not_supported" in msg or "not supported by any provider" in msg:
+        pytest.skip(f"HuggingFace serverless does not currently serve this model: {exc}")
+    from effgen.models.errors import ModelUnavailableError
+
+    if isinstance(exc, ModelUnavailableError) and "temporarily unavailable" in msg:
+        pytest.skip(f"HuggingFace serverless model rotated out: {exc}")
+
+
 def _call_or_skip_hf_quota(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except Exception as exc:
         _skip_if_hf_credits_exhausted(exc)
+        _skip_if_hf_model_rotated_out(exc)
         raise
 
 
