@@ -90,7 +90,7 @@ class MessageBus:
     - Optional message persistence for replay/debugging
     """
 
-    def __init__(self, persist: bool = False):
+    def __init__(self, persist: bool = False) -> None:
         """
         Initialize the message bus.
 

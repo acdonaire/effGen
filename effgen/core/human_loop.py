@@ -232,7 +232,7 @@ class ApprovalManager:
         callback: Callable[[str, str], bool] | None = None,
         timeout: float = 0.0,
         default_decision: ApprovalDecision = ApprovalDecision.DENIED,
-    ):
+    ) -> None:
         self.mode = mode
         self.callback = callback
         self.timeout = timeout

@@ -189,7 +189,7 @@ class ExecutionTracker:
     - Final synthesis
     """
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """
         Initialize execution tracker.
 
@@ -230,7 +230,7 @@ class ExecutionTracker:
         except ValueError:
             pass
 
-    def track_event(self, event: ExecutionEvent):
+    def track_event(self, event: ExecutionEvent) -> None:
         """
         Record execution event.
 
@@ -626,7 +626,7 @@ class ExecutionTracker:
             "duration": status.elapsed_time
         }
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all tracking data."""
         self.events = []
         self.nodes = {}
@@ -797,7 +797,7 @@ class ExecutionTracker:
 
         return bottlenecks
 
-    def export_trace(self, filepath: str, format: str = "json"):
+    def export_trace(self, filepath: str, format: str = "json") -> None:
         """
         Export execution trace to file.
 

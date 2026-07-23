@@ -151,7 +151,7 @@ class AgentRegistry:
     and provides lookup/query capabilities.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._agents: dict[str, AgentEntry] = {}
         self._lock = threading.RLock()
 
@@ -277,7 +277,7 @@ class AgentPool:
     out and returned. Uses a simple list-based pool.
     """
 
-    def __init__(self, max_size: int = 10):
+    def __init__(self, max_size: int = 10) -> None:
         """
         Initialize the agent pool.
 

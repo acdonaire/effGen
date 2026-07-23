@@ -293,7 +293,7 @@ class MultiAgentOrchestrator:
         print(result.success, result.output)
     """
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """
         Initialize orchestrator.
 
@@ -313,7 +313,7 @@ class MultiAgentOrchestrator:
         # partial results gathered so far.
         self._cancel_events: dict[str, threading.Event] = {}
 
-    def register_agent(self, agent: Agent):
+    def register_agent(self, agent: Agent) -> None:
         """
         Register an agent.
 
@@ -332,7 +332,7 @@ class MultiAgentOrchestrator:
                    agents: list[Agent],
                    pattern: OrchestrationPattern = OrchestrationPattern.SEQUENTIAL,
                    manager_agent: Agent | None = None,
-                   **kwargs) -> TeamConfig:
+                   **kwargs: Any) -> TeamConfig:
         """
         Create a team of agents.
 
@@ -1149,7 +1149,7 @@ Consider the above viewpoints and provide your perspective or refined answer."""
         """List all team names."""
         return list(self.teams.keys())
 
-    def remove_team(self, name: str):
+    def remove_team(self, name: str) -> None:
         """Remove a team."""
         if name in self.teams:
             del self.teams[name]

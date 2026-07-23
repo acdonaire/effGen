@@ -73,7 +73,7 @@ class FeedbackCollector:
     for analysis or fine-tuning datasets.
     """
 
-    def __init__(self, agent_name: str = ""):
+    def __init__(self, agent_name: str = "") -> None:
         self.agent_name = agent_name
         self._entries: list[FeedbackEntry] = []
 

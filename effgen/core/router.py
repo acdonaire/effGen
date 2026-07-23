@@ -117,7 +117,7 @@ class SubAgentRouter:
     }
 
     def __init__(self, config: dict[str, Any] | None = None,
-                 llm_client: Any | None = None):
+                 llm_client: Any | None = None) -> None:
         """
         Initialize router.
 
@@ -769,7 +769,7 @@ class SubAgentRouter:
 
         return suggestions
 
-    def export_decision_log(self, filepath: str, format: str = "json"):
+    def export_decision_log(self, filepath: str, format: str = "json") -> None:
         """
         Export routing decision history to file.
 
@@ -807,7 +807,7 @@ class SubAgentRouter:
         else:
             raise ValueError(f"Unsupported format: {format}")
 
-    def clear_history(self, keep_recent: int = 0):
+    def clear_history(self, keep_recent: int = 0) -> None:
         """
         Clear routing history.
 
