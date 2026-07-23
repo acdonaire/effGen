@@ -22,6 +22,7 @@ from dataclasses import replace
 from typing import Any
 
 from effgen.models._adapter_utils import (
+    model_not_found_error,
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
@@ -30,6 +31,12 @@ from effgen.models._multimodal import (
     require_audio_support,
     require_video_support,
     require_vision_support,
+)
+from effgen.models._usage import (
+    extract_openai_usage,
+    record_tracker_cost,
+    tool_calls_from_message,
+    usage_metadata,
 )
 from effgen.models.base import (
     FunctionCallingModel,
@@ -40,9 +47,7 @@ from effgen.models.base import (
     record_stream_usage,
 )
 from effgen.models.errors import (
-    BudgetExceededError,
     ModelAuthError,
-    ModelNotFoundError,
     ModelRefusalError,
 )
 from effgen.models.latency_tracker import timed_call
@@ -434,6 +439,36 @@ class OpenAIAdapter(FunctionCallingModel):
 
         return " ".join(transcripts).strip()
 
+    def _validate_media_support(self, prompt: Any) -> None:
+        """Reject image/audio/video inputs the current model cannot handle.
+
+        All GPT models support audio via Whisper transcription; audio capability
+        is always True for OpenAI since we transparently transcribe before
+        sending. Video is handled via frame-sampling + vision, so it requires a
+        vision-capable model.
+        """
+        require_vision_support(
+            prompt,
+            provider="openai",
+            model_name=self.model_name,
+            supports_vision=supports_vision,
+            hint="Use 'gpt-4o-mini' or 'gpt-4o' for image inputs.",
+        )
+        require_audio_support(
+            prompt,
+            provider="openai",
+            model_name=self.model_name,
+            supports_audio=True,
+            hint="Audio is transcribed via Whisper before chat completion.",
+        )
+        require_video_support(
+            prompt,
+            provider="openai",
+            model_name=self.model_name,
+            supports_video=supports_vision(self.model_name),
+            hint="Use 'gpt-4o-mini' or 'gpt-4o' for video inputs (frames sent as images).",
+        )
+
     def _validate_reasoning_effort(self, effort: str | None) -> None:
         """Raise ValueError for invalid *effort* values."""
         if effort is not None and effort not in VALID_REASONING_EFFORTS:
@@ -546,18 +581,13 @@ class OpenAIAdapter(FunctionCallingModel):
             f"| call=${cost:.6f} session=${self.total_cost:.6f}"
         )
 
-        try:
-            from effgen.models._cost import CostTracker
-            CostTracker.get().record(
-                provider="openai",
-                model=self.model_name,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-            )
-        except BudgetExceededError:
-            raise
-        except Exception:
-            logger.debug("CostTracker recording failed for OpenAI", exc_info=True)
+        record_tracker_cost(
+            "openai",
+            self.model_name,
+            prompt_tokens,
+            completion_tokens,
+            log=logger,
+        )
         return cost
 
     # ------------------------------------------------------------------
@@ -583,30 +613,7 @@ class OpenAIAdapter(FunctionCallingModel):
         if config is None:
             config = GenerationConfig()
 
-        require_vision_support(
-            prompt,
-            provider="openai",
-            model_name=self.model_name,
-            supports_vision=supports_vision,
-            hint="Use 'gpt-4o-mini' or 'gpt-4o' for image inputs.",
-        )
-        # All GPT models support audio via Whisper transcription; audio capability
-        # is always True for OpenAI since we transparently transcribe before sending.
-        require_audio_support(
-            prompt,
-            provider="openai",
-            model_name=self.model_name,
-            supports_audio=True,
-            hint="Audio is transcribed via Whisper before chat completion.",
-        )
-        # Video is handled via frame-sampling + vision; requires a vision-capable model.
-        require_video_support(
-            prompt,
-            provider="openai",
-            model_name=self.model_name,
-            supports_video=supports_vision(self.model_name),
-            hint="Use 'gpt-4o-mini' or 'gpt-4o' for video inputs (frames sent as images).",
-        )
+        self._validate_media_support(prompt)
 
         # Transparent routing: if tools are passed (e.g. from the Agent), use
         # generate_with_tools so native function-calling works end-to-end.
@@ -632,38 +639,22 @@ class OpenAIAdapter(FunctionCallingModel):
             if "401" in msg or "invalid_api_key" in msg.lower() or "incorrect api key" in msg.lower():
                 raise ModelAuthError("openai", self.model_name, msg) from e
             if "404" in msg or "model_not_found" in msg.lower():
-                from effgen.models._catalog import suggest_for_missing
-
-                raise ModelNotFoundError(
-                    "openai",
-                    self.model_name,
-                    msg + suggest_for_missing("openai", self.model_name),
-                ) from e
+                raise model_not_found_error("openai", self.model_name, msg) from e
             raise provider_runtime_error("openai", self.model_name, "generate", e, message="OpenAI generation failed") from e
 
         choice = response.choices[0]
         generated_text = choice.message.content or ""
         finish_reason = normalize_finish_reason(choice.finish_reason)
 
-        usage = response.usage
-        prompt_tokens = usage.prompt_tokens
-        completion_tokens = usage.completion_tokens
-        total_tokens = usage.total_tokens
-
-        cached_tokens = 0
-        if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-            cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
-
+        prompt_tokens, completion_tokens, total_tokens, cached_tokens = (
+            extract_openai_usage(response.usage)
+        )
         cost = self._record_cost(prompt_tokens, completion_tokens, total_tokens, cached_tokens)
 
-        metadata: dict[str, Any] = {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "cached_input_tokens": cached_tokens,
-            "cost_usd": cost,
-            "total_cost": self.total_cost,
-        }
+        metadata: dict[str, Any] = usage_metadata(
+            prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+            cost, self.total_cost,
+        )
 
         _obs_log.model_event(
             "call.done",
@@ -706,27 +697,7 @@ class OpenAIAdapter(FunctionCallingModel):
         if config is None:
             config = GenerationConfig()
 
-        require_vision_support(
-            prompt,
-            provider="openai",
-            model_name=self.model_name,
-            supports_vision=supports_vision,
-            hint="Use 'gpt-4o-mini' or 'gpt-4o' for image inputs.",
-        )
-        require_audio_support(
-            prompt,
-            provider="openai",
-            model_name=self.model_name,
-            supports_audio=True,
-            hint="Audio is transcribed via Whisper before chat completion.",
-        )
-        require_video_support(
-            prompt,
-            provider="openai",
-            model_name=self.model_name,
-            supports_video=supports_vision(self.model_name),
-            hint="Use 'gpt-4o-mini' or 'gpt-4o' for video inputs (frames sent as images).",
-        )
+        self._validate_media_support(prompt)
 
         config = _fold_generation_kwargs(config, kwargs)
         messages = self._create_messages(prompt)
@@ -757,19 +728,13 @@ class OpenAIAdapter(FunctionCallingModel):
         # CLI's per-turn footer reflect streamed turns too.
         if _usage is not None:
             try:
-                cached_tokens = 0
-                details = getattr(_usage, "prompt_tokens_details", None)
-                if details:
-                    cached_tokens = getattr(details, "cached_tokens", 0) or 0
+                prompt_tokens, completion_tokens, total_tokens, cached_tokens = (
+                    extract_openai_usage(_usage)
+                )
                 cost = self._record_cost(
-                    _usage.prompt_tokens,
-                    _usage.completion_tokens,
-                    _usage.total_tokens,
-                    cached_tokens,
+                    prompt_tokens, completion_tokens, total_tokens, cached_tokens
                 )
-                record_stream_usage(
-                    self, _usage.prompt_tokens, _usage.completion_tokens, cost
-                )
+                record_stream_usage(self, prompt_tokens, completion_tokens, cost)
             except Exception:  # noqa: BLE001 - usage accounting must not break streaming
                 logger.debug("OpenAI stream usage recording failed", exc_info=True)
 
@@ -844,14 +809,9 @@ class OpenAIAdapter(FunctionCallingModel):
         generated_text = message.content or ""
         finish_reason = normalize_finish_reason(choice.finish_reason)
 
-        usage = response.usage
-        prompt_tokens = usage.prompt_tokens
-        completion_tokens = usage.completion_tokens
-        total_tokens = usage.total_tokens
-        cached_tokens = 0
-        if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-            cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
-
+        prompt_tokens, completion_tokens, total_tokens, cached_tokens = (
+            extract_openai_usage(response.usage)
+        )
         cost = self._record_cost(prompt_tokens, completion_tokens, total_tokens, cached_tokens)
 
         return GenerationResult(
@@ -859,14 +819,10 @@ class OpenAIAdapter(FunctionCallingModel):
             tokens_used=completion_tokens,
             finish_reason=finish_reason,
             model_name=self.model_name,
-            metadata={
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "cached_input_tokens": cached_tokens,
-                "cost_usd": cost,
-                "total_cost": self.total_cost,
-            },
+            metadata=usage_metadata(
+                prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+                cost, self.total_cost,
+            ),
         )
 
     def generate_with_system_prompt(
@@ -915,14 +871,9 @@ class OpenAIAdapter(FunctionCallingModel):
         generated_text = choice.message.content or ""
         finish_reason = normalize_finish_reason(choice.finish_reason)
 
-        usage = response.usage
-        prompt_tokens = usage.prompt_tokens
-        completion_tokens = usage.completion_tokens
-        total_tokens = usage.total_tokens
-        cached_tokens = 0
-        if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-            cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
-
+        prompt_tokens, completion_tokens, total_tokens, cached_tokens = (
+            extract_openai_usage(response.usage)
+        )
         cost = self._record_cost(prompt_tokens, completion_tokens, total_tokens, cached_tokens)
 
         return GenerationResult(
@@ -930,14 +881,10 @@ class OpenAIAdapter(FunctionCallingModel):
             tokens_used=completion_tokens,
             finish_reason=finish_reason,
             model_name=self.model_name,
-            metadata={
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "cached_input_tokens": cached_tokens,
-                "cost_usd": cost,
-                "total_cost": self.total_cost,
-            },
+            metadata=usage_metadata(
+                prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+                cost, self.total_cost,
+            ),
         )
 
     def generate_with_tools(
@@ -995,26 +942,17 @@ class OpenAIAdapter(FunctionCallingModel):
         message = choice.message
         finish_reason = normalize_finish_reason(choice.finish_reason)
 
-        usage = response.usage
-        prompt_tokens = usage.prompt_tokens
-        completion_tokens = usage.completion_tokens
-        total_tokens = usage.total_tokens
-        cached_tokens = 0
-        if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-            cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
+        prompt_tokens, completion_tokens, total_tokens, cached_tokens = (
+            extract_openai_usage(response.usage)
+        )
         cost = self._record_cost(prompt_tokens, completion_tokens, total_tokens, cached_tokens)
 
-        tool_calls = []
-        if message.tool_calls:
-            for tc in message.tool_calls:
-                tool_calls.append({
-                    "id": tc.id,
-                    "type": tc.type,
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                })
+        metadata = usage_metadata(
+            prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+            cost, self.total_cost,
+        )
+        metadata["tool_calls"] = tool_calls_from_message(message)
+        metadata["message"] = message
 
         generated_text = message.content or ""
         return GenerationResult(
@@ -1022,16 +960,7 @@ class OpenAIAdapter(FunctionCallingModel):
             tokens_used=completion_tokens,
             finish_reason=finish_reason,
             model_name=self.model_name,
-            metadata={
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "cached_input_tokens": cached_tokens,
-                "cost_usd": cost,
-                "total_cost": self.total_cost,
-                "tool_calls": tool_calls,
-                "message": message,
-            },
+            metadata=metadata,
         )
 
     def generate_with_native_tools(
@@ -1228,23 +1157,23 @@ class OpenAIAdapter(FunctionCallingModel):
 
         cost = self._record_cost(prompt_tokens, completion_tokens, total_tokens, cached_tokens)
 
+        metadata = usage_metadata(
+            prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+            cost, self.total_cost,
+        )
+        metadata.update({
+            "response_id": getattr(response, "id", None),
+            "tool_calls": tool_call_results,
+            "native_tool_results": tool_call_results,
+            "grounding_chunks": grounding_chunks,
+        })
+
         return GenerationResult(
             text=output_text,
             tokens_used=completion_tokens,
             finish_reason=normalize_finish_reason(getattr(response, "status", "completed")),
             model_name=self.model_name,
-            metadata={
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "cached_input_tokens": cached_tokens,
-                "cost_usd": cost,
-                "total_cost": self.total_cost,
-                "response_id": getattr(response, "id", None),
-                "tool_calls": tool_call_results,
-                "native_tool_results": tool_call_results,
-                "grounding_chunks": grounding_chunks,
-            },
+            metadata=metadata,
         )
 
     def chat(
@@ -1294,36 +1223,24 @@ class OpenAIAdapter(FunctionCallingModel):
 
         choice = response.choices[0]
         message = choice.message
-        usage = response.usage
-        cached_tokens = 0
-        if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-            cached_tokens = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
-        cost = self._record_cost(usage.prompt_tokens, usage.completion_tokens, usage.total_tokens, cached_tokens)
+        prompt_tokens, completion_tokens, total_tokens, cached_tokens = (
+            extract_openai_usage(response.usage)
+        )
+        cost = self._record_cost(prompt_tokens, completion_tokens, total_tokens, cached_tokens)
 
-        tool_calls = []
-        if message.tool_calls:
-            for tc in message.tool_calls:
-                tool_calls.append({
-                    "id": tc.id,
-                    "type": tc.type,
-                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                })
+        metadata = usage_metadata(
+            prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+            cost, self.total_cost,
+        )
+        metadata["tool_calls"] = tool_calls_from_message(message)
+        metadata["message"] = message
 
         return GenerationResult(
             text=message.content or "",
-            tokens_used=usage.completion_tokens,
+            tokens_used=completion_tokens,
             finish_reason=normalize_finish_reason(choice.finish_reason),
             model_name=self.model_name,
-            metadata={
-                "prompt_tokens": usage.prompt_tokens,
-                "completion_tokens": usage.completion_tokens,
-                "total_tokens": usage.total_tokens,
-                "cached_input_tokens": cached_tokens,
-                "cost_usd": cost,
-                "total_cost": self.total_cost,
-                "tool_calls": tool_calls,
-                "message": message,
-            },
+            metadata=metadata,
         )
 
     # ------------------------------------------------------------------

@@ -318,6 +318,21 @@ def provider_runtime_error(
     return err
 
 
+def model_not_found_error(provider: str, model: str, message: str) -> Exception:
+    """Build a :class:`ModelNotFoundError` carrying the catalog suggestion.
+
+    Appends the live "did you mean… / available now…" hint from the model
+    catalog to *message* so a 404 surfaces real alternatives instead of a raw
+    provider error.
+    """
+    from ._catalog import suggest_for_missing
+    from .errors import ModelNotFoundError
+
+    return ModelNotFoundError(
+        provider, model, message + suggest_for_missing(provider, model)
+    )
+
+
 def not_loaded_error(
     provider: str,
     model: str = "",
@@ -373,6 +388,7 @@ __all__ = [
     "build_error_context",
     "device_memory_hint",
     "provider_runtime_error",
+    "model_not_found_error",
     "not_loaded_error",
     "attach_error_context",
     "RETRY_WILL_RETRY",

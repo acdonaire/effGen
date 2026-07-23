@@ -20,6 +20,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from effgen.models._adapter_utils import (
+    model_not_found_error,
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
@@ -29,6 +30,7 @@ from effgen.models._multimodal import (
     require_video_support,
     require_vision_support,
 )
+from effgen.models._usage import record_tracker_cost
 from effgen.models.base import (
     FunctionCallingModel,
     GenerationConfig,
@@ -176,21 +178,21 @@ class GeminiAdapter(FunctionCallingModel):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _model_supports_thinking(self) -> bool:
-        """Return True if the registered model entry has supports_thinking=True."""
+    def _model_flag(self, flag: str) -> bool:
+        """Return the boolean *flag* from the registered model entry (False if absent)."""
         canonical = GEMINI_MODEL_ALIASES.get(self.model_name, self.model_name)
         info = GEMINI_MODELS.get(canonical) or GEMINI_MODELS.get(self.model_name)
         if info is None:
             return False
-        return bool(info.get("supports_thinking", False))
+        return bool(info.get(flag, False))
+
+    def _model_supports_thinking(self) -> bool:
+        """Return True if the registered model entry has supports_thinking=True."""
+        return self._model_flag("supports_thinking")
 
     def _model_supports_grounding(self) -> bool:
         """Return True if the registered model entry has supports_grounding=True."""
-        canonical = GEMINI_MODEL_ALIASES.get(self.model_name, self.model_name)
-        info = GEMINI_MODELS.get(canonical) or GEMINI_MODELS.get(self.model_name)
-        if info is None:
-            return False
-        return bool(info.get("supports_grounding", False))
+        return self._model_flag("supports_grounding")
 
     def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         cost_entry: tuple[float, float] | None = None
@@ -213,22 +215,30 @@ class GeminiAdapter(FunctionCallingModel):
         the dashboard), or ``None`` if tracking is unavailable.  Re-raises
         :class:`BudgetExceededError` so budget limits are enforced.
         """
-        try:
-            from effgen.models._cost import CostTracker
+        return record_tracker_cost(
+            "gemini",
+            self.model_name,
+            prompt_tokens,
+            completion_tokens,
+            log=logger,
+        )
 
-            return CostTracker.get().record(
-                provider="gemini",
-                model=self.model_name,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-            )
-        except Exception as exc:
-            from effgen.models.errors import BudgetExceededError
+    def _settle_cost(
+        self, prompt_tokens: int, completion_tokens: int, total_tokens: int
+    ) -> float:
+        """Price this call and fold it into the adapter's running session totals.
 
-            if isinstance(exc, BudgetExceededError):
-                raise
-            logger.debug("CostTracker recording failed for Gemini", exc_info=True)
-            return None
+        Prefers the catalog-priced cost from the process-global tracker (so the
+        number matches ``effgen cost`` and the dashboard); falls back to the
+        local per-1M estimate when tracking is unavailable. Returns this call's
+        cost — the value reported as ``metadata["cost_usd"]``.
+        """
+        cost = self._record_to_cost_tracker(prompt_tokens, completion_tokens)
+        if cost is None:
+            cost = self._calculate_cost(prompt_tokens, completion_tokens)
+        self.total_cost += cost
+        self.total_tokens += total_tokens
+        return cost
 
     def _build_config(self, config: GenerationConfig | None) -> Any:
         """Build a google.genai GenerateContentConfig from an effGen GenerationConfig."""
@@ -489,6 +499,35 @@ class GeminiAdapter(FunctionCallingModel):
         assert last_exc is not None
         raise last_exc
 
+    def _validate_media_support(self, prompt: Any) -> None:
+        """Reject image/audio/video inputs the current model cannot handle.
+
+        Video requires vision (for the frame-sampling fallback) or native
+        video support.
+        """
+        model_info = GEMINI_MODELS.get(self.model_name, {})
+        require_vision_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_vision=model_info.get("supports_vision", False),
+            hint="Use a Gemini model with supports_vision=True for image inputs.",
+        )
+        require_audio_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_audio=model_info.get("supports_audio", False),
+            hint="Use a Gemini Flash/Pro model with supports_audio=True for audio inputs.",
+        )
+        require_video_support(
+            prompt,
+            provider="gemini",
+            model_name=self.model_name,
+            supports_video=model_info.get("supports_vision", False) or model_info.get("supports_video", False),
+            hint="Use a Gemini vision model for video inputs (frame-sampling fallback is used).",
+        )
+
     def _prepare_content(
         self, prompt: str | list[str | dict[str, Any]]
     ) -> str | list:
@@ -643,29 +682,7 @@ class GeminiAdapter(FunctionCallingModel):
             self.validate_prompt(prompt)
 
         gen_config = self._build_config(config)
-        _model_info = GEMINI_MODELS.get(self.model_name, {})
-        require_vision_support(
-            prompt,
-            provider="gemini",
-            model_name=self.model_name,
-            supports_vision=_model_info.get("supports_vision", False),
-            hint="Use a Gemini model with supports_vision=True for image inputs.",
-        )
-        require_audio_support(
-            prompt,
-            provider="gemini",
-            model_name=self.model_name,
-            supports_audio=_model_info.get("supports_audio", False),
-            hint="Use a Gemini Flash/Pro model with supports_audio=True for audio inputs.",
-        )
-        # Video requires vision (for frame-sampling) or native video support.
-        require_video_support(
-            prompt,
-            provider="gemini",
-            model_name=self.model_name,
-            supports_video=_model_info.get("supports_vision", False) or _model_info.get("supports_video", False),
-            hint="Use a Gemini vision model for video inputs (frame-sampling fallback is used).",
-        )
+        self._validate_media_support(prompt)
         content = self._prepare_content(prompt)
 
         # Prepend uploaded files to the content so the model sees them.
@@ -768,14 +785,10 @@ class GeminiAdapter(FunctionCallingModel):
                 thoughts_tokens = 0
 
             # Persist + price via the shared catalog-backed tracker so
-            # `effgen cost` includes Gemini spend (it previously never saw it)
-            # and the number matches the model catalog.  Fall back to the local
-            # estimate if tracking is unavailable.
-            cost = self._record_to_cost_tracker(prompt_tokens, completion_tokens)
-            if cost is None:
-                cost = self._calculate_cost(prompt_tokens, completion_tokens)
-            self.total_cost += cost
-            self.total_tokens += total_tokens
+            # `effgen cost` includes Gemini spend and the number matches the
+            # model catalog; falls back to the local estimate if tracking is
+            # unavailable.
+            cost = self._settle_cost(prompt_tokens, completion_tokens, total_tokens)
 
             raw_finish_reason = None
             if hasattr(response, "candidates") and response.candidates:
@@ -865,13 +878,7 @@ class GeminiAdapter(FunctionCallingModel):
                 or "is not found" in lowered
                 or "not_found" in lowered
             ):
-                from effgen.models._catalog import suggest_for_missing
-
-                raise ModelNotFoundError(
-                    "gemini",
-                    self.model_name,
-                    msg + suggest_for_missing("gemini", self.model_name),
-                ) from exc
+                raise model_not_found_error("gemini", self.model_name, msg) from exc
             # A generic 400 INVALID_ARGUMENT is a malformed/unsupported request
             # (e.g. bad schema, or combining google_search with function tools),
             # NOT an auth failure — classify it correctly so retries don't fire.
@@ -892,28 +899,7 @@ class GeminiAdapter(FunctionCallingModel):
             self.validate_prompt(prompt)
 
         gen_config = self._build_config(config)
-        _model_info_s = GEMINI_MODELS.get(self.model_name, {})
-        require_vision_support(
-            prompt,
-            provider="gemini",
-            model_name=self.model_name,
-            supports_vision=_model_info_s.get("supports_vision", False),
-            hint="Use a Gemini model with supports_vision=True for image inputs.",
-        )
-        require_audio_support(
-            prompt,
-            provider="gemini",
-            model_name=self.model_name,
-            supports_audio=_model_info_s.get("supports_audio", False),
-            hint="Use a Gemini Flash/Pro model with supports_audio=True for audio inputs.",
-        )
-        require_video_support(
-            prompt,
-            provider="gemini",
-            model_name=self.model_name,
-            supports_video=_model_info_s.get("supports_vision", False) or _model_info_s.get("supports_video", False),
-            hint="Use a Gemini vision model for video inputs (frame-sampling fallback is used).",
-        )
+        self._validate_media_support(prompt)
         content = self._prepare_content(prompt)
 
         raw_tools: list | None = None
@@ -954,11 +940,7 @@ class GeminiAdapter(FunctionCallingModel):
                 prompt_tokens = _usage_metadata.prompt_token_count or 0
                 completion_tokens = _usage_metadata.candidates_token_count or 0
                 total_tokens = _usage_metadata.total_token_count or (prompt_tokens + completion_tokens)
-                cost = self._record_to_cost_tracker(prompt_tokens, completion_tokens)
-                if cost is None:
-                    cost = self._calculate_cost(prompt_tokens, completion_tokens)
-                self.total_cost += cost
-                self.total_tokens += total_tokens
+                cost = self._settle_cost(prompt_tokens, completion_tokens, total_tokens)
                 record_stream_usage(self, prompt_tokens, completion_tokens, cost)
             except Exception:
                 logger.debug("Failed to record streaming usage for Gemini", exc_info=True)
