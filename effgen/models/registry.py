@@ -378,8 +378,7 @@ class ProviderRegistry:
         recovery_timeout: float = 30.0,
         half_open_probes: int = 1,
     ) -> "CircuitBreaker":
-        """Return (or lazily create) the :class:`~effgen.reliability.circuit.CircuitBreaker`
-        for *provider*.
+        """Return (or lazily create) the circuit breaker for *provider*.
 
         Circuit breakers are kept on the registry record so they survive across
         call sites.  Parameters are only applied on first creation.
@@ -419,8 +418,7 @@ class ProviderRegistry:
         queue_size: int = 100,
         queue_timeout: float = 5.0,
     ) -> "Bulkhead":
-        """Return (or lazily create) the :class:`~effgen.reliability.bulkhead.Bulkhead`
-        for *provider*.
+        """Return (or lazily create) the :class:`~effgen.reliability.bulkhead.Bulkhead` for *provider*.
 
         Args:
             provider:        Registered provider name.
@@ -467,8 +465,7 @@ class ProviderRegistry:
 
     @classmethod
     def with_chaos(cls, chaos: Any) -> "ChaosMiddlewareRegistry":
-        """Return a :class:`ChaosMiddlewareRegistry` that wraps this registry
-        with the given *chaos* instance.
+        """Return a :class:`ChaosMiddlewareRegistry` wrapping this registry with *chaos*.
 
         Usage::
 

@@ -76,9 +76,11 @@ _CONTEXT_OVERFLOW_SIGNALS = (
 
 
 def context_overflow_hint(message: str) -> str | None:
-    """Return an actionable suffix when *message* signals the request (the
-    prompt, or a large preset's tool-schema payload) exceeded a model's
-    context window or a provider's token-rate limit.
+    """Return an actionable hint when *message* signals a context/token-rate overflow.
+
+    Fires when the request (the prompt, or a large preset's tool-schema
+    payload) exceeded a model's context window or a provider's token-rate
+    limit.
 
     Returns ``None`` when *message* is not such a signal, so callers can
     leave their base remediation text untouched.

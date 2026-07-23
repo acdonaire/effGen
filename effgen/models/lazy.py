@@ -60,13 +60,16 @@ class LazyModel(BaseModel):
 
     @property
     def inner(self) -> BaseModel:
+        """The wrapped model instance."""
         return self._inner
 
     # ------------------------------------------------------------------ BaseModel API
     def load(self) -> None:
+        """Load the wrapped model now instead of on first use."""
         self._ensure_loaded()
 
     def unload(self) -> None:
+        """Unload the wrapped model; the next call loads it again."""
         with self._lock:
             if self._inner.is_loaded():
                 self._inner.unload()
@@ -78,6 +81,7 @@ class LazyModel(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
+        """Generate via the wrapped model, loading it on demand."""
         self._maybe_evict()
         self._ensure_loaded()
         return self._inner.generate(prompt, config, **kwargs)
@@ -88,25 +92,30 @@ class LazyModel(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[str]:
+        """Stream via the wrapped model, loading it on demand."""
         self._maybe_evict()
         self._ensure_loaded()
         return self._inner.generate_stream(prompt, config, **kwargs)
 
     def count_tokens(self, text: str) -> TokenCount:
+        """Count tokens via the wrapped model (loads it: the tokenizer may be needed)."""
         # count_tokens may need the tokenizer; load on demand.
         self._ensure_loaded()
         return self._inner.count_tokens(text)
 
     def get_context_length(self) -> int:
+        """Context length of the wrapped model without forcing a load."""
         if self._inner.is_loaded() or self._inner._context_length is not None:
             return self._inner.get_context_length()
         # Fall back to whatever we were told at construction time.
         return self._context_length or 4096
 
     def supports_tool_calling(self) -> bool:
+        """Delegate to the wrapped model."""
         return self._inner.supports_tool_calling()
 
     def get_metadata(self) -> dict[str, Any]:
+        """Delegate to the wrapped model."""
         return self._inner.get_metadata()
 
     def __repr__(self) -> str:

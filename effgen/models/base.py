@@ -304,8 +304,7 @@ def accumulate_stream_cost(
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
 ) -> None:
-    """Fold a completed streaming call's cost and token count onto the model's
-    cumulative totals.
+    """Fold a completed streaming call's cost and tokens onto the model's totals.
 
     ``generate()``/``generate_batch()`` get their cumulative cost for free from
     ``_stamp_cost`` because they return a ``GenerationResult`` the wrapper can
@@ -618,15 +617,15 @@ class BaseModel(ABC):
         return self._is_loaded
 
     def get_total_cost(self) -> float:
-        """Cumulative cost (USD) charged to this model instance since it was
-        created or since :meth:`reset_cost` was last called. Populated from
-        each call's ``cost_usd``; local/unpriced engines stay at ``0.0``.
+        """Cumulative cost (USD) charged to this model instance.
+
+        Accumulates each call's ``cost_usd`` since creation or the last
+        :meth:`reset_cost`; local/unpriced engines stay at ``0.0``.
         """
         return getattr(self, "total_cost", 0.0)
 
     def reset_cost(self) -> None:
-        """Reset this instance's cumulative cost counter (see
-        :meth:`get_total_cost`) back to zero."""
+        """Reset the cumulative cost counter (see :meth:`get_total_cost`) to zero."""
         self.total_cost = 0.0
 
     def get_metadata(self) -> dict[str, Any]:

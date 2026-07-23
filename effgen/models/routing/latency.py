@@ -100,6 +100,7 @@ class LatencyBasedPolicy(RoutingPolicy):
 
     @property
     def name(self) -> str:
+        """Policy identifier: ``"latency_based"``."""
         return "latency_based"
 
     def _get_latency(self, provider: str, model_id: str) -> float:
@@ -129,6 +130,7 @@ class LatencyBasedPolicy(RoutingPolicy):
         candidates: list[ProviderModelPair],
         context: RoutingContext,
     ) -> RouterDecision:
+        """Pick the candidate with the lowest observed (or seeded) latency."""
         self._warm_up_if_needed(context)
 
         budget_ms = context.latency_budget_ms

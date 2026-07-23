@@ -12,11 +12,11 @@ Example:
     >>> from effgen.models import load_model
     >>>
     >>> # Load a local HuggingFace model (tries vLLM, falls back to Transformers)
-    >>> model = load_model("meta-llama/Llama-2-7b-hf")
+    >>> model = load_model("Qwen/Qwen2.5-1.5B-Instruct")
     >>>
     >>> # Load an API model
-    >>> gpt4 = load_model("gpt-4")
-    >>> claude = load_model("claude-3-opus-20240229")
+    >>> gpt = load_model("openai:gpt-5-nano")
+    >>> gemini = load_model("gemini:gemini-3.1-flash-lite")
     >>>
     >>> # Generate text
     >>> result = model.generate("What is the capital of France?")

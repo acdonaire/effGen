@@ -67,6 +67,7 @@ class ContinuousBatcher:
         timeout: float | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
+        """Queue *prompt* and block until its result is ready (or *timeout*)."""
         if self._stop.is_set():
             raise RuntimeError("ContinuousBatcher has been shut down")
         req = _Request(prompt=prompt, config=config, kwargs=kwargs)
@@ -79,6 +80,7 @@ class ContinuousBatcher:
         return req.result
 
     def shutdown(self, wait: bool = True) -> None:
+        """Stop the worker thread (optionally joining it)."""
         self._stop.set()
         if wait:
             self._worker.join(timeout=5.0)

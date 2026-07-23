@@ -111,7 +111,7 @@ class ModelLoader:
 
     Example:
         >>> loader = ModelLoader()
-        >>> model = loader.load_model("meta-llama/Llama-2-7b-hf")
+        >>> model = loader.load_model("Qwen/Qwen2.5-1.5B-Instruct")
         >>> # Uses Transformers by default, can specify vLLM with engine='vllm'
 
         >>> model = loader.load_model("gpt-4")
@@ -1164,14 +1164,14 @@ def load_model(
     Example:
         >>> from effgen.models import load_model
         >>> # Default uses Transformers engine
-        >>> model = load_model("meta-llama/Llama-2-7b-hf")
+        >>> model = load_model("Qwen/Qwen2.5-1.5B-Instruct")
         >>> result = model.generate("Hello, how are you?")
 
         >>> # Explicitly use vLLM for production (5-10x faster)
         >>> model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="vllm")
 
         >>> # With tensor parallelism for large models
-        >>> model = load_model("meta-llama/Llama-2-70b-hf", engine="vllm", tensor_parallel_size=4)
+        >>> model = load_model("meta-llama/Llama-3.3-70B-Instruct", engine="vllm", tensor_parallel_size=4)
 
         >>> # Lower GPU memory usage if getting OOM errors
         >>> model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="vllm", gpu_memory_utilization=0.7)

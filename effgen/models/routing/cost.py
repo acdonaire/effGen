@@ -175,6 +175,7 @@ class CostBasedPolicy(RoutingPolicy):
 
     @property
     def name(self) -> str:
+        """Policy identifier: ``"cost_based"``."""
         return "cost_based"
 
     def select(
@@ -182,6 +183,7 @@ class CostBasedPolicy(RoutingPolicy):
         candidates: list[ProviderModelPair],
         context: RoutingContext,
     ) -> RouterDecision:
+        """Pick the cheapest capable candidate within the user's budget."""
         from effgen.models.registry import ProviderRegistry
 
         prompt_tokens = max(context.prompt_tokens_estimate, 0)

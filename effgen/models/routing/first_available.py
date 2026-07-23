@@ -23,6 +23,7 @@ class FirstAvailablePolicy(RoutingPolicy):
 
     @property
     def name(self) -> str:
+        """Policy identifier: ``"first_available"``."""
         return "first_available"
 
     def select(
@@ -30,6 +31,7 @@ class FirstAvailablePolicy(RoutingPolicy):
         candidates: list[ProviderModelPair],
         context: RoutingContext,
     ) -> RouterDecision:
+        """Pick the first candidate whose provider is configured and healthy."""
         eliminated: list[tuple[ProviderModelPair, str]] = []
         seen_providers: dict[str, str] = {}
         chosen: ProviderModelPair | None = None

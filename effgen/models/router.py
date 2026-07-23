@@ -87,7 +87,9 @@ class RoutingPolicy(ABC):
 
     @property
     @abstractmethod
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """Short policy identifier used in router decisions and logs."""
+        ...
 
     @abstractmethod
     def select(
