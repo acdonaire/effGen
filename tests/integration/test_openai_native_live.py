@@ -131,14 +131,23 @@ def test_live_file_search(openai_client):
         f.write(content)
         tmp_path = f.name
 
+    file_id = None
+    vs_id = None
     try:
-        with open(tmp_path, "rb") as f:
-            uploaded = openai_client.files.create(file=f, purpose="assistants")
-        file_id = uploaded.id
+        # A 5xx here is upstream vector-store unavailability, not an effGen
+        # bug — skip rather than fail (mirrors the Gemini/Cerebras live tests).
+        from openai import InternalServerError
 
-        vs = openai_client.vector_stores.create(name="effgen-integration-test")
-        vs_id = vs.id
-        openai_client.vector_stores.files.create(vector_store_id=vs_id, file_id=file_id)
+        try:
+            with open(tmp_path, "rb") as f:
+                uploaded = openai_client.files.create(file=f, purpose="assistants")
+            file_id = uploaded.id
+
+            vs = openai_client.vector_stores.create(name="effgen-integration-test")
+            vs_id = vs.id
+            openai_client.vector_stores.files.create(vector_store_id=vs_id, file_id=file_id)
+        except InternalServerError as exc:
+            pytest.skip(f"OpenAI vector-store backend unavailable (5xx) — {exc}")
 
         for _ in range(60):
             status = openai_client.vector_stores.retrieve(vs_id)
@@ -170,8 +179,10 @@ def test_live_file_search(openai_client):
         assert "AURORA" in text or "aurora" in text.lower(), f"Expected AURORA in: {text}"
     finally:
         try:
-            openai_client.vector_stores.delete(vs_id)
-            openai_client.files.delete(file_id)
+            if vs_id:
+                openai_client.vector_stores.delete(vs_id)
+            if file_id:
+                openai_client.files.delete(file_id)
         except Exception:
             pass
         os.unlink(tmp_path)
