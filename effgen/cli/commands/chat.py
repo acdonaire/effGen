@@ -8,10 +8,16 @@ exposes this through ``CLIInterface.chat_mode``.
 
 from __future__ import annotations
 
+import argparse
+from typing import TYPE_CHECKING
+
 from effgen.cli.commands._shared import resolve_provider_name
 
+if TYPE_CHECKING:
+    from effgen.cli._main import CLIInterface
 
-def chat_mode(cli, args):
+
+def chat_mode(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Interactive chat REPL.
 
     Delegates to :class:`effgen.cli.chat.ChatREPL`, which provides streaming

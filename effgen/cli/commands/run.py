@@ -9,12 +9,14 @@ than imported here, so an override on ``effgen.cli._main`` still takes effect.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Live status / progress presentation (TTY-aware; degrades to plain text).
 from effgen.cli import progress as _progress
@@ -28,8 +30,11 @@ from effgen.cli.commands._shared import (
     resolve_provider_name,
 )
 
+if TYPE_CHECKING:
+    from effgen.cli._main import CLIInterface
 
-def interactive_wizard(cli, args):
+
+def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
     """
     Interactive setup wizard for configuring and running agents.
 
@@ -381,7 +386,7 @@ def interactive_wizard(cli, args):
         return 1
 
 
-def run_agent(cli, args):
+def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """
     Run an agent with a task.
 
@@ -841,7 +846,7 @@ def run_agent(cli, args):
                 logging.debug(f"Agent close failed: {e}")
 
 
-def stream_tokens(cli, token_iter, *, animate: bool) -> str:
+def stream_tokens(cli: "CLIInterface", token_iter: Iterable[str], *, animate: bool) -> str:
     """Print streamed tokens with an optional soft cursor; return the text.
 
     On an interactive terminal a single-cell soft cursor (``▌``) trails the
@@ -870,7 +875,7 @@ def stream_tokens(cli, token_iter, *, animate: bool) -> str:
     return "".join(collected)
 
 
-def handle_interrupt(cli, agent) -> None:
+def handle_interrupt(cli: "CLIInterface", agent: Any) -> None:
     """Render a friendly Ctrl-C stop (partial trace + 'Stopped.'), no traceback."""
     # Move to a clean line after any in-flight spinner/stream output.
     try:

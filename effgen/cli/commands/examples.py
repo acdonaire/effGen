@@ -6,6 +6,7 @@ methods delegate here. Holds the example discovery, listing, and run logic.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
 
 
-def examples_commands(cli: "CLIInterface", args):
+def examples_commands(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Run example scripts.
 
     Args:
@@ -55,7 +56,7 @@ def find_examples_dir() -> "Path | None":
     return None
 
 
-def examples_list(cli: "CLIInterface", args):
+def examples_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """List available examples."""
     from rich.table import Table
 
@@ -93,9 +94,10 @@ def examples_list(cli: "CLIInterface", args):
     else:
         for example in sorted(examples):
             print(f"- {example}")
+    return None
 
 
-def examples_run(cli: "CLIInterface", args):
+def examples_run(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Run an example script."""
     if not args.name:
         cli.print_error("Example name required")

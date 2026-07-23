@@ -6,6 +6,7 @@ methods delegate here. Holds the config-file round-trip and budget-key logic.
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
 
 
-def config_commands(cli: "CLIInterface", args):
+def config_commands(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Configuration management commands.
 
     Args:
@@ -41,7 +42,7 @@ def config_commands(cli: "CLIInterface", args):
     return 0
 
 
-def config_set(cli: "CLIInterface", args):
+def config_set(cli: "CLIInterface", args: argparse.Namespace) -> None:
     """Handle 'effgen config set <key> <value>'."""
     key: str = args.key
     value_str: str = args.value
@@ -82,7 +83,7 @@ def config_set(cli: "CLIInterface", args):
         )
 
 
-def config_show(cli: "CLIInterface", args):
+def config_show(cli: "CLIInterface", args: argparse.Namespace) -> None:
     """Show current configuration."""
     from rich.syntax import Syntax
 
@@ -112,7 +113,7 @@ def config_show(cli: "CLIInterface", args):
         cli.print("Use: effgen config show --file <path>")
 
 
-def config_validate(cli: "CLIInterface", args):
+def config_validate(cli: "CLIInterface", args: argparse.Namespace) -> None:
     """Validate configuration file."""
     if not args.file:
         cli.print_error("Configuration file required")
@@ -125,7 +126,7 @@ def config_validate(cli: "CLIInterface", args):
         cli.print_error(f"Configuration validation failed: {e}")
 
 
-def config_init(cli: "CLIInterface", args):
+def config_init(cli: "CLIInterface", args: argparse.Namespace) -> None:
     """Initialize a new configuration file."""
     output_path = Path(args.output or "config.yaml")
 

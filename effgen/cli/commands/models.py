@@ -11,6 +11,7 @@ test's ``monkeypatch.setattr(cli, ...)`` takes effect on the moved code too.
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import os
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
 
 
-def models_commands(cli: "CLIInterface", args):
+def models_commands(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Model management commands.
 
     Args:
@@ -51,7 +52,7 @@ def models_commands(cli: "CLIInterface", args):
     return 0
 
 
-def price_cell(rec) -> str:
+def price_cell(rec: Any) -> str:
     """Format a model's input/output price per 1M tokens for a table cell."""
     pin, pout = rec.price_in_per_1m, rec.price_out_per_1m
     # A genuinely nonzero published rate is shown as-is (mirrors
@@ -119,7 +120,7 @@ def local_model_context_window(cli: "CLIInterface", path: str) -> int | None:
     return None
 
 
-def models_list(cli: "CLIInterface", args):
+def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """List models from the drift-aware registry (not a static yaml).
 
     Shows three views — the provider registry (the bundled, refreshable
@@ -325,7 +326,7 @@ def rich_tables(cli: "CLIInterface") -> bool:
     return bool(cli.console) and bool(getattr(cli.console, "is_terminal", False))
 
 
-def browse_filter_sort(recs, args):
+def browse_filter_sort(recs: list[Any], args: argparse.Namespace) -> list[Any]:
     """Apply the browse filters/sort to a list of catalog records.
 
     Filters compose (a record must satisfy every one supplied); records with
@@ -385,7 +386,7 @@ def browse_filter_sort(recs, args):
     return out
 
 
-def models_browse(cli: "CLIInterface", args):
+def models_browse(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Browse the full cross-provider catalog with search/filter/sort/paging.
 
     Reads the bundled, refreshable catalog (the same source ``models list``
@@ -539,7 +540,7 @@ def models_browse(cli: "CLIInterface", args):
     return 0
 
 
-def price_in_out_cells(rec) -> tuple[str, str]:
+def price_in_out_cells(rec: Any) -> tuple[str, str]:
     """Return (input, output) price cells for the split-column browse table.
 
     A published nonzero rate shows as ``$<n>``; a genuine free tier reads
@@ -601,7 +602,7 @@ def render_local_model_info(cli: "CLIInterface", payload: dict) -> None:
         print(f"  Run locally: {run_hint}")
 
 
-def models_info(cli: "CLIInterface", args):
+def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Show detailed information for one model from the registry."""
     from rich.table import Table
 
@@ -792,7 +793,7 @@ def models_info(cli: "CLIInterface", args):
     return 0
 
 
-def models_load(cli: "CLIInterface", args):
+def models_load(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Pre-load a model into the model pool."""
     from effgen.models.pool import ModelPool
 
@@ -812,9 +813,10 @@ def models_load(cli: "CLIInterface", args):
     except Exception as e:
         cli.print_error(f"Failed to load model: {e}")
         return 1
+    return None
 
 
-def models_unload(cli: "CLIInterface", args):
+def models_unload(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Unload a model from memory."""
     from effgen.models.model_loader import ModelLoader
 
@@ -831,9 +833,10 @@ def models_unload(cli: "CLIInterface", args):
     except Exception as e:
         cli.print_error(f"Failed to unload model: {e}")
         return 1
+    return None
 
 
-def models_status(cli: "CLIInterface", args):
+def models_status(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Show loaded models and GPU memory status."""
     if getattr(args, "output_json", False):
         return cli._models_status_json()
@@ -904,6 +907,7 @@ def models_status(cli: "CLIInterface", args):
     from effgen.models.capabilities import list_registered_models
     registered = list_registered_models()
     cli.print(f"\nCapability profiles registered: {len(registered)}")
+    return None
 
 
 def models_status_json(cli: "CLIInterface") -> int:
@@ -948,7 +952,7 @@ def models_status_json(cli: "CLIInterface") -> int:
     return 0
 
 
-def models_refresh(cli: "CLIInterface", args):
+def models_refresh(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Refresh the bundled model catalog from each provider's live API.
 
     Fetches the live model list for the requested provider(s), reports what

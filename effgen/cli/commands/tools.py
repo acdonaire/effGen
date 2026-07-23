@@ -7,16 +7,17 @@ rendering, example synthesis, and single-tool execution logic.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
 
 
-def tools_commands(cli: "CLIInterface", args):
+def tools_commands(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Tool management commands.
 
     Args:
@@ -52,7 +53,7 @@ def suggest_tool(cli: "CLIInterface", name: str) -> None:
     cli.print("Run 'effgen tools list' to see all available tools.")
 
 
-def tools_list(cli: "CLIInterface", args):
+def tools_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """List available tools."""
     from rich.table import Table
 
@@ -121,7 +122,7 @@ def tools_list(cli: "CLIInterface", args):
     return 0
 
 
-def example_input(cli: "CLIInterface", metadata, tool=None) -> dict:
+def example_input(cli: "CLIInterface", metadata: Any, tool: Any = None) -> dict:
     """Build a runnable example input for a tool from its metadata."""
     # Prefer a curated example (drop the illustrative 'output' field).
     for ex in metadata.examples or []:
@@ -155,7 +156,7 @@ def example_input(cli: "CLIInterface", metadata, tool=None) -> dict:
     return example
 
 
-def print_tool_usage(cli: "CLIInterface", metadata, tool=None) -> None:
+def print_tool_usage(cli: "CLIInterface", metadata: Any, tool: Any = None) -> None:
     """Print a tool's input schema and a copy-paste runnable example."""
     from rich.syntax import Syntax
 
@@ -175,7 +176,7 @@ def print_tool_usage(cli: "CLIInterface", metadata, tool=None) -> None:
         cli.print(f"  {cmd}")
 
 
-def tools_info(cli: "CLIInterface", args):
+def tools_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Show detailed tool information."""
     from rich.syntax import Syntax
 
@@ -233,7 +234,7 @@ def tools_info(cli: "CLIInterface", args):
     return 0
 
 
-def tools_test(cli: "CLIInterface", args):
+def tools_test(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Test a tool with sample input."""
     from rich.panel import Panel
 

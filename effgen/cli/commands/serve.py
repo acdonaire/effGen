@@ -19,9 +19,10 @@ param and reject the handshake (1008). Keeping both ``TaskRequest`` and
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     from fastapi import WebSocket  # noqa: F401 - module-level for annotation resolution
@@ -59,6 +60,9 @@ except Exception:  # pragma: no cover - pydantic always present with [server]
     TaskRequest = None  # type: ignore[assignment,misc]
     TaskResponse = None  # type: ignore[assignment,misc]
 
+if TYPE_CHECKING:
+    from effgen.cli._main import CLIInterface
+
 
 def _general_purpose_tool_names(registry: Any, limit: int = 5) -> list:
     """Pick up to *limit* model-agnostic tool names for the convenience routes.
@@ -83,7 +87,7 @@ def _general_purpose_tool_names(registry: Any, limit: int = 5) -> list:
     return names
 
 
-def serve_api(cli, args):
+def serve_api(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """
     Start the effGen API server.
 
@@ -227,7 +231,7 @@ def serve_api(cli, args):
         return 1
 
 
-def register_convenience_routes(cli, app: Any) -> None:
+def register_convenience_routes(cli: "CLIInterface", app: Any) -> None:
     """Attach the legacy convenience routes onto the secure app.
 
     Adds ``/run``, ``/tools``, ``/``, ``/slo`` and ``/ws`` to the app built by
