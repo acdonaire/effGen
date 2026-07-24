@@ -15,6 +15,7 @@ a silent no-op.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from effgen.tools.base_tool import BaseTool
@@ -24,6 +25,7 @@ from effgen.tools.builtin.code_executor import CodeExecutor
 from effgen.tools.builtin.file_ops import FileOperations
 from effgen.tools.builtin.python_repl import PythonREPL
 
+from .edits import ProposedEdit
 from .permissions import PermissionGate
 
 # ``file_operations`` operations that put bytes on disk. Reads, listings,
@@ -47,8 +49,28 @@ def _shorten(text: str, limit: int = 120) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
+def _read_text_or_none(path: Path) -> str | None:
+    """Return the file's text, or ``None`` when it is absent or not UTF-8 text.
+
+    ``None`` means "do not diff or snapshot this write" — a binary or unreadable
+    file falls back to the plain gated write with no preview, rather than a
+    corrupt diff or a lossy undo snapshot.
+    """
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 class GatedFileOperations(FileOperations):
-    """``file_operations`` whose write paths pass the permission gate first."""
+    """``file_operations`` whose writes are previewed, gated, and reversible.
+
+    A write is shown as a unified diff before it is decided, applied against the
+    file's current content hunk-by-hunk (so a file that changed underneath is not
+    overwritten whole), and recorded on the run's undo journal.
+    """
 
     def __init__(self, gate: PermissionGate, **kwargs: Any) -> None:
         super().__init__(allowed_directories=[str(gate.workspace)], **kwargs)
@@ -59,6 +81,9 @@ class GatedFileOperations(FileOperations):
     ) -> Any:
         if operation not in _WRITING_OPERATIONS:
             return await super()._execute(operation, path, content=content, **kwargs)
+        if operation != "write":
+            # ``convert`` writes derived output; gate it without a text diff.
+            return await self._gated_plain_write(operation, path, content, **kwargs)
 
         summary = f"write {path}"
         try:
@@ -72,10 +97,70 @@ class GatedFileOperations(FileOperations):
         except ValueError:  # pragma: no cover - resolve_path guarantees containment
             rel = str(resolved)
 
-        decision = self.gate.request("write", f"Write {rel}", target=rel)
+        before = _read_text_or_none(resolved)
+        if before is None:
+            # Not diffable text: fall back to a plain gated write, no snapshot.
+            return await self._gated_plain_write("write", path, content, **kwargs)
+
+        edit = ProposedEdit(
+            rel_path=rel,
+            old_content=before,
+            new_content=content or "",
+            is_new=not resolved.exists(),
+        )
+        if not edit.unchanged:
+            self.gate.announce_edit(edit)
+
+        decision = self.gate.request("write", f"Write {rel} ({edit.stat()})", target=rel)
         if not decision.allowed:
             return _blocked(decision.reason)
 
+        # Re-read at apply time and merge, so a file that changed since the diff
+        # was shown keeps the hunks that still apply rather than being clobbered.
+        current = _read_text_or_none(resolved)
+        if current is None:  # became unreadable between preview and write
+            current = before
+        final, _applied, failed = edit.resolve_against_current(current)
+        snapshot = None if not resolved.exists() else current
+
+        result = await super()._execute("write", path, content=final, **kwargs)
+        failed_write = isinstance(result, dict) and result.get("success") is False
+        if failed_write:
+            self.gate.note_outcome(
+                decision.record, "error", _shorten(result.get("error", ""))
+            )
+            return result
+
+        detail = ""
+        if failed:
+            detail = (
+                f"{len(failed)} hunk(s) did not apply (the file changed since it "
+                "was read); the rest were applied."
+            )
+        self.gate.note_outcome(decision.record, "ok", detail)
+        self.gate.record_applied_edit(
+            edit, before=snapshot, after=final, failed_hunks=len(failed)
+        )
+        return result
+
+    async def _gated_plain_write(
+        self, operation: str, path: str, content: str | None, **kwargs: Any
+    ) -> Any:
+        """Gate a write that carries no text diff (``convert``, binary target)."""
+        summary = f"write {path}"
+        try:
+            resolved = self.gate.resolve_path(path)
+        except PathNotAllowedError as exc:
+            decision = self.gate.refuse("write", summary, str(exc), target=path)
+            return _blocked(decision.reason)
+        try:
+            rel = str(resolved.relative_to(self.gate.workspace.resolve()))
+        except ValueError:  # pragma: no cover - resolve_path guarantees containment
+            rel = str(resolved)
+
+        decision = self.gate.request("write", f"Write {rel}", target=rel)
+        if not decision.allowed:
+            return _blocked(decision.reason)
         result = await super()._execute(operation, path, content=content, **kwargs)
         failed = isinstance(result, dict) and result.get("success") is False
         self.gate.note_outcome(

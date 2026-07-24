@@ -47,6 +47,8 @@ from typing import Any
 
 from effgen.tools.builtin._fs import PathNotAllowedError, is_credential_filename
 
+from .edits import EditJournal, ProposedEdit
+
 #: Action kinds the gate distinguishes, in the order they are reported.
 ACTION_KINDS: tuple[str, ...] = ("write", "run", "shell")
 
@@ -180,6 +182,10 @@ class PermissionGate:
             drive their own UI.
         on_event: Optional callback invoked with each :class:`ActionRecord` as it
             is decided, for live progress output.
+        on_diff: Optional callback invoked with each :class:`ProposedEdit` before
+            a write is decided, so its diff can be shown before it touches disk.
+        journal: Optional :class:`EditJournal`; when set, every applied write is
+            recorded so ``effgen code --undo`` can reverse it.
     """
 
     def __init__(
@@ -191,6 +197,8 @@ class PermissionGate:
         interactive: bool = False,
         confirm: Callable[[str], str] | None = None,
         on_event: Callable[[ActionRecord], None] | None = None,
+        on_diff: Callable[[ProposedEdit], None] | None = None,
+        journal: EditJournal | None = None,
     ) -> None:
         self.mode = mode
         self.workspace = Path(workspace)
@@ -198,7 +206,12 @@ class PermissionGate:
         self.interactive = interactive
         self._confirm = confirm or _prompt_confirm
         self._on_event = on_event
+        self._on_diff = on_diff
+        self.journal = journal
         self.actions: list[ActionRecord] = []
+        # A summary of each edit that reached disk, in write order, for the run
+        # report and ``--json`` output.
+        self.edits: list[dict[str, Any]] = []
         # Kinds the human answered "always" to for the rest of this run.
         self._always: set[str] = set()
 
@@ -304,6 +317,41 @@ class PermissionGate:
         record.detail = detail
         if self._on_event is not None:
             self._on_event(record)
+
+    # -- edits --------------------------------------------------------------
+
+    def announce_edit(self, edit: ProposedEdit) -> None:
+        """Surface a pending edit's diff before the write is decided."""
+        if self._on_diff is not None:
+            self._on_diff(edit)
+
+    def record_applied_edit(
+        self,
+        edit: ProposedEdit,
+        *,
+        before: str | None,
+        after: str,
+        failed_hunks: int = 0,
+    ) -> None:
+        """Record a write that reached disk: onto the undo stack and the report.
+
+        *before* is the file's content before the write (``None`` when the run
+        created it), captured so ``--undo`` can restore it. *failed_hunks* is how
+        many of the edit's hunks did not apply because the file changed
+        underneath — zero for the common case.
+        """
+        if self.journal is not None:
+            self.journal.record_write(edit.rel_path, before, after)
+        self.edits.append(
+            {
+                "path": edit.rel_path,
+                "added": edit.added,
+                "removed": edit.removed,
+                "is_new": edit.is_new,
+                "hunks_failed": failed_hunks,
+                "diff": edit.diff_text,
+            }
+        )
 
     # -- reporting ----------------------------------------------------------
 
