@@ -585,7 +585,11 @@ def test_an_unsuccessful_run_fails_the_step_with_a_larger_model_hint(
 
 
 class _AnsweringAgent:
-    """Stands in for the guided run's sample-task agent, with no model behind it."""
+    """Stands in for the guided run's sample-task agent, with no model behind it.
+
+    Patched over ``_main.Agent`` — the name the guided run actually calls — so
+    the test needs no provider key and makes no request.
+    """
 
     def __init__(self, config):
         self.config = config
@@ -608,8 +612,11 @@ class _AnsweringAgent:
 def test_the_guided_run_only_claims_success_when_the_coding_step_worked(
     monkeypatch, tmp_path, code_rc, expected, absent
 ):
+    built: list = []
     monkeypatch.setenv("EFFGEN_HOME", str(tmp_path))
-    monkeypatch.setattr("effgen.Agent", _AnsweringAgent)
+    monkeypatch.setattr(
+        _main, "Agent", lambda config: built.append(config) or _AnsweringAgent(config)
+    )
     monkeypatch.setattr(_main, "_quickstart_code_step", lambda *a, **k: code_rc)
     rc, out, err = _capture(
         _main._handle_quickstart_command,
@@ -617,6 +624,8 @@ def test_the_guided_run_only_claims_success_when_the_coding_step_worked(
         _plain_cli(),
     )
     text = out + err
+    # The guided run built the stand-in, so no key was needed and no request made.
+    assert len(built) == 1
     assert rc == code_rc
     assert expected in text and absent not in text
 
