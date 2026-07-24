@@ -20,7 +20,16 @@ from typing import Any
 from effgen.tools.builtin._fs import WORKSPACE_ENV_VAR, default_workspace
 
 from .edits import EditJournal, ProposedEdit, UndoOutcome
+from .git_actions import (
+    CommitOutcome,
+    commit_paths,
+    other_staged_paths,
+    relative_to_repo,
+    suggest_message,
+    untracked_among,
+)
 from .permissions import ActionRecord, PermissionGate, PermissionMode
+from .project import ProjectContext, build_project_context
 from .tools import build_code_tools
 
 #: The preset whose prompt, tools and iteration budget ``effgen code`` builds on.
@@ -139,6 +148,37 @@ def undo_workspace(workspace: Path, count: int = 1) -> tuple[list[UndoOutcome], 
 
 
 @dataclass
+class CommitPlan:
+    """What a commit of the run's edits would cover, before it is confirmed.
+
+    Built by :meth:`CodeEngine.plan_commit` so the surface can show the user the
+    repository, the exact paths and the message before anything is asked or run.
+    A non-empty :attr:`error` means there is nothing to commit and why.
+    """
+
+    repo_root: Path | None = None
+    branch: str = ""
+    paths: list[str] = field(default_factory=list)
+    message: str = ""
+    other_staged: list[str] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def subject(self) -> str:
+        """The message's first line."""
+        return self.message.splitlines()[0] if self.message else ""
+
+    def describe(self) -> str:
+        """One line naming what would be committed and where."""
+        if self.error:
+            return self.error
+        return (
+            f"Commit {len(self.paths)} file(s) to {self.repo_root} on "
+            f"{self.branch}: {', '.join(self.paths)}"
+        )
+
+
+@dataclass
 class CodeRunResult:
     """The outcome of one ``effgen code`` task."""
 
@@ -160,6 +200,8 @@ class CodeRunResult:
     files_written: list[str] = field(default_factory=list)
     diffs: list[dict[str, Any]] = field(default_factory=list)
     error: dict[str, Any] | None = None
+    repo: dict[str, Any] | None = None
+    commit: dict[str, Any] | None = None
 
     # ``effgen.ui.render.summary_line`` reads a run's metrics off these names,
     # so the coding footer is the same one ``effgen run`` prints.
@@ -204,6 +246,8 @@ class CodeRunResult:
             "provider": self.provider,
             "workspace": self.workspace,
             "permission_mode": self.permission_mode,
+            "repo": self.repo,
+            "commit": self.commit,
             "files_written": list(self.files_written),
             "diffs": [dict(d) for d in self.diffs],
             "actions": [a.to_dict() for a in self.actions],
@@ -232,6 +276,10 @@ class CodeEngine:
         max_tokens: Per-call output-token cap, when the model needs one raised.
         confirm: Confirmation callback, passed through to the gate.
         on_event: Called with each :class:`ActionRecord` as it is decided.
+        on_diff: Called with each :class:`ProposedEdit` before the write is
+            decided, so its diff can be shown before it touches disk.
+        project: The workspace's repository state, layout and project brief,
+            appended to the system prompt. ``None`` builds it from the workspace.
     """
 
     def __init__(
@@ -249,6 +297,7 @@ class CodeEngine:
         confirm: Callable[[str], str] | None = None,
         on_event: Callable[[ActionRecord], None] | None = None,
         on_diff: Callable[[ProposedEdit], None] | None = None,
+        project: ProjectContext | None = None,
     ) -> None:
         self.model = model
         self.provider = provider
@@ -256,6 +305,7 @@ class CodeEngine:
         self.max_iterations = max_iterations
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.project = project
         self.gate = PermissionGate(
             mode,
             self.workspace,
@@ -274,11 +324,29 @@ class CodeEngine:
         return self.gate.mode
 
     def system_prompt(self) -> str:
-        """Return the preset prompt plus the workspace instruction."""
+        """Return the preset prompt, the workspace instruction and the project context."""
         from effgen.presets import get_preset
 
         base = get_preset(CODE_PRESET).system_prompt
-        return base + "\n\n" + _WORKSPACE_PROMPT.format(workspace=self.workspace)
+        parts = [base, _WORKSPACE_PROMPT.format(workspace=self.workspace)]
+        if self.project is not None:
+            parts.append(self.project.as_prompt())
+        return "\n\n".join(parts)
+
+    def load_project(self, *, refresh: bool = False) -> ProjectContext:
+        """Return the workspace's project context, building it once on demand.
+
+        *refresh* rebuilds it — the repository moved on, files were added — and
+        updates the live agent's system prompt so the next turn sees the new
+        state. Rebuilding the context is the point; an agent that carries no
+        editable configuration simply keeps the prompt it was built with.
+        """
+        if self.project is None or refresh:
+            self.project = build_project_context(self.workspace)
+            config = getattr(self._agent, "config", None)
+            if config is not None and hasattr(config, "system_prompt"):
+                config.system_prompt = self.system_prompt()
+        return self.project
 
     def build_agent(self) -> Any:
         """Construct the agent, reusing the ``coding`` preset's configuration."""
@@ -317,6 +385,77 @@ class CodeEngine:
             response = agent.run(task)
         return self.result_from_response(task, response)
 
+    # -- git ----------------------------------------------------------------
+
+    def plan_commit(
+        self, rel_paths: list[str], *, task: str = "", message: str | None = None
+    ) -> CommitPlan:
+        """Describe the commit that would record *rel_paths*, without running it.
+
+        *rel_paths* are workspace-relative (what the run reports as written) and
+        are mapped to repository-relative paths. Nothing is staged or committed
+        here; the caller shows the plan, then calls :meth:`perform_commit`.
+        """
+        repo = (self.project.repo if self.project is not None else None)
+        if repo is None:
+            repo = build_project_context(self.workspace, include_brief=False).repo
+        if repo is None:
+            return CommitPlan(
+                error=(
+                    f"{self.workspace} is not inside a git repository, so there is "
+                    "nothing to commit to."
+                )
+            )
+        paths = relative_to_repo(self.workspace, repo.root, rel_paths)
+        if not paths:
+            return CommitPlan(
+                repo_root=repo.root,
+                branch=repo.branch,
+                error="No files were written in this repository, so there is nothing to commit.",
+            )
+        if message and message.strip():
+            text = message.strip()
+        else:
+            text = suggest_message(paths, task, untracked_among(repo.root, paths))
+        return CommitPlan(
+            repo_root=repo.root,
+            branch=repo.branch,
+            paths=paths,
+            message=text,
+            other_staged=other_staged_paths(repo.root, paths),
+        )
+
+    def perform_commit(self, plan: CommitPlan) -> CommitOutcome:
+        """Ask the gate about *plan*, and commit when it is allowed.
+
+        The gate decides exactly as it does for a write or a shell command: in
+        ``ask`` mode the human answers a y/N prompt, in ``plan`` mode the commit
+        is withheld, and only ``--yes`` commits without asking. The decision is
+        recorded on the run's action log either way.
+        """
+        if plan.error or plan.repo_root is None:
+            return CommitOutcome(False, plan.message, plan.error or "Nothing to commit.")
+        # Phrased like the other gated actions ("Write main.py (+2/-0)"), so the
+        # confirm prompt and the action tick read the same way.
+        question = (
+            f"Commit {len(plan.paths)} file(s) to {plan.repo_root.name} on "
+            f"{plan.branch} as \"{plan.subject}\""
+        )
+        decision = self.gate.request("git", question, target=", ".join(plan.paths))
+        if not decision.allowed:
+            return CommitOutcome(
+                False, plan.message,
+                decision.reason or "not confirmed; nothing was committed.",
+                paths=list(plan.paths),
+            )
+        outcome = commit_paths(plan.repo_root, plan.paths, plan.message)
+        self.gate.note_outcome(
+            decision.record,
+            "ok" if outcome.success else "error",
+            outcome.detail or (f"commit {outcome.commit}" if outcome.commit else ""),
+        )
+        return outcome
+
     def result_from_response(self, task: str, response: Any) -> CodeRunResult:
         """Assemble a :class:`CodeRunResult` from *response* and the gate's log.
 
@@ -345,4 +484,9 @@ class CodeEngine:
             files_written=self.gate.files_written,
             diffs=list(self.gate.edits),
             error=metadata.get("error"),
+            repo=(
+                self.project.repo.to_dict()
+                if self.project is not None and self.project.repo is not None
+                else None
+            ),
         )

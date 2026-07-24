@@ -5,7 +5,7 @@ Both go through :class:`PermissionGate` before they reach the underlying tool, s
 a run's disk and process effects are decided by an explicit policy rather than by
 whatever the model happened to call.
 
-Three action kinds are distinguished, because they carry different risk:
+Four action kinds are distinguished, because they carry different risk:
 
 - ``write`` — a file write into the workspace (``file_operations``).
 - ``run`` — code executed in the configured sandbox (``code_executor`` with a
@@ -13,17 +13,21 @@ Three action kinds are distinguished, because they carry different risk:
 - ``shell`` — a shell command (``bash``, or ``code_executor`` with
   ``language="bash"``). The shell runs with the caller's own permissions, so it
   is gated more tightly than a sandboxed run.
+- ``git`` — a commit of the files a run wrote (:mod:`effgen.cli.code.git_actions`).
+  No tool can request one: it is only ever asked for by the person driving the
+  session, and it still passes the gate so the decision is recorded like any
+  other.
 
 The four modes:
 
-============  ==========  ==========  ==========
-mode          write       run         shell
-============  ==========  ==========  ==========
-``plan``      deny        deny        deny
-``ask``       confirm     confirm     confirm
-``auto-edit`` allow       allow       confirm
-``yes``       allow       allow       allow
-============  ==========  ==========  ==========
+============  ==========  ==========  ==========  ==========
+mode          write       run         shell       git
+============  ==========  ==========  ==========  ==========
+``plan``      deny        deny        deny        deny
+``ask``       confirm     confirm     confirm     confirm
+``auto-edit`` allow       allow       confirm     confirm
+``yes``       allow       allow       allow       allow
+============  ==========  ==========  ==========  ==========
 
 ``confirm`` asks the human and needs a terminal. Without one there is nobody to
 ask, so the action is withheld and recorded — a non-interactive run never writes
@@ -50,7 +54,7 @@ from effgen.tools.builtin._fs import PathNotAllowedError, is_credential_filename
 from .edits import EditJournal, ProposedEdit
 
 #: Action kinds the gate distinguishes, in the order they are reported.
-ACTION_KINDS: tuple[str, ...] = ("write", "run", "shell")
+ACTION_KINDS: tuple[str, ...] = ("write", "run", "shell", "git")
 
 # Policy verbs.
 _ALLOW = "allow"
@@ -71,10 +75,14 @@ class PermissionMode(str, Enum):
 
 
 _POLICY: dict[PermissionMode, dict[str, str]] = {
-    PermissionMode.PLAN: {"write": _DENY, "run": _DENY, "shell": _DENY},
-    PermissionMode.ASK: {"write": _CONFIRM, "run": _CONFIRM, "shell": _CONFIRM},
-    PermissionMode.AUTO_EDIT: {"write": _ALLOW, "run": _ALLOW, "shell": _CONFIRM},
-    PermissionMode.YES: {"write": _ALLOW, "run": _ALLOW, "shell": _ALLOW},
+    PermissionMode.PLAN: {"write": _DENY, "run": _DENY, "shell": _DENY, "git": _DENY},
+    PermissionMode.ASK: {
+        "write": _CONFIRM, "run": _CONFIRM, "shell": _CONFIRM, "git": _CONFIRM,
+    },
+    PermissionMode.AUTO_EDIT: {
+        "write": _ALLOW, "run": _ALLOW, "shell": _CONFIRM, "git": _CONFIRM,
+    },
+    PermissionMode.YES: {"write": _ALLOW, "run": _ALLOW, "shell": _ALLOW, "git": _ALLOW},
 }
 
 #: One-line description per mode, used by ``--help`` and the run summary.
@@ -402,6 +410,7 @@ _VERB: dict[str, str] = {
     "write": "write files",
     "run": "run code",
     "shell": "run shell commands",
+    "git": "commit to git",
 }
 
 # The flag that turns a withheld action of each kind into an allowed one.
@@ -409,4 +418,5 @@ _OPT_IN: dict[str, str] = {
     "write": "--auto-edit (or --yes)",
     "run": "--auto-edit (or --yes)",
     "shell": "--yes",
+    "git": "--yes",
 }
