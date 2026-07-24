@@ -18,6 +18,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from effgen.cli.commands._shared import _print_group_help, resolve_provider_name
+from effgen.ui.tables import check_mark
 
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
@@ -195,14 +196,14 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             title = (f"{provider_filter} — {len(recs)} models "
                      f"(auth: {auth}, verified: {verified})")
             table = Table(title=title)
-            table.add_column("Model ID", style="cyan", overflow="fold")
-            table.add_column("Context", style="white", justify="right", no_wrap=True)
-            table.add_column("Max Out", style="white", justify="right", no_wrap=True)
-            table.add_column("$/1M in/out", style="green", no_wrap=True, overflow="fold")
+            table.add_column("Model ID", style="effgen.model", overflow="fold")
+            table.add_column("Context", justify="right", no_wrap=True)
+            table.add_column("Max Out", justify="right", no_wrap=True)
+            table.add_column("$/1M in/out", style="effgen.cost", no_wrap=True, overflow="fold")
             table.add_column("Tools", justify="center", no_wrap=True)
             table.add_column("Vision", justify="center", no_wrap=True)
             table.add_column("Free", justify="center", no_wrap=True)
-            table.add_column("Status", style="yellow")
+            table.add_column("Status", style="effgen.warning")
             for r in recs:
                 status = "deprecated" if r.deprecated else ("default" if r.id == default_id else "")
                 table.add_row(
@@ -210,9 +211,9 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                     f"{r.context_window:,}" if r.context_window else "—",
                     f"{r.max_output:,}" if r.max_output else "—",
                     cli._price_cell(r),
-                    "✓" if r.supports_tools else "",
-                    "✓" if r.supports_vision else "",
-                    "✓" if r.free_tier else "",
+                    check_mark(r.supports_tools),
+                    check_mark(r.supports_vision),
+                    check_mark(r.free_tier),
                     status,
                 )
             cli.console.print(table)
@@ -241,10 +242,10 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             label = "free + tool-capable"
         if cli._rich_tables():
             table = Table(title=f"{label.capitalize()} models (all providers)")
-            table.add_column("Model ID", style="cyan", overflow="fold")
-            table.add_column("Provider", style="magenta", no_wrap=True)
+            table.add_column("Model ID", style="effgen.model", overflow="fold")
+            table.add_column("Provider", style="effgen.accent", no_wrap=True)
             table.add_column("Context", justify="right", no_wrap=True)
-            table.add_column("$/1M in/out", style="green", no_wrap=True, overflow="fold")
+            table.add_column("$/1M in/out", style="effgen.cost", no_wrap=True, overflow="fold")
             table.add_column("Tools", justify="center", no_wrap=True)
             table.add_column("Free", justify="center", no_wrap=True)
             for prov in providers:
@@ -253,8 +254,8 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                         r.id, prov,
                         f"{r.context_window:,}" if r.context_window else "—",
                         cli._price_cell(r),
-                        "✓" if r.supports_tools else "",
-                        "✓" if r.free_tier else "",
+                        check_mark(r.supports_tools),
+                        check_mark(r.free_tier),
                     )
             cli.console.print(table)
         else:
@@ -269,15 +270,16 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     stale = set(_catalog.stale_providers())
     if cli.console:
         table = Table(title="Provider Registry (bundled catalog)")
-        table.add_column("Provider", style="cyan")
+        table.add_column("Provider", style="effgen.accent")
         table.add_column("Models", justify="right")
-        table.add_column("Default", style="magenta", overflow="fold")
+        table.add_column("Default", style="effgen.model", overflow="fold")
         table.add_column("Auth", justify="center")
-        table.add_column("Verified", style="dim")
+        table.add_column("Verified", style="effgen.muted")
         for prov in providers:
             meta = _catalog.snapshot_meta(prov)
             n = len(_catalog.list_models(prov))
-            auth = "[green]key[/green]" if _refresh.has_credentials(prov) else "[dim]—[/dim]"
+            auth = ("[effgen.success]key[/effgen.success]" if _refresh.has_credentials(prov)
+                    else "[effgen.muted]—[/effgen.muted]")
             verified = meta.get("verified_on") or "?"
             if prov in stale:
                 verified += " (stale)"
@@ -300,14 +302,15 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         n_ready = sum(1 for m in local if m.get("complete", True))
         if cli.console:
             ltable = Table(title=f"Local HuggingFace cache ({n_ready} ready)")
-            ltable.add_column("Model", style="cyan", overflow="fold")
-            ltable.add_column("Size", justify="right", style="white")
+            ltable.add_column("Model", style="effgen.model", overflow="fold")
+            ltable.add_column("Size", justify="right")
             ltable.add_column("Status", justify="center")
             for m in local:
                 ready = m.get("complete", True)
                 ltable.add_row(
                     m["id"], f"{m['size_gb']:.1f} GB",
-                    "ready" if ready else "[yellow]incomplete[/yellow]",
+                    "[effgen.success]ready[/effgen.success]" if ready
+                    else "[effgen.warning]incomplete[/effgen.warning]",
                 )
             cli.console.print(ltable)
         else:
@@ -475,13 +478,13 @@ def models_browse(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         if offset:
             shown += f" (from #{offset + 1})"
         table = Table(title=f"Models across providers — {shown}")
-        table.add_column("Provider", style="magenta", no_wrap=True)
-        table.add_column("Model ID", style="cyan", overflow="fold")
+        table.add_column("Provider", style="effgen.accent", no_wrap=True)
+        table.add_column("Model ID", style="effgen.model", overflow="fold")
         table.add_column("Context", justify="right", no_wrap=True)
         table.add_column("Max Out", justify="right", no_wrap=True)
-        table.add_column("$/1M in", style="green", justify="right",
+        table.add_column("$/1M in", style="effgen.cost", justify="right",
                          no_wrap=True, overflow="fold")
-        table.add_column("$/1M out", style="green", justify="right",
+        table.add_column("$/1M out", style="effgen.cost", justify="right",
                          no_wrap=True, overflow="fold")
         table.add_column("Tools", justify="center", no_wrap=True)
         table.add_column("Vision", justify="center", no_wrap=True)
@@ -493,9 +496,9 @@ def models_browse(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 f"{r.context_window:,}" if r.context_window else "—",
                 f"{r.max_output:,}" if r.max_output else "—",
                 pin, pout,
-                "✓" if r.supports_tools else "",
-                "✓" if r.supports_vision else "",
-                "✓" if r.free_tier else "",
+                check_mark(r.supports_tools),
+                check_mark(r.supports_vision),
+                check_mark(r.free_tier),
             )
         cli.console.print(table)
         if limit and offset + limit < total:
@@ -589,8 +592,8 @@ def render_local_model_info(cli: "CLIInterface", payload: dict) -> None:
     if cli.console:
         from rich.table import Table
         table = Table(show_header=False, title="Local cache")
-        table.add_column("Field", style="cyan")
-        table.add_column("Value", style="white", overflow="fold")
+        table.add_column("Field", style="effgen.label")
+        table.add_column("Value", overflow="fold")
         for k, v in rows.items():
             table.add_row(k, str(v))
         cli.console.print(table)
@@ -742,8 +745,8 @@ def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     }
     if cli.console:
         table = Table(show_header=False)
-        table.add_column("Field", style="cyan")
-        table.add_column("Value", style="white", overflow="fold")
+        table.add_column("Field", style="effgen.label")
+        table.add_column("Value", overflow="fold")
         for k, v in rows.items():
             table.add_row(k, str(v))
         cli.console.print(table)
@@ -756,8 +759,8 @@ def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     if others:
         if cli.console:
             vtable = Table(title=f"Also served by ({len(others)} other provider(s))")
-            vtable.add_column("Provider", style="magenta", no_wrap=True)
-            vtable.add_column("$/1M in/out", style="green", no_wrap=True, overflow="fold")
+            vtable.add_column("Provider", style="effgen.accent", no_wrap=True)
+            vtable.add_column("$/1M in/out", style="effgen.cost", no_wrap=True, overflow="fold")
             vtable.add_column("Context", justify="right", no_wrap=True)
             vtable.add_column("Tools", justify="center", no_wrap=True)
             vtable.add_column("Vision", justify="center", no_wrap=True)
@@ -766,9 +769,9 @@ def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 vtable.add_row(
                     v.provider, cli._price_cell(v),
                     f"{v.context_window:,}" if v.context_window else "—",
-                    "✓" if v.supports_tools else "",
-                    "✓" if v.supports_vision else "",
-                    "✓" if v.free_tier else "",
+                    check_mark(v.supports_tools),
+                    check_mark(v.supports_vision),
+                    check_mark(v.free_tier),
                 )
             cli.console.print(vtable)
             cli.console.print(
