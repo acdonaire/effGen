@@ -19,6 +19,10 @@ The pieces:
   model sees are unchanged.
 - :mod:`~effgen.cli.code.engine` — workspace resolution, agent construction, and
   the run-result record the CLI prints or serializes.
+- :mod:`~effgen.cli.code.render` — the terminal rendering both surfaces share:
+  a diff, a decided action, a run footer, and the verbatim line printer.
+- :mod:`~effgen.cli.code.repl` — the interactive session (:class:`CodeREPL`) a
+  terminal with no task opens, with its slash commands.
 
 The command handler lives in :mod:`effgen.cli.commands.code`.
 """
@@ -52,6 +56,7 @@ from .permissions import (
     PermissionMode,
     default_mode,
 )
+from .repl import CodeREPL
 from .tools import build_code_tools
 
 __all__ = [
@@ -60,6 +65,7 @@ __all__ = [
     "AppliedEdit",
     "ApplyResult",
     "CodeEngine",
+    "CodeREPL",
     "CodeRunResult",
     "Decision",
     "DiffStat",
