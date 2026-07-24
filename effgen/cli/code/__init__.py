@@ -19,6 +19,8 @@ The pieces:
   model sees are unchanged.
 - :mod:`~effgen.cli.code.project` — repository detection and the bounded
   workspace inventory (``.gitignore`` respected) the session starts from.
+- :mod:`~effgen.cli.code.readiness` — the workspace/sandbox/git checks
+  ``effgen doctor`` and the session's ``/doctor`` report.
 - :mod:`~effgen.cli.code.git_actions` — the one repository-changing action a
   session offers: a confirmed commit of the files it wrote.
 - :mod:`~effgen.cli.code.engine` — workspace resolution, agent construction, and
@@ -70,6 +72,7 @@ from .permissions import (
     default_mode,
 )
 from .project import ProjectContext, RepoInfo, build_project_context, detect_repo, staged_diff
+from .readiness import ReadinessCheck, ReadinessReport, code_readiness
 from .repl import CodeREPL
 from .tools import build_code_tools
 
@@ -91,12 +94,15 @@ __all__ = [
     "PermissionMode",
     "ProjectContext",
     "ProposedEdit",
+    "ReadinessCheck",
+    "ReadinessReport",
     "RepoInfo",
     "UndoOutcome",
     "UnsafeGitAction",
     "apply_hunks",
     "build_code_tools",
     "build_project_context",
+    "code_readiness",
     "commit_paths",
     "default_mode",
     "detect_repo",
