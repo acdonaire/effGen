@@ -642,99 +642,33 @@ class ChatREPL:
     # ------------------------------------------------------------------
     # Answer rendering
     # ------------------------------------------------------------------
-    def _await_first_token(self, gen: Any) -> str | None:
-        """Consume up to the first non-empty token, showing a wait indicator."""
-        if self.animate and self.console:
-            from rich.progress import Progress, SpinnerColumn, TextColumn
-
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=self.console,
-                transient=True,
-            ) as progress:
-                progress.add_task("Thinking…", total=None)
-                for tok in gen:
-                    if tok:
-                        return tok
-            return None
-        show = not self.quiet
-        if show:
-            print("Thinking…", end="", flush=True)
-        first: str | None = None
-        for tok in gen:
-            if tok:
-                first = tok
-                break
-        if show:
-            print("\r" + " " * 10 + "\r", end="", flush=True)
-        return first
-
-    def _stream_raw(self, gen: Any) -> str:
-        """Emit the answer as plain text on stdout (piped/non-TTY fallback)."""
-        collected: list[str] = []
-        for tok in gen:
-            if tok:
-                sys.stdout.write(tok)
-                collected.append(tok)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-        return "".join(collected).strip()
-
-    def _stream_live_markdown(self, gen: Any, first: str | None) -> str:
-        """Stream tokens into a live markdown region so lists/code render inline."""
-        from rich.live import Live
-
-        from effgen.ui.render import answer_renderable
-
-        collected: list[str] = [first] if first else []
-        self.console.print("[bold green]assistant[/bold green]", highlight=False)
-        with Live(
-            console=self.console,
-            refresh_per_second=8,
-            transient=False,
-            vertical_overflow="visible",
-        ) as live:
-            if collected:
-                live.update(answer_renderable("".join(collected)))
-            for tok in gen:
-                collected.append(tok)
-                live.update(answer_renderable("".join(collected)))
-        return "".join(collected).strip()
-
     def _show_answer(self, answer: str) -> None:
         """Print a finished answer, rendering markdown when a rich console is up."""
-        if self.console:
-            from effgen.ui.render import answer_renderable
+        from effgen.ui.render import answer_surface
 
-            label = "[bold green]assistant[/bold green] " if self._color else "assistant "
-            self.console.print(label, end="", highlight=False)
-            self.console.print(answer_renderable(answer))
-        else:
-            print(f"assistant {answer}")
+        answer_surface(answer, framed=False, label="assistant", console=self.console)
 
     def _stream_plain(self, user_input: str) -> str:
         """Stream the model's answer, rendering markdown the way tool turns do.
 
         A piped/non-TTY run emits the raw answer only; an interactive terminal
-        renders lists/headings/code the same whether or not a tool ran.
+        renders lists/headings/code the same whether or not a tool ran — a live
+        markdown region on a colour TTY, a single rendered block otherwise.
         """
-        gen = iter(self.agent.stream(user_input))
+        gen = self.agent.stream(user_input)
         if not self.interactive:
-            return self._stream_raw(gen)
+            return _progress.stream_answer(
+                self.console, gen,
+                animate=False, interactive=False, quiet=self.quiet,
+                trailing_newline=True,
+            ).strip()
 
-        first = self._await_first_token(gen)
-        if self.console and self.animate and self._color:
-            return self._stream_live_markdown(gen, first)
-
-        # No animation (or no rich): collect, then render once so the answer is
-        # markdown-formatted like the tool path instead of raw text.
-        collected: list[str] = [first] if first else []
-        for tok in gen:
-            collected.append(tok)
-        answer = "".join(collected).strip()
-        self._show_answer(answer)
-        return answer
+        return _progress.stream_answer(
+            self.console, gen,
+            animate=bool(self.console and self.animate and self._color),
+            interactive=True, quiet=self.quiet,
+            label="assistant", render_plain=True,
+        ).strip()
 
     def _run_with_tools(self, user_input: str) -> str:
         """Run a tool-enabled turn under the live-status spinner, then show the answer."""
@@ -785,28 +719,21 @@ class ChatREPL:
     def _footer_text(
         self, elapsed: float, tok: int, cost: float, interrupted: bool
     ) -> str:
-        """Build the per-turn footer, appending a running session total over time."""
-        from effgen.ui.render import format_cost
+        """Build the per-turn footer, appending a running session total over time.
 
-        parts = [f"{elapsed:.1f}s"]
-        if tok:
-            parts.append(f"{tok:,} tok")
-        if cost > 0:
-            c = format_cost(cost)
-            if c:
-                parts.append(c)
-        footer = "· " + " · ".join(parts)
-        if interrupted:
-            footer += " · stopped"
-        # A compact running total once a session has more than one turn, so the
-        # cumulative spend stays visible between turns without asking /cost.
-        if self.turns > 1 and (self.session_tokens or self.session_cost):
-            run = f"{self.turns} turns · {self.session_tokens:,} tok"
-            if self.session_cost > 0:
-                rc = format_cost(self.session_cost)
-                if rc:
-                    run += f" · {rc}"
-            footer += f"    (session: {run})"
+        Shares the one summary builder with ``effgen run``; the ``chat`` preset
+        keeps the compact per-turn shape and the running session total.
+        """
+        from effgen.ui.render import summary_line
+
+        footer, _ = summary_line(
+            mode="chat",
+            elapsed=elapsed,
+            tokens=tok,
+            cost=cost,
+            interrupted=interrupted,
+            session=(self.turns, self.session_tokens, self.session_cost),
+        )
         return footer
 
     def _print_footer(
@@ -820,7 +747,10 @@ class ChatREPL:
         tok = rtok or max(dtok, 0)
         cost = rcost or max(dcost, 0.0)
 
-        footer = self._footer_text(elapsed, tok, cost, interrupted)
+        from effgen.ui.render import ascii_fold
+
+        footer = ascii_fold(self._footer_text(elapsed, tok, cost, interrupted),
+                            self.cli._human_stream())
         console = self._chrome_console()
         if console:
             console.print(
@@ -1171,11 +1101,16 @@ class ChatREPL:
                 self.cli.print("No turn to trace yet.")
             return
         self.cli.print_header("Last turn — reasoning trace")
-        lines = _progress.execution_trace_lines(self.last_trace)
+        from effgen.ui.render import ascii_fold
+
+        lines = _progress.execution_trace_lines(
+            self.last_trace, stream=self.cli._human_stream()
+        )
         if not lines:
             self.cli.print("(no detailed steps recorded for this turn)")
             return
         for style, text in lines:
+            text = ascii_fold(text, self.cli._human_stream())
             if self.console and self._color:
                 self.console.print(f"[{style}]{text}[/{style}]")
             else:

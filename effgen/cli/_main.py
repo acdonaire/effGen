@@ -445,18 +445,6 @@ class CLIInterface:
 
         return run_agent(self, args)
 
-    def _stream_tokens(self, token_iter, *, animate: bool) -> str:
-        """Print streamed tokens with an optional soft cursor; return the text.
-
-        On an interactive terminal a single-cell soft cursor (``▌``) trails the
-        latest token and is erased before the next one, giving a live-typing
-        feel. When not animating (piped/redirected/non-TTY) tokens are written
-        plainly so the output is clean to capture.
-        """
-        from effgen.cli.commands.run import stream_tokens
-
-        return stream_tokens(self, token_iter, animate=animate)
-
     def _handle_interrupt(self, agent) -> None:
         """Render a friendly Ctrl-C stop (partial trace + 'Stopped.'), no traceback."""
         from effgen.cli.commands.run import handle_interrupt

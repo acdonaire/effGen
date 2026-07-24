@@ -327,39 +327,3 @@ def test_step_progress_noop_without_animation():
         bar.advance()
         bar.update(3, total=3)
     # no exception, no console required
-
-
-# ---------------------------------------------------------------------------
-# streaming soft cursor
-# ---------------------------------------------------------------------------
-
-
-def _cli():
-    from effgen.cli._main import CLIInterface
-
-    return CLIInterface()
-
-
-def test_stream_tokens_plain(capsys):
-    cli = _cli()
-    text = cli._stream_tokens(iter(["Hello", " ", "world"]), animate=False)
-    assert text == "Hello world"
-    out = capsys.readouterr().out
-    assert out == "Hello world"  # plain, no cursor artifacts
-
-
-def test_stream_tokens_soft_cursor(capsys):
-    cli = _cli()
-    text = cli._stream_tokens(iter(["Hi", "!"]), animate=True)
-    assert text == "Hi!"
-    out = capsys.readouterr().out
-    # cursor printed then erased with backspace-space-backspace; final text intact
-    assert "▌" in out
-    assert "\b \b" in out
-    assert out.replace("▌", "").replace("\b \b", "") == "Hi!"
-
-
-def test_stream_tokens_skips_empty_chunks(capsys):
-    cli = _cli()
-    text = cli._stream_tokens(iter(["a", "", None, "b"]), animate=False)  # type: ignore[list-item]
-    assert text == "ab"

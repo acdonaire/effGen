@@ -14,7 +14,6 @@ import asyncio
 import json
 import logging
 import sys
-from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +28,7 @@ from effgen.cli.commands._shared import (
     filter_incompatible_tools,
     resolve_provider_name,
 )
+from effgen.ui.render import ascii_fold as _ascii_fold
 
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
@@ -59,12 +59,8 @@ def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
     # Rich renderables are only reached when ``cli.console`` exists, which is
     # exactly when rich imported; read them defensively so a rich-less install
     # enters the wizard and takes the plain-text branches.
-    Markdown = getattr(_main, "Markdown", None)
     Panel = getattr(_main, "Panel", None)
     Table = getattr(_main, "Table", None)
-    Progress = getattr(_main, "Progress", None)
-    SpinnerColumn = getattr(_main, "SpinnerColumn", None)
-    TextColumn = getattr(_main, "TextColumn", None)
     __version__ = _main.__version__
 
     cli.print_header(f"effGen v{__version__} - Interactive Setup Wizard")
@@ -307,21 +303,21 @@ def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
 
         if enable_streaming:
             if cli.console:
-                cli.console.print("\n[bold green]Agent:[/bold green] ", end="")
+                cli.console.print("\n[effgen.success]Agent:[/effgen.success] ", end="")
             else:
                 print("\nAgent: ", end="", flush=True)
 
-            for token in agent.stream(task):
-                print(token, end='', flush=True)
-            print()
+            _progress.stream_answer(
+                cli.console,
+                agent.stream(task),
+                animate=_progress.animation_enabled(),
+                interactive=True,
+                render_plain=True,
+                trailing_newline=True,
+            )
         else:
             if cli.console:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    console=cli.console
-                ) as progress:
-                    progress.add_task("Thinking...", total=None)
+                with _progress.thinking_status(cli.console, animate=True):
                     response = agent.run(task)
             else:
                 print("Thinking...")
@@ -331,11 +327,14 @@ def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
             cli.print_header("Response")
 
             if cli.console:
-                cli.console.print(Panel(
-                    Markdown(response.output),
+                from effgen.ui.render import answer_surface
+                answer_surface(
+                    response.output,
+                    success=response.success,
+                    framed=True,
                     title="Agent Response",
-                    border_style="green" if response.success else "red"
-                ))
+                    console=cli.console,
+                )
             else:
                 print(response.output)
 
@@ -398,10 +397,8 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     from effgen.cli import _main
 
     Agent, AgentConfig, AgentMode = _main.Agent, _main.AgentConfig, _main.AgentMode
-    # See the note in ``interactive_wizard``: these are reached only behind
+    # See the note in ``interactive_wizard``: this is reached only behind
     # ``cli.console``.
-    Markdown = getattr(_main, "Markdown", None)
-    Panel = getattr(_main, "Panel", None)
     Syntax = getattr(_main, "Syntax", None)
     __version__ = _main.__version__
 
@@ -654,14 +651,22 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             getattr(agent.config, "model", None) if hasattr(agent, "config") else None
         )
         if args.stream:
-            # Streaming output with an optional soft cursor for a live feel.
+            # Streamed answer: a live markdown region on an interactive colour
+            # terminal, raw token passthrough when piped/redirected/non-TTY.
             if not quiet:
                 cli.print(
                     "[italic]Streaming response...[/italic]\n"
                     if cli.console else "Streaming response...\n"
                 )
             try:
-                cli._stream_tokens(agent.stream(args.task, mode=mode), animate=animate)
+                _progress.stream_answer(
+                    cli.console,
+                    agent.stream(args.task, mode=mode),
+                    animate=animate,
+                    interactive=False,
+                    quiet=quiet,
+                    trailing_newline=False,
+                )
             except KeyboardInterrupt:
                 cli._handle_interrupt(agent)
                 return 130
@@ -707,13 +712,15 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 if not response.success and not _partial:
                     cli.print_error_panel(response.output, title="Error")
                 elif cli.console:
-                    _border = "green" if response.success else "yellow"
-                    # Rich markdown formatting
-                    cli.console.print(Panel(
-                        Markdown(response.output),
+                    from effgen.ui.render import answer_surface
+                    answer_surface(
+                        response.output,
+                        success=response.success,
+                        partial=_partial,
+                        framed=True,
                         title="Agent Response",
-                        border_style=_border
-                    ))
+                        console=cli.console,
+                    )
                 else:
                     print(response.output)
 
@@ -728,10 +735,13 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 # wall-clock went across the run's steps.
                 if _trace and response.execution_trace:
                     cli.print_header("Timeline")
-                    _tl = _progress.execution_timeline_lines(response.execution_trace)
+                    _tl = _progress.execution_timeline_lines(
+                        response.execution_trace, stream=cli._human_stream()
+                    )
                     if not _tl:
                         cli.print("(no timed steps recorded for this run)")
                     for _style, _text in _tl:
+                        _text = _ascii_fold(_text, cli._human_stream())
                         if cli.console:
                             cli.console.print(f"[{_style}]{_text}[/{_style}]")
                         else:
@@ -740,10 +750,13 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 # Display the step trace (tool reasoning + per-step timing).
                 if (_explain or _trace) and response.execution_trace:
                     cli.print_header("Execution Trace")
-                    _lines = _progress.execution_trace_lines(response.execution_trace)
+                    _lines = _progress.execution_trace_lines(
+                        response.execution_trace, stream=cli._human_stream()
+                    )
                     if not _lines:
                         cli.print("(no detailed steps recorded for this run)")
                     for _style, _text in _lines:
+                        _text = _ascii_fold(_text, cli._human_stream())
                         if cli.console:
                             cli.console.print(f"[{_style}]{_text}[/{_style}]")
                         else:
@@ -846,35 +859,6 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 agent.close()
             except Exception as e:
                 logger.debug(f"Agent close failed: {e}")
-
-
-def stream_tokens(cli: "CLIInterface", token_iter: Iterable[str], *, animate: bool) -> str:
-    """Print streamed tokens with an optional soft cursor; return the text.
-
-    On an interactive terminal a single-cell soft cursor (``▌``) trails the
-    latest token and is erased before the next one, giving a live-typing
-    feel. When not animating (piped/redirected/non-TTY) tokens are written
-    plainly so the output is clean to capture.
-    """
-    cursor = "▌"
-    wrote_cursor = False
-    collected = []
-    for token in token_iter:
-        if not token:
-            continue
-        collected.append(token)
-        if animate:
-            if wrote_cursor:
-                sys.stdout.write("\b \b")  # erase the previous single-cell cursor
-            sys.stdout.write(token + cursor)
-            wrote_cursor = True
-        else:
-            sys.stdout.write(token)
-        sys.stdout.flush()
-    if animate and wrote_cursor:
-        sys.stdout.write("\b \b")  # erase the trailing cursor
-        sys.stdout.flush()
-    return "".join(collected)
 
 
 def handle_interrupt(cli: "CLIInterface", agent: Any) -> None:
