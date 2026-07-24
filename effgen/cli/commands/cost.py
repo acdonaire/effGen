@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from effgen.cli.commands.report import _write_html_report_arg, _write_result_artifact
-from effgen.ui.tables import console_is_interactive
+from effgen.ui.tables import console_is_interactive, empty_state
 
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
@@ -175,25 +175,41 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
     if json_mode:
         return 0
 
-    # Friendly empty state: warm message + a next step instead of a blank table.
+    # Empty state: a next step instead of a blank table. The interactive terminal
+    # gets the shared empty-state block; a piped/redirected stream keeps the exact
+    # plain lines so its bytes are unchanged.
     if not rows:
-        cli.print_header(f"effGen Cost Summary — {period_label}")
-        cli.print("No spend recorded yet. 🎉")
-        cli.print("Run an agent to start tracking — e.g. effgen run \"What is 2+2?\" -m gpt-5-nano "
-                  "--provider openai")
-        cli.print("Then set a cap with: effgen cost set-budget 1.00")
+        if console_is_interactive(cli.console):
+            empty_state(
+                cli.console,
+                title=f"effGen Cost Summary — {period_label}",
+                message="No spend recorded yet.",
+                hints=[
+                    (
+                        "Run an agent to start tracking — e.g. "
+                        "effgen run \"What is 2+2?\" -m gpt-5-nano --provider openai"
+                    ),
+                    "Set a daily cap with effgen cost set-budget 1.00",
+                ],
+            )
+        else:
+            cli.print_header(f"effGen Cost Summary — {period_label}")
+            cli.print("No spend recorded yet. 🎉")
+            cli.print("Run an agent to start tracking — e.g. effgen run \"What is 2+2?\" "
+                      "-m gpt-5-nano --provider openai")
+            cli.print("Then set a cap with: effgen cost set-budget 1.00")
         return 0
 
     if console_is_interactive(cli.console):
         from rich.table import Table
         table = Table(title=f"effGen Cost Summary — {period_label}", show_footer=True)
-        table.add_column("Provider", style="cyan", no_wrap=True)
+        table.add_column("Provider", style="effgen.accent", no_wrap=True)
         # Wrap (fold) long model ids instead of truncating with an ellipsis.
-        table.add_column("Model", style="white", overflow="fold")
-        table.add_column("Requests", style="yellow", justify="right")
-        table.add_column("Prompt Tokens", style="blue", justify="right")
-        table.add_column("Completion Tokens", style="blue", justify="right")
-        table.add_column("Cost (USD)", style="green", justify="right",
+        table.add_column("Model", style="effgen.model", overflow="fold")
+        table.add_column("Requests", justify="right")
+        table.add_column("Prompt Tokens", justify="right")
+        table.add_column("Completion Tokens", justify="right")
+        table.add_column("Cost (USD)", style="effgen.cost", justify="right",
                          footer=f"${total_cost:.6f}")
 
         for r in rows:
@@ -207,15 +223,16 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
             )
 
         cli.console.print(table)
-        cli.console.print(f"\n[bold]Total:[/bold] {total_requests} requests  "
-                          f"[green]${total_cost:.6f} USD[/green]")
+        cli.console.print(f"\n[effgen.label]Total:[/effgen.label] {total_requests} requests  "
+                          f"[effgen.cost]${total_cost:.6f} USD[/effgen.cost]")
         if daily_budget is not None and cost_cmd in (None, 'today'):
             ratio = total_cost / daily_budget if daily_budget > 0 else 0
             filled = min(20, max(0, int(ratio * 20)))
             bar = "█" * filled + "░" * (20 - filled)
-            color = "red" if ratio >= 1.0 else "yellow" if ratio >= 0.8 else "green"
+            role = ("effgen.error" if ratio >= 1.0
+                    else "effgen.warning" if ratio >= 0.8 else "effgen.success")
             cli.console.print(
-                f"[bold]Daily budget:[/bold] [{color}]{bar}[/{color}] "
+                f"[effgen.label]Daily budget:[/effgen.label] [{role}]{bar}[/{role}] "
                 f"{format_usd(total_cost)} / {format_usd(daily_budget)} ({ratio*100:.0f}%)"
             )
     else:

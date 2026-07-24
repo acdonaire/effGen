@@ -11,7 +11,8 @@ from __future__ import annotations
 from effgen.cli.commands._shared import resolve_provider_name
 from effgen.cli.commands.eval import _resolve_eval_suite
 from effgen.cli.commands.report import _write_html_report_arg, _write_result_artifact
-from effgen.ui.tables import console_is_interactive, render_table
+from effgen.ui.palette import glyph
+from effgen.ui.tables import console_is_interactive, empty_state, render_table
 
 
 def _render_comparison_tables(cli, matrix) -> None:
@@ -23,7 +24,15 @@ def _render_comparison_tables(cli, matrix) -> None:
     piped Markdown say the same thing.
     """
     if not matrix.scores:
-        cli.print("No scores recorded.")
+        empty_state(
+            cli.console,
+            title="No scores recorded",
+            message="No model produced a scored result for this run.",
+            hints=[
+                "Check the model ids with effgen models list",
+                "Confirm provider keys with effgen doctor",
+            ],
+        )
         return
     suites = sorted({s.suite_name for s in matrix.scores})
     models = sorted({s.model_name for s in matrix.scores})
@@ -57,7 +66,7 @@ def _render_comparison_tables(cli, matrix) -> None:
             console=cli.console,
             title=title,
             justify=["left", *(["right"] * len(suites))],
-            styles=["cyan", *([None] * len(suites))],
+            styles=["effgen.model", *([None] * len(suites))],
         )
     if matrix.self_judged is not None:
         from effgen.eval.comparison import _judge_note
@@ -66,20 +75,26 @@ def _render_comparison_tables(cli, matrix) -> None:
     # explains a failure instead of leaving the reader with a bare label.
     failures = [s for s in matrix.scores if s.error or s.error_count]
     if failures:
-        cli.print("\nFailures:")
+        g_err = glyph("error")
+        cli.print("\n[effgen.heading]Failures[/effgen.heading]")
         for s in sorted(failures, key=lambda x: (x.model_name, x.suite_name)):
             if s.error:
-                cli.print(f"  {s.model_name} ({s.suite_name}): did not run — {s.error}")
+                cli.print(f"  [effgen.error]{g_err}[/effgen.error] {s.model_name} "
+                          f"({s.suite_name}): did not run — {s.error}")
             else:
                 cli.print(
-                    f"  {s.model_name} ({s.suite_name}): {s.error_count} "
-                    "case(s) failed to run and scored zero"
+                    f"  [effgen.error]{g_err}[/effgen.error] {s.model_name} "
+                    f"({s.suite_name}): {s.error_count} case(s) failed to run and scored zero"
                 )
     if matrix.recommendations:
-        cli.print(f"\nRecommendations (optimized for {matrix.optimize}):")
+        g_ok = glyph("success")
+        cli.print(f"\n[effgen.heading]Recommendations (optimized for "
+                  f"{matrix.optimize})[/effgen.heading]")
         for su, model in sorted(matrix.recommendations.items()):
             why = matrix.recommendation_rationale.get(su)
-            cli.print(f"  {su}: {model}" + (f" — {why}" if why else ""))
+            cli.print(f"  [effgen.success]{g_ok}[/effgen.success] {su}: "
+                      f"[effgen.model]{model}[/effgen.model]"
+                      + (f" — {why}" if why else ""))
 
 
 def _handle_compare_command(args, cli) -> int:
