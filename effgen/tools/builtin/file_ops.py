@@ -92,9 +92,13 @@ class FileOperations(BaseTool):
         ".rst", ".tex",
     }
     _DATA_READ_EXTS = {".txt", ".json", ".csv", ".xml", ".yaml", ".yml", ".md", ".log"}
+    # Writes cover the same source-code and config formats as reads, so a coding
+    # agent can create the file types it can already open (Go, Rust, TypeScript,
+    # C/C++, Java, ...) without users widening the whitelist by hand. Credential
+    # filenames stay refused by the deny-list regardless of extension.
     ALLOWED_EXTENSIONS = {
         "read": _DATA_READ_EXTS | _CODE_READ_EXTS,
-        "write": _DATA_READ_EXTS | {".py", ".js", ".ts", ".html", ".css", ".sh", ".sql"},
+        "write": _DATA_READ_EXTS | _CODE_READ_EXTS,
     }
 
     def __init__(self, allowed_directories: list[str] | None = None) -> None:
