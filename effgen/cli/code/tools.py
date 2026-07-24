@@ -15,6 +15,7 @@ a silent no-op.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ from effgen.tools.builtin.file_ops import FileOperations
 from effgen.tools.builtin.python_repl import PythonREPL
 
 from .edits import ProposedEdit
-from .permissions import PermissionGate
+from .permissions import Decision, PermissionGate
 
 # ``file_operations`` operations that put bytes on disk. Reads, listings,
 # searches and metadata lookups are not gated: they are already confined to the
@@ -62,6 +63,22 @@ def _read_text_or_none(path: Path) -> str | None:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
+
+
+async def _recorded(gate: PermissionGate, decision: Decision, coro: Awaitable[Any]) -> Any:
+    """Await *coro*, recording an error outcome on *decision* if it raises.
+
+    A tool that raises — a command the shell's blocked list rejects, a sandbox
+    that could not start — is turned into a failed result by
+    :meth:`BaseTool.execute` further up. Recording the failure here keeps the
+    action log and the live ticks accurate: the action is reported as attempted
+    and failed, with the reason, rather than left with no outcome at all.
+    """
+    try:
+        return await coro
+    except Exception as exc:
+        gate.note_outcome(decision.record, "error", _shorten(str(exc)))
+        raise
 
 
 class GatedFileOperations(FileOperations):
@@ -123,7 +140,9 @@ class GatedFileOperations(FileOperations):
         final, _applied, failed = edit.resolve_against_current(current)
         snapshot = None if not resolved.exists() else current
 
-        result = await super()._execute("write", path, content=final, **kwargs)
+        result = await _recorded(
+            self.gate, decision, super()._execute("write", path, content=final, **kwargs)
+        )
         failed_write = isinstance(result, dict) and result.get("success") is False
         if failed_write:
             self.gate.note_outcome(
@@ -161,7 +180,9 @@ class GatedFileOperations(FileOperations):
         decision = self.gate.request("write", f"Write {rel}", target=rel)
         if not decision.allowed:
             return _blocked(decision.reason)
-        result = await super()._execute(operation, path, content=content, **kwargs)
+        result = await _recorded(
+            self.gate, decision, super()._execute(operation, path, content=content, **kwargs)
+        )
         failed = isinstance(result, dict) and result.get("success") is False
         self.gate.note_outcome(
             decision.record,
@@ -188,7 +209,9 @@ class GatedCodeExecutor(CodeExecutor):
         if not decision.allowed:
             return _blocked(decision.reason)
 
-        result = await super()._execute(code, language, **kwargs)
+        result = await _recorded(
+            self.gate, decision, super()._execute(code, language, **kwargs)
+        )
         failed = isinstance(result, dict) and result.get("success") is False
         self.gate.note_outcome(
             decision.record,
@@ -211,7 +234,7 @@ class GatedPythonREPL(PythonREPL):
         if not decision.allowed:
             return _blocked(decision.reason)
 
-        result = await super()._execute(code, **kwargs)
+        result = await _recorded(self.gate, decision, super()._execute(code, **kwargs))
         failed = isinstance(result, dict) and result.get("success") is False
         self.gate.note_outcome(
             decision.record,
@@ -234,7 +257,7 @@ class GatedBashTool(BashTool):
         if not decision.allowed:
             return _blocked(decision.reason)
 
-        result = await super()._execute(command, **kwargs)
+        result = await _recorded(self.gate, decision, super()._execute(command, **kwargs))
         failed = isinstance(result, dict) and result.get("success") is False
         self.gate.note_outcome(
             decision.record,
