@@ -19,6 +19,46 @@ def console_is_interactive(console: Any) -> bool:
     return bool(console is not None and getattr(console, "is_terminal", False))
 
 
+def check_mark(present: bool, stream: Any = None) -> str:
+    """A capability cell: the success glyph when *present*, else empty.
+
+    Routes the ``✓`` used across the catalog tables through the one glyph table
+    so every listing marks a capability the same way and a non-UTF-8 console
+    gets an ASCII stand-in instead of raising. On a UTF-8 terminal the cell is
+    the same ``✓`` as before.
+    """
+    if not present:
+        return ""
+    from .palette import glyph
+
+    return glyph("success", stream)
+
+
+def empty_state(
+    console: Any,
+    *,
+    title: str,
+    message: str,
+    hints: Sequence[str] = (),
+    stream: Any = None,
+) -> None:
+    """Print a consistent "nothing here yet" block on an interactive terminal.
+
+    A muted heading, the *message*, and any next-step *hints* each prefixed with
+    an arrow, all through the shared theme roles and glyph table so every
+    results command reports an empty result the same way. Callers gate this on
+    an interactive console and keep their existing plain text for piped or
+    redirected output, so the machine-readable bytes are unchanged.
+    """
+    from .palette import glyph
+
+    arrow = glyph("arrow", stream) or "->"
+    console.print(f"[effgen.heading]{title}[/effgen.heading]")
+    console.print(f"[effgen.muted]{message}[/effgen.muted]")
+    for hint in hints:
+        console.print(f"  [effgen.accent]{arrow}[/effgen.accent] {hint}")
+
+
 def render_table(
     *,
     columns: Sequence[str],
