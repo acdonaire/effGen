@@ -64,6 +64,12 @@ class SandboxConfig:
     # Fallback image if custom image not available
     docker_fallback_image: str = "python:3.11-slim"
     network_enabled: bool = False
+    #: Working directory for the executed process. When set, a relative path in
+    #: the code resolves against this directory, so code can read and write the
+    #: files a caller placed there. Applies to the subprocess and off backends;
+    #: DockerSandbox does not mount the host filesystem, so it ignores this.
+    #: ``None`` (the default) leaves the calling process's directory in effect.
+    workdir: str | None = None
 
     @classmethod
     def from_env(cls) -> "SandboxConfig":
@@ -86,6 +92,26 @@ class SandboxResult:
     timed_out: bool = False
     backend_used: str = ""
     error: str | None = None
+
+
+def _resolve_workdir(config: SandboxConfig) -> str | None:
+    """Return the directory to start the executed process in, or ``None``.
+
+    A configured :attr:`SandboxConfig.workdir` is used only when it is an
+    existing directory; a missing or unreadable one is reported once and the
+    calling process's directory is used instead, so a stale path never turns
+    every execution into a spawn failure.
+    """
+    workdir = config.workdir
+    if not workdir:
+        return None
+    if os.path.isdir(workdir):
+        return workdir
+    logger.warning(
+        "Sandbox workdir %r is not a directory; running in the current "
+        "directory instead.", workdir,
+    )
+    return None
 
 
 def _killed_at_deadline(exit_code: int | None, elapsed: float, timeout: float) -> bool:
@@ -425,6 +451,7 @@ class SubprocessSandbox(SandboxBase):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=env,
+                    cwd=_resolve_workdir(config),
                 )
                 stdout_b, stderr_b = await asyncio.wait_for(
                     proc.communicate(input=code.encode("utf-8")),
@@ -672,6 +699,7 @@ class OffSandbox(SandboxBase):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=_resolve_workdir(config),
             )
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(

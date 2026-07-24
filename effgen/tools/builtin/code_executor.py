@@ -101,8 +101,18 @@ class CodeExecutor(BaseTool):
         "sh": "bash:5",
     }
 
-    def __init__(self) -> None:
-        """Initialize the code executor."""
+    def __init__(self, workdir: str | None = None) -> None:
+        """Initialize the code executor.
+
+        Args:
+            workdir: Directory the executed process starts in, so a relative
+                path in the code resolves against it. Defaults to the
+                ``EFFGEN_WORKSPACE`` directory when that is set — the same root
+                ``file_operations`` writes into and ``bash`` runs in, so code
+                written by an agent and then executed sees its own files.
+                Applies to the subprocess and off backends; DockerSandbox does
+                not mount the host filesystem, so it is unaffected.
+        """
         super().__init__(
             metadata=ToolMetadata(
                 name="code_executor",
@@ -117,7 +127,9 @@ class CodeExecutor(BaseTool):
                     "any file the calling process's user can, and CPU/process "
                     "limits are enforced by ulimit, not cgroups. Check the "
                     "'sandbox_backend' field in the result to see which backend "
-                    "ran a given call."
+                    "ran a given call. Outside Docker the code starts in the "
+                    "workspace directory, so a relative path reads and writes "
+                    "the files there."
                 ),
                 category=ToolCategory.CODE_EXECUTION,
                 parameters=[
@@ -208,6 +220,19 @@ class CodeExecutor(BaseTool):
         )
         self._sandbox: SandboxBase | None = None
         self._sandbox_config: SandboxConfig = SandboxConfig.from_env()
+        self._workdir = workdir
+
+    def _resolve_workdir(self) -> str | None:
+        """Return the directory executed code should start in, or ``None``.
+
+        Read at call time (not at construction) so a workspace configured after
+        the tool was created still takes effect.
+        """
+        if self._workdir:
+            return self._workdir
+        from ._fs import default_workspace
+        workspace = default_workspace()
+        return str(workspace) if workspace is not None else None
 
     async def initialize(self) -> None:
         """Initialize the executor and resolve the sandbox backend."""
@@ -274,6 +299,7 @@ class CodeExecutor(BaseTool):
             docker_image=self._sandbox_config.docker_image,
             docker_fallback_image=self._sandbox_config.docker_fallback_image,
             network_enabled=network_enabled,
+            workdir=self._resolve_workdir(),
         )
 
         try:
