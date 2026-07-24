@@ -12,7 +12,35 @@ import html as _html
 import re
 from typing import Any
 
+from .palette import glyph, supports_unicode
 from .theme import CODE_THEME, color_enabled, get_console, rich_available
+
+# Typographic characters the CLI prints in its own chrome (metric separators,
+# bars, an em-dash, an ellipsis, spinner cells). On a non-UTF-8 stream these
+# would raise ``UnicodeEncodeError``; :func:`ascii_fold` swaps them for ASCII
+# stand-ins. Semantic status glyphs are handled separately by ``palette.glyph``.
+_TYPO_ASCII: dict[str, str] = {
+    "·": "-",
+    "—": "-",
+    "…": "...",
+    "█": "#",
+    "▌": "",
+    "⏱": "",
+    "•": "-",
+}
+
+
+def ascii_fold(text: str, stream: Any = None) -> str:
+    """Return *text* unchanged on a UTF-8 stream, ASCII-folded otherwise.
+
+    Applied at the human-print boundary for effGen's own presentation strings so
+    a ``PYTHONIOENCODING=ascii`` (or other non-UTF-8) console prints a readable
+    ASCII form instead of raising. On a UTF-8 stream the text is returned
+    verbatim, so byte-for-byte output on a normal terminal is unchanged.
+    """
+    if not text or supports_unicode(stream):
+        return text
+    return "".join(_TYPO_ASCII.get(ch, ch) for ch in text)
 
 # ---------------------------------------------------------------------------
 # Small shared helpers
@@ -112,6 +140,82 @@ def _tool_names(response: Any) -> list[str]:
     return names
 
 
+def summary_line(
+    response: Any = None,
+    *,
+    mode: str = "run",
+    stream: Any = None,
+    elapsed: float = 0.0,
+    tokens: int = 0,
+    cost: float = 0.0,
+    interrupted: bool = False,
+    session: tuple[int, int, float] | None = None,
+) -> tuple[str, str]:
+    """Build the one-glance summary for a finished turn (``(plain, markup)``).
+
+    Two presets share one metric vocabulary and one cost extractor:
+
+    - ``mode="run"`` — a one-shot run/wizard footer read from *response*::
+
+          ✓ Done in 3.2s · 2 tools · 1,204 tokens · $0.0006
+
+      A partial (iteration-cap) run and an outright failure are marked
+      distinctly from a success.
+    - ``mode="chat"`` — a conversational per-turn footer from the explicit
+      *elapsed*/*tokens*/*cost*, with a running *session* total once a session
+      has more than one turn::
+
+          · 3.2s · 318 tok · $0.0003    (session: 4 turns · 1,020 tok · $…)
+
+    The status glyphs resolve through :func:`palette.glyph` so a non-UTF-8
+    stream falls back to an ASCII stand-in instead of raising.
+    """
+    if mode == "chat":
+        parts = [f"{elapsed:.1f}s"]
+        if tokens:
+            parts.append(f"{tokens:,} tok")
+        if cost and cost > 0:
+            c = format_cost(cost)
+            if c:
+                parts.append(c)
+        footer = "· " + " · ".join(parts)
+        if interrupted:
+            footer += " · stopped"
+        if session:
+            turns, s_tokens, s_cost = session
+            if turns > 1 and (s_tokens or s_cost):
+                run = f"{turns} turns · {s_tokens:,} tok"
+                if s_cost > 0:
+                    rc = format_cost(s_cost)
+                    if rc:
+                        run += f" · {rc}"
+                footer += f"    (session: {run})"
+        return footer, footer
+
+    body = " · ".join(_summary_parts(response))
+    meta = getattr(response, "metadata", None) or {}
+    success = bool(getattr(response, "success", False))
+    g_ok = glyph("success", stream)
+    g_err = glyph("error", stream)
+    g_warn = glyph("warning", stream)
+    if success:
+        plain = f"{g_ok} Done in {body}"
+        markup = f"[green]{g_ok}[/green] Done in {body}"
+    elif meta.get("partial"):
+        # A run cut off at the iteration cap is not a completed success, but the
+        # recovered text is still shown: mark it distinctly from an outright
+        # failure so the partial result is not read as finished.
+        tail = f" · {body}" if body else ""
+        plain = f"{g_warn} Stopped at max iterations — partial result{tail}"
+        markup = f"[yellow]{g_warn}[/yellow] Stopped at max iterations — partial result{tail}"
+    else:
+        reason = meta.get("reason", "failed")
+        tail = f" · {body}" if body else ""
+        plain = f"{g_err} Failed ({reason}){tail}"
+        markup = f"[red]{g_err}[/red] Failed ([yellow]{reason}[/yellow]){tail}"
+    return plain, markup
+
+
 # ---------------------------------------------------------------------------
 # Terminal rendering (Rich)
 # ---------------------------------------------------------------------------
@@ -159,6 +263,63 @@ def answer_renderable(text: str) -> Any:
         return Text(text)
 
 
+def answer_surface(
+    text: str,
+    *,
+    success: bool = True,
+    framed: bool = True,
+    partial: bool = False,
+    title: str | None = None,
+    label: str | None = None,
+    console: Any = None,
+) -> None:
+    """Render a finished answer once, using the shared markdown renderer + roles.
+
+    ``framed=True`` draws a bordered panel (the one-shot ``run``/wizard/report
+    surface); ``framed=False`` draws an inline labelled block (conversational
+    ``chat``). Both go through :func:`answer_renderable`, so markdown, code, and
+    tables render the same way on every surface, and both take their colour from
+    the ``effgen.*`` theme roles rather than hardcoded style names — so a chosen
+    ``--theme`` and ``NO_COLOR`` reach every answer.
+
+    The border/title role follows the outcome: ``effgen.success`` for a success,
+    ``effgen.warning`` for a partial (iteration-cap) result, ``effgen.error``
+    otherwise. Degrades to plain ``print`` when ``rich`` is unavailable.
+    """
+    text = text or ""
+    if not rich_available():  # pragma: no cover - rich normally present
+        if not framed and label:
+            print(f"{label} {text}")
+        else:
+            print(text)
+        return
+
+    console = console or get_console()
+    if framed:
+        from rich.panel import Panel
+
+        if success:
+            border = "effgen.success"
+        elif partial:
+            border = "effgen.warning"
+        else:
+            border = "effgen.error"
+        ttl = title if title is not None else ("Answer" if success else "Failed")
+        console.print(
+            Panel(
+                answer_renderable(text),
+                title=f"[{border}]{ttl}[/{border}]",
+                border_style=border,
+                expand=True,
+            )
+        )
+    else:
+        if label:
+            lbl = f"[effgen.success]{label}[/effgen.success] " if color_enabled() else f"{label} "
+            console.print(lbl, end="", highlight=False)
+        console.print(answer_renderable(text))
+
+
 def response_show(response: Any, console: Any = None) -> None:
     """Print a compact human view: the answer, then a one-line metric footer.
 
@@ -171,38 +332,23 @@ def response_show(response: Any, console: Any = None) -> None:
 
     if not rich_available():  # pragma: no cover - rich normally present
         print(output)
-        mark = "✓" if success else "✗"
-        print(f"{mark} {body}")
+        mark = glyph("success") if success else glyph("error")
+        print(ascii_fold(f"{mark} {body}"))
         return
 
-    from rich.panel import Panel
-
-    own = console is None
     console = console or get_console()
 
-    title = "Answer" if success else "Failed"
-    border = "effgen.success" if success else "effgen.error"
-    console.print(
-        Panel(
-            answer_renderable(output),
-            title=f"[{border}]{title}[/{border}]",
-            border_style=border,
-            expand=True,
-        )
-    )
+    answer_surface(output, success=success, framed=True, console=console)
 
     tool_names = _tool_names(response)
-    footer_bits = []
-    icon = "[effgen.success]✓[/effgen.success]" if success else "[effgen.error]✗[/effgen.error]"
-    footer_bits.append(icon)
-    footer_bits.append(f"[effgen.muted]{body}[/effgen.muted]")
+    ok = glyph("success")
+    err = glyph("error")
+    icon = f"[effgen.success]{ok}[/effgen.success]" if success else f"[effgen.error]{err}[/effgen.error]"
+    footer_bits = [icon, f"[effgen.muted]{body}[/effgen.muted]"]
     if tool_names:
         footer_bits.append("[effgen.muted]·[/effgen.muted]")
         footer_bits.append("[effgen.tool]" + ", ".join(tool_names) + "[/effgen.tool]")
-    console.print(" ".join(footer_bits))
-    if own:
-        # nothing to flush; rich console writes immediately
-        pass
+    console.print(ascii_fold(" ".join(footer_bits)))
 
 
 def response_trace(response: Any, console: Any = None) -> None:
