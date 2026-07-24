@@ -19,6 +19,7 @@ from typing import Any
 
 from effgen.tools.builtin._fs import WORKSPACE_ENV_VAR, default_workspace
 
+from .edits import EditJournal, ProposedEdit, UndoOutcome
 from .permissions import ActionRecord, PermissionGate, PermissionMode
 from .tools import build_code_tools
 
@@ -118,6 +119,22 @@ def workspace_env(workspace: Path) -> Iterator[Path]:
             os.environ[WORKSPACE_ENV_VAR] = previous
 
 
+def undo_workspace(workspace: Path, count: int = 1) -> tuple[list[UndoOutcome], int]:
+    """Reverse the last *count* applied edits in *workspace*.
+
+    Returns the outcomes performed (newest first) and how many edits remain on
+    the stack afterwards. An empty stack yields no outcomes.
+    """
+    journal = EditJournal(Path(workspace))
+    outcomes: list[UndoOutcome] = []
+    for _ in range(max(1, count)):
+        outcome = journal.undo()
+        if outcome is None:
+            break
+        outcomes.append(outcome)
+    return outcomes, len(journal)
+
+
 @dataclass
 class CodeRunResult:
     """The outcome of one ``effgen code`` task."""
@@ -138,6 +155,7 @@ class CodeRunResult:
     partial: bool = False
     actions: list[ActionRecord] = field(default_factory=list)
     files_written: list[str] = field(default_factory=list)
+    diffs: list[dict[str, Any]] = field(default_factory=list)
     error: dict[str, Any] | None = None
 
     # ``effgen.ui.render.summary_line`` reads a run's metrics off these names,
@@ -184,6 +202,7 @@ class CodeRunResult:
             "workspace": self.workspace,
             "permission_mode": self.permission_mode,
             "files_written": list(self.files_written),
+            "diffs": [dict(d) for d in self.diffs],
             "actions": [a.to_dict() for a in self.actions],
             "withheld": [a.to_dict() for a in self.withheld],
             "iterations": self.iterations,
@@ -226,6 +245,7 @@ class CodeEngine:
         max_tokens: int | None = None,
         confirm: Callable[[str], str] | None = None,
         on_event: Callable[[ActionRecord], None] | None = None,
+        on_diff: Callable[[ProposedEdit], None] | None = None,
     ) -> None:
         self.model = model
         self.provider = provider
@@ -240,6 +260,8 @@ class CodeEngine:
             interactive=interactive,
             confirm=confirm,
             on_event=on_event,
+            on_diff=on_diff,
+            journal=EditJournal(self.workspace),
         )
         self._agent: Any = None
 
@@ -309,5 +331,6 @@ class CodeEngine:
             partial=bool(metadata.get("partial")),
             actions=list(self.gate.actions),
             files_written=self.gate.files_written,
+            diffs=list(self.gate.edits),
             error=metadata.get("error"),
         )

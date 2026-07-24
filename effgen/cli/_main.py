@@ -1036,18 +1036,20 @@ Model id formats:
             'Run a coding agent over a workspace. It proposes an approach, '
             'writes files, executes code in the configured sandbox, reads the '
             'real output, and iterates until the task is done or the iteration '
-            'cap is reached.'
+            'cap is reached. Each file change is shown as a unified diff before '
+            'it is written, and --undo reverses the last applied edit.'
         ),
         epilog=(
             "Examples:\n"
             "  effgen code \"write fib.py with fib(n) and print fib(10)\" --auto-edit\n"
             "  effgen code -p \"add a --retries flag to cli.py\" --json | jq .files_written\n"
             "  cat pytest.log | effgen code -p \"why did this fail?\"\n"
+            "  effgen code --undo                  # revert the last applied edit\n"
             "\n"
             "Permission modes (pick at most one):\n"
-            "  --plan        propose only; no file is written and no command runs\n"
-            "  (default)     with a terminal, confirm every write and command;\n"
-            "                without one, behave as --plan\n"
+            "  --plan        propose only; show the diffs, write nothing, run nothing\n"
+            "  (default)     with a terminal, show each diff and confirm every write\n"
+            "                and command; without one, behave as --plan\n"
             "  --auto-edit   apply writes and sandboxed runs; confirm shell commands\n"
             "  --yes         apply writes, runs and shell commands without asking\n"
             "\n"
@@ -1090,6 +1092,13 @@ Model id formats:
     code_parser.add_argument('-y', '--yes', dest='assume_yes', action='store_true',
                              help='Apply writes, sandboxed runs and shell commands '
                                   'without asking (still confined to the workspace)')
+    code_parser.add_argument('--undo', action='store_true',
+                             help='Reverse the last applied edit(s) in the '
+                                  'workspace instead of running a task, restoring '
+                                  'the previous file content')
+    code_parser.add_argument('--undo-count', type=int, default=1, metavar='N',
+                             help='With --undo, how many recent edits to reverse '
+                                  '(default 1)')
     code_parser.add_argument('--max-iterations', type=int,
                              help='Iteration cap for the plan/run/fix loop '
                                   '(default: the coding preset\'s)')

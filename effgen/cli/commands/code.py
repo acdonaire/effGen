@@ -25,10 +25,12 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Any
 
+from effgen.cli.code.edits import ProposedEdit
 from effgen.cli.code.engine import (
     CodeEngine,
     CodeRunResult,
     resolve_workspace,
+    undo_workspace,
     workspace_execution_note,
 )
 from effgen.cli.code.permissions import (
@@ -154,6 +156,24 @@ def _print_action(cli: "CLIInterface", record: ActionRecord) -> None:
         print(line, file=stream)
 
 
+def _print_diff(cli: "CLIInterface", edit: ProposedEdit) -> None:
+    """Show a pending edit as a colorized unified diff before it is decided."""
+    from effgen.cli.code.diffs import render_diff
+    from effgen.ui.render import ascii_fold
+
+    stream = cli._human_stream()
+    kind = "new file" if edit.is_new else "edit"
+    header = f"{kind} {edit.rel_path} ({edit.stat()})"
+    plain, markup = render_diff(edit.diff_text, stream)
+    console = cli._human()
+    if console is not None:
+        console.print(f"[effgen.heading]{header}[/effgen.heading]", highlight=False)
+        console.print(markup, highlight=False)
+    else:
+        print(ascii_fold(header, stream), file=stream)
+        print(ascii_fold(plain, stream), file=stream)
+
+
 def _print_summary(cli: "CLIInterface", result: CodeRunResult) -> None:
     """Print the one-glance run summary via the CLI's human stream.
 
@@ -202,6 +222,7 @@ def _report(cli: "CLIInterface", result: CodeRunResult, *, quiet: bool) -> None:
     if result.files_written:
         names = ", ".join(result.files_written)
         cli.print(f"Files written in {result.workspace}: {names}")
+    _report_partial_hunks(cli, result)
     for record in result.refused:
         cli.print_warning(record.reason)
 
@@ -223,8 +244,70 @@ def _withheld_note(result: CodeRunResult, explicit_mode: bool) -> str:
     )
 
 
+def _run_undo(cli: "CLIInterface", args: argparse.Namespace) -> int:
+    """Reverse the last applied edit(s) in the workspace and report what changed."""
+    json_mode = bool(getattr(args, "output_json", False))
+    try:
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    except (ValueError, OSError):  # pragma: no cover - closed std streams
+        interactive = False
+    if json_mode or not interactive:
+        cli._human_to_stderr = True
+
+    try:
+        workspace = resolve_workspace(getattr(args, "workspace", None))
+    except OSError as exc:
+        cli.print_error(f"--workspace: {exc}")
+        return 1
+
+    count = int(getattr(args, "undo_count", None) or 1)
+    outcomes, remaining = undo_workspace(workspace, count)
+
+    if json_mode:
+        print(json.dumps(
+            {
+                "undone": [
+                    {"path": o.rel_path, "action": o.action, "detail": o.detail}
+                    for o in outcomes
+                ],
+                "remaining": remaining,
+            },
+            indent=2, ensure_ascii=False,
+        ))
+        return 0
+
+    if not outcomes:
+        cli.print(f"Nothing to undo in {workspace}.")
+        return 0
+    for outcome in outcomes:
+        if outcome.action == "restored":
+            cli.print(f"Restored {outcome.rel_path} to its previous content.")
+        elif outcome.action == "removed":
+            cli.print(f"Removed {outcome.rel_path} (created by a coding run).")
+        elif outcome.action == "skipped":
+            cli.print_warning(f"Skipped {outcome.rel_path}: {outcome.detail}")
+        else:
+            cli.print_error(f"Could not undo {outcome.rel_path}: {outcome.detail}")
+    cli.print(f"{remaining} earlier change(s) can still be undone.")
+    return 0
+
+
+def _report_partial_hunks(cli: "CLIInterface", result: CodeRunResult) -> None:
+    """Warn about any edit whose hunks did not all apply."""
+    for diff in result.diffs:
+        failed = int(diff.get("hunks_failed", 0) or 0)
+        if failed:
+            cli.print_warning(
+                f"{diff.get('path')}: {failed} hunk(s) did not apply because the "
+                "file changed since it was read; the rest were applied."
+            )
+
+
 def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
     """Run one ``effgen code`` task and return the process exit code."""
+    if bool(getattr(args, "undo", False)):
+        return _run_undo(cli, args)
+
     json_mode = bool(getattr(args, "output_json", False))
     quiet = bool(getattr(args, "quiet", False))
 
@@ -283,6 +366,12 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
     show_ticks = interactive and not quiet and not json_mode
     on_event = (lambda record: _print_action(cli, record)) if show_ticks else None
 
+    # Each pending edit's diff is shown (on the human stream) before the write is
+    # decided, so a proposal is visible even in plan mode and even when piped.
+    # Under --json the diffs are in the document, so the live render is skipped.
+    show_diffs = not quiet and not json_mode
+    on_diff = (lambda edit: _print_diff(cli, edit)) if show_diffs else None
+
     engine = CodeEngine(
         model=model,
         provider=provider,
@@ -294,6 +383,7 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
         temperature=getattr(args, "temperature", None),
         max_tokens=getattr(args, "max_tokens", None),
         on_event=on_event,
+        on_diff=on_diff,
     )
 
     agent: Any = None
@@ -353,5 +443,6 @@ def _report_to_stderr(cli: "CLIInterface", result: CodeRunResult) -> None:
     _print_summary(cli, result)
     if result.files_written:
         cli.print(f"Files written in {result.workspace}: {', '.join(result.files_written)}")
+    _report_partial_hunks(cli, result)
     for record in result.refused:
         cli.print_warning(record.reason)
