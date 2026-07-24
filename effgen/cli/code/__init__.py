@@ -17,6 +17,10 @@ The pieces:
 - :mod:`~effgen.cli.code.tools` — the ``coding`` preset's tools with the gate
   wired in front of their write/execute paths. The tool names and schemas the
   model sees are unchanged.
+- :mod:`~effgen.cli.code.project` — repository detection and the bounded
+  workspace inventory (``.gitignore`` respected) the session starts from.
+- :mod:`~effgen.cli.code.git_actions` — the one repository-changing action a
+  session offers: a confirmed commit of the files it wrote.
 - :mod:`~effgen.cli.code.engine` — workspace resolution, agent construction, and
   the run-result record the CLI prints or serializes.
 - :mod:`~effgen.cli.code.render` — the terminal rendering both surfaces share:
@@ -43,10 +47,19 @@ from .edits import AppliedEdit, EditJournal, ProposedEdit, UndoOutcome
 from .engine import (
     CodeEngine,
     CodeRunResult,
+    CommitPlan,
     resolve_workspace,
     undo_workspace,
     workspace_env,
     workspace_execution_note,
+)
+from .git_actions import (
+    CommitOutcome,
+    UnsafeGitAction,
+    commit_paths,
+    ensure_safe,
+    suggest_message,
+    unsafe_shell_git,
 )
 from .permissions import (
     ACTION_KINDS,
@@ -56,6 +69,7 @@ from .permissions import (
     PermissionMode,
     default_mode,
 )
+from .project import ProjectContext, RepoInfo, build_project_context, detect_repo, staged_diff
 from .repl import CodeREPL
 from .tools import build_code_tools
 
@@ -67,23 +81,35 @@ __all__ = [
     "CodeEngine",
     "CodeREPL",
     "CodeRunResult",
+    "CommitOutcome",
+    "CommitPlan",
     "Decision",
     "DiffStat",
     "EditJournal",
     "Hunk",
     "PermissionGate",
     "PermissionMode",
+    "ProjectContext",
     "ProposedEdit",
+    "RepoInfo",
     "UndoOutcome",
+    "UnsafeGitAction",
     "apply_hunks",
     "build_code_tools",
+    "build_project_context",
+    "commit_paths",
     "default_mode",
+    "detect_repo",
     "diff_stat",
+    "ensure_safe",
     "render_diff",
     "resolve_workspace",
     "split_hunks",
+    "staged_diff",
+    "suggest_message",
     "undo_workspace",
     "unified_diff_text",
+    "unsafe_shell_git",
     "workspace_env",
     "workspace_execution_note",
 ]

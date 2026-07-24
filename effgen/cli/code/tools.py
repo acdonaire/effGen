@@ -7,6 +7,12 @@ about the tool's name, description or parameter schema changes, so the model
 sees exactly the same ``coding`` toolbox and the existing sandbox, path
 confinement and blocked-command lists all still apply underneath.
 
+The shell carries one extra limit: a command that would publish, rewrite or
+discard git history (``git push``, ``git reset --hard``, ``git checkout``, ...)
+is refused in every permission mode, so the narrow confirmed-commit action in
+:mod:`effgen.cli.code.git_actions` stays the only way a session changes a
+repository. Reading a repository from the shell is unaffected.
+
 A withheld action returns a normal tool failure (``{"success": False, "error":
 ...}``) naming what was blocked and which flag would allow it. The agent reads
 that as an observation and can adjust — a refusal is visible to the model, never
@@ -27,6 +33,7 @@ from effgen.tools.builtin.file_ops import FileOperations
 from effgen.tools.builtin.python_repl import PythonREPL
 
 from .edits import ProposedEdit
+from .git_actions import unsafe_shell_git
 from .permissions import Decision, PermissionGate
 
 # ``file_operations`` operations that put bytes on disk. Reads, listings,
@@ -42,6 +49,28 @@ _SANDBOXED_LANGUAGES = frozenset({"python", "javascript", "js", "node"})
 def _blocked(reason: str) -> dict[str, Any]:
     """Return the tool-failure envelope used for every gated refusal."""
     return {"success": False, "error": reason}
+
+
+def _refuse_unsafe_git(gate: PermissionGate, summary: str, command: str) -> dict[str, Any] | None:
+    """Refuse a shell command that publishes, rewrites or discards git history.
+
+    A session reads a repository from the shell as much as it likes; the one
+    repository-changing action it offers is the confirmed commit, so a ``git
+    push``/``reset --hard``/``checkout``-shaped command is refused in every
+    permission mode rather than confirmed. ``None`` means the command may go on
+    to the gate.
+    """
+    reason = unsafe_shell_git(command)
+    if reason is None:
+        return None
+    decision = gate.refuse(
+        "shell",
+        summary,
+        f"{reason} Commit the run's edits with --commit (or /git commit); run "
+        "anything else yourself.",
+        target=_shorten(command, 200),
+    )
+    return _blocked(decision.reason)
 
 
 def _shorten(text: str, limit: int = 120) -> str:
@@ -205,6 +234,10 @@ class GatedCodeExecutor(CodeExecutor):
         lang = (language or "").strip().lower()
         kind = "run" if lang in _SANDBOXED_LANGUAGES else "shell"
         summary = f"Run {lang or 'code'}: {_shorten(code, 80)}"
+        if kind == "shell":
+            refusal = _refuse_unsafe_git(self.gate, summary, code)
+            if refusal is not None:
+                return refusal
         decision = self.gate.request(kind, summary, target=lang or "code")
         if not decision.allowed:
             return _blocked(decision.reason)
@@ -253,6 +286,9 @@ class GatedBashTool(BashTool):
 
     async def _execute(self, command: str, **kwargs: Any) -> Any:  # type: ignore[override]
         summary = f"Run shell: {_shorten(command, 100)}"
+        refusal = _refuse_unsafe_git(self.gate, summary, command)
+        if refusal is not None:
+            return refusal
         decision = self.gate.request("shell", summary, target=_shorten(command, 200))
         if not decision.allowed:
             return _blocked(decision.reason)
