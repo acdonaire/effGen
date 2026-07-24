@@ -1028,6 +1028,87 @@ Model id formats:
              'are recalled and new turns are saved; a new id starts a fresh session.',
     )
 
+    # Code command
+    code_parser = subparsers.add_parser(
+        'code', help='Coding agent: writes code, runs it, and fixes what fails',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            'Run a coding agent over a workspace. It proposes an approach, '
+            'writes files, executes code in the configured sandbox, reads the '
+            'real output, and iterates until the task is done or the iteration '
+            'cap is reached.'
+        ),
+        epilog=(
+            "Examples:\n"
+            "  effgen code \"write fib.py with fib(n) and print fib(10)\" --auto-edit\n"
+            "  effgen code -p \"add a --retries flag to cli.py\" --json | jq .files_written\n"
+            "  cat pytest.log | effgen code -p \"why did this fail?\"\n"
+            "\n"
+            "Permission modes (pick at most one):\n"
+            "  --plan        propose only; no file is written and no command runs\n"
+            "  (default)     with a terminal, confirm every write and command;\n"
+            "                without one, behave as --plan\n"
+            "  --auto-edit   apply writes and sandboxed runs; confirm shell commands\n"
+            "  --yes         apply writes, runs and shell commands without asking\n"
+            "\n"
+            "Exit codes: 0 completed, 1 failed, 2 completed but changes were\n"
+            "withheld because there was no terminal to confirm on.\n"
+            "\n"
+            "Environment:\n"
+            "  EFFGEN_WORKSPACE          the directory the agent reads and writes\n"
+            "                            (created if missing). Unset: the current\n"
+            "                            directory. -w/--workspace overrides it.\n"
+            "  EFFGEN_SANDBOX_BACKEND    docker|subprocess. Docker confines the\n"
+            "                            filesystem and network for executed code;\n"
+            "                            the subprocess fallback isolates network\n"
+            "                            and /tmp only.\n"
+        ),
+    )
+    code_parser.add_argument('task', nargs='?', default=None,
+                             help='What to build, change or debug')
+    code_parser.add_argument('-p', '--print', dest='print_task', nargs='?', const='',
+                             metavar='TASK',
+                             help='Run one task and print the result. Takes the task '
+                                  'directly, or reads it from stdin when given alone.')
+    code_parser.add_argument('-m', '--model', help='Model to use')
+    code_parser.add_argument(
+        '--provider',
+        help='Provider for a bare model id (e.g. openai, groq, cerebras, gemini, '
+             'together, fireworks, replicate, anthropic, hf). '
+             'Equivalent to the "provider:model" prefix.',
+    )
+    code_parser.add_argument('-w', '--workspace', metavar='DIR',
+                             help='Directory the agent reads and writes (created if '
+                                  'missing). Sets EFFGEN_WORKSPACE for the run; '
+                                  'nothing outside it is written.')
+    code_parser.add_argument('--plan', dest='plan_only', action='store_true',
+                             help='Propose the change without writing a file or '
+                                  'running a command')
+    code_parser.add_argument('--auto-edit', dest='auto_edit', action='store_true',
+                             help='Apply file writes and sandboxed runs without '
+                                  'asking; shell commands still need confirmation')
+    code_parser.add_argument('-y', '--yes', dest='assume_yes', action='store_true',
+                             help='Apply writes, sandboxed runs and shell commands '
+                                  'without asking (still confined to the workspace)')
+    code_parser.add_argument('--max-iterations', type=int,
+                             help='Iteration cap for the plan/run/fix loop '
+                                  '(default: the coding preset\'s)')
+    code_parser.add_argument('--temperature', type=float, help='Temperature')
+    code_parser.add_argument('--max-tokens', type=int,
+                             help='Max output tokens per call (raise for reasoning '
+                                  'models that spend part of the budget before any '
+                                  'visible text)')
+    code_parser.add_argument('--json', dest='output_json', action='store_true',
+                             help='Emit the result as one JSON document on stdout '
+                                  '(answer, files_written, actions, tokens, cost). '
+                                  'Human output goes to stderr.')
+    code_parser.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS,
+                             help='Verbose output (show DEBUG/INFO logs)')
+    code_parser.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
+                             help='Quiet output (answer only)')
+    code_parser.add_argument('--no-animation', action='store_true', default=argparse.SUPPRESS,
+                             help='Disable live spinners/progress animation')
+
     # Serve command
     serve_parser = subparsers.add_parser(
         'serve', help='Start API server',
@@ -2608,6 +2689,9 @@ def _dispatch(args: argparse.Namespace, cli: "CLIInterface", parser: argparse.Ar
         exit_code = cli.run_agent(args)
     elif args.command == 'chat':
         exit_code = cli.chat_mode(args)
+    elif args.command == 'code':
+        from effgen.cli.commands.code import run_code_command
+        exit_code = run_code_command(cli, args)
     elif args.command == 'serve':
         exit_code = cli.serve_api(args)
     elif args.command == 'config':
