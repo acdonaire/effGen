@@ -355,6 +355,17 @@ class PermissionGate:
 
     # -- reporting ----------------------------------------------------------
 
+    def begin_turn(self) -> None:
+        """Clear the per-turn action and edit log before a new REPL turn.
+
+        Each interactive turn reports only its own writes, runs and refusals, so
+        the log is reset here between turns. The "always" answers the human gave
+        and the on-disk undo journal both persist for the whole session and are
+        left untouched.
+        """
+        self.actions = []
+        self.edits = []
+
     @property
     def withheld(self) -> list[ActionRecord]:
         """Actions the mode did not permit (excludes explicit human declines)."""

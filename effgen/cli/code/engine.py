@@ -30,14 +30,17 @@ CODE_PRESET = "coding"
 #: and treats a gate refusal as a real constraint rather than something to retry.
 _WORKSPACE_PROMPT = (
     "You are working inside the directory {workspace}. Read and write files "
-    "with relative paths inside it; never write outside it. Run code with the "
-    "code execution tool, which starts in that directory, so a relative path "
-    "such as 'main.py' reads the file you just wrote. The Python REPL tool "
-    "evaluates short expressions in a restricted namespace with a small import "
-    "allow-list; it cannot import project files, so use the code execution tool "
-    "for anything that touches the workspace. Base every claim on a tool's real "
-    "output. If a tool reports that an action was not permitted, tell the user "
-    "instead of retrying the same action or answering as if it had succeeded."
+    "with relative paths inside it; never write outside it. To create or change "
+    "a file, use the file tool's write operation — not shell redirection such as "
+    "'cat > file', 'tee', or 'sed -i' — so each change is shown as a diff before "
+    "it is applied and can be undone. Run code with the code execution tool, "
+    "which starts in that directory, so a relative path such as 'main.py' reads "
+    "the file you just wrote. The Python REPL tool evaluates short expressions in "
+    "a restricted namespace with a small import allow-list; it cannot import "
+    "project files, so use the code execution tool for anything that touches the "
+    "workspace. Base every claim on a tool's real output. If a tool reports that "
+    "an action was not permitted, tell the user instead of retrying the same "
+    "action or answering as if it had succeeded."
 )
 
 
@@ -312,7 +315,16 @@ class CodeEngine:
         agent = self._agent or self.build_agent()
         with workspace_env(self.workspace):
             response = agent.run(task)
+        return self.result_from_response(task, response)
 
+    def result_from_response(self, task: str, response: Any) -> CodeRunResult:
+        """Assemble a :class:`CodeRunResult` from *response* and the gate's log.
+
+        The agent run is separated from record assembly so the REPL, which drives
+        the agent itself (under a live status render, and sometimes with the mode
+        overridden for a single turn), builds the same result the single-shot
+        path does.
+        """
         metadata = response.metadata or {}
         return CodeRunResult(
             task=task,
