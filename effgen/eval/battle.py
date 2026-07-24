@@ -184,8 +184,8 @@ class BattleResult:
         spent = fmt_cost(total) if self.finishers else "—"
         lines.extend([
             "",
-            f"_{len(self.finishers)}/{len(self.contenders)} answered in "
-            f"{self.wall_s:.2f}s; total cost {spent}._",
+            (f"_{len(self.finishers)}/{len(self.contenders)} answered in "
+            f"{self.wall_s:.2f}s; total cost {spent}._"),
         ])
         return "\n".join(lines)
 

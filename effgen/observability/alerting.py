@@ -439,9 +439,9 @@ def validate_alert_rules_yaml(path: str | Path) -> tuple[bool, list[str]]:
             # of a path to it -- name that mistake instead of stat()'ing a
             # multi-line string and reporting a confusing "file not found".
             return False, [
-                "validate_alert_rules_yaml expects a path to a YAML file, "
+                ("validate_alert_rules_yaml expects a path to a YAML file, "
                 "not YAML text. Write the document to a file and pass its "
-                "path, e.g. Path('/tmp/rules.yaml')."
+                "path, e.g. Path('/tmp/rules.yaml').")
             ]
         path = Path(path)
     elif not isinstance(path, Path):

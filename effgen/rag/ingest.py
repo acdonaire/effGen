@@ -616,8 +616,8 @@ class DocumentIngester:
                     # audit isn't misled into chasing a phantom empty file.
                     self.last_skipped.append((
                         str(path),
-                        "all content duplicates an already-ingested file "
-                        "(dedupe=True)",
+                        ("all content duplicates an already-ingested file "
+                        "(dedupe=True)"),
                     ))
                 elif ext == ".pdf":
                     # A PDF loads but yields no text most often because it is
@@ -625,8 +625,8 @@ class DocumentIngester:
                     # text layer, and ingestion does not run OCR on them.
                     self.last_skipped.append((
                         str(path),
-                        "PDF has no extractable text layer (likely a scanned "
-                        "or image-only PDF); OCR is not applied during ingestion",
+                        ("PDF has no extractable text layer (likely a scanned "
+                        "or image-only PDF); OCR is not applied during ingestion"),
                     ))
                 else:
                     # A supported extension that loaded but produced no

@@ -106,10 +106,10 @@ _BUILTIN_PATTERNS: list[tuple[str, str, str]] = [
 # user's own ``add_pattern`` still wins on the same span.
 _FALLBACK_PATTERNS: list[tuple[str, str, str]] = [
     ("env_secret",
-     r"(?i)(\b[A-Za-z0-9_]*"
+     (r"(?i)(\b[A-Za-z0-9_]*"
      r"(?:API[_\-]?KEY|APIKEY|SECRET[_\-]?ACCESS[_\-]?KEY|ACCESS[_\-]?KEY|"
      r"SECRET[_\-]?KEY|AUTH[_\-]?TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|TOKEN))"
-     r"([\"']?\s*[:=]\s*[\"']?)(?!<REDACTED)[^\s\"',]{4,}",
+     r"([\"']?\s*[:=]\s*[\"']?)(?!<REDACTED)[^\s\"',]{4,}"),
      r"\g<1>\g<2>" + _REDACT.format("env_secret")),
 ]
 

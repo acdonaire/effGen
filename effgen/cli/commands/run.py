@@ -87,8 +87,8 @@ def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
         # separate agent class).
         cli.print_header("Step 1: Select Reasoning Style")
         agent_types = [
-            ("1", "auto", "Let effGen choose: native tool-calling when the model "
-                          "supports it, else ReAct (recommended)"),
+            ("1", "auto", ("Let effGen choose: native tool-calling when the model "
+                          "supports it, else ReAct (recommended)")),
             ("2", "react", "Explicit Reason → Act → Observe loop with tools"),
             ("3", "single", "One model call, no tool loop (plain Q&A)"),
         ]

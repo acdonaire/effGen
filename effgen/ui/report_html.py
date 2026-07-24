@@ -958,9 +958,9 @@ def _eval_body(data: dict[str, Any]) -> tuple[str, str, str]:
                 f'<span class="wrap">{_esc(_truncate(r.get("agent_output", ""), 200))}</span>',
                 _badge("PASS" if passed_case else "FAIL", "ok" if passed_case else "err"),
                 f'<span class="num">{_secs(r.get("latency"))}</span>',
-                f'<span class="num">'
+                (f'<span class="num">'
                 f'{_usd(r.get("cost_usd")) if r.get("cost_usd") is not None else "unpriced"}'
-                "</span>",
+                "</span>"),
                 _esc(r.get("difficulty") or _DASH),
             ])
         parts.append(_table(
@@ -1058,8 +1058,8 @@ def _cost_body(data: dict[str, Any]) -> tuple[str, str, str]:
 
     return (
         f"Spend Report — {period}",
-        f"{_usd(total, 4) if total is not None else _DASH} across "
-        f"{_int(data.get('total_requests'))} requests",
+        (f"{_usd(total, 4) if total is not None else _DASH} across "
+        f"{_int(data.get('total_requests'))} requests"),
         "".join(parts),
     )
 
@@ -1078,13 +1078,13 @@ def _loadtest_body(data: dict[str, Any]) -> tuple[str, str, str]:
             role, state = "warn", "some requests failed"
 
     parts: list[str] = [
-        '<div class="verdict">'
+        ('<div class="verdict">'
         '<div class="verdict-label">Outcome</div>'
         f'<div class="verdict-value">{_pct(error_rate, 2)} errors '
         f"{_badge(state, role)}</div>"
         f'<p class="verdict-note">{_int(data.get("successful_requests"))} of '
         f'{_int(data.get("total_requests"))} requests succeeded at '
-        f'{data.get("concurrency")} concurrent users.</p></div>',
+        f'{data.get("concurrency")} concurrent users.</p></div>'),
         _cards([
             ("Throughput", _rps(data.get("throughput_rps")), ""),
             ("p95 latency", _ms(lat.get("p95")), f"p50 {_ms(lat.get('p50'))}"),
@@ -1140,8 +1140,8 @@ def _loadtest_body(data: dict[str, Any]) -> tuple[str, str, str]:
 
     return (
         f"Load Test Report — {scenario}",
-        f"{_int(data.get('total_requests'))} requests · "
-        f"{data.get('concurrency')} concurrent · {_pct(error_rate, 2)} errors",
+        (f"{_int(data.get('total_requests'))} requests · "
+        f"{data.get('concurrency')} concurrent · {_pct(error_rate, 2)} errors"),
         "".join(parts),
     )
 

@@ -660,8 +660,8 @@ class OffSandbox(SandboxBase):
             mem_kb = SubprocessSandbox._parse_mem_kb(config.memory_limit)
             cmd = [
                 "bash", "-c",
-                f"ulimit -v {mem_kb} -t {config.timeout} -u 256 2>/dev/null; "
-                f"exec {interpreter}",
+                (f"ulimit -v {mem_kb} -t {config.timeout} -u 256 2>/dev/null; "
+                f"exec {interpreter}"),
             ]
         else:
             cmd = ["bash", "-c", f"exec {interpreter}"]
