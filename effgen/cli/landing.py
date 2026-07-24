@@ -37,6 +37,7 @@ _EXIT = "__exit__"
 _ACTIONS: tuple[tuple[str, str, str], ...] = (
     ("Enter", "set up and run an agent (interactive wizard)", _WIZARD),
     ("c", "chat — open an interactive session", "chat"),
+    ("e", "code — write, run and fix code in this directory", "code"),
     ("q", "quickstart — a 2-minute guided first run", "quickstart"),
     ("d", "doctor — check which providers are ready", "doctor"),
     ("m", "models — browse the model catalog", "models"),
@@ -49,6 +50,7 @@ _ACTIONS: tuple[tuple[str, str, str], ...] = (
 _CHOICES: dict[str, str] = {
     "": _WIZARD,
     "c": "chat", "chat": "chat",
+    "e": "code", "code": "code",
     "q": "quickstart", "quickstart": "quickstart",
     "d": "doctor", "doctor": "doctor",
     "m": "models", "models": "models",

@@ -114,6 +114,8 @@ TIPS: tuple[str, ...] = (
     "effgen tools list shows every built-in tool; tools info <name> explains one.",
     "--explain shows the full step-by-step reasoning trace for a run.",
     "effgen chat opens an interactive session with the same agent.",
+    "effgen code writes and runs code in your workspace, showing each edit as a diff.",
+    "effgen code --plan proposes the change and its diffs without writing anything.",
     "set EFFGEN_TIPS=0 to silence these tips.",
 )
 
@@ -179,10 +181,11 @@ def maybe_print_tip(*, quiet: bool = False, force: bool = False, stream: Any = N
 _WELCOME_TEXT = """\
 👋 Welcome to effGen — a framework for building agents with small (and cloud) models.
 
-Get started in three steps:
+Get started in four steps:
   1. effgen doctor              # check which providers are ready to use
   2. effgen quickstart          # a 2-minute guided first run
   3. effgen run "What is 25 * 17?" -m gpt-5-nano --provider openai
+  4. effgen code                # a coding agent that writes, runs and fixes code
 
 Or in Python:
   from effgen import create_agent
