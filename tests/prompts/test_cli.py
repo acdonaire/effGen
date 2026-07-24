@@ -93,7 +93,7 @@ class TestPromptsShowCLI:
         from effgen.cli import _main
 
         src = inspect.getsource(_main)
-        assert 'add_column("Name", style="cyan", overflow="fold")' in src
+        assert 'add_column("Name", style="effgen.model", overflow="fold")' in src
 
 
 class TestPromptsEvalCLI:

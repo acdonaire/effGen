@@ -2419,7 +2419,7 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
             # Names must never be clipped — they're the id a user types back
             # into `prompts show`/`run`/`render`. "fold" wraps onto extra
             # lines instead of the default ellipsis truncation.
-            t.add_column("Name", style="cyan", overflow="fold")
+            t.add_column("Name", style="effgen.model", overflow="fold")
             t.add_column("Domain")
             t.add_column("Variant")
             t.add_column("Description")
