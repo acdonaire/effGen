@@ -83,6 +83,30 @@ export EFFGEN_NO_ANIM=1
 
 `NO_COLOR` and a non-interactive stdout also disable animation.
 
+## Answers, streaming, and the run summary
+
+`effgen run` and `effgen chat` share one presentation for a model's answer, so a
+one-shot run and a conversational turn read as the same tool:
+
+- **The answer.** `run` frames the finished answer in a bordered panel; `chat`
+  shows it inline under an `assistant` label. Both render markdown — headings,
+  lists, fenced code, and tables — through the same renderer, and both take
+  their color from the selected theme.
+- **Streaming.** With `--stream` (and in `chat`), the answer renders live as it
+  arrives: a brief `Thinking…` spinner until the first token, then a markdown
+  region that updates in place. On a pipe, a redirect, a non-terminal, or with
+  `NO_COLOR`, streaming falls back to plain token-by-token text with no spinner
+  and no cursor, so captured output is clean.
+- **The summary.** After a run, a single line reports the outcome at a glance —
+  for example `✓ Done in 3.2s · 2 tools · 1,204 tokens · $0.0006`. A run stopped
+  at its iteration cap is marked as a partial result, and a failure names its
+  reason. `chat` shows a compact per-turn footer with a running session total.
+
+`--quiet` prints the answer alone (no header, spinner, or summary). Under
+`--json`, standard output stays a single JSON document and all of the above is
+suppressed. On a non-UTF-8 terminal (for example `PYTHONIOENCODING=ascii`) the
+status glyphs and separators fall back to ASCII stand-ins instead of failing.
+
 ## Tips
 
 `effgen` surfaces an occasional one-line tip after commands you watch
