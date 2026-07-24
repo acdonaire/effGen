@@ -249,7 +249,13 @@ def create_app(
 
         @app.exception_handler(Exception)
         async def _unhandled_handler(request: Any, exc: Exception) -> Any:
-            logger.exception("Unhandled error serving %s", getattr(request, "url", ""))
+            # The handler runs outside the ``except`` block, so attach the
+            # exception explicitly to keep the traceback in the log.
+            logger.error(
+                "Unhandled error serving %s",
+                getattr(request, "url", ""),
+                exc_info=exc,
+            )
             status, _err_type, code = _classify_http(exc)
             if status < 500:
                 status, code = 500, None
