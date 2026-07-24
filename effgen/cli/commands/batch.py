@@ -320,17 +320,26 @@ def _handle_batch_command(args, cli) -> int:
         total_prompt_tokens = result.total_prompt_tokens + done_prompt_tokens
         total_completion_tokens = result.total_completion_tokens + done_completion_tokens
 
-        summary = (
-            f"\nBatch complete: {succeeded}/{total} succeeded "
+        body = (
+            f"Batch complete: {succeeded}/{total} succeeded "
             f"in {result.total_time:.2f}s"
         )
         if total_tokens:
-            summary += f" · {total_tokens:,} tokens"
+            body += f" · {total_tokens:,} tokens"
         from effgen.ui.render import format_cost
         cost_str = format_cost(total_cost)
         if cost_str is not None:
-            summary += f" · {cost_str}"
-        cli.print(summary)
+            body += f" · {cost_str}"
+        # A status glyph leads the summary on an interactive terminal; the piped
+        # line stays exactly as before so a script reading it is unaffected.
+        from effgen.ui.palette import glyph
+        from effgen.ui.tables import console_is_interactive
+        if console_is_interactive(cli.console):
+            role = "effgen.success" if failed == 0 else "effgen.warning"
+            g = glyph("success" if failed == 0 else "warning")
+            cli.print(f"\n[{role}]{g}[/{role}] {body}")
+        else:
+            cli.print("\n" + body)
 
         # Non-streaming formats (.csv/.json) get one batched write at the end.
         if output_path and not stream_jsonl:

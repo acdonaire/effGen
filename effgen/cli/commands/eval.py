@@ -15,7 +15,8 @@ from pathlib import Path
 from effgen.cli import progress as _progress
 from effgen.cli.commands._shared import resolve_provider_name
 from effgen.cli.commands.report import _write_html_report_arg, _write_result_artifact
-from effgen.ui.tables import render_table
+from effgen.ui.palette import glyph
+from effgen.ui.tables import console_is_interactive, render_table
 
 
 def _resolve_eval_suite(suite_arg: str, difficulty=None, max_cases=None):
@@ -168,7 +169,7 @@ def _handle_eval_command(args, cli) -> int:
                 ["Tool Accuracy", f"{summary['avg_tool_accuracy']:.1%}"],
             ],
             console=None if json_mode else cli.console,
-            styles=["cyan", None],
+            styles=["effgen.metric", None],
             file=sys.stderr if json_mode else None,
         )
 
@@ -229,15 +230,24 @@ def _handle_eval_command(args, cli) -> int:
         # baseline always fails the build; otherwise the gate is the suite
         # accuracy against --fail-under (--threshold is a separate per-case
         # setting and does not drive the exit code).
+        # A status glyph leads the verdict on an interactive terminal; the piped
+        # line (which CI logs parse) stays exactly as before.
+        def _gate_prefix(passed: bool) -> str:
+            if not console_is_interactive(cli.console):
+                return ""
+            role = "effgen.success" if passed else "effgen.error"
+            return f"[{role}]{glyph('success' if passed else 'error')}[/{role}] "
+
         if report is not None and report.has_regressions:
             cli.print(
-                "\n  Exit gate: FAIL — blocking regression against baseline (--compare-baseline)."
+                f"\n  {_gate_prefix(False)}Exit gate: FAIL — blocking regression "
+                "against baseline (--compare-baseline)."
             )
             return 1
         gate_passed = results.accuracy >= fail_under
         cli.print(
-            f"\n  Exit gate: {'PASS' if gate_passed else 'FAIL'} — accuracy "
-            f"{results.accuracy:.1%} {'>=' if gate_passed else '<'} "
+            f"\n  {_gate_prefix(gate_passed)}Exit gate: {'PASS' if gate_passed else 'FAIL'} "
+            f"— accuracy {results.accuracy:.1%} {'>=' if gate_passed else '<'} "
             f"--fail-under {fail_under:.0%}"
         )
         return 0 if gate_passed else 1
