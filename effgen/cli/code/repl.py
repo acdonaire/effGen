@@ -1408,12 +1408,19 @@ class CodeREPL:
                 self._say(f"  {cmd:9s} {desc}")
 
     def _cmd_doctor(self) -> None:
+        """Report the provider keys, the system, and this session's readiness.
+
+        The workspace is handed to ``doctor`` so its coding section describes
+        the directory this session is confined to rather than the one the
+        process was started in.
+        """
         from effgen.cli._main import _handle_doctor_command
 
         class _DoctorArgs:
             doctor_provider = self.provider
             live = False
             output_json = False
+            workspace = str(self.workspace)
 
         try:
             _handle_doctor_command(_DoctorArgs())

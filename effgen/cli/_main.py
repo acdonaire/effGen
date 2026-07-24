@@ -1395,9 +1395,19 @@ Model id formats:
              'does not contact any external service. EFFGEN_HEALTH_REMOTE=1 also enables it.')
 
     # Doctor command — API key availability check
-    doctor_parser = subparsers.add_parser('doctor', help='Check provider API key availability')
+    doctor_parser = subparsers.add_parser(
+        'doctor',
+        help='Check provider keys, the system, and what effgen code needs',
+        description='Check which providers are keyed, report the CUDA/torch/vLLM '
+                    'state, and check what `effgen code` needs from this machine: '
+                    'a writable workspace, a sandbox backend for the code it runs, '
+                    'and git for repository context.',
+    )
     doctor_parser.add_argument('--json', dest='output_json', action='store_true',
                                help='Output as JSON')
+    doctor_parser.add_argument('-w', '--workspace', metavar='DIR',
+                               help='Check the coding workspace for DIR instead of '
+                                    'EFFGEN_WORKSPACE / the current directory')
     doctor_parser.add_argument('--provider', dest='doctor_provider',
                                help='Check a specific provider only')
     doctor_parser.add_argument('--live', action='store_true',
@@ -1420,7 +1430,7 @@ Model id formats:
     # documented alias so both names a newcomer might try lead to the same
     # guided run rather than one dead-ending.
     _qs_help = {
-        'quickstart': 'Guided first run: pick a model, run an agent, see the trace and cost',
+        'quickstart': 'Guided first run: pick a model, run an agent, then write and run code',
         'tutorial': 'Alias of quickstart — the same guided first run',
     }
     for _qs_name in ('quickstart', 'tutorial'):
@@ -1429,13 +1439,20 @@ Model id formats:
             help=_qs_help[_qs_name],
             description=_qs_help['quickstart']
             + ('.  (`effgen tutorial` is an alias of `effgen quickstart`.)'
-               if _qs_name == 'tutorial' else '.'),
+               if _qs_name == 'tutorial' else '.')
+            + '  The coding step writes and runs a small program inside '
+              '~/.effgen/quickstart-code; the files it changes stay there.',
         )
         qs_parser.add_argument('-m', '--model', help='Model to use (skips the model prompt)')
         qs_parser.add_argument('--provider', help='Provider for a bare model id')
         qs_parser.add_argument('--task', help='Task to run (defaults to a sample task)')
         qs_parser.add_argument('-y', '--yes', action='store_true',
                                help='Run non-interactively with sensible defaults')
+        qs_parser.add_argument('--code', action='store_true',
+                               help='Include the coding step without asking (needed '
+                                    'with --yes, which otherwise skips it)')
+        qs_parser.add_argument('--no-code', dest='no_code', action='store_true',
+                               help='Skip the coding step')
 
     # Workflow command
     workflow_parser = subparsers.add_parser('workflow', help='Run a DAG-based workflow')
@@ -1954,6 +1971,10 @@ def _handle_doctor_command(args) -> int:
     # own code.
     reliability_report = _doctor_reliability_report()
 
+    # What `effgen code` needs from this machine: a writable workspace, a
+    # sandbox backend for the code it runs, and git for repository context.
+    code_report = _doctor_code_report(getattr(args, 'workspace', None))
+
     # Exit nonzero if a live probe was requested and a keyed provider failed.
     # Computed once so every output format (JSON and human) agrees.
     exit_code = _doctor_exit_code(results, live)
@@ -1963,6 +1984,7 @@ def _handle_doctor_command(args) -> int:
             "providers": results,
             "system": system_report,
             "reliability": reliability_report,
+            "code": code_report,
         }, indent=2))
         return exit_code
 
@@ -2043,6 +2065,31 @@ def _handle_doctor_command(args) -> int:
                 rel_table.add_row(prov, circuit_cell, bulkhead_cell)
             console.print(rel_table)
 
+        # Coding section — what `effgen code` needs from this machine.
+        console.print("\n[bold cyan]Coding (effgen code)[/bold cyan]")
+        if code_report.get("error"):
+            console.print(f"  [red]The coding checks could not run: {code_report['error']}[/red]")
+        code_table = Table(show_header=True)
+        code_table.add_column("Check", style="cyan", no_wrap=True)
+        code_table.add_column("Status", style="white", no_wrap=True)
+        code_table.add_column("Detail", style="white", overflow="fold")
+        _code_status_style = {"ready": "green", "limited": "yellow"}
+        for check in code_report.get("checks", []):
+            style = _code_status_style.get(
+                check.get("status", ""), "green" if check.get("ok") else "red"
+            )
+            code_table.add_row(
+                check.get("name", ""),
+                f"[{style}]{check.get('status', '')}[/{style}]",
+                check.get("detail", ""),
+            )
+        console.print(code_table)
+        for check in code_report.get("checks", []):
+            if check.get("fix"):
+                console.print(f"  [yellow]{check.get('name')}[/yellow]: {check['fix']}")
+        if code_report.get("ready"):
+            console.print("  Try it: [bold]effgen code \"write fib.py and run it\"[/bold]")
+
         # Print hints for missing keys
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
@@ -2078,6 +2125,15 @@ def _handle_doctor_command(args) -> int:
                     if bh else "—"
                 )
                 print(f"  {prov:12s} circuit={circuit_str:10s} bulkhead={bulkhead_str}")
+        print("\nCoding (effgen code):")
+        if code_report.get("error"):
+            print(f"  The coding checks could not run: {code_report['error']}")
+        for check in code_report.get("checks", []):
+            print(f"  {check.get('name', ''):12s} {check.get('status', ''):14s} {check.get('detail', '')}")
+            if check.get("fix"):
+                print(f"    Fix: {check['fix']}")
+        if code_report.get("ready"):
+            print("  Try it: effgen code \"write fib.py and run it\"")
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
             print("\nMissing keys — set in ~/.effgen/.env or export:")
@@ -2123,6 +2179,22 @@ def _doctor_reliability_report() -> dict[str, dict]:
         for prov, rec in stats.items()
         if rec.get("circuit_breaker") is not None or rec.get("bulkhead") is not None
     }
+
+
+def _doctor_code_report(workspace: str | None = None) -> dict[str, Any]:
+    """Coding-agent readiness: the workspace, the sandbox backend and git.
+
+    Reported for information only — a machine without Docker or without git can
+    still run `effgen code`, so this never changes the exit code. A check that
+    would actually stop a run (an unwritable workspace, a disabled sandbox)
+    carries ``ok: false`` and the fix for it.
+    """
+    try:
+        from effgen.cli.code.readiness import code_readiness
+
+        return code_readiness(workspace).to_dict()
+    except Exception as e:  # noqa: BLE001 - a diagnostic never breaks doctor
+        return {"ready": False, "workspace": "", "checks": [], "error": str(e)}
 
 
 def _doctor_system_report(*, include_pip_check: bool = False) -> dict[str, Any]:
@@ -2319,14 +2391,210 @@ def _handle_resume_command(args, cli) -> int:
             logger.debug(f"Agent close after resume failed: {e}")
 
 
+#: The sample task the quickstart's coding step runs. Small enough for a local
+#: model, and it only completes if the agent actually executes what it wrote.
+_QUICKSTART_CODE_TASK = (
+    "Create fib.py with a function fib(n) returning the nth Fibonacci number, "
+    "make the file print fib(10) when it runs, then run it and report the number "
+    "it printed."
+)
+
+
+def _quickstart_code_wanted(args, *, interactive: bool) -> bool:
+    """Whether the guided run should include the coding step.
+
+    ``--code`` runs it, ``--no-code`` skips it, and on a terminal the user is
+    asked. A scripted run (``--yes``, piped, CI) skips it unless ``--code`` said
+    otherwise, so ``effgen quickstart --yes`` stays a single model call.
+    """
+    if getattr(args, 'no_code', False):
+        return False
+    if getattr(args, 'code', False):
+        return True
+    if not interactive:
+        return False
+    print("Now the coding agent: it writes a small program, runs it, and reports "
+          "the real output.")
+    try:
+        answer = input("Try it? [Y/n] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("")
+        return False
+    return answer in ("", "y", "yes")
+
+
+def _quickstart_code_step(
+    args, cli: "CLIInterface", model_id: str, provider: str | None, *, interactive: bool
+) -> int:
+    """Run a small `effgen code` task end to end and show what it did.
+
+    Returns the exit code for the guided run: ``0`` when the step was skipped or
+    completed, ``1`` when it ran and failed. Everything is written inside a
+    dedicated directory under the user's effGen state directory, named before the
+    step starts, so a first run never touches the directory it was started in.
+    """
+    if not _quickstart_code_wanted(args, interactive=interactive):
+        cli.print("\nSkipping the coding step. Run 'effgen code' whenever you want it, "
+                  "or 'effgen quickstart --code' to see it here.")
+        return 0
+
+    from effgen.cli.code.engine import CodeEngine, workspace_execution_note
+    from effgen.cli.code.permissions import MODE_DESCRIPTIONS, PermissionMode
+    from effgen.cli.code.render import print_action, print_diff, print_summary
+
+    workspace = _onboarding.state_dir() / "quickstart-code"
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        cli.print_error(_onboarding.teach(
+            f"Could not create the coding workspace {workspace}: {e}",
+            fix="Set EFFGEN_HOME to a directory you can write to, then re-run "
+                "'effgen quickstart --code'.",
+        ))
+        return 1
+
+    # The step is a self-contained demonstration in a directory named above, so
+    # it allows writes, sandboxed runs and shell commands without stopping to
+    # ask — a guided first run that dead-ends on an unconfirmable command shows
+    # the newcomer nothing. The mode is printed, and confinement still applies.
+    mode = PermissionMode.YES
+    cli.print_header("The coding agent")
+    cli.print(f"Workspace: {workspace}  (the files it changes stay there)")
+    cli.print(f"Permissions: {mode.value} — {MODE_DESCRIPTIONS[mode]}")
+    # The same sandbox line `effgen doctor` reports, so a newcomer knows how the
+    # code they are about to run is confined before it runs.
+    sandbox = next(
+        (c for c in _doctor_code_report(str(workspace)).get("checks", [])
+         if c.get("name") == "sandbox"),
+        None,
+    )
+    if sandbox:
+        cli.print(f"Sandbox: {sandbox.get('detail', sandbox.get('status', ''))}")
+    cli.print(f"Task: {_QUICKSTART_CODE_TASK}\n")
+
+    # The generic note points at -w/--workspace, which the guided run does not
+    # take; here the directory follows EFFGEN_HOME, so name that instead.
+    if workspace_execution_note(workspace) is not None:
+        cli.print_warning(
+            f"Code run in the sandbox cannot read {workspace}: a workspace under "
+            "the system temp directory is not visible to executed code, so the "
+            "file will be written but running it will fail. Set EFFGEN_HOME to a "
+            "directory outside the system temp directory."
+        )
+
+    engine = CodeEngine(
+        model=model_id,
+        provider=provider,
+        workspace=workspace,
+        mode=mode,
+        mode_explicit=True,
+        interactive=interactive,
+        # No iteration override: the step is a real `effgen code` run on the
+        # coding preset's own budget, so what a newcomer sees here is what the
+        # command does.
+        on_event=lambda record: print_action(cli, record),
+        on_diff=lambda edit: print_diff(cli, edit),
+    )
+
+    agent = None
+    # The action ticks and the summary below report what happened; the agent's
+    # internal retry/fallback logging would only add noise to a guided run.
+    _effgen_logger = logging.getLogger("effgen")
+    _prev_level = _effgen_logger.level
+    try:
+        agent = engine.build_agent()
+        _effgen_logger.setLevel(logging.CRITICAL)
+        result = engine.run(_QUICKSTART_CODE_TASK)
+    except KeyboardInterrupt:
+        cli.print_warning("Interrupted; the coding step stopped where it was.")
+        return 0
+    except Exception as e:  # noqa: BLE001 - reported, not swallowed
+        cli.print_error(_onboarding.teach(
+            f"The coding step could not run: {e}",
+            fix="Try it directly with 'effgen code \"write fib.py and run it\" "
+                "--auto-edit' to see the full error.",
+            doc="docs/cli/code.md",
+        ))
+        return 1
+    finally:
+        _effgen_logger.setLevel(_prev_level)
+        if agent is not None:
+            try:
+                agent.close()
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"quickstart: code agent close failed: {e}")
+
+    cli.print("")
+    if cli.console:
+        cli.console.print(Panel(
+            Markdown(result.answer or "(no output)"),
+            border_style="green" if result.success else "red",
+        ))
+    else:
+        print(result.answer)
+
+    print_summary(cli, result)
+    if result.files_written:
+        cli.print(f"Files written in {workspace}: {', '.join(result.files_written)}")
+        cli.print(f"Undo them with: effgen code --undo -w {workspace}")
+    for record in result.refused:
+        cli.print_warning(record.reason)
+    if result.withheld:
+        kinds = ", ".join(sorted({a.kind for a in result.withheld}))
+        cli.print_warning(
+            f"{len(result.withheld)} action(s) ({kinds}) were not carried out, so "
+            "the report above may not cover everything the task asked for."
+        )
+
+    # The sample task is only demonstrated when code actually ran. A model that
+    # stops after writing the file has not computed anything, so say that rather
+    # than letting the answer above stand in for a result.
+    executed = any(
+        a.kind in ("run", "shell") and a.decision == "allowed" and a.outcome != "error"
+        for a in result.actions
+    )
+    if not executed:
+        did = (
+            "wrote the file but never ran it"
+            if result.files_written
+            else "did not write or run anything"
+        )
+        cli.print_warning(
+            f"The model {did}, so nothing above was computed by executing code. "
+            "Smaller models often stop early on a multi-step task; a larger one "
+            "finishes this in two or three steps."
+        )
+
+    if result.hit_iteration_cap:
+        cli.print_warning(
+            f"The model used all {result.iterations} steps of the sample task "
+            "without finishing. A larger model usually needs two or three; "
+            "'effgen code --max-iterations N' raises the cap for a real task."
+        )
+    if not result.success:
+        cli.print_error(_onboarding.teach(
+            "The coding step did not complete.",
+            fix="Re-run with a larger model, e.g. 'effgen quickstart --code -m gpt-5-mini'.",
+            doc="docs/cli/code.md",
+        ))
+        return 1
+    return 0
+
+
 def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
     """Handle 'effgen quickstart' / 'effgen tutorial' — a guided first run.
 
     Walks a brand-new user from nothing to a successful agent run in well under
-    two minutes: pick a model → run a sample task → see the trace → see the
-    cost. Fully scriptable (``--model``/``--task``/``--yes``) for CI and docs.
+    two minutes: pick a model → run a sample task → see the trace → see the cost
+    → write and run a small program with the coding agent. Fully scriptable
+    (``--model``/``--task``/``--yes``/``--code``/``--no-code``) for CI and docs.
     """
     interactive = _onboarding.is_interactive() and not getattr(args, 'yes', False)
+
+    if getattr(args, 'code', False) and getattr(args, 'no_code', False):
+        cli.print_error("--code and --no-code cannot be combined — they ask for "
+                        "opposite things. Pass one.")
+        return 1
 
     cli.print_header("effGen quickstart")
     cli.print("Let's run your first agent. This takes about a minute.\n")
@@ -2431,7 +2699,7 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
                 f"The run did not succeed: {err.get('message', 'unknown error')}",
                 fix="Run 'effgen doctor --live --cheap' to confirm the model is reachable, "
                     "or try a different model with -m.",
-                doc="docs/getting-started.md",
+                doc="docs/tutorials/getting-started.md",
             ))
             return 1
 
@@ -2455,19 +2723,25 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
         # --- 5. Show the cost --------------------------------------------
         _progress.print_summary(cli, response)
 
+        # --- 6. Write and run real code ----------------------------------
+        code_rc = _quickstart_code_step(args, cli, model_id, provider, interactive=interactive)
+
         # --- Next steps --------------------------------------------------
-        cli.print_header("You're set! Next steps")
+        # The sample run succeeded to get here; only claim the whole guided run
+        # worked when the coding step did too.
+        cli.print_header("You're set! Next steps" if code_rc == 0 else "Next steps")
         cli.print("  • effgen run \"your question\" -m " + model_id + "   # run any task")
         cli.print("  • effgen chat -m " + model_id + "                  # interactive chat")
+        cli.print("  • effgen code                                    # coding agent session")
         cli.print("  • effgen tools list                              # see available tools")
         cli.print("  • effgen doctor --live --cheap                   # check all providers")
-        return 0
+        return code_rc
 
     except Exception as e:  # noqa: BLE001
         cli.print_error(_onboarding.teach(
             f"Quickstart could not complete: {e}",
             fix="Run 'effgen doctor' to check your setup, then 'effgen quickstart -m <model>'.",
-            doc="docs/getting-started.md",
+            doc="docs/tutorials/getting-started.md",
         ))
         if getattr(args, 'verbose', False):
             import traceback
@@ -2926,7 +3200,7 @@ def main() -> None:
         # A gentle, rotating tip at a natural moment — only after the commands a
         # human watches finish cleanly, never under --quiet / non-interactive /
         # EFFGEN_TIPS=0, and only every few runs (see onboarding.maybe_print_tip).
-        _TIP_COMMANDS = {'run', 'chat', 'quickstart', 'tutorial', 'presets', 'doctor'}
+        _TIP_COMMANDS = {'run', 'chat', 'code', 'quickstart', 'tutorial', 'presets', 'doctor'}
         if (
             exit_code == 0
             and args.command in _TIP_COMMANDS
