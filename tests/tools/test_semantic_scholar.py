@@ -2,7 +2,8 @@
 
 All tests hit the real Semantic Scholar Graph API. Because the public,
 unauthenticated endpoint is heavily rate-limited (100 req / 5 min globally),
-transient 429 responses are treated as skips rather than failures.
+transient upstream errors — 429s, 5xx responses, and read timeouts — are
+treated as skips rather than failures.
 """
 
 from __future__ import annotations
@@ -46,6 +47,8 @@ def _ok(result: ToolResult):
             or "too many requests" in lowered
             or "rate-limited" in lowered
             or "rate limit" in lowered
+            or "timed out" in lowered
+            or "timeout" in lowered
         ):
             pytest.skip(f"Semantic Scholar transient upstream error: {result.error}")
     assert result.success, f"tool failed: {result.error}"
