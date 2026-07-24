@@ -116,6 +116,12 @@ class TestUnicodeAndWordmark:
     def test_supports_unicode_false_without_encoding(self):
         assert palette.supports_unicode(_stream(None)) is False
 
+    def test_supports_unicode_reads_through_a_live_region_proxy(self):
+        """While a live region is up, stdout is a proxy carrying no encoding."""
+        proxy = types.SimpleNamespace(rich_proxied_file=_stream("utf-8"))
+        assert palette.supports_unicode(proxy) is True
+        assert palette.glyph("success", proxy) == palette.GLYPHS["success"]
+
     def test_wordmark_plain_and_versioned(self):
         s = _stream("utf-8")
         assert brand.wordmark(stream=s) == "⚡ effGen"

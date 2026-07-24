@@ -406,8 +406,13 @@ def supports_unicode(stream: Any = None) -> bool:
     Selects between the Unicode and ASCII presentations by asking the stream's
     encoding to encode a probe string, rather than guessing from the platform.
     A stream with no discoverable encoding is treated as ASCII-only.
+
+    While a live region is on screen ``sys.stdout`` is a proxy that carries no
+    encoding of its own, so the real file behind it is unwrapped first — a line
+    printed during a live status keeps the same glyphs as one printed before it.
     """
     out = stream if stream is not None else sys.stdout
+    out = getattr(out, "rich_proxied_file", None) or out
     encoding = getattr(out, "encoding", None)
     if not encoding:
         return False

@@ -347,12 +347,12 @@ class CLIInterface:
         """Print one line with no markup parsing and no value highlighting.
 
         Stored values such as model ids, timestamps and durations stay intact
-        instead of being read as console markup or split into separately
-        colored tokens.
+        instead of being read as console markup, split into separately colored
+        tokens, or (for text like ``root:x:0:0``) rewritten into emoji.
         """
         console = self._human()
         if console:
-            console.print(text, highlight=False, markup=False, style=style)
+            console.print(text, highlight=False, markup=False, emoji=False, style=style)
         else:
             print(text, file=sys.stderr if self._human_to_stderr else None)
 
@@ -1037,10 +1037,15 @@ Model id formats:
             'writes files, executes code in the configured sandbox, reads the '
             'real output, and iterates until the task is done or the iteration '
             'cap is reached. Each file change is shown as a unified diff before '
-            'it is written, and --undo reverses the last applied edit.'
+            'it is written, and --undo reverses the last applied edit. '
+            'On a terminal with no task it opens an interactive session with '
+            'slash commands (/plan, /diff, /apply, /undo, /run, /context, '
+            '/model, /help); a task, -p, piped stdin or --json runs once and '
+            'exits.'
         ),
         epilog=(
             "Examples:\n"
+            "  effgen code                         # interactive session\n"
             "  effgen code \"write fib.py with fib(n) and print fib(10)\" --auto-edit\n"
             "  effgen code -p \"add a --retries flag to cli.py\" --json | jq .files_written\n"
             "  cat pytest.log | effgen code -p \"why did this fail?\"\n"
@@ -1067,7 +1072,8 @@ Model id formats:
         ),
     )
     code_parser.add_argument('task', nargs='?', default=None,
-                             help='What to build, change or debug')
+                             help='What to build, change or debug (omit on a '
+                                  'terminal to open an interactive session)')
     code_parser.add_argument('-p', '--print', dest='print_task', nargs='?', const='',
                              metavar='TASK',
                              help='Run one task and print the result. Takes the task '
