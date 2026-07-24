@@ -15,6 +15,12 @@ Output contract:
 - The exit code is ``0`` for a completed run, ``1`` for a failed one, and ``2``
   when the run completed but changes were withheld because there was no terminal
   to confirm on and no ``--auto-edit``/``--yes`` was given.
+
+When the workspace is in a git repository, the branch, the short status and a
+bounded file layout are read before the first model call and become part of the
+agent's context. ``--commit`` offers to commit the files the run wrote — only
+after a y/N confirmation, or, without a terminal, only when ``--yes`` was also
+given.
 """
 
 from __future__ import annotations
@@ -32,11 +38,13 @@ from effgen.cli.code.engine import (
     undo_workspace,
     workspace_execution_note,
 )
+from effgen.cli.code.git_actions import CommitOutcome
 from effgen.cli.code.permissions import (
     MODE_DESCRIPTIONS,
     PermissionMode,
     default_mode,
 )
+from effgen.cli.code.project import build_project_context
 from effgen.cli.code.render import (
     print_action,
     print_diff,
@@ -162,19 +170,34 @@ def _report(cli: "CLIInterface", result: CodeRunResult, *, quiet: bool) -> None:
 
 
 def _withheld_note(result: CodeRunResult, explicit_mode: bool) -> str:
-    """Return the one-line explanation for a run that changed nothing."""
+    """Return the one-line explanation for the actions a run did not carry out.
+
+    The wording follows what actually happened: a run that wrote nothing says so,
+    while a run that applied its edits but could not confirm a shell command or a
+    commit says only those were withheld. The suggested flag is the one that
+    covers the kinds that were withheld.
+    """
     kinds = sorted({a.kind for a in result.withheld})
     what = ", ".join(kinds)
+    opt_in = (
+        "--auto-edit (or --yes)"
+        if set(kinds) <= {"write", "run"}
+        else "--yes"
+    )
     if explicit_mode and result.permission_mode == PermissionMode.PLAN.value:
         return (
             f"Plan mode: {len(result.withheld)} action(s) ({what}) were proposed "
-            "and not carried out. Re-run with --auto-edit to apply them."
+            f"and not carried out. Re-run with {opt_in} to apply them."
         )
+    lead = (
+        "Some actions were not carried out"
+        if result.files_written
+        else "No changes were made"
+    )
     return (
-        f"No changes were made: {len(result.withheld)} action(s) ({what}) needed "
-        "confirmation and this session has no terminal to confirm on. Re-run with "
-        "--auto-edit to apply file writes and sandboxed runs, or --yes to also "
-        "allow shell commands."
+        f"{lead}: {len(result.withheld)} action(s) ({what}) needed confirmation "
+        f"and this session has no terminal to confirm on. Re-run with {opt_in} "
+        "to allow them without asking."
     )
 
 
@@ -224,6 +247,59 @@ def _run_undo(cli: "CLIInterface", args: argparse.Namespace) -> int:
             print_status(cli, "error", f"Could not undo {outcome.rel_path}: {outcome.detail}")
     cli.print(f"{remaining} earlier change(s) can still be undone.")
     return 0
+
+
+def _offer_commit(
+    cli: "CLIInterface",
+    args: argparse.Namespace,
+    engine: CodeEngine,
+    result: CodeRunResult,
+    *,
+    quiet: bool,
+) -> None:
+    """Offer to commit the files this run wrote, and record the outcome.
+
+    The plan is printed first, so the user sees the repository, the exact paths
+    and the message before answering. The permission gate then decides: a
+    terminal is asked y/N, ``--yes`` commits without asking, and any other
+    non-interactive combination withholds the commit. Nothing outside the listed
+    paths is ever staged or committed.
+    """
+    plan = engine.plan_commit(
+        result.files_written,
+        task=result.task,
+        message=getattr(args, "commit_message", None),
+    )
+    if plan.error:
+        print_status(cli, "warning", plan.error)
+        # The same shape as a completed attempt, so ``--json`` consumers read one
+        # commit record whether or not there was anything to commit.
+        result.commit = CommitOutcome(False, plan.message, plan.error).to_dict()
+        return
+
+    if not quiet:
+        print_plain(cli, plan.describe())
+        print_plain(cli, f'Message: "{plan.subject}"')
+        if plan.other_staged:
+            print_status(
+                cli, "warning",
+                f"{len(plan.other_staged)} other path(s) are staged in this "
+                "repository; they stay staged and are not part of this commit: "
+                + ", ".join(plan.other_staged[:5])
+                + ("…" if len(plan.other_staged) > 5 else ""),
+            )
+
+    outcome = engine.perform_commit(plan)
+    result.actions = list(engine.gate.actions)
+    result.commit = outcome.to_dict()
+    if outcome.success:
+        print_status(
+            cli, "success",
+            f"Committed {len(outcome.paths)} file(s) as {outcome.commit or 'HEAD'}: "
+            f"{plan.subject}",
+        )
+    else:
+        print_status(cli, "warning", f"Nothing was committed: {outcome.detail}")
 
 
 def _report_partial_hunks(cli: "CLIInterface", result: CodeRunResult) -> None:
@@ -318,8 +394,15 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
         if not quiet:
             print_plain(cli, f"Using model {model} ({reason}); override with -m/--model.")
 
+    # The repository state and file layout are read once, before the first model
+    # call, and travel with the run as context.
+    project = build_project_context(workspace)
+
     if not quiet:
         print_plain(cli, f"Workspace: {workspace}")
+        print_plain(cli, project.summary_line())
+        if project.brief_path:
+            print_plain(cli, f"Project instructions: {project.brief_path}")
         cli.print(f"Permissions: {mode.value} — {MODE_DESCRIPTIONS[mode]}")
         if mode is not PermissionMode.PLAN:
             note = workspace_execution_note(workspace)
@@ -349,6 +432,7 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
         max_tokens=getattr(args, "max_tokens", None),
         on_event=on_event,
         on_diff=on_diff,
+        project=project,
     )
 
     agent: Any = None
@@ -375,6 +459,9 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
                 agent.close()
             except Exception as exc:  # noqa: BLE001 - close is best effort
                 logger.debug("Agent close failed: %s", exc)
+
+    if getattr(args, "commit", False):
+        _offer_commit(cli, args, engine, result, quiet=quiet)
 
     if json_mode:
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))

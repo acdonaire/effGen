@@ -1040,8 +1040,8 @@ Model id formats:
             'it is written, and --undo reverses the last applied edit. '
             'On a terminal with no task it opens an interactive session with '
             'slash commands (/plan, /diff, /apply, /undo, /run, /context, '
-            '/model, /help); a task, -p, piped stdin or --json runs once and '
-            'exits.'
+            '/git, /model, /help); a task, -p, piped stdin or --json runs once '
+            'and exits.'
         ),
         epilog=(
             "Examples:\n"
@@ -1050,6 +1050,14 @@ Model id formats:
             "  effgen code -p \"add a --retries flag to cli.py\" --json | jq .files_written\n"
             "  cat pytest.log | effgen code -p \"why did this fail?\"\n"
             "  effgen code --undo                  # revert the last applied edit\n"
+            "  effgen code \"fix the failing test\" --auto-edit --commit\n"
+            "\n"
+            "In a git repository the branch, the short status and a bounded file\n"
+            "layout (ignored files excluded) become part of the agent's context,\n"
+            "and an AGENTS.md in the workspace is read as project instructions.\n"
+            "The confirmed commit behind --commit is the only repository change a\n"
+            "session makes: push, reset, checkout, rebase, tag and stash are refused\n"
+            "in every mode, from the shell too.\n"
             "\n"
             "Permission modes (pick at most one):\n"
             "  --plan        propose only; show the diffs, write nothing, run nothing\n"
@@ -1098,6 +1106,14 @@ Model id formats:
     code_parser.add_argument('-y', '--yes', dest='assume_yes', action='store_true',
                              help='Apply writes, sandboxed runs and shell commands '
                                   'without asking (still confined to the workspace)')
+    code_parser.add_argument('--commit', action='store_true',
+                             help='After the run, offer to commit the files it '
+                                  'wrote (y/N; needs --yes without a terminal). '
+                                  'Only those files are committed, and it never '
+                                  'pushes, amends, resets or discards your work.')
+    code_parser.add_argument('--commit-message', metavar='MSG',
+                             help='Commit message for --commit (default: a message '
+                                  'naming the changed files and the task)')
     code_parser.add_argument('--undo', action='store_true',
                              help='Reverse the last applied edit(s) in the '
                                   'workspace instead of running a task, restoring '

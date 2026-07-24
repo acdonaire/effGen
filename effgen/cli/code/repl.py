@@ -17,7 +17,11 @@ the session store), adding the parts a coding session needs:
 - ``/run`` / ``/test`` to execute a command through the confined sandbox and feed
   the output back into the conversation;
 - ``/undo`` over the on-disk edit journal, ``/compact`` to summarize a long
-  conversation, and ``/save`` / ``/session`` / ``/load`` to round-trip a session.
+  conversation, and ``/save`` / ``/session`` / ``/load`` to round-trip a session;
+- **project awareness**: the repository's branch, short status and file layout
+  are read at startup and travel with each turn, ``/git`` shows the read-only git
+  surface and pulls the staged diff into context, and ``/git commit`` records the
+  session's edits after an explicit confirmation.
 
 The interactive chrome is a terminal affordance only. When there is no terminal
 the command never reaches this class — :func:`effgen.cli.commands.code.run_code_command`
@@ -43,6 +47,7 @@ from effgen.cli.code.permissions import (
     PermissionMode,
     default_mode,
 )
+from effgen.cli.code.project import build_project_context, staged_diff
 from effgen.cli.code.render import print_action, print_diff, print_plain, print_status
 from effgen.ui.theme import color_enabled
 
@@ -59,7 +64,8 @@ _SLASH_COMMANDS: dict[str, str] = {
     "/apply": "Apply the staged edits:  /apply [n]  (n = one edit by number)",
     "/reject": "Discard the staged edits:  /reject [n]",
     "/undo": "Reverse the last applied edit(s):  /undo [n]",
-    "/context": "Show the files in context and their token/size estimate",
+    "/context": "Show the files in context and their token/size estimate "
+                "(/context refresh re-reads the project layout)",
     "/add": "Add a workspace file to context:  /add src/app.py",
     "/drop": "Remove a file from context:  /drop src/app.py",
     "/mode": "Show or set the permission mode:  /mode ask|auto-edit|yes|plan",
@@ -67,7 +73,8 @@ _SLASH_COMMANDS: dict[str, str] = {
     "/tools": "List the coding tools the agent can call",
     "/cost": "Session token + cost total",
     "/trace": "Show the last turn's reasoning/tool steps",
-    "/git": "Read-only git status/diff/log for the workspace",
+    "/git": "Git for the workspace:  /git [status|diff|log|branch|show|remote] · "
+            "/git staged (pull the staged diff into context) · /git commit [message]",
     "/reset": "Clear the conversation memory (keep files-in-context)",
     "/clear": "Reset live context (memory + files) but keep the session on disk",
     "/compact": "Summarize the conversation so far to extend a long session",
@@ -136,6 +143,13 @@ class CodeREPL:
         # True only while a /plan turn runs, so on_diff stages instead of applying.
         self._staging = False
 
+        # The repository state, file layout and project brief, read once at
+        # startup and refreshed on request with /context refresh.
+        self.project = build_project_context(self.workspace)
+        # Workspace-relative paths this session has written, in order, so
+        # /git commit records exactly the session's own edits.
+        self.session_files: list[str] = []
+
         self.engine: CodeEngine | None = None
         self.session_id: str | None = None
         self.session_tokens = 0
@@ -143,6 +157,7 @@ class CodeREPL:
         self.turns = 0
         self.last_trace: list[dict[str, Any]] | None = None
         self.last_result: Any = None
+        self._last_task = ""
         self._history_file = _history_dir() / "code_input_history"
 
     # ------------------------------------------------------------------
@@ -188,6 +203,7 @@ class CodeREPL:
             max_tokens=self.max_tokens,
             on_event=self._on_event,
             on_diff=self._on_diff,
+            project=self.project,
         )
         agent = engine.build_agent()
         if carry_from is not None and carry_from._agent is not None:
@@ -262,6 +278,9 @@ class CodeREPL:
 
         self._banner_line(f"Model: {_progress.short_model_label(self.model_id)}")
         self._banner_line(f"Workspace: {self.workspace}")
+        self._banner_line(self.project.summary_line())
+        if self.project.brief_path:
+            self._banner_line(f"Project instructions: {self.project.brief_path}")
         self._banner_line(
             f"Permissions: {self.mode.value} — {MODE_DESCRIPTIONS[self.mode]}"
         )
@@ -420,7 +439,7 @@ class CodeREPL:
             "/apply": lambda: self._cmd_apply(arg),
             "/reject": lambda: self._cmd_reject(arg),
             "/undo": lambda: self._cmd_undo(arg),
-            "/context": lambda: self._cmd_context(),
+            "/context": lambda: self._cmd_context(arg),
             "/add": lambda: self._cmd_add(arg),
             "/drop": lambda: self._cmd_drop(arg),
             "/mode": lambda: self._cmd_mode(arg),
@@ -489,6 +508,7 @@ class CodeREPL:
         """Run one coding turn and render the result."""
         assert self.engine is not None
         task = self._compose_task(message)
+        self._last_task = message
         self.engine.gate.begin_turn()
         tok0, cost0 = self._snapshot()
         t0 = time.monotonic()
@@ -506,6 +526,7 @@ class CodeREPL:
 
         result = self.engine.result_from_response(task, response)
         self.last_result = result
+        self._note_written(result.files_written)
         try:
             self.last_trace = response.execution_trace or None
         except Exception:  # noqa: BLE001
@@ -522,6 +543,21 @@ class CodeREPL:
         if not self.quiet:
             self._print_footer(elapsed, rtok, rcost or 0.0)
         self._post_turn_notes(result)
+
+    def _note_written(self, paths: list[str]) -> None:
+        """Record the paths just written and re-read the project from disk.
+
+        The paths are remembered for ``/git commit``, and the layout and status
+        the agent is working from are rebuilt so the next turn sees the files the
+        last one created rather than a listing that predates them.
+        """
+        if not paths:
+            return
+        for rel in paths:
+            if rel not in self.session_files:
+                self.session_files.append(rel)
+        if self.engine is not None:
+            self.project = self.engine.load_project(refresh=True)
 
     def _run_agent(self, task: str) -> Any:
         """Run one turn under the live status line ``chat`` uses.
@@ -726,6 +762,7 @@ class CodeREPL:
         finally:
             self.engine.gate.mode = prev_mode
         if written:
+            self._note_written(written)
             self._status("success", f"Applied: {', '.join(written)} (/undo to reverse).")
         else:
             self._status("warning", "No edits were applied.")
@@ -842,12 +879,30 @@ class CodeREPL:
     # ------------------------------------------------------------------
     # Files in context
     # ------------------------------------------------------------------
-    def _cmd_context(self) -> None:
+    def _cmd_context(self, arg: str = "") -> None:
+        """Show what the agent is working from; ``refresh`` re-reads the project."""
+        if arg.split()[:1] == ["refresh"]:
+            self.project = (
+                self.engine.load_project(refresh=True)
+                if self.engine is not None
+                else build_project_context(self.workspace)
+            )
+            self._status("success", f"Project context refreshed — {self.project.summary_line()}")
+            return
+
         self.cli.print_header("Files in context")
         self._say(f"Workspace: {self.workspace}")
+        self._say(self.project.summary_line())
+        if self.project.brief_path:
+            self._say(f"Project instructions: {self.project.brief_path}")
+        self._say(
+            f"Project layout in the prompt: {self.project.file_count_text()}, "
+            f"{len(self.project.layout_lines())} line(s) — /context refresh to re-read"
+        )
         if not self.context_files:
-            self._say("(none) — add one with /add <file>")
+            self._say("Files pinned with /add: (none) — add one with /add <file>")
             return
+        self._say("Files pinned with /add (their content is sent every turn):")
         total = 0
         for rel in self.context_files:
             content = self._read_context_file(rel)
@@ -1014,15 +1069,33 @@ class CodeREPL:
             self._say(ascii_fold(text, self.cli._human_stream()), style=style)
 
     def _cmd_git(self, arg: str) -> None:
-        """Read-only git status/diff/log for the workspace."""
+        """Git for the workspace: the read-only surface, plus a confirmed commit.
+
+        ``status``/``diff``/``log``/``branch``/``show``/``remote`` go through the
+        read-only ``git`` tool. ``staged`` shows the staged patch and adds it to
+        the conversation so the next turn can work from it. ``commit`` is the one
+        action that changes the repository, and it asks first.
+        """
         from effgen.tools.builtin.devops import GitTool
 
-        op = (arg.split()[0].lower() if arg else "status")
+        parts = arg.split(maxsplit=1) if arg else []
+        op = parts[0].lower() if parts else "status"
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if op == "staged":
+            self._git_staged()
+            return
+        if op == "commit":
+            self._git_commit(rest)
+            return
+
         if op not in GitTool.ALLOWED:
             self._status(
                 "warning",
-                f"'{op}' is not a read-only git operation. "
-                f"Choose: {', '.join(sorted(GitTool.ALLOWED))}."
+                f"'{op}' is not available. Choose a read-only operation "
+                f"({', '.join(sorted(GitTool.ALLOWED))}), 'staged' to pull the "
+                "staged diff into context, or 'commit' to record this session's "
+                "edits after confirming."
             )
             return
         try:
@@ -1043,6 +1116,63 @@ class CodeREPL:
         else:
             body = str(output or "")
         self._say(body.rstrip() or "(no output)")
+
+    def _git_staged(self) -> None:
+        """Show the staged patch and add it to the conversation as context."""
+        repo = self.project.repo
+        if repo is None:
+            self._status("warning", f"{self.workspace} is not inside a git repository.")
+            return
+        patch = staged_diff(repo.root)
+        if not patch.strip():
+            self._say("Nothing is staged in this repository.")
+            return
+        self._say(patch.rstrip())
+        self._feed_back(
+            "The staged changes in this repository (git diff --cached):\n" + patch
+        )
+        self._status("success", "The staged diff is now part of this conversation.")
+
+    def _git_commit(self, message: str) -> None:
+        """Commit the files this session wrote, after an explicit confirmation.
+
+        Only the session's own paths are committed; anything else the user has
+        staged stays staged. The permission gate asks before the commit runs, so
+        a commit never happens on an implied yes.
+        """
+        assert self.engine is not None
+        if not self.session_files:
+            self._say(
+                "This session has written no files yet, so there is nothing to commit."
+            )
+            return
+        plan = self.engine.plan_commit(
+            self.session_files, task=self._last_task, message=message or None
+        )
+        if plan.error:
+            self._status("warning", plan.error)
+            return
+        self._say(plan.describe())
+        self._say(f'Message: "{plan.subject}"')
+        if plan.other_staged:
+            self._status(
+                "warning",
+                f"{len(plan.other_staged)} other path(s) are staged; they stay "
+                "staged and are not part of this commit: "
+                + ", ".join(plan.other_staged[:5])
+                + ("…" if len(plan.other_staged) > 5 else ""),
+            )
+        outcome = self.engine.perform_commit(plan)
+        if outcome.success:
+            self._status(
+                "success",
+                f"Committed {len(outcome.paths)} file(s) as "
+                f"{outcome.commit or 'HEAD'}: {plan.subject}",
+            )
+            self.session_files.clear()
+            self.project = self.engine.load_project(refresh=True)
+        else:
+            self._status("warning", f"Nothing was committed: {outcome.detail}")
 
     # ------------------------------------------------------------------
     # Memory: reset / clear / compact
@@ -1142,6 +1272,7 @@ class CodeREPL:
             "workspace": str(self.workspace),
             "mode": self.mode.value,
             "files_in_context": list(self.context_files),
+            "files_written": list(self.session_files),
             "messages": history,
         }
         try:
@@ -1231,6 +1362,7 @@ class CodeREPL:
                 self._status("error", f"Could not load model '{saved_model}': {e}")
                 return
         self.context_files = list(data.get("files_in_context", []) or [])
+        self.session_files = list(data.get("files_written", []) or [])
         saved_mode = data.get("mode")
         if saved_mode:
             try:
