@@ -306,74 +306,201 @@ class LiveStatus:
 
 
 # ---------------------------------------------------------------------------
+# Thinking spinner + streaming answer renderer
+# ---------------------------------------------------------------------------
+
+# One shared refresh rate for the live streaming region. Too low reads as choppy,
+# too high flickers; 8–12/s is the usable band and 10/s is the shared constant so
+# every streaming surface redraws at the same cadence rather than per-call guesses.
+STREAM_REFRESH_PER_SECOND = 10
+
+
+class _ThinkingRenderable:
+    """A braille 'Thinking…' line rebuilt each refresh so the spinner ticks."""
+
+    def __init__(self, label: str, start: float):
+        self.label = label
+        self.start = start
+
+    def __rich__(self) -> Any:
+        frame = _BRAILLE[int(time.monotonic() * 10) % len(_BRAILLE)]
+        text = Text()
+        text.append(frame + " ", style="cyan")
+        text.append(self.label)
+        return text
+
+
+class thinking_status:  # noqa: N801 - used as a lowercase context-manager factory
+    """Transient pre-first-token / indeterminate spinner shared by every surface.
+
+    One spinner, one frames set (:data:`_BRAILLE`), one label — used for the
+    streaming pre-token wait and the setup wizard so a "thinking" pause looks the
+    same everywhere. :class:`LiveStatus` remains the richer model/tool-aware
+    variant used whenever an execution tracker is available. A no-op when ``rich``
+    is unavailable, ``console`` is ``None``, or ``animate`` is false.
+    """
+
+    def __init__(self, console: Any, *, animate: bool = True, label: str = "Thinking…") -> None:
+        self.console = console
+        self.label = label
+        self._active = bool(animate and _RICH_AVAILABLE and console is not None)
+        self._live: Any = None
+
+    def __enter__(self) -> "thinking_status":
+        if self._active:
+            self._live = Live(
+                _ThinkingRenderable(self.label, time.monotonic()),
+                console=self.console,
+                refresh_per_second=12,
+                transient=True,
+            )
+            self._live.__enter__()
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        if self._live is not None:
+            try:
+                self._live.__exit__(*exc)
+            except Exception:  # noqa: BLE001
+                pass
+            self._live = None
+        return False
+
+
+def stream_answer(
+    console: Any,
+    token_iter: Any,
+    *,
+    animate: bool,
+    interactive: bool = True,
+    quiet: bool = False,
+    label: str | None = None,
+    render_plain: bool = False,
+    trailing_newline: bool = False,
+) -> str:
+    """Render a streamed answer once, chosen by capability; return the full text.
+
+    Three mutually exclusive presentations, one function:
+
+    * **Animating** (interactive colour TTY with ``rich``): show the shared
+      :class:`thinking_status` spinner until the first non-empty token, then hand
+      off to a live region that re-renders ``answer_renderable`` at
+      :data:`STREAM_REFRESH_PER_SECOND`, so streamed markdown (lists, code,
+      tables) renders live instead of dumping raw source. An optional *label*
+      (e.g. ``assistant``) is printed on its own line first.
+    * **Interactive, not animating** with ``render_plain=True`` (e.g. a
+      ``NO_COLOR`` terminal): collect the tokens behind a lightweight wait
+      indicator, then render the finished answer once via
+      :func:`effgen.ui.render.answer_surface` so it reads as markdown, not raw
+      text.
+    * **Otherwise** (piped / redirected / non-TTY / ``rich`` absent / ``--quiet``):
+      write raw tokens straight to ``stdout`` as they arrive — byte-identical to
+      a plain token passthrough — optionally followed by a trailing newline.
+
+    The returned text is the concatenation of the streamed tokens (unstripped),
+    so the caller can persist the turn or stamp a summary.
+    """
+    it = iter(token_iter)
+    collected: list[str] = []
+
+    if animate and _RICH_AVAILABLE and console is not None:
+        from effgen.ui.render import answer_renderable
+
+        if label:
+            console.print(f"[effgen.success]{label}[/effgen.success]", highlight=False)
+        first: str | None = None
+        with thinking_status(console, animate=not quiet):
+            for tok in it:
+                if tok:
+                    first = tok
+                    break
+        if first:
+            collected.append(first)
+        with Live(
+            console=console,
+            refresh_per_second=STREAM_REFRESH_PER_SECOND,
+            transient=False,
+            vertical_overflow="visible",
+        ) as live:
+            if collected:
+                live.update(answer_renderable("".join(collected)))
+            for tok in it:
+                if not tok:
+                    continue
+                collected.append(tok)
+                live.update(answer_renderable("".join(collected)))
+        return "".join(collected)
+
+    if interactive and render_plain:
+        # Collect behind a lightweight wait indicator, then render once so the
+        # answer is markdown-formatted like the animated / tool paths.
+        show = not quiet
+        if show:
+            from effgen.ui.render import ascii_fold
+
+            sys.stdout.write(ascii_fold("Thinking…", sys.stdout))
+            sys.stdout.flush()
+        for tok in it:
+            if tok:
+                collected.append(tok)
+        if show:
+            sys.stdout.write("\r" + " " * 10 + "\r")
+            sys.stdout.flush()
+        from effgen.ui.render import answer_surface
+
+        answer_surface("".join(collected).strip(), framed=False, label=label, console=console)
+        return "".join(collected)
+
+    # Raw passthrough: piped / redirected / non-TTY / rich-absent / quiet.
+    for tok in it:
+        if tok:
+            sys.stdout.write(tok)
+            collected.append(tok)
+    if trailing_newline:
+        sys.stdout.write("\n")
+    sys.stdout.flush()
+    return "".join(collected)
+
+
+# ---------------------------------------------------------------------------
 # Final summary line
 # ---------------------------------------------------------------------------
 
 
 def _extract_cost(metadata: dict[str, Any] | None) -> float | None:
-    if not metadata:
-        return None
-    for key in ("cost_usd", "cost", "total_cost"):
-        val = metadata.get(key)
-        if isinstance(val, int | float) and val > 0:
-            return float(val)
-    return None
+    """Pull a positive USD cost out of response metadata (one shared extractor)."""
+    from effgen.ui.render import _extract_cost as _e
+
+    return _e(metadata)
 
 
-def summary_line(response: Any) -> tuple[str, str]:
+def summary_line(response: Any, *, stream: Any = None) -> tuple[str, str]:
     """Build the one-glance final summary for a finished run.
 
     Returns ``(plain, markup)`` where *plain* is safe for non-rich output and
-    *markup* carries rich color tags.
+    *markup* carries rich color tags. Delegates to the shared builder in
+    :mod:`effgen.ui.render` so run/chat share one summary vocabulary.
 
     Example (success)::
 
         ✓ Done in 3.2s · 2 tools · 1,204 tokens · $0.0006
     """
-    secs = float(getattr(response, "execution_time", 0.0) or 0.0)
-    tools = int(getattr(response, "tool_calls", 0) or 0)
-    tokens = int(getattr(response, "tokens_used", 0) or 0)
-    cost = _extract_cost(getattr(response, "metadata", None))
-    success = bool(getattr(response, "success", False))
+    from effgen.ui.render import summary_line as _summary_line
 
-    parts = [f"{secs:.1f}s"]
-    if tools:
-        parts.append(f"{tools} tool" + ("s" if tools != 1 else ""))
-    if tokens:
-        parts.append(f"{tokens:,} tokens")
-    from effgen.ui.render import format_cost
-    cost_str = format_cost(cost)
-    if cost_str is not None:
-        parts.append(cost_str)
-    body = " · ".join(parts)
-
-    meta = getattr(response, "metadata", None) or {}
-    if success:
-        plain = f"✓ Done in {body}"
-        markup = f"[green]✓[/green] Done in {body}"
-    elif meta.get("partial"):
-        # A run cut off at the iteration cap is not a completed success, but the
-        # recovered text is still shown: mark it distinctly from an outright
-        # failure so the partial result is not read as finished.
-        tail = f" · {body}" if body else ""
-        plain = f"⚠ Stopped at max iterations — partial result{tail}"
-        markup = f"[yellow]⚠[/yellow] Stopped at max iterations — partial result{tail}"
-    else:
-        reason = meta.get("reason", "failed")
-        tail = f" · {body}" if body else ""
-        plain = f"✗ Failed ({reason}){tail}"
-        markup = f"[red]✗[/red] Failed ([yellow]{reason}[/yellow]){tail}"
-    return plain, markup
+    return _summary_line(response, mode="run", stream=stream)
 
 
 def print_summary(cli: Any, response: Any) -> None:
     """Print the frozen summary line via the CLI's rich-or-plain print."""
-    plain, markup = summary_line(response)
+    from effgen.ui.render import ascii_fold
+
+    stream = cli._human_stream() if hasattr(cli, "_human_stream") else None
+    plain, markup = summary_line(response, stream=stream)
     console = getattr(cli, "console", None)
     if console is not None:
-        console.print(markup)
+        console.print(ascii_fold(markup, stream))
     else:
-        print(plain)
+        print(ascii_fold(plain, stream))
 
 
 def _truncate(value: Any, limit: int) -> str:
@@ -446,7 +573,9 @@ def _event_gaps(trace: list[dict[str, Any]]) -> list[float]:
     return gaps
 
 
-def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str, str]]:
+def execution_trace_lines(
+    trace: list[dict[str, Any]] | None, *, stream: Any = None
+) -> list[tuple[str, str]]:
     """Turn an :class:`ExecutionTracker` event trace into readable ``(style, text)``.
 
     The agent's ``execution_trace`` is a list of event dicts (``type``,
@@ -455,7 +584,21 @@ def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str,
     events and produces one human line each (reasoning, tool call + result,
     delegation, …), annotating each step with the wall-clock time it took, and
     is shared by ``effgen run --explain`` and chat's ``/trace`` so they agree.
+
+    Step glyphs resolve through :func:`palette.glyph` (against *stream*, default
+    ``stdout``) so a non-UTF-8 console falls back to an ASCII form instead of
+    raising ``UnicodeEncodeError``.
     """
+    from effgen.ui.palette import glyph
+
+    g_thought = glyph("thought", stream)
+    g_tool = glyph("tool", stream)
+    g_clock = glyph("clock", stream)
+    g_ok = glyph("success", stream)
+    g_err = glyph("error", stream)
+    g_delegate = glyph("delegate", stream)
+    g_plan = glyph("plan", stream)
+
     events = list(trace or [])
     gaps = _event_gaps(events)
     # Pair each tool_call_start with its terminal event to time the tool itself.
@@ -465,46 +608,60 @@ def execution_trace_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str,
         msg = str(ev.get("message", "") or "")
         data = ev.get("data") or {}
         if etype == "reasoning_step":
-            out.append(("cyan", f"💭 {msg or 'reasoning…'}"))
+            out.append(("cyan", f"{g_thought} {msg or 'reasoning…'}"))
         elif etype == "tool_call_start":
             name = data.get("tool_name", "tool")
             tool_input = data.get("tool_input", data.get("input", ""))
             if tool_input:
-                detail = f"🔧 {format_tool_call(name, tool_input)}"
+                detail = f"{g_tool} {format_tool_call(name, tool_input)}"
             else:
-                detail = f"🔧 {name}"
+                detail = f"{g_tool} {name}"
             # Attribute the model's think time (the gap into this call) so the
             # step reads with the time it cost, not as if it were instant.
             if gaps[i] >= 0.1:
-                detail += f"  ⏱ {_fmt_duration(gaps[i])}"
+                detail += f"  {g_clock} {_fmt_duration(gaps[i])}"
             out.append(("green", detail))
         elif etype == "tool_call_complete":
             result = data.get("result", data.get("output", ""))
             exec_s = gaps[i] if gaps[i] >= 0.5 else 0.0
             suffix = f"  ({_fmt_duration(exec_s)})" if exec_s else ""
-            out.append(("dim", f"   ✓ {_truncate(result, 120)}{suffix}" if result else f"   ✓ done{suffix}"))
+            out.append((
+                "dim",
+                f"   {g_ok} {_truncate(result, 120)}{suffix}" if result else f"   {g_ok} done{suffix}",
+            ))
         elif etype == "tool_call_failed":
             err = data.get("error", msg)
-            out.append(("red", f"   ✗ {_truncate(err, 120)}"))
+            out.append(("red", f"   {g_err} {_truncate(err, 120)}"))
         elif etype in ("sub_agent_start",):
             name = data.get("agent_name") or ev.get("agent_id") or "sub-agent"
-            out.append(("magenta", f"👥 delegating to {name}"))
+            out.append(("magenta", f"{g_delegate} delegating to {name}"))
         elif etype == "task_decomposition":
-            out.append(("yellow", f"🧩 {msg or 'planning…'}"))
+            out.append(("yellow", f"{g_plan} {msg or 'planning…'}"))
         elif etype in ("task_complete", "answer"):
             if msg:
                 out.append(("dim", f"   {_truncate(msg, 120)}"))
     return out
 
 
-def execution_timeline_lines(trace: list[dict[str, Any]] | None) -> list[tuple[str, str]]:
+def execution_timeline_lines(
+    trace: list[dict[str, Any]] | None, *, stream: Any = None
+) -> list[tuple[str, str]]:
     """A compact per-step timeline: each step with a proportional bar + duration.
 
     Collapses the event stream into one line per meaningful step (a tool call,
     reasoning, or delegation), sizes a bar by the step's wall-clock share, and
     labels it with the elapsed time — so a run's slow steps are visible at a
     glance. Falls back to an empty list when there is nothing timed to show.
+
+    Step glyphs resolve through :func:`palette.glyph` (against *stream*) so a
+    non-UTF-8 console falls back to an ASCII form.
     """
+    from effgen.ui.palette import glyph
+
+    g_tool = glyph("tool", stream)
+    g_delegate = glyph("delegate", stream)
+    g_plan = glyph("plan", stream)
+
     events = list(trace or [])
     if not events:
         return []
@@ -520,12 +677,12 @@ def execution_timeline_lines(trace: list[dict[str, Any]] | None) -> list[tuple[s
             name = data.get("tool_name", "tool")
             tool_input = data.get("tool_input", data.get("input", ""))
             label = format_tool_call(name, tool_input) if tool_input else name
-            steps.append(("green", f"🔧 {label}", gaps[i]))
+            steps.append(("green", f"{g_tool} {label}", gaps[i]))
         elif etype == "sub_agent_start":
             name = data.get("agent_name") or ev.get("agent_id") or "sub-agent"
-            steps.append(("magenta", f"👥 {name}", gaps[i]))
+            steps.append(("magenta", f"{g_delegate} {name}", gaps[i]))
         elif etype == "task_decomposition":
-            steps.append(("yellow", "🧩 planning", gaps[i]))
+            steps.append(("yellow", f"{g_plan} planning", gaps[i]))
     if not steps:
         return []
 
