@@ -243,6 +243,23 @@ def test_piped_without_optin_withholds_and_exits_two(monkeypatch, tmp_path):
     assert "No changes were made" in stderr
 
 
+def test_partial_withholding_says_what_was_carried_out(monkeypatch, tmp_path):
+    # --auto-edit applies the write but still gates the shell command: the note
+    # must not claim nothing happened, and must name the flag that would allow
+    # what was withheld.
+    exit_code, _stdout, stderr = _run_command(
+        monkeypatch, tmp_path,
+        {"auto_edit": True},
+        actions=[("write", ("main.py", "x = 1\n")), ("shell", "ls")],
+        answer="wrote the file; the command needs confirmation.",
+    )
+    assert exit_code == 0
+    assert (tmp_path / "ws" / "main.py").exists()
+    assert "Some actions were not carried out" in stderr
+    assert "--yes" in stderr
+    assert "No changes were made" not in stderr
+
+
 def test_conflicting_permission_flags_error(monkeypatch, tmp_path):
     exit_code, stdout, stderr = _run_command(
         monkeypatch, tmp_path,

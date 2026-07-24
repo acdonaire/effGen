@@ -40,10 +40,22 @@ def _run(coro):
 @pytest.mark.parametrize(
     ("mode", "expected"),
     [
-        (PermissionMode.PLAN, {"write": False, "run": False, "shell": False}),
-        (PermissionMode.ASK, {"write": False, "run": False, "shell": False}),
-        (PermissionMode.AUTO_EDIT, {"write": True, "run": True, "shell": False}),
-        (PermissionMode.YES, {"write": True, "run": True, "shell": True}),
+        (
+            PermissionMode.PLAN,
+            {"write": False, "run": False, "shell": False, "git": False},
+        ),
+        (
+            PermissionMode.ASK,
+            {"write": False, "run": False, "shell": False, "git": False},
+        ),
+        (
+            PermissionMode.AUTO_EDIT,
+            {"write": True, "run": True, "shell": False, "git": False},
+        ),
+        (
+            PermissionMode.YES,
+            {"write": True, "run": True, "shell": True, "git": True},
+        ),
     ],
 )
 def test_policy_without_a_terminal(mode, expected, workspace):
