@@ -43,3 +43,43 @@ def test_local_engine_seed_makes_sampling_reproducible():
     assert first.strip()
     assert first == again, "same seed must reproduce identical sampled text"
     assert first != other, "a different seed must change the sampled text"
+
+
+@pytest.mark.skipif(not _HAS_CUDA, reason="SKIPPED: no CUDA device for local model")
+def test_local_engine_seed_honored_as_a_per_call_kwarg():
+    """``seed=`` passed alongside the other sampling kwargs behaves like the config field."""
+    model = load_model(MODEL_NAME)
+    sampling = {"temperature": 0.8, "top_p": 0.95, "max_tokens": 40}
+
+    first = model.generate(PROMPT, seed=1234, **sampling).text
+    again = model.generate(PROMPT, seed=1234, **sampling).text
+    other = model.generate(PROMPT, seed=9999, **sampling).text
+
+    assert first.strip()
+    assert first == again
+    assert first != other
+
+    # A per-call seed supersedes the one on the config, like every other override.
+    config = GenerationConfig(temperature=0.8, top_p=0.95, max_tokens=40, seed=1)
+    assert model.generate(PROMPT, config, seed=1234).text == first
+
+
+@pytest.mark.skipif(not _HAS_CUDA, reason="SKIPPED: no CUDA device for local model")
+def test_local_engine_streaming_is_seeded_too():
+    """A streamed generation reproduces from a fixed seed, same as a buffered one."""
+    model = load_model(MODEL_NAME)
+
+    def _stream(**kw) -> str:
+        return "".join(model.generate_stream(PROMPT, **kw))
+
+    sampling = {"temperature": 0.8, "top_p": 0.95, "max_tokens": 40}
+    first = _stream(seed=4242, **sampling)
+    again = _stream(seed=4242, **sampling)
+    other = _stream(seed=99, **sampling)
+
+    assert first.strip()
+    assert first == again
+    assert first != other
+    # The config field drives streaming identically to the kwarg.
+    config = GenerationConfig(temperature=0.8, top_p=0.95, max_tokens=40, seed=4242)
+    assert "".join(model.generate_stream(PROMPT, config)) == first

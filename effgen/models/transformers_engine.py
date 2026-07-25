@@ -649,6 +649,22 @@ class TransformersEngine(BatchModel):
         "max_new_tokens",
     )
 
+    def _seed_sampling(self, config: GenerationConfig | None, kwargs: dict[str, Any]) -> None:
+        """Seed the sampling RNGs so a fixed seed reproduces the text on-device.
+
+        The seed comes from a per-call ``seed=`` kwarg when given (removed from
+        ``kwargs`` so it is not forwarded on as an unknown generation parameter),
+        otherwise from ``config.seed`` — matching the precedence every other
+        per-call generation override follows. ``set_seed()`` covers torch (CPU +
+        CUDA), numpy and random; it only affects sampling, so greedy decoding
+        (``temperature<=0``) is unchanged either way.
+        """
+        seed = kwargs.pop("seed", None)
+        if seed is None:
+            seed = getattr(config, "seed", None)
+        if seed is not None:
+            _hf_set_seed(seed)
+
     def _sanitize_generation_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Translate per-call OpenAI-style generation kwargs to HuggingFace names.
 
@@ -790,6 +806,8 @@ class TransformersEngine(BatchModel):
             # passed to the chat template, not to HF generate()
             tools_for_template = kwargs.pop("tools", None)
 
+            self._seed_sampling(config, kwargs)
+
             # Sanitize per-call kwargs (OpenAI-style → HuggingFace) and fold them
             # into the GenerationConfig. Passing generation params alongside a
             # generation_config is deprecated in Transformers 5.x, so we merge
@@ -814,15 +832,6 @@ class TransformersEngine(BatchModel):
             # Move inputs to device
             if self.device != "cpu":
                 inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-
-            # Seed the sampling RNGs from config.seed so run(seed=...) is
-            # reproducible on-device: identical prompt + temperature + seed
-            # returns identical text. set_seed() covers torch (CPU + CUDA),
-            # numpy and random; it only affects sampling, so greedy decoding
-            # (temperature<=0) is unchanged either way.
-            _seed = getattr(config, "seed", None)
-            if _seed is not None:
-                _hf_set_seed(_seed)
 
             # Generate with sanitized kwargs
             with torch.no_grad():
@@ -1001,6 +1010,8 @@ class TransformersEngine(BatchModel):
 
             # Note: stop_sequences not fully supported in streaming mode
             # They would need to be checked in the consumer of the stream
+
+            self._seed_sampling(config, kwargs)
 
             # Fold any per-call generation kwargs into the config (Transformers
             # 5.x deprecates passing them alongside a generation_config); forward
