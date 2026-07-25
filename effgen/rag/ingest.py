@@ -399,7 +399,11 @@ def _load_docx(path: Path) -> list[dict[str, Any]]:
         if core.author:
             meta["author"] = core.author
         if core.created:
-            meta["date"] = str(core.created)
+            meta["date"] = (
+                core.created.isoformat()
+                if hasattr(core.created, "isoformat")
+                else str(core.created)
+            )
     except Exception:  # best-effort metadata; the document still ingests without it
         pass
     return [{"content": "\n\n".join(paragraphs), "metadata": meta}]

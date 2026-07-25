@@ -372,6 +372,23 @@ class TestDocumentIngester:
         import re
         assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)?$", date)
 
+    def test_docx_creation_date_normalized_to_iso8601(self, tmp_path: Path):
+        # The docx `date` uses the same ISO-8601 shape as the pdf and xlsx
+        # loaders, so a consumer can parse `metadata["date"]` the same way for
+        # every document type.
+        docx = pytest.importorskip("docx")
+        path = tmp_path / "dated.docx"
+        doc = docx.Document()
+        doc.add_paragraph("Some content.")
+        doc.save(str(path))
+        chunks = DocumentIngester(show_progress=False).ingest(path)
+        date = chunks[0].metadata.get("date")
+        assert date is not None
+        import re
+        assert re.match(
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:\d{2}|Z)?$", date
+        ), date
+
     def test_duplicate_file_reported_as_duplicate_not_empty(self, tmp_path: Path):
         # A file whose content is an exact duplicate of an already-indexed file
         # is named as a duplicate, distinct from a genuinely empty file, so a
