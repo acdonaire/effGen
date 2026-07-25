@@ -211,8 +211,17 @@ _TOOLCALL_TAG_RE = re.compile(
 # separating space the brace block must additionally look like a JSON argument
 # object (a quoted key or an empty object), so prose or code that opens with
 # something like "body{color:red}" is left alone.
+#
+# A model that starts to emit a tag and abandons it leaves a stray angle bracket
+# on the same shape ('<wikipedia {"query": "x"}', sometimes closed with '>').
+# That form is stripped too, but only when the braces look like a JSON argument
+# object, so a template or markup answer opening with '<template {{ x }}>' is
+# left alone.
 _LEADING_TOOLCALL_ECHO_RE = re.compile(
-    r"^[a-z_][a-z0-9_]{1,63}(?:[ \t]+|(?=\{[ \t\r\n]*[\"}]))" + _JSON_OBJ + r"[ \t\n]*"
+    r"^(?:"
+    r"<[a-z_][a-z0-9_]{1,63}[ \t]*(?=\{[ \t\r\n]*[\"}])"
+    r"|[a-z_][a-z0-9_]{1,63}(?:[ \t]+|(?=\{[ \t\r\n]*[\"}]))"
+    r")" + _JSON_OBJ + r">?[ \t\n]*"
 )
 
 

@@ -115,6 +115,19 @@ def test_strips_tool_call_syntax(leaked, expected):
         ('calculator{"expression": "6*7"}\nThe answer is 42.', "The answer is 42."),
         # Empty argument object, still a tool-call echo.
         ("issue_refund{}\nRefund issued.", "Refund issued."),
+        # A model that begins a tag and abandons it leaves a stray "<" on the
+        # same shape. Groq llama-3.1-8b-instant returned this as a whole answer.
+        (
+            '<wikipedia {"operation": "search", "query": "Eiffel Tower"}',
+            "",
+        ),
+        (
+            '<wikipedia {"operation": "search"} \nThe tower was completed in 1889.',
+            "The tower was completed in 1889.",
+        ),
+        # Closed with a matching ">".
+        ('<calculator {"expression": "1889+11"}>The answer is 1900.', "The answer is 1900."),
+        ('<calculator{"expression": "6*7"}>42', "42"),
     ],
 )
 def test_strips_leading_untagged_tool_call_echo(leaked, expected):
@@ -133,6 +146,11 @@ def test_strips_leading_untagged_tool_call_echo(leaked, expected):
         # argument object, so a CSS rule or a brace block with bare keys stays.
         "body{color:red} is the CSS you want.",
         "config{alpha: 1} means something.",
+        # An angle-bracketed opening only counts when the braces look like a
+        # JSON argument object, so markup and templates are left alone.
+        "<template {{ item }}> renders each row.",
+        '<div class="x">hello</div>',
+        "<section {alpha: 1}> is not a tool call.",
     ],
 )
 def test_leading_json_like_prose_not_corrupted(text):
