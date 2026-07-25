@@ -853,5 +853,35 @@ def test_banner_no_first_run_note_when_model_given():
     assert not any("first run downloads" in m for m in cli.messages)
 
 
+def test_tool_turn_uses_the_agents_configured_mode():
+    """A tool turn must not force automatic routing.
+
+    Forcing it lets the router decompose an ordinary question into sub-agents,
+    which answers from a synthesis step instead of the tool result. ``effgen
+    run`` leaves the mode to the agent's own config; chat does the same.
+    """
+    repl, _ = _make_repl(model="groq:llama-3.1-8b-instant")
+    seen: dict[str, Any] = {}
+
+    def _run(task, **kwargs):
+        seen["task"] = task
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(
+            output="9396",
+            success=True,
+            metadata={},
+            tokens_used=12,
+            execution_trace=[],
+        )
+
+    repl.agent = SimpleNamespace(run=_run, execution_tracker=None)
+    repl.animate = False
+    repl.interactive = False
+
+    assert repl._run_with_tools("What is 348 * 27?") == "9396"
+    assert seen["task"] == "What is 348 * 27?"
+    assert "mode" not in seen["kwargs"]
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

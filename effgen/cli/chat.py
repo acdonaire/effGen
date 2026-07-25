@@ -671,9 +671,14 @@ class ChatREPL:
         ).strip()
 
     def _run_with_tools(self, user_input: str) -> str:
-        """Run a tool-enabled turn under the live-status spinner, then show the answer."""
-        from effgen.core.agent import AgentMode
+        """Run a tool-enabled turn under the live-status spinner, then show the answer.
 
+        The turn uses the agent's own configured mode (single-agent unless the
+        caller set another), the same default `effgen run` uses. Forcing
+        automatic routing here would let the router decompose an ordinary
+        question into sub-agents, which costs several extra model calls and
+        answers from a synthesis step rather than from the tool result.
+        """
         if self.animate and self.console:
             reasoning = _progress.is_reasoning_agent(self.agent)
             with _progress.LiveStatus(
@@ -683,11 +688,11 @@ class ChatREPL:
                 tracker=self.agent.execution_tracker,
                 hint="Ctrl-C to cancel",
             ):
-                response = self.agent.run(user_input, mode=AgentMode.AUTO)
+                response = self.agent.run(user_input)
         else:
             if not self.quiet and self.interactive:
                 print("Thinking…")
-            response = self.agent.run(user_input, mode=AgentMode.AUTO)
+            response = self.agent.run(user_input)
 
         try:
             self.last_trace = response.execution_trace or None
