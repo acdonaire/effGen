@@ -127,6 +127,22 @@ class PromptInjectionGuardrail(Guardrail):
             r"(?:original|full|complete|entire)\s+(?:prompt|instructions?)))",
             re.I,
         ),
+        # Same reframing verbs against an unqualified object. The possessive
+        # "your prompt"/"your instructions" is the discriminator: it can only
+        # mean the agent's own instructions, whereas "the instructions" is
+        # commonly a document the user wants help with and is not matched here.
+        re.compile(
+            r"\b(?:show|reveal|print|display|output|repeat|echo|tell|give|what\s+(?:is|are)|"
+            r"translate|paraphrase|summarize|summarise|rephrase|explain|convert)"
+            r"(?:\s+me)?\s+your\s+(?:prompt|instructions?|rules|guidelines)\b",
+            re.I,
+        ),
+        # Explicit self-reference: "the instructions you were given/received".
+        re.compile(
+            r"\b(?:the\s+|your\s+)?(?:prompt|instructions?|rules|guidelines)\s+"
+            r"you\s+(?:were\s+(?:given|provided|handed)|received|have\s+been\s+given)\b",
+            re.I,
+        ),
         # Prompt-leak: "repeat / print the text above ..."
         re.compile(
             r"\b(?:repeat|print|output|echo|show|reveal|say|spell\s+out)\s+(?:back\s+)?"
