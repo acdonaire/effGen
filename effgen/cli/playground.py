@@ -56,9 +56,24 @@ def _print(msg: str) -> None:
         print(msg)
 
 
+def _plain(text: str) -> str:
+    """Neutralize console-markup syntax in text that came from a model or a file.
+
+    Rendered prompts, model output and error details routinely contain square
+    brackets. Left unescaped, ``[empty result]`` is consumed as a style tag and
+    disappears, and a ``[/…]`` sequence aborts the command with a markup error
+    instead of showing the answer.
+    """
+    if not (_RICH and _console):
+        return text
+    from rich.markup import escape
+
+    return escape(text)
+
+
 def _print_prompt(text: str) -> None:
     if _RICH and _console:
-        _console.print(Panel(text, title="Rendered Prompt", border_style="green"))
+        _console.print(Panel(_plain(text), title="Rendered Prompt", border_style="green"))
     else:
         print("\n--- Rendered Prompt ---")
         print(text)
@@ -67,7 +82,9 @@ def _print_prompt(text: str) -> None:
 
 def _print_output(text: str, model: str) -> None:
     if _RICH and _console:
-        _console.print(Panel(text, title=f"Model Output ({model})", border_style="blue"))
+        _console.print(
+            Panel(_plain(text), title=f"Model Output ({model})", border_style="blue")
+        )
     else:
         print(f"\n--- Model Output ({model}) ---")
         print(text)
@@ -76,21 +93,21 @@ def _print_output(text: str, model: str) -> None:
 
 def _print_err(msg: str) -> None:
     if _RICH and _console:
-        _console.print(f"[red]Error:[/red] {msg}")
+        _console.print(f"[red]Error:[/red] {_plain(msg)}")
     else:
         print(f"Error: {msg}", file=sys.stderr)
 
 
 def _print_warn(msg: str) -> None:
     if _RICH and _console:
-        _console.print(f"[yellow]Warning:[/yellow] {msg}")
+        _console.print(f"[yellow]Warning:[/yellow] {_plain(msg)}")
     else:
         print(f"Warning: {msg}")
 
 
 def _print_ok(msg: str) -> None:
     if _RICH and _console:
-        _console.print(f"[green]{msg}[/green]")
+        _console.print(f"[green]{_plain(msg)}[/green]")
     else:
         print(msg)
 
@@ -286,6 +303,17 @@ def _report_empty_result(result: "RunOutput", model: str) -> None:
     _print_err(f"Model returned no usable output — {detail}")
 
 
+def _report_truncated_result(result: "RunOutput") -> None:
+    """Flag an answer the model was still writing when the budget ran out."""
+    cap = result.max_tokens
+    cap_note = f" (currently {cap})" if cap is not None else ""
+    _print_err(
+        "Output is incomplete — the model stopped at the token budget "
+        f"(finish_reason={result.finish_reason!r}). Raise the cap with "
+        f"--max-tokens{cap_note} to get the full answer."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Non-interactive entry-points
 # ---------------------------------------------------------------------------
@@ -407,6 +435,9 @@ def cmd_run(
     _print_output(result.text, model)
     _print_run_footer(result)
     _print_shape_verdict(p, result.text)
+    if result.truncated:
+        _report_truncated_result(result)
+        return 1
     return 0
 
 
@@ -661,6 +692,8 @@ class PlaygroundREPL:
         _print_output(result.text, model)
         _print_run_footer(result)
         _print_shape_verdict(p, result.text)
+        if result.truncated:
+            _report_truncated_result(result)
 
     def _cmd_save(self, rest: str) -> None:
         path_str = rest.strip()

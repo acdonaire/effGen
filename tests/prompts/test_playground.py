@@ -652,6 +652,27 @@ class TestRunFailClosed:
         assert "tokens: 15 (10 in / 5 out)" in out
         assert "cost: $0.000120" in out
 
+    def test_truncated_nonempty_result_exits_nonzero(self, monkeypatch, capsys):
+        from effgen.cli.playground import cmd_run
+        from effgen.prompts.library.eval import RunOutput
+
+        self._stub(
+            monkeypatch,
+            RunOutput(
+                text='{"issues": [{"severity": "hi',
+                finish_reason="length",
+                truncated=True,
+                max_tokens=16,
+            ),
+        )
+        rc = cmd_run("coding.code_review.v1", {}, "groq:llama-3.1-8b-instant")
+        assert rc == 1
+        out = capsys.readouterr().out
+        # The partial answer is still shown, alongside a named reason.
+        assert '"issues"' in out
+        assert "Output is incomplete" in out
+        assert "--max-tokens (currently 16)" in out
+
     def test_structured_verdict_reported(self, monkeypatch, capsys):
         from effgen.cli.playground import cmd_run
         from effgen.prompts.library.eval import RunOutput
@@ -665,6 +686,35 @@ class TestRunFailClosed:
         assert rc == 0
         out = capsys.readouterr().out
         assert "expected_shape" in out
+
+
+class TestBracketedTextIsPrintedVerbatim:
+    """Model output and error details keep their square brackets on a rich console."""
+
+    def test_output_with_closing_tag_does_not_abort(self, capsys):
+        from effgen.cli.playground import _print_output
+
+        _print_output("See [ref] and [/close] markers.", "groq:llama-3.1-8b-instant")
+        out = capsys.readouterr().out
+        assert "[ref]" in out
+        assert "[/close]" in out
+
+    def test_empty_result_marker_is_visible(self, monkeypatch, capsys):
+        from effgen.cli.playground import cmd_run
+        from effgen.prompts.library.eval import RunOutput
+
+        def fake_run(rendered, model, *, max_tokens=None, temperature=None):
+            return RunOutput(text="", finish_reason="length", truncated=True, max_tokens=16)
+
+        monkeypatch.setattr("effgen.cli.playground._run_prompt", fake_run)
+        assert cmd_run("business.elevator_pitch.v1", {}, "openai:gpt-5-nano") == 1
+        assert "[empty result]" in capsys.readouterr().out
+
+    def test_rendered_prompt_with_brackets_survives(self, capsys):
+        from effgen.cli.playground import _print_prompt
+
+        _print_prompt("Return [/json] verbatim")
+        assert "[/json]" in capsys.readouterr().out
 
 
 class TestRunOutput:
