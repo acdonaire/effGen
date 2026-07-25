@@ -77,7 +77,7 @@ docker run --rm -p 8080:8080 \
 ## Docker Compose
 
 A ready-to-run `deploy/docker/docker-compose.yml` builds the image and starts
-the server (dev mode, auth disabled) in one command:
+the server (dev mode, auth disabled, published on loopback only) in one command:
 
 ```bash
 docker compose -f deploy/docker/docker-compose.yml up --build
@@ -96,7 +96,7 @@ services:
         EXTRAS: server
     image: effgen:local
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       EFFGEN_DEV_MODE: "1"
       EFFGEN_PORT: "8080"
@@ -107,8 +107,9 @@ services:
       retries: 3
 ```
 
-For a deployment that faces a network, drop `EFFGEN_DEV_MODE` and set the
-`EFFGEN_OIDC_*` variables (see "Production run" above).
+For a deployment that faces a network, drop `EFFGEN_DEV_MODE`, set the
+`EFFGEN_OIDC_*` variables (see "Production run" above), and widen the port
+mapping to `"8080:8080"`.
 
 ## Building for multiple architectures
 
