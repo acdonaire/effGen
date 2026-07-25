@@ -33,7 +33,7 @@ class LibraryPrompt:
     fixture: dict[str, Any]
     """Default input values used by the eval harness."""
 
-    expected_shape: dict[str, Any] | None
+    expected_shape: dict[str, Any] | None = None
     """Optional output shape spec:
        {'type': 'json', 'schema': {...}}
        {'type': 'regex', 'pattern': '...'}

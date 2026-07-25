@@ -150,7 +150,13 @@ PROMPTS = [
 ]
 
 # Option B: call registry.register(prompt) directly instead of PROMPTS.
+#
+#   from effgen.prompts.library import registry
+#   registry.register(LibraryPrompt(name=..., domain=..., ...))
 ```
+
+`expected_shape` defaults to `None`; set it only when you want
+`prompts run`/`prompts eval` to check the output's shape.
 
 Within a running Python process you can also add a template in-process:
 
