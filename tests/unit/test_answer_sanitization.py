@@ -109,6 +109,12 @@ def test_strips_tool_call_syntax(leaked, expected):
         ('calculator {"expression": "6*7"} 42', "42"),
         # Same-line, no newline separator.
         ('issue_refund {"order_id": "ORD-1001"} Refund not issued.', "Refund not issued."),
+        # No separator at all between the name and its arguments — the shape a
+        # model emits when the tool name and JSON are concatenated.
+        ('mcp_p64_echo{"text": "world"}', ""),
+        ('calculator{"expression": "6*7"}\nThe answer is 42.', "The answer is 42."),
+        # Empty argument object, still a tool-call echo.
+        ("issue_refund{}\nRefund issued.", "Refund issued."),
     ],
 )
 def test_strips_leading_untagged_tool_call_echo(leaked, expected):
@@ -123,6 +129,10 @@ def test_strips_leading_untagged_tool_call_echo(leaked, expected):
         # Capitalized "word {...}" is not a tool-name shape (tool names are
         # lowercase snake_case) and must be left alone.
         'Config {"debug": true} is enabled',
+        # Without a separating space the brace block must look like a JSON
+        # argument object, so a CSS rule or a brace block with bare keys stays.
+        "body{color:red} is the CSS you want.",
+        "config{alpha: 1} means something.",
     ],
 )
 def test_leading_json_like_prose_not_corrupted(text):

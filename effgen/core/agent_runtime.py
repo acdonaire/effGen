@@ -202,13 +202,17 @@ _TOOLCALL_TAG_RE = re.compile(
     re.IGNORECASE,
 )
 # A leaked tool call with no wrapping tag at all — just the bare tool name
-# immediately followed by its JSON arguments, e.g.
-# 'order_lookup {"order_id": "ORD-1001"} \nThe order status is "shipped"'.
+# followed by its JSON arguments, e.g.
+# 'order_lookup {"order_id": "ORD-1001"} \nThe order status is "shipped"' or,
+# with no separator at all, 'get_order{"order_id": "ORD-1001"}'.
 # Anchored to the very start of the text (never mid-sentence) so an ordinary
 # answer that happens to contain "word {...}" is never touched; a tool name
-# is always a lowercase snake_case identifier by effGen convention.
+# is always a lowercase snake_case identifier by effGen convention. Without a
+# separating space the brace block must additionally look like a JSON argument
+# object (a quoted key or an empty object), so prose or code that opens with
+# something like "body{color:red}" is left alone.
 _LEADING_TOOLCALL_ECHO_RE = re.compile(
-    r"^[a-z_][a-z0-9_]{1,63}[ \t]+" + _JSON_OBJ + r"[ \t\n]*"
+    r"^[a-z_][a-z0-9_]{1,63}(?:[ \t]+|(?=\{[ \t\r\n]*[\"}]))" + _JSON_OBJ + r"[ \t\n]*"
 )
 
 
