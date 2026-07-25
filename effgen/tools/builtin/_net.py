@@ -83,13 +83,22 @@ def check_url_safe(
 
     Raises :class:`BlockedURLError` if the URL must not be fetched.
     """
-    parsed = urlparse(url)
+    # A malformed URL raises either here (an unclosed IPv6 literal) or only when
+    # the authority is read below (a non-numeric port), so both are turned into
+    # a refusal naming the URL instead of a bare urllib ValueError.
+    try:
+        parsed = urlparse(url)
+    except ValueError as e:
+        raise BlockedURLError(f"Refusing to fetch unparseable URL '{url}': {e}") from e
     if parsed.scheme not in ("http", "https"):
         raise BlockedURLError(
             f"Refusing to fetch non-http(s) URL '{url}' (scheme "
             f"'{parsed.scheme or 'none'}')."
         )
-    host = parsed.hostname
+    try:
+        host = parsed.hostname
+    except ValueError as e:
+        raise BlockedURLError(f"Refusing to fetch unparseable URL '{url}': {e}") from e
     if not host:
         raise BlockedURLError(f"URL '{url}' has no host")
 
@@ -115,7 +124,10 @@ def check_url_safe(
             )
         return
 
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as e:
+        raise BlockedURLError(f"Refusing to fetch unparseable URL '{url}': {e}") from e
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as e:

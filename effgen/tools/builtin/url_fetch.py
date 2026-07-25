@@ -22,12 +22,16 @@ from ..base_tool import (
 )
 from ._net import (
     _METADATA_IPS,  # noqa: F401  (back-compat re-export)
+    BlockedURLError,
     check_url_safe,
     safe_requests_get,
     safe_urlopen,
 )
 from ._net import BlockedURLError as _BlockedURLError  # noqa: F401  (back-compat re-export)
 from ._net import is_blocked_ip as _is_blocked_ip  # noqa: F401  (back-compat re-export)
+
+# "scheme://" at the start of a URL, per RFC 3986 scheme syntax.
+_HAS_SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
 
 
 def _get_user_agent() -> str:
@@ -184,11 +188,21 @@ class URLFetchTool(BaseTool):
     def _validate_url(self, url: str) -> str:
         """Validate and normalize URL (scheme, domain lists, SSRF guard)."""
         url = url.strip()
-        if not url.startswith(("http://", "https://")):
+        # A bare host ("example.com/page") gets https://; a URL that already
+        # names a scheme keeps it, so `check_url_safe` can reject a non-http(s)
+        # one by name. Prepending to "file:///etc/passwd" would turn the scheme
+        # into the hostname and report a DNS failure instead.
+        if not _HAS_SCHEME.match(url):
             url = "https://" + url
 
-        parsed = urlparse(url)
-        domain = parsed.hostname or ""
+        # A malformed URL raises at the parse (an unclosed IPv6 literal) or only
+        # when the authority is read (a non-numeric port). Both are reported as
+        # a refusal naming the URL, the same wording the shared guard uses.
+        try:
+            parsed = urlparse(url)
+            domain = parsed.hostname or ""
+        except ValueError as e:
+            raise BlockedURLError(f"Refusing to fetch unparseable URL '{url}': {e}") from e
 
         if self.allowed_domains and domain not in self.allowed_domains:
             raise ValueError(f"Domain '{domain}' not in allowed domains list")

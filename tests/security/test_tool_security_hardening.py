@@ -674,6 +674,46 @@ class TestSharedSSRFGuard:
 
         assert url_fetch._is_blocked_ip is _net.is_blocked_ip
 
+    @pytest.mark.parametrize(
+        "url,scheme",
+        [
+            ("file:///etc/passwd", "file"),
+            ("ftp://example.com/x", "ftp"),
+            ("gopher://evil.example.com/", "gopher"),
+        ],
+    )
+    def test_url_fetch_rejects_non_http_scheme_by_name(self, url, scheme):
+        # A non-http(s) scheme reaches the shared guard and is refused by name.
+        # Normalizing it to "https://" + url first would make the scheme the
+        # hostname, turning a scheme rejection into a DNS lookup failure.
+        from effgen.tools.builtin._net import BlockedURLError
+        from effgen.tools.builtin.url_fetch import URLFetchTool
+
+        with pytest.raises(BlockedURLError) as exc:
+            URLFetchTool()._validate_url(url)
+        assert f"scheme '{scheme}'" in str(exc.value)
+
+    def test_url_fetch_still_normalizes_a_bare_host(self):
+        from effgen.tools.builtin.url_fetch import URLFetchTool
+
+        tool = URLFetchTool()
+        assert tool._validate_url("example.com/page") == "https://example.com/page"
+        assert tool._validate_url("example.com:8080/page") == "https://example.com:8080/page"
+        assert tool._validate_url("http://example.com/x") == "http://example.com/x"
+
+    @pytest.mark.parametrize("url", ["https://host:not-a-port/x", "http://[::1/x"])
+    def test_unparseable_url_is_refused_by_name(self, url):
+        # urlparse raises on an unclosed IPv6 literal and defers a bad port to
+        # attribute access, so an unparseable URL must come back as a refusal
+        # naming the URL — not as a bare urllib ValueError.
+        from effgen.tools.builtin._net import BlockedURLError, check_url_safe
+        from effgen.tools.builtin.url_fetch import URLFetchTool
+
+        with pytest.raises(BlockedURLError, match="unparseable URL"):
+            check_url_safe(url)
+        with pytest.raises(BlockedURLError, match="unparseable URL"):
+            URLFetchTool()._validate_url(url)
+
 
 # --------------------------------------------------------------------------- #
 # file-path tools may not read sensitive locations; tighten on demand    #
