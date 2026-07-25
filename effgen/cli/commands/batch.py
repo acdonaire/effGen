@@ -209,12 +209,30 @@ def _handle_batch_command(args, cli) -> int:
         def _on_empty(lineno: int, keys: list[str]) -> None:
             empty_rows.append((lineno, keys))
 
+        def _empty_rows_message() -> str:
+            """Name the fields the first unusable row carried and how to point at one."""
+            lineno, keys = empty_rows[0]
+            fields = ", ".join(keys) if keys else "none"
+            more = f" (and {len(empty_rows) - 1} more)" if len(empty_rows) > 1 else ""
+            return (
+                f"Row {lineno}{more} has no query text. Fields present: {fields}. "
+                f"Set the query column with --query-field NAME, or key rows on one "
+                f"of: {', '.join(_QUERY_ALIASES)}."
+            )
+
         try:
             queries = runner._read_queries(
                 Path(input_path), query_field, strict=strict,
                 on_skip=_on_skip, on_empty=_on_empty,
             )
         except Exception as e:  # noqa: BLE001 - one clear message, no traceback
+            # When every row lacked a recognized query field the read raises
+            # before any query is collected, so report the fields those rows
+            # carried instead of a generic "no queries found".
+            if empty_rows:
+                msg = _empty_rows_message()
+                cli.print_error(msg)
+                return _json_error(ValueError(msg))
             cli.print_error(f"Could not read {input_path}: {e}")
             return _json_error(e)
         if skipped:
@@ -228,14 +246,7 @@ def _handle_batch_command(args, cli) -> int:
         # did carry and how to point at the right one, rather than letting each
         # empty row fail with a generic empty-task message.
         if empty_rows:
-            lineno, keys = empty_rows[0]
-            fields = ", ".join(keys) if keys else "none"
-            more = f" (and {len(empty_rows) - 1} more)" if len(empty_rows) > 1 else ""
-            msg = (
-                f"Row {lineno}{more} has no query text. Fields present: {fields}. "
-                f"Set the query column with --query-field NAME, or key rows on one "
-                f"of: {', '.join(_QUERY_ALIASES)}."
-            )
+            msg = _empty_rows_message()
             cli.print_error(msg)
             return _json_error(ValueError(msg))
 

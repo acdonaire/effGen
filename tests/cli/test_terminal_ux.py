@@ -87,6 +87,47 @@ def test_batch_bad_output_format_json_error_object(tmp_path, capsys):
 
 
 # --------------------------------------------------------------------------- #
+# batch names the fields an unusable row carried, even when no row is usable
+# --------------------------------------------------------------------------- #
+def _batch_unusable_rows_args(tmp_path, monkeypatch, extra=()):
+    """A batch invocation whose every input row lacks recognized query text."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-not-a-real-key-for-parsing-only")
+    src = tmp_path / "in.jsonl"
+    src.write_text('{"note": "hi", "id": 3}\n', encoding="utf-8")
+    parser = _main.create_parser()
+    return parser.parse_args([
+        "batch", str(src), "-o", str(tmp_path / "out.jsonl"),
+        "-m", "openai:gpt-5-nano", *extra,
+    ])
+
+
+def test_batch_all_rows_missing_query_text_names_fields(tmp_path, monkeypatch, capsys):
+    args = _batch_unusable_rows_args(tmp_path, monkeypatch)
+    cli = _main.CLIInterface()
+    cli.console = None
+    code = _main._handle_batch_command(args, cli)
+    text = "".join(capsys.readouterr())
+    assert code == 1
+    # Names the fields the row did carry and how to point at the query column,
+    # rather than referring to skip messages that were never printed.
+    assert "Fields present: id, note" in text
+    assert "--query-field" in text
+    assert "messages above" not in text
+
+
+def test_batch_all_rows_missing_query_text_json_error(tmp_path, monkeypatch, capsys):
+    args = _batch_unusable_rows_args(tmp_path, monkeypatch, extra=("--json", "-q"))
+    cli = _main.CLIInterface()
+    cli.console = None
+    code = _main._handle_batch_command(args, cli)
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["success"] is False
+    assert "Fields present: id, note" in payload["error"]["message"]
+    assert "--query-field" in payload["error"]["message"]
+
+
+# --------------------------------------------------------------------------- #
 # batch positional input + chat --tools
 # --------------------------------------------------------------------------- #
 def test_batch_accepts_positional_input():
