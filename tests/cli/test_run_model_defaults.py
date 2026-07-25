@@ -78,3 +78,20 @@ def test_no_model_default_falls_back_to_local(monkeypatch):
     assert provider is None
     assert "/" in model_id  # a HF-style local id
     assert "local" in reason.lower()
+    # The engine prefix is part of the id. The bare repo id also appears in a
+    # cloud provider's catalog, so a caller that routes bare ids by catalog
+    # would send the keyless fallback to a provider whose key is missing.
+    assert model_id.startswith("transformers:")
+
+
+def test_local_fallback_id_names_the_local_engine(monkeypatch):
+    import effgen.models.cerebras_adapter  # noqa: F401  (populates the registry)
+    from effgen.models.registry import ProviderRegistry
+
+    monkeypatch.setattr("effgen.models.auth.check_keys", lambda: {}, raising=False)
+    model_id, _provider, _reason = _main._quickstart_suggest_model()
+    engine, _, bare = model_id.partition(":")
+    assert engine == "transformers"
+    # Without the prefix this id is claimed by a cloud catalog — the reason the
+    # prefix has to be part of the suggestion.
+    assert ProviderRegistry._model_index.get(bare)

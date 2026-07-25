@@ -179,7 +179,10 @@ _QUICKSTART_CLOUD_MODELS: tuple[tuple[str, str], ...] = (
     ("gemini", "gemini-3.1-flash-lite"),
     ("cerebras", "gpt-oss-120b"),
 )
-_QUICKSTART_LOCAL_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+# The engine prefix is part of the id: the bare repo id also appears in a cloud
+# provider's catalog, and a caller that auto-routes bare ids by catalog would
+# send this suggestion to that provider — whose key is, by definition, absent.
+_QUICKSTART_LOCAL_MODEL = "transformers:Qwen/Qwen2.5-1.5B-Instruct"
 
 
 def _quickstart_suggest_model() -> tuple[str, str | None, str]:
