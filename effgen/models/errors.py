@@ -556,6 +556,9 @@ DEVICE_MEMORY_SIGNALS = (
     "not enough memory",
     "insufficient device memory",
     "failed to allocate",
+    # A quantized load that does not fit reports the shortfall as an offload
+    # instruction rather than an allocation failure.
+    "enough gpu ram",
 )
 
 
@@ -707,6 +710,11 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
     )):
         return _INVALID
     if any(k in msg for k in ("model_not_found", "does not exist", "not found", "no such model", "unknown model")):
+        return _NOT_FOUND
+    # Hugging Face phrases a missing/inaccessible repo id without the words
+    # "not found", so match its wording too — retrying such a load never
+    # succeeds and the caller needs the model-id remediation, not a retry.
+    if "is not a local folder" in msg or "not a valid model identifier" in msg:
         return _NOT_FOUND
     if "timed out" in msg or "timeout" in msg:
         return _TIMEOUT

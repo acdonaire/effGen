@@ -199,6 +199,37 @@ def test_classify_by_name_and_message():
     assert classify_provider_error(Exception("something weird")).should_retry is True
 
 
+def test_classify_huggingface_missing_repo_is_not_found():
+    """A missing/inaccessible HF repo id is not_found, so the load is not retried."""
+    hf_msg = (
+        "totally-not-a-model-xyz is not a local folder and is not a valid model "
+        "identifier listed on 'https://huggingface.co/models'\nIf this is a private "
+        "repository, make sure to pass a token having permission to this repo either "
+        "by logging in with `hf auth login` or by passing `token=<your_token>`"
+    )
+    cls = classify_provider_error(RuntimeError(hf_msg))
+    assert cls.category == "not_found"
+    assert cls.not_found is True
+    assert cls.should_retry is False
+    # Transient/auth/rate-limit wordings keep their own categories.
+    assert classify_provider_error(Exception("connection error to host")).category == "transient"
+    assert classify_provider_error(Exception("rate limit exceeded")).category == "rate_limited"
+
+
+def test_classify_quantized_load_that_does_not_fit_is_resource_exhausted():
+    """A quantized load with too little VRAM reports an offload instruction, not an OOM."""
+    msg = (
+        "Some modules are dispatched on the CPU or the disk. Make sure you have "
+        "enough GPU RAM to fit the quantized model. If you want to dispatch the "
+        "model on the CPU or the disk while keeping these modules in 32-bit, you "
+        "need to set `llm_int8_enable_fp32_cpu_offload=True`"
+    )
+    cls = classify_provider_error(RuntimeError(msg))
+    assert cls.category == "resource_exhausted"
+    assert cls.should_retry is False
+    assert classify_provider_error(RuntimeError("CUDA out of memory")).category == "resource_exhausted"
+
+
 # ---------------------------------------------------------------------------
 # run() failure semantics
 # ---------------------------------------------------------------------------
