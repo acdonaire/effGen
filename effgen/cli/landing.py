@@ -86,6 +86,9 @@ def _render(console: Any) -> None:
     """Draw the logo, version/environment lines, and the quick-action list."""
     import platform
 
+    from effgen.ui.render import ascii_fold
+
+    stream = getattr(console, "file", None)
     theme = resolve_theme_name()
     py = platform.python_version()
 
@@ -93,17 +96,17 @@ def _render(console: Any) -> None:
     console.print(brand.logo_renderable(console=console))
     console.print()
     console.print(
-        f"effGen v{__version__} · agents on small (and cloud) models",
+        ascii_fold(f"effGen v{__version__} · agents on small (and cloud) models", stream),
         style="effgen.accent",
     )
     console.print(
-        f"Python {py} · theme: {theme} · docs.effgen.org",
+        ascii_fold(f"Python {py} · theme: {theme} · docs.effgen.org", stream),
         style="effgen.muted",
     )
     console.print()
     console.print("What next?", style="effgen.heading")
     for key, desc, _target in _ACTIONS:
-        console.print(f"  [effgen.accent]\\[{key}][/effgen.accent]  {desc}")
+        console.print(f"  [effgen.accent]\\[{key}][/effgen.accent]  {ascii_fold(desc, stream)}")
     console.print()
 
 

@@ -179,7 +179,7 @@ def maybe_print_tip(*, quiet: bool = False, force: bool = False, stream: Any = N
 # ---------------------------------------------------------------------------
 
 _WELCOME_TEXT = """\
-👋 Welcome to effGen — a framework for building agents with small (and cloud) models.
+{welcome}Welcome to effGen — a framework for building agents with small (and cloud) models.
 
 Get started in four steps:
   1. effgen doctor              # check which providers are ready to use
@@ -194,6 +194,15 @@ Or in Python:
 
 (This welcome shows only once. See effgen --help for everything.)
 """
+
+
+def welcome_text(stream: Any = None) -> str:
+    """Return the first-run welcome, glyphed and ASCII-folded for *stream*."""
+    from effgen.ui.palette import glyph
+    from effgen.ui.render import ascii_fold
+
+    mark = glyph("welcome", stream)
+    return ascii_fold(_WELCOME_TEXT.format(welcome=f"{mark} " if mark else ""), stream)
 
 
 def first_run_pending() -> bool:
@@ -229,10 +238,11 @@ def _render_welcome_panel() -> bool:
 
     from effgen.ui import brand
 
-    title = brand.wordmark(stream=getattr(console, "file", None))
+    stream = getattr(console, "file", None)
+    title = brand.wordmark(stream=stream)
     console.print(
         Panel(
-            Text(_WELCOME_TEXT.strip()),
+            Text(welcome_text(stream).strip()),
             title=f"[effgen.title]{title}[/effgen.title]",
             border_style="effgen.accent",
             padding=(1, 2),
@@ -261,7 +271,7 @@ def maybe_show_first_run_welcome(*, quiet: bool = False, stream: Any = None) -> 
         return True
     out = stream if stream is not None else sys.stdout
     try:
-        print(_WELCOME_TEXT, file=out)
+        print(welcome_text(out), file=out)
     except Exception:  # noqa: BLE001
         return False
     return True
