@@ -113,6 +113,7 @@ class AppliedEdit:
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, object]:
+        """Return the record as a JSON-serializable dict for the journal file."""
         return {
             "path": self.rel_path,
             "before": self.before,
@@ -123,6 +124,7 @@ class AppliedEdit:
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "AppliedEdit":
+        """Rebuild a record from a journal entry, tolerating missing fields."""
         return cls(
             rel_path=str(data.get("path", "")),
             before=data.get("before"),  # type: ignore[arg-type]
