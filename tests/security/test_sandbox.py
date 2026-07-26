@@ -590,7 +590,7 @@ class TestCodeExecutorSandboxIntegration:
         )
 
 
-class TestPublicCodeExecutorHonesty:
+class TestPublicCodeExecutorStatesItsIsolation:
     """`from effgen import CodeExecutor` documents its isolation level plainly."""
 
     def test_public_export_still_resolves(self):
