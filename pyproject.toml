@@ -288,7 +288,9 @@ audio = [
 ]
 youtube = [
     "youtube-transcript-api>=1.0.0",
-    "yt-dlp>=2024.1.1",
+    # 2026.7.4 is the first release that clears CVE-2026-55404 (the
+    # --write-*-link options wrote unsanitized attacker-controlled paths).
+    "yt-dlp>=2026.7.4",
 ]
 groq = [
     "groq>=0.15",
@@ -338,6 +340,10 @@ cloud-secrets = [
 ]
 monitoring = [
     "wandb>=0.16.0",
+    # gitpython reaches the install through wandb; 3.1.55 is the first release
+    # that clears GHSA-fjr4-x663-mwxc, GHSA-6p8h-3wgx-97gf, GHSA-r9mr-m37c-5fr3
+    # and GHSA-94p4-4cq8-9g67.
+    "gitpython>=3.1.55",
     "tensorboard>=2.15.0",
     # via tensorboard
     "Pillow>=12.3.0",
@@ -439,6 +445,10 @@ all = [
     "azure-keyvault-secrets>=4.7.0",
     "azure-identity>=1.14.0",
     "wandb>=0.16.0",
+    # gitpython reaches the install through wandb; 3.1.55 is the first release
+    # that clears GHSA-fjr4-x663-mwxc, GHSA-6p8h-3wgx-97gf, GHSA-r9mr-m37c-5fr3
+    # and GHSA-94p4-4cq8-9g67.
+    "gitpython>=3.1.55",
     "tensorboard>=2.15.0",
     "sentence-transformers>=2.2.0",
     "yfinance>=0.2.31",
@@ -459,7 +469,9 @@ all = [
     "datasets>=2.14.0",
     "feedparser>=6.0.11",
     "youtube-transcript-api>=1.0.0",
-    "yt-dlp>=2024.1.1",
+    # 2026.7.4 is the first release that clears CVE-2026-55404 (the
+    # --write-*-link options wrote unsanitized attacker-controlled paths).
+    "yt-dlp>=2026.7.4",
     "argostranslate>=1.9.0",
     "langdetect>=1.0.9",
     "qrcode[pil]>=7.4",

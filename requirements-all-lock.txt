@@ -281,8 +281,10 @@ fsspec==2024.6.1
     #   torch
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.53
-    # via wandb
+gitpython==3.1.56
+    # via
+    #   effgen (pyproject.toml)
+    #   wandb
 google-ai-generativelanguage==0.6.15
     # via google-generativeai
 google-api-core==2.30.3
@@ -1332,5 +1334,5 @@ yfinance==1.4.0
     # via effgen (pyproject.toml)
 youtube-transcript-api==1.2.4
     # via effgen (pyproject.toml)
-yt-dlp==2026.3.17
+yt-dlp==2026.7.4
     # via effgen (pyproject.toml)
