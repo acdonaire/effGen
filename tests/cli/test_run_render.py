@@ -257,6 +257,107 @@ def test_trace_lines_utf8_keep_emoji():
 
 
 # ---------------------------------------------------------------------------
+# a terminal that cannot encode the CLI's typography still renders
+# ---------------------------------------------------------------------------
+
+
+def _ascii_console():
+    """A forced-terminal effGen console writing to an ASCII-only stream."""
+    stream = _AsciiStream()
+    return get_console(file=stream, force_terminal=True, width=100), stream
+
+
+def test_spinner_frame_falls_back_to_ascii():
+    assert P._spinner_frame(_AsciiStream()) in P._BRAILLE_ASCII
+    assert P._spinner_frame(io.StringIO()) in P._BRAILLE_ASCII  # no encoding -> ASCII
+
+
+def test_spinner_frame_keeps_braille_on_utf8():
+    class _Utf8(io.StringIO):
+        encoding = "utf-8"
+
+    assert P._spinner_frame(_Utf8()) in P._BRAILLE
+
+
+def test_status_and_thinking_renderables_encode_on_ascii():
+    console, stream = _ascii_console()
+    state = P._StatusState("gpt-5-nano", reasoning=True, hint="Ctrl-C to cancel",
+                           stream=stream)
+    console.print(P._StatusRenderable(state, stream))
+    state.set_step("Running calculator…")
+    console.print(P._StatusRenderable(state, stream))
+    console.print(P._ThinkingRenderable("Thinking…", 0.0, stream))
+    stream.getvalue().encode("ascii")  # must not raise
+    assert "reasoning" in stream.getvalue()
+    assert "Running calculator..." in stream.getvalue()
+
+
+def test_reasoning_label_drops_the_glyph_on_ascii():
+    class _Utf8(io.StringIO):
+        encoding = "utf-8"
+
+    ascii_label = P._StatusState("gpt-5-nano", True, stream=_AsciiStream())._idle_label()
+    # The glyph is dropped at the source; the ellipsis folds at the print boundary.
+    assert ascii_label == "gpt-5-nano reasoning…"
+    R.ascii_fold(ascii_label, _AsciiStream()).encode("ascii")  # must not raise
+    assert P._StatusState("gpt-5-nano", True, stream=_Utf8())._idle_label().startswith("🧠 ")
+
+
+def test_typography_fold_covers_the_input_chevron():
+    assert R.ascii_fold("model · 1 tool › ", _AsciiStream()) == "model - 1 tool > "
+
+
+def test_chat_banner_and_prompt_encode_on_ascii():
+    from effgen.cli.chat import ChatREPL
+
+    console, stream = _ascii_console()
+
+    class _CLI:
+        def __init__(self, console):
+            self.console = console
+
+        def _human_stream(self):
+            return stream
+
+        def print(self, text):
+            console.print(text)
+
+    repl = ChatREPL.__new__(ChatREPL)
+    repl.cli = _CLI(console)
+    repl._color = True
+    repl.preset = "math"
+    repl.model_id = "openai:gpt-5-nano"
+    repl.agent = None  # tool_count is derived from the agent
+    repl._banner_line("effGen v0.0.0 · chat")
+    repl._banner_line("Session: s1  ·  resuming 3 prior message(s)")
+    prompt = repl._prompt_str()
+    prompt.encode("ascii")
+    stream.getvalue().encode("ascii")
+    assert prompt.endswith("> ")
+    # the multi-line continuation prompt folds too
+    assert R.ascii_fold("… ", stream) == "... "
+
+
+def test_landing_renders_on_ascii():
+    from effgen.cli import landing
+
+    console, stream = _ascii_console()
+    landing._render(console)
+    stream.getvalue().encode("ascii")  # must not raise
+    assert "What next?" in stream.getvalue()
+
+
+def test_first_run_welcome_folds_and_is_identity_on_utf8():
+    from effgen.cli.onboarding import welcome_text
+
+    class _Utf8(io.StringIO):
+        encoding = "utf-8"
+
+    welcome_text(_AsciiStream()).encode("ascii")  # must not raise
+    assert "👋 Welcome to effGen — " in welcome_text(_Utf8())
+
+
+# ---------------------------------------------------------------------------
 # public surface anchor
 # ---------------------------------------------------------------------------
 
