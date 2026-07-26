@@ -36,6 +36,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _failure_text(response: Any) -> str:
+    """What to show in the error panel of a failed run.
+
+    Most failures put the classified message in the answer, but a run refused
+    before any model call — an empty task, a blocked input — has no answer
+    text and carries its message on the typed error instead. An error panel
+    with nothing in it tells the reader nothing, so fall back to that message.
+    """
+    text = (getattr(response, "output", "") or "").strip()
+    if text:
+        return text
+    metadata = getattr(response, "metadata", None) or {}
+    error = metadata.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message") or "").strip()
+        if message:
+            return message
+    reason = str(metadata.get("reason") or "").strip()
+    return reason or "The run failed and reported no message."
+
+
 def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
     """
     Interactive setup wizard for configuring and running agents.
@@ -566,19 +587,22 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 guardrails=guardrails,
                 **_preset_overrides,
             )
-            cli.print_success(f"Created {args.preset} preset agent")
-            cli.print(f"Model: {model_id}")
+            if not quiet:
+                cli.print_success(f"Created {args.preset} preset agent")
+                cli.print(f"Model: {model_id}")
             tools = agent.config.tools if hasattr(agent, 'config') else []
         else:
             # Initialize tools
             tools = []
             if args.tools:
-                cli.print(f"Loading tools: {', '.join(args.tools)}")
+                if not quiet:
+                    cli.print(f"Loading tools: {', '.join(args.tools)}")
                 for tool_name in args.tools:
                     try:
                         tool = cli.tool_registry.get_tool_sync(tool_name)
                         tools.append(tool)
-                        cli.print_success(f"Loaded tool: {tool_name}")
+                        if not quiet:
+                            cli.print_success(f"Loaded tool: {tool_name}")
                     except KeyError:
                         cli._suggest_tool(tool_name)
                         return 1
@@ -710,7 +734,9 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 # model-load failure below — a red "Error" panel.
                 _partial = bool((response.metadata or {}).get("partial"))
                 if not response.success and not _partial:
-                    cli.print_error_panel(response.output, title="Error")
+                    cli.print_error_panel(
+                        _failure_text(response), title="Error"
+                    )
                 elif cli.console:
                     from effgen.ui.render import answer_surface
                     answer_surface(

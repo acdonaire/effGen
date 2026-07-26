@@ -17,6 +17,7 @@ import sys
 import pytest
 
 from effgen.cli import _main
+from effgen.cli.commands import run as run_cmd
 from effgen.cli.progress import format_tool_call
 from effgen.ui.tables import console_is_interactive, render_table
 
@@ -186,6 +187,45 @@ def test_error_panel_plain_fallback(capsys):
     assert "could not load model 'x'" in out
 
 
+def test_failure_panel_text_prefers_the_answer():
+    from effgen.core.agent_response import AgentResponse
+
+    response = AgentResponse(
+        output="Generation failed: the model returned no text",
+        success=False,
+        metadata={"error": {"message": "a different message"}},
+    )
+    assert run_cmd._failure_text(response) == "Generation failed: the model returned no text"
+
+
+def test_failure_panel_text_falls_back_to_the_typed_error():
+    # A run refused before any model call has no answer text; the panel would
+    # otherwise be empty and tell the reader nothing.
+    from effgen.core.agent_response import AgentResponse
+
+    response = AgentResponse(
+        output="",
+        success=False,
+        metadata={
+            "reason": "empty_task",
+            "error": {"category": "invalid_input",
+                      "message": "task is empty — provide a non-empty prompt"},
+        },
+    )
+    assert run_cmd._failure_text(response) == "task is empty — provide a non-empty prompt"
+
+
+def test_failure_panel_text_is_never_blank():
+    from effgen.core.agent_response import AgentResponse
+
+    assert run_cmd._failure_text(
+        AgentResponse(output="   ", success=False, metadata={"reason": "empty_task"})
+    ) == "empty_task"
+    assert run_cmd._failure_text(
+        AgentResponse(output="", success=False, metadata={})
+    ).strip()
+
+
 # --------------------------------------------------------------------------- #
 # compact, balanced tool-call args
 # --------------------------------------------------------------------------- #
@@ -353,6 +393,31 @@ def test_run_quiet_suppresses_banner(argv, monkeypatch, capsys):
     text = _run_banner_output(argv, monkeypatch, capsys)
     assert "Running Task" not in text
     assert "Initializing agent" not in text
+    assert "Model:" not in text
+
+
+@pytest.mark.parametrize("argv", [
+    ["run", "hi", "-m", "does-not-matter", "--preset", "minimal", "-q"],
+    ["run", "hi", "-m", "does-not-matter", "-t", "calculator", "-q"],
+])
+def test_run_quiet_suppresses_the_construction_lines(argv, monkeypatch, capsys):
+    # Building the agent from a preset, or loading named tools, takes its own
+    # branch, and each announces what it built. -q means the answer only.
+    import effgen.presets as presets
+
+    class _StubConfig:
+        tools: list = []
+
+    class _StubPresetAgent:
+        config = _StubConfig()
+
+        def run(self, *a, **k):
+            raise RuntimeError("stop before any model call")
+
+    monkeypatch.setattr(presets, "create_agent", lambda *a, **k: _StubPresetAgent())
+    text = _run_banner_output(argv, monkeypatch, capsys)
+    assert "preset agent" not in text
+    assert "Loading tools" not in text and "Loaded tool" not in text
     assert "Model:" not in text
 
 
