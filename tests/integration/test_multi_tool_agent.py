@@ -16,8 +16,9 @@ def _assert_run_reached_an_answer(result):
     other unsuccessful reason (a tool error, a refusal, an empty result) still
     fails here.
     """
-    assert result.success or result.reason == "max_iterations_partial", (
-        f"run failed for an unexpected reason: reason={result.reason!r} "
+    reason = (result.metadata or {}).get("reason")
+    assert result.success or reason == "max_iterations_partial", (
+        f"run failed for an unexpected reason: reason={reason!r} "
         f"output={result.output!r}"
     )
 
