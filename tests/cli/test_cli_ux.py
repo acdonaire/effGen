@@ -468,6 +468,9 @@ def test_all_presets_accepted_by_run_parser():
 # .env discovery is centralized + documented
 # --------------------------------------------------------------------------- #
 def test_env_search_paths_include_override_and_home(monkeypatch):
+    # EFFGEN_NO_DOTENV short-circuits the walk to an empty list, so clear it:
+    # the search order must be asserted regardless of the ambient environment.
+    monkeypatch.delenv("EFFGEN_NO_DOTENV", raising=False)
     monkeypatch.setenv("EFFGEN_DOTENV", "/tmp/custom.env")
     paths = [str(p) for p in _main._env_search_paths()]
     assert "/tmp/custom.env" == paths[0]
