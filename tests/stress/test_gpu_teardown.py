@@ -51,19 +51,36 @@ def _reserved_mb() -> float:
     ) / 1024**2
 
 
+def _allocated_mb() -> float:
+    """Memory held by live tensors, summed over every visible device.
+
+    Unlike the reserved figure this is unaffected by what the allocator has
+    already cached, so it states whether the weights are resident whatever the
+    process did before.
+    """
+    return sum(
+        torch.cuda.memory_allocated(device) for device in range(torch.cuda.device_count())
+    ) / 1024**2
+
+
 class TestLocalModelTeardown:
     def test_unload_returns_reserved_memory(self):
         """After ``unload()`` the process holds no cached device memory."""
         gc.collect()
         torch.cuda.empty_cache()
         baseline = _reserved_mb()
+        baseline_live = _allocated_mb()
 
         model = load_model(MODEL_NAME)
         result = model.generate("Reply with one word: hello", max_tokens=8)
         assert (result.text or "").strip(), "model produced no output"
         loaded = _reserved_mb()
-        assert loaded > baseline + 100, (
-            f"expected the weights to reserve memory: {baseline}MB -> {loaded}MB"
+        # memory_allocated (not reserved) for the precondition: when the process
+        # already holds a large cache the weights are served from it, so the
+        # reserved figure barely moves while the live figure grows by the model.
+        loaded_live = _allocated_mb()
+        assert loaded_live > baseline_live + 100, (
+            f"expected the weights to be resident: {baseline_live}MB -> {loaded_live}MB"
         )
 
         model.unload()
