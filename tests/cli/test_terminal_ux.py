@@ -425,3 +425,41 @@ def test_run_without_quiet_shows_banner(monkeypatch, capsys):
     text = _run_banner_output(["run", "hi", "-m", "does-not-matter"], monkeypatch, capsys)
     assert "Running Task" in text
     assert "Initializing agent" in text
+
+
+# --------------------------------------------------------------------------- #
+# a reader that closes the pipe early (`… | head`) ends the command quietly
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["models", "list"],          # rich table path
+        ["models", "list", "--json"],  # plain print path
+        ["tools", "info", "calculator"],
+        ["presets"],
+    ],
+)
+def test_piping_to_a_short_reader_exits_141_with_no_stderr_noise(argv):
+    """`effgen … | head` reports 128+SIGPIPE and prints nothing to stderr.
+
+    Both output paths must agree: the rich console and plain ``print`` used to
+    end at 1 and 120 respectively, and the plain path left an
+    "Exception ignored ... BrokenPipeError" line behind.
+    """
+    import os
+    import subprocess
+
+    env = {**os.environ, "NO_COLOR": "1", "EFFGEN_NO_DOTENV": "1"}
+    writer = subprocess.Popen(
+        [sys.executable, "-m", "effgen.cli", *argv],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    reader = subprocess.Popen(["head", "-2"], stdin=writer.stdout, stdout=subprocess.DEVNULL)
+    writer.stdout.close()
+    reader.wait(timeout=120)
+    stderr = writer.communicate(timeout=120)[1].decode()
+    assert writer.returncode in (0, 141), f"exit={writer.returncode} stderr={stderr!r}"
+    assert "BrokenPipeError" not in stderr, stderr
+    assert "Traceback" not in stderr, stderr

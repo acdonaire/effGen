@@ -3141,6 +3141,21 @@ def _dispatch(args: argparse.Namespace, cli: "CLIInterface", parser: argparse.Ar
     return exit_code if exit_code is not None else 0
 
 
+def _silence_broken_pipe() -> None:
+    """Point stdout at the null device after a reader closed the pipe.
+
+    ``effgen models list --json | head`` leaves the process writing into a pipe
+    nobody reads. Without this the interpreter's exit-time flush raises again
+    and prints ``Exception ignored ... BrokenPipeError`` after the command has
+    already done its job.
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError):  # pragma: no cover - stdout already gone
+        pass
+
+
 def main() -> None:
     """Main entry point for CLI."""
     # Load .env early so all subcommands see API keys (see load_env_files).
@@ -3208,8 +3223,17 @@ def main() -> None:
         ):
             _onboarding.maybe_print_tip(quiet=getattr(args, 'quiet', False))
 
+        # Flush inside the guard: a pipe closed by the reader must be reported
+        # here, not by the interpreter's exit-time flush where it becomes an
+        # "Exception ignored" line no one can act on.
+        sys.stdout.flush()
         sys.exit(exit_code)
 
+    except BrokenPipeError:
+        # The reader closed the pipe first (`effgen … | head`). The command did
+        # its work; report the conventional SIGPIPE status without a traceback.
+        _silence_broken_pipe()
+        sys.exit(141)
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
         sys.exit(130)

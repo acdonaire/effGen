@@ -110,6 +110,30 @@ def get_theme(name: str | None = None) -> Any:
     return _build_theme(cli_palette(resolved))
 
 
+if _RICH_AVAILABLE:
+
+    class _EffGenConsole(Console):  # type: ignore[misc,valid-type]
+        """A console that reports a closed pipe with the conventional status.
+
+        ``effgen models list | head`` leaves the writer with nowhere to send the
+        rest of its output. Rich's default is to exit ``1``, which a caller
+        cannot tell apart from a command that genuinely failed; the plain-print
+        paths report ``141`` (``128 + SIGPIPE``), so this reports it too.
+        """
+
+        def on_broken_pipe(self) -> None:
+            self.quiet = True
+            try:
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull, sys.stdout.fileno())
+            except (OSError, ValueError):  # pragma: no cover - stdout already gone
+                pass
+            raise SystemExit(141)
+
+else:  # pragma: no cover - rich is normally present
+    _EffGenConsole = None  # type: ignore[assignment,misc]
+
+
 def get_console(*, theme_name: str | None = None, **kwargs: Any) -> Any:
     """Build a :class:`~rich.console.Console` carrying the effGen theme.
 
@@ -124,4 +148,4 @@ def get_console(*, theme_name: str | None = None, **kwargs: Any) -> Any:
     kwargs.setdefault("theme", get_theme(theme_name))
     if not color_enabled():
         kwargs["no_color"] = True
-    return Console(**kwargs)
+    return _EffGenConsole(**kwargs)
