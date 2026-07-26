@@ -174,3 +174,35 @@ def test_history_dir_follows_effgen_home(tmp_path, monkeypatch):
     monkeypatch.setenv("EFFGEN_HOME", str(tmp_path / "state"))
 
     assert run_log.history_dir() == (tmp_path / "state" / "runs").absolute()
+
+
+def _agent_with(model):
+    from effgen.core.agent import Agent, AgentConfig
+
+    return Agent(config=AgentConfig(name="rec", model=model))
+
+
+def test_provider_is_taken_from_the_serving_adapter(history_dir):
+    """A ``provider:model`` id names its provider without the caller doing so."""
+    from tests.fixtures.mock_models import MockModel
+
+    class ServedModel(MockModel):
+        def get_metadata(self):
+            return {**super().get_metadata(), "provider": "groq"}
+
+    agent = _agent_with(ServedModel(["ok"], model_name="llama-3.1-8b-instant"))
+    agent.run("hello")
+
+    record = run_log.read_runs()[0]
+    assert record["provider"] == "groq"
+
+
+def test_a_local_engine_run_records_no_provider(history_dir):
+    """Local engines are not served by a provider, so the field stays unset."""
+    from tests.fixtures.mock_models import MockModel
+
+    agent = _agent_with(MockModel(["ok"], model_name="Qwen/Qwen2.5-1.5B-Instruct"))
+    agent.run("hello")
+
+    record = run_log.read_runs()[0]
+    assert record["provider"] is None

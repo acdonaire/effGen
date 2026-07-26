@@ -1239,6 +1239,13 @@ Question: {task}
                 output_tokens = response.tokens_used
             input_tokens = metadata.get("input_tokens", metadata.get("prompt_tokens"))
             provider = metadata.get("provider") or getattr(self.config, "provider", None)
+            if not provider and getattr(self, "model", None) is not None:
+                # A `provider:model` id carries the provider without the caller
+                # naming one, so resolve it from the adapter that served the
+                # run. Local engines have no provider and stay unset.
+                from effgen.models.base import _provider_of
+
+                provider = _provider_of(self.model)
             record_run(
                 model=str(getattr(self, "model_name", None) or "unknown"),
                 input_tokens=_safe_int_or_none(input_tokens),
