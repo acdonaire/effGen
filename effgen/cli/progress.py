@@ -46,8 +46,24 @@ except ImportError:  # pragma: no cover - rich is normally present
 
 
 # Braille shimmer frames for the manual spinner (kept in sync with the icons
-# used elsewhere in the CLI so the whole product feels like one tool).
+# used elsewhere in the CLI so the whole product feels like one tool), plus the
+# stand-in frames used when the console cannot encode braille.
 _BRAILLE = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_BRAILLE_ASCII = "|/-\\"
+
+
+def _spinner_frame(stream: Any = None) -> str:
+    """Return the current spinner cell for *stream*'s encoding."""
+    from effgen.ui.palette import supports_unicode
+
+    frames = _BRAILLE if supports_unicode(stream) else _BRAILLE_ASCII
+    return frames[int(time.monotonic() * 10) % len(frames)]
+
+
+def _console_stream(console: Any) -> Any:
+    """Return the file a rich console writes to, or ``None`` if unknown."""
+    return getattr(console, "file", None)
+
 
 # Environment variables that indicate a non-interactive CI runner. Animation is
 # pointless (and noisy) in CI logs, so we fall back to plain output there.
@@ -175,10 +191,19 @@ class _StatusState:
     # readable "Running <tool>…" rather than being skipped between refreshes.
     _STICKY_SECONDS = 0.6
 
-    def __init__(self, model_label: str, reasoning: bool, hint: str | None = None):
+    def __init__(
+        self,
+        model_label: str,
+        reasoning: bool,
+        hint: str | None = None,
+        stream: Any = None,
+    ):
         self.start = time.monotonic()
         self.model_label = model_label
         self.reasoning = reasoning
+        # The stream the label will be printed to, so the reasoning marker is
+        # chosen for that terminal's encoding rather than for ``sys.stdout``.
+        self.stream = stream
         self.base_label = self._idle_label()
         self.sticky_label: str | None = None
         self.sticky_until = 0.0
@@ -188,7 +213,11 @@ class _StatusState:
 
     def _idle_label(self) -> str:
         if self.reasoning:
-            return f"🧠 {self.model_label} reasoning…"
+            from effgen.ui.palette import glyph
+
+            mark = glyph("reasoning", self.stream)
+            prefix = f"{mark} " if mark else ""
+            return f"{prefix}{self.model_label} reasoning…"
         return f"Calling {self.model_label}…"
 
     def set_step(self, label: str) -> None:
@@ -209,19 +238,22 @@ class _StatusState:
 class _StatusRenderable:
     """A rich renderable rebuilt on every refresh so time/spinner keep ticking."""
 
-    def __init__(self, state: _StatusState):
+    def __init__(self, state: _StatusState, stream: Any = None):
         self.state = state
+        self.stream = stream
 
     def __rich__(self) -> Any:
+        from effgen.ui.render import ascii_fold
+
         s = self.state
-        frame = _BRAILLE[int(time.monotonic() * 10) % len(_BRAILLE)]
+        frame = _spinner_frame(self.stream)
         elapsed = time.monotonic() - s.start
         text = Text()
         text.append(frame + " ", style="cyan")
-        text.append(s.effective_label())
-        text.append(f"   ⏱ {elapsed:4.1f}s", style="dim")
+        text.append(ascii_fold(s.effective_label(), self.stream))
+        text.append(ascii_fold(f"   ⏱ {elapsed:4.1f}s", self.stream), style="dim")
         if s.hint:
-            text.append(f"   ({s.hint})", style="dim")
+            text.append(ascii_fold(f"   ({s.hint})", self.stream), style="dim")
         return text
 
 
@@ -250,7 +282,9 @@ class LiveStatus:
     ) -> None:
         self.console = console
         self.tracker = tracker
-        self.state = _StatusState(model_label, reasoning, hint=hint)
+        self.state = _StatusState(
+            model_label, reasoning, hint=hint, stream=_console_stream(console)
+        )
         self._live: Any = None
         self._active = bool(_RICH_AVAILABLE and console is not None)
 
@@ -263,7 +297,7 @@ class LiveStatus:
             except Exception:  # noqa: BLE001 - never let cosmetics break a run
                 pass
         self._live = Live(
-            _StatusRenderable(self.state),
+            _StatusRenderable(self.state, _console_stream(self.console)),
             console=self.console,
             refresh_per_second=12,
             transient=True,
@@ -316,17 +350,20 @@ STREAM_REFRESH_PER_SECOND = 10
 
 
 class _ThinkingRenderable:
-    """A braille 'Thinking…' line rebuilt each refresh so the spinner ticks."""
+    """A spinning 'Thinking…' line rebuilt each refresh so the spinner ticks."""
 
-    def __init__(self, label: str, start: float):
+    def __init__(self, label: str, start: float, stream: Any = None):
         self.label = label
         self.start = start
+        self.stream = stream
 
     def __rich__(self) -> Any:
-        frame = _BRAILLE[int(time.monotonic() * 10) % len(_BRAILLE)]
+        from effgen.ui.render import ascii_fold
+
+        frame = _spinner_frame(self.stream)
         text = Text()
         text.append(frame + " ", style="cyan")
-        text.append(self.label)
+        text.append(ascii_fold(self.label, self.stream))
         return text
 
 
@@ -349,7 +386,7 @@ class thinking_status:  # noqa: N801 - used as a lowercase context-manager facto
     def __enter__(self) -> "thinking_status":
         if self._active:
             self._live = Live(
-                _ThinkingRenderable(self.label, time.monotonic()),
+                _ThinkingRenderable(self.label, time.monotonic(), _console_stream(self.console)),
                 console=self.console,
                 refresh_per_second=12,
                 transient=True,
