@@ -51,7 +51,6 @@ def _issuer(_keypair, monkeypatch):
     monkeypatch.setenv("EFFGEN_OIDC_CLIENT_ID", "effgen-client")
     monkeypatch.setenv("EFFGEN_OIDC_JWKS_URI", "https://fake.issuer/jwks")
     monkeypatch.delenv("EFFGEN_RBAC_POLICY_FILE", raising=False)
-    auth._DEV_MODE_WARNED = False
     yield
     auth._jwks_cache.keys = {}
     auth._jwks_cache.fetched_at = 0.0
@@ -272,9 +271,6 @@ def test_dev_mode_allows_unauth_with_warning(_keypair, tmp_path, monkeypatch):
     monkeypatch.setenv("EFFGEN_DEV_MODE", "1")
     monkeypatch.setenv("EFFGEN_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("EFFGEN_BUDGET_DIR", str(tmp_path / "budget"))
-    import effgen.server.auth as auth
-
-    auth._DEV_MODE_WARNED = False
     from effgen.server.app import create_app
 
     app = create_app(dev_mode=True, runner=_stub_runner)
@@ -344,9 +340,6 @@ def test_http_requests_total_counts_by_route_method_status(tmp_path, monkeypatch
     monkeypatch.setenv("EFFGEN_PUBLIC_METRICS", "1")
     monkeypatch.setenv("EFFGEN_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("EFFGEN_BUDGET_DIR", str(tmp_path / "budget"))
-    import effgen.server.auth as auth
-
-    auth._DEV_MODE_WARNED = False
     from fastapi.testclient import TestClient
 
     from effgen.server.app import create_app

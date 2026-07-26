@@ -222,9 +222,6 @@ class TestAuthMiddleware:
     @pytest.fixture()
     def _no_dev_mode(self, monkeypatch):
         monkeypatch.setenv("EFFGEN_DEV_MODE", "0")
-        from effgen.server import auth as _auth
-
-        _auth._DEV_MODE_WARNED = False
 
     async def _call_middleware(
         self,
@@ -343,8 +340,6 @@ class TestAuthMiddleware:
         """EFFGEN_DEV_MODE=1 must bypass auth with a dev-user token."""
         monkeypatch.setenv("EFFGEN_DEV_MODE", "1")
         from effgen.server import auth as _auth
-
-        _auth._DEV_MODE_WARNED = False
 
         user_captured: list[Any] = []
 
