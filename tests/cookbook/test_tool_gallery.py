@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -229,24 +230,168 @@ def test_gallery_snippet_imports_resolve():
 # Execution helpers
 # ---------------------------------------------------------------------------
 
-def _run_snippet(code: str, tmp_path: Path, cwd: Path | None = None) -> None:
-    """Execute a snippet verbatim in a subprocess; /tmp/ paths land in tmp_path."""
+# Marker the snippet runner prints when a failed snippet left a ToolResult that
+# reports an upstream error, so the caller sees the tool's message even though the
+# snippet itself discarded it.
+_TOOL_ERROR_MARKER = "SNIPPET_TOOL_ERROR:"
+
+# A snippet that reads ``result.output`` without checking ``result.success`` dies
+# on ``None`` and loses the reason. This wrapper runs it unchanged and, if it
+# raises, walks the traceback for a ToolResult that failed and prints its error.
+_SNIPPET_RUNNER = f'''
+import runpy
+import sys
+import traceback
+
+try:
+    runpy.run_path(sys.argv[1], run_name="__main__")
+except BaseException as exc:  # noqa: BLE001 - report, then exit non-zero
+    traceback.print_exc()
+    tb = exc.__traceback__
+    while tb is not None:
+        try:
+            values = list(tb.tb_frame.f_locals.values())
+        except Exception:  # noqa: BLE001
+            values = []
+        for value in values:
+            if getattr(value, "success", None) is False and getattr(value, "error", None):
+                print("{_TOOL_ERROR_MARKER} " + str(value.error), file=sys.stderr)
+        tb = tb.tb_next
+    raise SystemExit(1) from None
+'''
+
+# Wording used by the adapters and tools for an upstream problem that is not the
+# snippet's fault. Same vocabulary as tests/tools/test_semantic_scholar.py.
+_TRANSIENT_UPSTREAM = (
+    "429",
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "too many requests",
+    "rate-limited",
+    "rate limit",
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection error",
+    "temporarily unavailable",
+)
+
+
+def _run_snippet(
+    code: str,
+    tmp_path: Path,
+    cwd: Path | None = None,
+    attempts: int = 1,
+    retry_delay: float = 10.0,
+    skip_on_upstream_error: bool = False,
+) -> None:
+    """Execute a snippet verbatim in a subprocess; /tmp/ paths land in tmp_path.
+
+    *attempts* > 1 re-runs the snippet when it exits non-zero, waiting
+    *retry_delay* seconds and doubling that wait each time.
+
+    With *skip_on_upstream_error*, the snippet runs through a wrapper that
+    reports the error of any failed ``ToolResult`` still on the traceback, and a
+    failure whose reported error is a 429/5xx/timeout from the public service the
+    snippet calls becomes a skip. Anything else — a renamed API, a bad argument, a
+    changed result shape — still fails, so the check keeps its meaning.
+    """
     rewritten = code.replace("/tmp/", f"{tmp_path}/")
     script = tmp_path / "snippet.py"
     script.write_text(rewritten, encoding="utf-8")
-    proc = subprocess.run(
-        [sys.executable, str(script)],
-        cwd=cwd or _REPO_ROOT,
-        env=os.environ.copy(),
-        text=True,
-        capture_output=True,
-        timeout=110,
-        check=False,
-    )
-    assert proc.returncode == 0, (
-        f"snippet failed (rc={proc.returncode})\n"
+    if skip_on_upstream_error:
+        runner = tmp_path / "snippet_runner.py"
+        runner.write_text(_SNIPPET_RUNNER, encoding="utf-8")
+        argv = [sys.executable, str(runner), str(script)]
+    else:
+        argv = [sys.executable, str(script)]
+    for attempt in range(1, attempts + 1):
+        proc = subprocess.run(
+            argv,
+            cwd=cwd or _REPO_ROOT,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+            timeout=110,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return
+        if attempt < attempts:
+            time.sleep(retry_delay * 2 ** (attempt - 1))
+    reported = [
+        line.split(_TOOL_ERROR_MARKER, 1)[1].strip()
+        for line in proc.stderr.splitlines()
+        if _TOOL_ERROR_MARKER in line
+    ]
+    if skip_on_upstream_error:
+        for message in reported:
+            lowered = message.lower()
+            if any(token in lowered for token in _TRANSIENT_UPSTREAM):
+                pytest.skip(f"transient upstream error from the snippet's service: {message}")
+    raise AssertionError(
+        f"snippet failed (rc={proc.returncode}) on {attempts} attempt(s)\n"
         f"--- stdout ---\n{proc.stdout[-2000:]}\n--- stderr ---\n{proc.stderr[-2000:]}"
     )
+
+
+def test_snippet_runner_reruns_a_flaky_snippet_but_not_a_broken_one(tmp_path):
+    """Retries absorb an intermittent failure; a snippet that always fails still fails."""
+    marker = tmp_path / "attempts"
+    # The marker is resolved next to the generated script, so the /tmp/ rewrite
+    # _run_snippet applies to snippet text cannot reach it.
+    flaky = (
+        "from pathlib import Path\n"
+        "p = Path(__file__).parent / 'attempts'\n"
+        "n = int(p.read_text()) + 1 if p.exists() else 1\n"
+        "p.write_text(str(n))\n"
+        "raise SystemExit(0 if n >= 2 else 1)\n"
+    )
+    _run_snippet(flaky, tmp_path, attempts=3, retry_delay=0)
+    assert marker.read_text() == "2"
+
+    with pytest.raises(AssertionError, match="on 3 attempt"):
+        _run_snippet("raise SystemExit(1)\n", tmp_path, attempts=3, retry_delay=0)
+
+
+def test_snippet_runner_separates_an_upstream_outage_from_a_broken_snippet(tmp_path):
+    """A 5xx from the snippet's service skips; any other failure still fails."""
+    stub = (
+        "class ToolResult:\n"
+        "    success = False\n"
+        "    output = None\n"
+        "    error = {error!r}\n"
+        "\n"
+        "result = ToolResult()\n"
+        "print(result.output['results'])\n"
+    )
+    outage = stub.format(
+        error="Tool execution failed: HTTP 500 from https://example.invalid/search: "
+              "Internal Server Error"
+    )
+    with pytest.raises(pytest.skip.Exception, match="transient upstream error"):
+        _run_snippet(outage, tmp_path, attempts=1, skip_on_upstream_error=True)
+
+    # The same shape with a non-transient reason is a real failure.
+    broken = stub.format(error="Tool execution failed: unknown operation 'serch'")
+    with pytest.raises(AssertionError, match="snippet failed"):
+        _run_snippet(broken, tmp_path, attempts=1, skip_on_upstream_error=True)
+
+    # And a snippet that breaks on effGen's own API, with no ToolResult involved,
+    # is never skipped.
+    with pytest.raises(AssertionError, match="snippet failed"):
+        _run_snippet(
+            "raise AttributeError('SomeTool has no attribute execute_sync')\n",
+            tmp_path,
+            attempts=1,
+            skip_on_upstream_error=True,
+        )
 
 
 def _require_deps(heading: str) -> None:
@@ -336,7 +481,7 @@ class TestNetworkSnippets:
     def test_snippet_runs(self, heading, tmp_path):
         _require_deps(heading)
         for code in _blocks_for(heading):
-            _run_snippet(code, tmp_path)
+            _run_snippet(code, tmp_path, attempts=2, skip_on_upstream_error=True)
 
 
 # ---------------------------------------------------------------------------
