@@ -20,8 +20,10 @@ from effgen.core.agent import sanitize_final_answer as sanitize
         ("Canberra\nFinal Answer: Canberra", "Canberra"),
         # Groq llama-3.1-8b multi-tool join with the bookkeeping marker embedded.
         (
-            "225 | 225\n[Tool results computed above. Continue or provide "
-            "Final Answer:] | 450 | 225 | 675 | 0",
+            (
+                "225 | 225\n[Tool results computed above. Continue or provide "
+                "Final Answer:] | 450 | 225 | 675 | 0"
+            ),
             "225 | 225 | 450 | 225 | 675 | 0",
         ),
         # Plain "Final Answer:" label.
@@ -48,14 +50,18 @@ from effgen.core.agent import sanitize_final_answer as sanitize
         # when a tool has run twice — a small model (groq llama-3.1-8b) echoed it
         # straight into a pipe-joined answer. Must be stripped like the others.
         (
-            "79.96 | 86.3568 [You already have results from this tool. If you "
-            "have enough information, respond now with 'Final Answer:'.] | 85.49",
+            (
+                "79.96 | 86.3568 [You already have results from this tool. If you "
+                "have enough information, respond now with 'Final Answer:'.] | 85.49"
+            ),
             "79.96 | 86.3568 | 85.49",
         ),
         # The "you already computed this" nudge injected on a repeated action.
         (
-            "42 You already computed this. Please provide your final response "
-            "using 'Final Answer:' now.",
+            (
+                "42 You already computed this. Please provide your final response "
+                "using 'Final Answer:' now."
+            ),
             "42",
         ),
     ],
@@ -71,16 +77,20 @@ def test_strips_scaffolding(leaked, expected):
     [
         # Groq llama-3.1-8b emitted its tool call as text instead of routing it.
         (
-            'function=calculator>{"expression": "15*90", "operation": '
-            '"calculate", "precision": 0}</function>',
+            (
+                'function=calculator>{"expression": "15*90", "operation": '
+                '"calculate", "precision": 0}</function>'
+            ),
             "",
         ),
         ('<function=calc>{"a": 1}</function>', ""),
         # Nested-object args must be matched whole, not leave a dangling "}".
         ('<function=calc>{"a": {"b": 1}}</function>', ""),
         (
-            '<function=calculator>{"args": {"expression": "1+1"}, "op": "x"}'
-            "</function>",
+            (
+                '<function=calculator>{"args": {"expression": "1+1"}, "op": "x"}'
+                "</function>"
+            ),
             "",
         ),
         ("<tool_call>{\"name\": \"calc\"}</tool_call>", ""),
@@ -102,8 +112,10 @@ def test_strips_tool_call_syntax(leaked, expected):
         # Groq llama-3.1-8b-instant: a bare "tool_name {json}" prefix, no
         # <function=.../<tool_call> wrapper, before the real prose answer.
         (
-            'order_lookup {"order_id": "ORD-1001"} \n'
-            'The order status is "shipped" and will arrive in 3-5 days.',
+            (
+                'order_lookup {"order_id": "ORD-1001"} \n'
+                'The order status is "shipped" and will arrive in 3-5 days.'
+            ),
             'The order status is "shipped" and will arrive in 3-5 days.',
         ),
         ('calculator {"expression": "6*7"} 42', "42"),
