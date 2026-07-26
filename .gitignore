@@ -229,6 +229,8 @@ effgen/security/installed_hashes.json
 # per-user state normally lives in ~/.effgen but EFFGEN_HOME can redirect it.
 /checkpoints/
 /.effgen/
+# `effgen config init` writes ./config.yaml unless -o names another path.
+/config.yaml
 
 # Secret-scan dir-scan report (gitleaks writes ./gitleaks-report.json on findings).
 gitleaks-report.json

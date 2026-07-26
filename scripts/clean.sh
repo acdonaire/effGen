@@ -53,6 +53,8 @@ run "rm -rf .coverage .coverage.* coverage.xml htmlcov .hypothesis \
 
 # Runtime state written under the working directory.
 run "rm -rf checkpoints .effgen"
+# `effgen config init` writes ./config.yaml unless -o names another path.
+run "rm -f config.yaml"
 
 # __pycache__ / *.pyc anywhere in the tree (never under .git or site-packages).
 # Use `-exec rm` rather than `-delete`: `-delete` implies `-depth`, which
