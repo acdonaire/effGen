@@ -212,6 +212,57 @@ def test_registry_starts_from_the_full_catalog():
     ), f"reliability state carried over: {stats}"
 
 
+def test_every_warn_once_record_is_cleared_between_tests():
+    """No module-level "already said this" flag may escape the reset fixture.
+
+    A heads-up that fires at most once per process is remembered in a
+    module-level flag or set. If the fixture in ``tests/conftest.py`` does not
+    clear one of them, a test that asserts that message passes alone and fails
+    behind whichever test tripped the flag first. Scanning the source rather
+    than listing the modules here means a newly added record has to be handled,
+    not merely noticed.
+    """
+    import ast
+
+    from tests.conftest import _WARN_ONCE_RECORDS
+
+    covered = {(module, attr) for module, attr in _WARN_ONCE_RECORDS}
+    found: set[tuple[str, str]] = set()
+
+    for path in sorted((REPO_ROOT / "effgen").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        module = ".".join(path.relative_to(REPO_ROOT).with_suffix("").parts)
+        if module.endswith(".__init__"):
+            module = module[: -len(".__init__")]
+        for node in tree.body:  # module level only
+            if isinstance(node, ast.Assign):
+                names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names = [node.target.id]
+            else:
+                continue
+            value = node.value
+            is_flag = isinstance(value, ast.Constant) and isinstance(value.value, bool)
+            is_set = isinstance(value, ast.Set) or (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id == "set"
+            )
+            if not (is_flag or is_set):
+                continue
+            for name in names:
+                if any(word in name.lower() for word in ("warn", "notified", "announced")):
+                    found.add((module, name))
+
+    missing = found - covered
+    assert not missing, (
+        "one-shot warning records not cleared between tests: "
+        f"{sorted(missing)} — add them to _WARN_ONCE_RECORDS in tests/conftest.py"
+    )
+    stale = covered - found
+    assert not stale, f"_WARN_ONCE_RECORDS names records that no longer exist: {sorted(stale)}"
+
+
 # ---------------------------------------------------------------------------
 # The guarantee, checked in a real multi-module session
 # ---------------------------------------------------------------------------
