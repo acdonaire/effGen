@@ -280,12 +280,26 @@ class ChatREPL:
                 pass
         return getattr(self.cli, "console", None)
 
+    def _human_stream(self) -> Any:
+        """The text stream human output goes to, for the typography fallback.
+
+        A CLI stand-in need not carry the hook; fall back to ``sys.stdout``, which
+        is where the prompt and banner are written when it is absent.
+        """
+        getter = getattr(self.cli, "_human_stream", None)
+        return getter() if callable(getter) else sys.stdout
+
     def _banner_line(self, text: str, style: str | None = None) -> None:
         """Print one banner line without number/repr auto-highlighting.
 
         Styling is applied only when color is enabled, so versions/counts read
-        as one token and a ``NO_COLOR`` banner carries no escape codes.
+        as one token and a ``NO_COLOR`` banner carries no escape codes. The text
+        is ASCII-folded when the console cannot encode the separators, so a
+        non-UTF-8 terminal prints the banner instead of failing on it.
         """
+        from effgen.ui.render import ascii_fold
+
+        text = ascii_fold(text, self._human_stream())
         console = getattr(self.cli, "console", None)
         if console:
             markup = f"[{style}]{text}[/{style}]" if (style and self._color) else text
@@ -300,8 +314,11 @@ class ChatREPL:
         """A model/tool-aware input prompt, e.g. ``math · gpt-5-nano · 1 tool › ``.
 
         Kept as plain text (no ANSI) so ``readline`` width math and ↑/↓ history
-        stay correct across terminals.
+        stay correct across terminals, and ASCII-folded when the terminal cannot
+        encode the separators.
         """
+        from effgen.ui.render import ascii_fold
+
         label = _progress.short_model_label(self.model_id)
         bits = []
         if self.preset:
@@ -310,7 +327,7 @@ class ChatREPL:
         n = self.tool_count
         if n:
             bits.append(f"{n} tool" + ("s" if n != 1 else ""))
-        return " · ".join(bits) + " › "
+        return ascii_fold(" · ".join(bits) + " › ", self._human_stream())
 
     def _banner(self) -> None:
         from effgen import __version__
@@ -414,9 +431,11 @@ class ChatREPL:
 
     def _read_input(self) -> str | None:
         """Read one (possibly multi-line) user entry. ``None`` on EOF."""
+        from effgen.ui.render import ascii_fold
+
         # A piped session shows no prompt so it can't leak onto answer-only stdout.
         prompt = self._prompt_str() if self.interactive else ""
-        cont = "… " if self.interactive else ""
+        cont = ascii_fold("… ", self._human_stream()) if self.interactive else ""
         lines: list[str] = []
         while True:
             try:
@@ -1105,9 +1124,11 @@ class ChatREPL:
             else:
                 self.cli.print("No turn to trace yet.")
             return
-        self.cli.print_header("Last turn — reasoning trace")
         from effgen.ui.render import ascii_fold
 
+        self.cli.print_header(
+            ascii_fold("Last turn — reasoning trace", self._human_stream())
+        )
         lines = _progress.execution_trace_lines(
             self.last_trace, stream=self.cli._human_stream()
         )

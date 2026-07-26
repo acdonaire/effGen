@@ -16,9 +16,10 @@ from .palette import glyph, supports_unicode
 from .theme import CODE_THEME, color_enabled, get_console, rich_available
 
 # Typographic characters the CLI prints in its own chrome (metric separators,
-# bars, an em-dash, an ellipsis, spinner cells). On a non-UTF-8 stream these
-# would raise ``UnicodeEncodeError``; :func:`ascii_fold` swaps them for ASCII
-# stand-ins. Semantic status glyphs are handled separately by ``palette.glyph``.
+# bars, an em-dash, an ellipsis, spinner cells, the input chevron). On a
+# non-UTF-8 stream these would raise ``UnicodeEncodeError``; :func:`ascii_fold`
+# swaps them for ASCII stand-ins. Semantic status glyphs are handled separately
+# by ``palette.glyph``.
 _TYPO_ASCII: dict[str, str] = {
     "·": "-",
     "—": "-",
@@ -27,6 +28,7 @@ _TYPO_ASCII: dict[str, str] = {
     "▌": "",
     "⏱": "",
     "•": "-",
+    "›": ">",
 }
 
 

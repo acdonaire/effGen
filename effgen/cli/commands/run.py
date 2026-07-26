@@ -792,7 +792,10 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                 # the user at the timeline rather than leaving it hidden.
                 elif not quiet and not _explain and int(getattr(response, "tool_calls", 0) or 0) >= 1:
                     _steps = int(getattr(response, "tool_calls", 0) or 0)
-                    _hint = f"{_steps} tool step{'s' if _steps != 1 else ''} — run with --trace to see the timeline"
+                    _hint = _ascii_fold(
+                        f"{_steps} tool step{'s' if _steps != 1 else ''} — run with --trace to see the timeline",
+                        cli._human_stream(),
+                    )
                     if cli.console:
                         cli.console.print(f"[effgen.muted]{_hint}[/effgen.muted]")
                     else:
