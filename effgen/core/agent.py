@@ -1181,12 +1181,26 @@ Question: {task}
         if response.model is None:
             response.model = getattr(self, "model_name", None)
         if response.provider is None:
-            metadata = response.metadata or {}
-            provider = metadata.get("provider") or getattr(self.config, "provider", None)
-            response.provider = str(provider) if provider else None
+            response.provider = self._resolve_provider(response)
         if response.started_at is None:
             response.started_at = started_at
         return response
+
+    def _resolve_provider(self, response: AgentResponse) -> str | None:
+        """Name the provider that served *response*, or ``None`` if none did.
+
+        The caller may name a provider on the config and an adapter may report
+        one in the run metadata, but a ``provider:model`` id carries it without
+        either — so fall back to the adapter that answered the run. Local
+        engines have no provider and stay unset.
+        """
+        metadata = response.metadata or {}
+        provider = metadata.get("provider") or getattr(self.config, "provider", None)
+        if not provider and getattr(self, "model", None) is not None:
+            from effgen.models.base import _provider_of
+
+            provider = _provider_of(self.model)
+        return str(provider) if provider else None
 
     def _session_turn_metadata(
         self,
@@ -1238,14 +1252,7 @@ Question: {task}
             if output_tokens is None and response.tokens_used:
                 output_tokens = response.tokens_used
             input_tokens = metadata.get("input_tokens", metadata.get("prompt_tokens"))
-            provider = metadata.get("provider") or getattr(self.config, "provider", None)
-            if not provider and getattr(self, "model", None) is not None:
-                # A `provider:model` id carries the provider without the caller
-                # naming one, so resolve it from the adapter that served the
-                # run. Local engines have no provider and stay unset.
-                from effgen.models.base import _provider_of
-
-                provider = _provider_of(self.model)
+            provider = self._resolve_provider(response)
             record_run(
                 model=str(getattr(self, "model_name", None) or "unknown"),
                 input_tokens=_safe_int_or_none(input_tokens),
@@ -1256,7 +1263,7 @@ Question: {task}
                 run_id=metadata.get("run_id"),
                 task=task,
                 output=response.output if response.success else None,
-                provider=str(provider) if provider else None,
+                provider=provider,
                 session_id=self._session_id,
                 agent=self.name,
             )

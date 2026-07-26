@@ -37,10 +37,19 @@ def _run(*args: str) -> subprocess.CompletedProcess:
 
 
 def _skip_if_upstream_hiccup(proc: subprocess.CompletedProcess) -> None:
+    """Skip when the provider, not the code under test, ended the run.
+
+    Only a failed command can be an upstream hiccup. A successful run prints its
+    own document, whose run ids, token counts and costs contain arbitrary
+    digits — matching a status code against those skips a test that passed.
+    """
+    if proc.returncode == 0:
+        return
     combined = (proc.stdout + proc.stderr).lower()
-    transient = ("rate limit", "rate_limit_exceeded", "429", "503",
-                 "service unavailable", "overloaded")
-    if any(marker in combined for marker in transient):
+    transient = ("rate limit", "rate_limit_exceeded", "service unavailable",
+                 "overloaded")
+    status = re.search(r"\b(429|500|502|503|529)\b", combined)
+    if status or any(marker in combined for marker in transient):
         pytest.skip(f"Groq transient upstream condition: {combined[-300:]}")
 
 
@@ -115,6 +124,25 @@ def test_saved_run_document_identifies_itself(tmp_path):
     assert document["provider"] == PROVIDER
     # An ISO-8601 UTC start time, so a curated run can be dated later.
     assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00", document["started_at"])
+
+
+@pytest.mark.integration
+@pytest.mark.api
+def test_prefixed_model_id_names_the_provider_that_served_the_run(tmp_path):
+    # `-m provider:model` carries the provider without `--provider`, and the
+    # saved document has to name it: the card labels an absent cost by whether
+    # the run was hosted or local, and reads the answer from this field.
+    saved = tmp_path / "run.json"
+    card = tmp_path / "card.html"
+    proc = _run("Reply with exactly: OK", "-m", f"{PROVIDER}:{MODEL}", "-q",
+                "-o", str(saved), "--card", str(card))
+    _skip_if_upstream_hiccup(proc)
+    assert proc.returncode == 0, proc.stderr
+
+    document = json.loads(saved.read_text(encoding="utf-8"))
+    assert document["provider"] == PROVIDER
+    assert document["model"] == f"{PROVIDER}:{MODEL}"
+    assert "unpriced (local)" not in card.read_text(encoding="utf-8")
 
 
 @pytest.mark.integration
