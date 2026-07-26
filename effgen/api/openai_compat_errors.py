@@ -72,8 +72,13 @@ def _classify_http(exc: Exception) -> tuple[int, str, str | None]:
         # credentials; report a gateway error instead. A missing key is a
         # configuration gap (503 Service Unavailable); a present-but-rejected key
         # is an upstream failure (502 Bad Gateway).
+        # Adapters word an absent credential two ways — "API key not found"
+        # (cerebras, fireworks, groq, together) and "API key not provided"
+        # (anthropic, gemini, openai) — and both mean the same thing: nothing
+        # was configured. Match both so one condition gets one status.
         if any(k in low for k in (
-            "not found", "not set", "no api key", "set the", "missing", "not configured",
+            "not found", "not set", "not provided", "no api key", "set the",
+            "missing", "not configured",
         )):
             return 503, "upstream_unavailable", "upstream_key_missing"
         return 502, "upstream_error", "upstream_auth_failed"

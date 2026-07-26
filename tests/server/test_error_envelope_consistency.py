@@ -408,3 +408,45 @@ def test_shutdown_drain_refusal_uses_the_envelope():
 def test_an_unknown_path_is_not_reachable_without_credentials(client):
     """An unrouted URL must not reveal that it is unrouted before authenticating."""
     assert_envelope(client.get("/no-such-route"), status=401)
+
+
+# ---------------------------------------------------------------------------
+# One condition, one status: an absent credential is a configuration gap (503),
+# a rejected one is an upstream failure (502) — on every provider.
+# ---------------------------------------------------------------------------
+# The exact sentences the provider adapters raise when nothing is configured.
+# They word it two ways ("not found" / "not provided"); both mean the same
+# thing, so both must classify the same way.
+MISSING_KEY_MESSAGES = [
+    "Anthropic API key not provided. Set ANTHROPIC_API_KEY environment variable or pass api_key",
+    "Google API key not provided. Set GOOGLE_API_KEY environment variable or pass api_key",
+    "OpenAI API key not provided. Set OPENAI_API_KEY environment variable or pass api_key",
+    "Cerebras API key not found. Set the CEREBRAS_API_KEY environment variable",
+    "Fireworks API key not found. Set the FIREWORKS_API_KEY environment variable",
+    "Groq API key not found. Set the GROQ_API_KEY environment variable",
+    "Together API key not found. Set the TOGETHER_API_KEY environment variable",
+]
+
+REJECTED_KEY_MESSAGES = [
+    "openai error: Incorrect API key provided: sk-proj-***. You can find your API key at ...",
+    "groq error: Invalid API Key",
+    "gemini error: API key not valid. Please pass a valid API key.",
+]
+
+
+@pytest.mark.parametrize("message", MISSING_KEY_MESSAGES)
+def test_an_absent_provider_key_is_a_503(message):
+    from effgen.api.openai_compat import _classify_http
+    from effgen.models.errors import ModelAuthError
+
+    status, err_type, code = _classify_http(ModelAuthError(message))
+    assert (status, code) == (503, "upstream_key_missing"), (status, err_type, code)
+
+
+@pytest.mark.parametrize("message", REJECTED_KEY_MESSAGES)
+def test_a_rejected_provider_key_is_a_502(message):
+    from effgen.api.openai_compat import _classify_http
+    from effgen.models.errors import ModelAuthError
+
+    status, err_type, code = _classify_http(ModelAuthError(message))
+    assert (status, code) == (502, "upstream_auth_failed"), (status, err_type, code)

@@ -150,6 +150,12 @@ Status codes: `400` invalid request, `401` authentication, `403` RBAC denial,
 `422` request validation, `429` rate limit, `502`/`503` upstream, `504` timeout,
 `500` otherwise. Branch on `type` and `code` rather than on the message text.
 
+The two upstream statuses say different things about the provider credential,
+consistently across every provider: `503` with `code: "upstream_key_missing"`
+means the server has no key configured for that provider (a configuration gap —
+set the variable and retry), and `502` with `code: "upstream_auth_failed"` means
+a key is configured and the provider rejected it. Neither ever echoes the key.
+
 A request with nothing for the model to act on is refused with `400` before any
 billed call: `empty_messages` / `empty_content` on `/v1/chat/completions`,
 `empty_prompt` on `/v1/completions`, `empty_input` on `/v1/embeddings`.
