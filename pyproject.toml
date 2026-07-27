@@ -770,7 +770,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Ignore unused imports in __init__.py
-"effgen/cli/_main.py" = ["F403"]  # Star import is intentional
 # Examples and validation scripts call load_dotenv() before effgen imports so
 # env-dependent modules see the keys at import time — the E402 is intentional.
 "examples/**/*.py" = ["E402"]

@@ -81,7 +81,6 @@ try:
         load_model,
     )
     from effgen.core.agent import AgentMode  # noqa: F401 - read as a module attribute
-    from effgen.tools.builtin import *
 except ImportError:
     print("Error: effGen package not found. Please install it first.")
     sys.exit(1)
