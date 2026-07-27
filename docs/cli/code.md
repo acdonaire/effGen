@@ -135,7 +135,9 @@ effgen code -p "add type hints to utils.py" --auto-edit --json | jq '.files_writ
 
 The JSON document carries the answer, `files_written`, the diffs, the full
 action log (what was allowed, withheld, declined or refused, and why),
-iterations, tool calls, tokens, cost and duration.
+iterations, tool calls, tokens, cost and duration. Every proposed edit appears
+in `diffs`; the ones that reached disk carry `"applied": true`, so
+`--plan --json` reports the changes it would make without writing any of them.
 
 Exit codes: `0` completed, `1` failed, `2` completed but changes were withheld
 because there was no terminal to confirm on and no `--auto-edit`/`--yes`.

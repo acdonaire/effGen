@@ -1131,8 +1131,8 @@ Model id formats:
                                   'visible text)')
     code_parser.add_argument('--json', dest='output_json', action='store_true',
                              help='Emit the result as one JSON document on stdout '
-                                  '(answer, files_written, actions, tokens, cost). '
-                                  'Human output goes to stderr.')
+                                  '(answer, files_written, diffs, actions, tokens, '
+                                  'cost). Human output goes to stderr.')
     code_parser.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS,
                              help='Verbose output (show DEBUG/INFO logs)')
     code_parser.add_argument('-q', '--quiet', action='store_true', default=argparse.SUPPRESS,
