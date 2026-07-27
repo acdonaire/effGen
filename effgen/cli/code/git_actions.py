@@ -59,13 +59,32 @@ _GLOBAL_VALUE_OPTIONS: frozenset[str] = frozenset({
     "--config-env", "--super-prefix",
 })
 
-# Shell tokens that end one command and begin another, so each `git ...` in a
-# chained line is inspected on its own.
-_COMMAND_SEPARATORS: frozenset[str] = frozenset({";", "&&", "||", "|", "&", "\n"})
+# Characters that end one command and begin another. A line is split on these
+# (outside quotes) so every command in it is inspected on its own.
+_SEPARATOR_CHARS = ";\n&|()"
 
 # Fallback scan when a command line cannot be tokenized (unbalanced quotes,
 # shell syntax shlex does not model): find any `git <subcommand>` shape.
-_GIT_WORD = re.compile(r"(?:^|[\s;&|(])git\s+(?:-\S+\s+)*([a-z][a-z-]*)", re.I)
+_GIT_WORD = re.compile(r"""(?:^|[\s;&|(`"'])git\s+(?:-\S+\s+)*([a-z][a-z-]*)""", re.I)
+
+# `git` inside an argument list, e.g. subprocess.run(["git", "push"]).
+_GIT_ARGV = re.compile(r"""["']git["']\s*,\s*["']([a-z][a-z-]*)["']""", re.I)
+
+# Programs whose `-c` argument is another shell command line.
+_SHELL_INTERPRETERS: frozenset[str] = frozenset({
+    "sh", "bash", "zsh", "dash", "ksh", "ash", "fish",
+})
+
+# Programs whose `-c`/`-e` argument is source code that can spawn git itself.
+_CODE_INTERPRETERS: frozenset[str] = frozenset({
+    "python", "python2", "python3", "perl", "ruby", "node", "nodejs", "php",
+})
+
+# Flags after which one of the interpreters above takes the text to run.
+_INLINE_CODE_FLAGS: frozenset[str] = frozenset({"-c", "-e", "--command", "--eval"})
+
+# How many nested command strings deep the scan goes before giving up.
+_MAX_NESTING = 5
 
 _TIMEOUT = 30
 
@@ -123,7 +142,101 @@ def _forbidden_reason(subcommand: str, options: list[str]) -> str | None:
     return None
 
 
-def unsafe_shell_git(command: str) -> str | None:
+def _split_commands(text: str) -> list[str]:
+    """Split a command line into the individual commands it runs.
+
+    Splitting happens on ``;``, newlines, ``&&``/``||``/``&``, pipes and
+    subshell parentheses that are not inside quotes, so each command is scanned
+    on its own and a leading ``git status`` cannot absorb the ``git push`` that
+    follows it. Quoted text is left intact: ``echo 'git push'`` stays one
+    command whose only git mention is data.
+    """
+    commands: list[str] = []
+    current: list[str] = []
+    quote = ""
+    escaped = False
+    for char in text:
+        if escaped:
+            current.append(char)
+            escaped = False
+        elif char == "\\" and quote != "'":
+            current.append(char)
+            escaped = True
+        elif quote:
+            current.append(char)
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+            current.append(char)
+        elif char in _SEPARATOR_CHARS:
+            commands.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    commands.append("".join(current))
+    return [part for part in commands if part.strip()]
+
+
+def _scan_git_call(tokens: list[str], index: int) -> tuple[str | None, int]:
+    """Read the git invocation starting at *index* and return (reason, index)."""
+    subcommand = ""
+    options: list[str] = []
+    while index < len(tokens):
+        candidate = tokens[index]
+        index += 1
+        if not subcommand:
+            if candidate in _GLOBAL_VALUE_OPTIONS:
+                index += 1
+                continue
+            if candidate.startswith("-"):
+                continue
+            subcommand = candidate
+            continue
+        if candidate == "--":
+            break
+        if candidate.startswith("-"):
+            options.append(candidate)
+    return _forbidden_reason(subcommand, options), index
+
+
+def _inline_argument(tokens: list[str], index: int) -> str | None:
+    """Return the text an interpreter was asked to run, if it was given one."""
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        # `-lc`, `-ec` and friends bundle the code flag with other short flags.
+        if token in _INLINE_CODE_FLAGS or (
+            len(token) > 1
+            and token.startswith("-")
+            and not token.startswith("--")
+            and ("c" in token[1:] or "e" in token[1:])
+        ):
+            return tokens[index] if index < len(tokens) else None
+        if not token.startswith("-"):
+            return None
+    return None
+
+
+def _scan_code(text: str) -> str | None:
+    """Return why *text*, source code an interpreter was handed, may not run.
+
+    Source code reaches git two ways: as a command line (``os.system("git
+    push")``) and as an argument list (``subprocess.run(["git", "push"])``).
+    Both shapes are read for a forbidden subcommand.
+    """
+    for match in _GIT_WORD.finditer(text):
+        reason = _forbidden_reason(match.group(1).lower(), [])
+        if reason:
+            return reason
+    for match in _GIT_ARGV.finditer(text):
+        reason = _forbidden_reason(match.group(1).lower(), [])
+        if reason:
+            return reason
+    return None
+
+
+def unsafe_shell_git(command: str, _depth: int = 0) -> str | None:
     """Return why *command* may not run as a shell command, or ``None``.
 
     A coding session reads a repository freely — ``git status``, ``git log``,
@@ -131,58 +244,61 @@ def unsafe_shell_git(command: str) -> str | None:
     or discards work, whichever tool it reaches for. This applies the same
     :data:`FORBIDDEN_SUBCOMMANDS` and :data:`FORBIDDEN_FLAGS` lists
     :func:`ensure_safe` applies to :func:`commit_paths`, so ``bash`` is not a way
-    around them. Chained commands are inspected one at a time, and ``git``'s
-    global options are skipped so ``git -C other/repo push`` is seen for what it
-    is.
+    around them.
+
+    The line is split into its individual commands first, so a chain
+    (``git add -A; git commit -m x; git push``) is read command by command, and
+    ``git``'s global options are skipped so ``git -C other/repo push`` is seen
+    for what it is. A command line handed to another interpreter is followed
+    into: ``bash -c '...'`` is scanned as a command line, ``python -c '...'`` as
+    source code that can spawn git itself. Quoted text that is only ever data —
+    ``echo 'git push'``, ``grep 'git reset' docs/`` — is not a git call and is
+    left alone.
 
     The one repository-changing action a session offers is the confirmed commit
     in this module; a refusal names it.
     """
     text = str(command or "")
-    if "git" not in text:
+    if "git" not in text or _depth > _MAX_NESTING:
         return None
 
-    try:
-        tokens = shlex.split(text, comments=False, posix=True)
-    except ValueError:
-        tokens = []
-
-    if tokens:
-        index = 0
-        while index < len(tokens):
-            token = tokens[index]
-            index += 1
-            if Path(token).name != "git":
-                continue
-            subcommand = ""
-            options: list[str] = []
-            while index < len(tokens):
-                candidate = tokens[index]
-                if candidate in _COMMAND_SEPARATORS:
-                    break
-                index += 1
-                if not subcommand:
-                    if candidate in _GLOBAL_VALUE_OPTIONS:
-                        index += 1
-                        continue
-                    if candidate.startswith("-"):
-                        continue
-                    subcommand = candidate
-                    continue
-                if candidate == "--":
-                    break
-                if candidate.startswith("-"):
-                    options.append(candidate)
-            reason = _forbidden_reason(subcommand, options)
+    for part in _split_commands(text):
+        try:
+            tokens = shlex.split(part, comments=False, posix=True)
+        except ValueError:
+            tokens = []
+        if not tokens:
+            # Untokenizable: fall back to the shape scan rather than let it through.
+            reason = _scan_code(part)
             if reason:
                 return reason
-        return None
+            continue
 
-    # Untokenizable: fall back to the shape scan rather than letting it through.
-    for match in _GIT_WORD.finditer(text):
-        reason = _forbidden_reason(match.group(1).lower(), [])
-        if reason:
-            return reason
+        index = 0
+        while index < len(tokens):
+            name = Path(tokens[index]).name
+            index += 1
+            if name == "git":
+                reason, index = _scan_git_call(tokens, index)
+                if reason:
+                    return reason
+                continue
+            if name == "eval":
+                reason = unsafe_shell_git(" ".join(tokens[index:]), _depth + 1)
+                if reason:
+                    return reason
+                break
+            if name in _SHELL_INTERPRETERS or name in _CODE_INTERPRETERS:
+                inline = _inline_argument(tokens, index)
+                if inline is None:
+                    continue
+                reason = (
+                    unsafe_shell_git(inline, _depth + 1)
+                    if name in _SHELL_INTERPRETERS
+                    else _scan_code(inline)
+                )
+                if reason:
+                    return reason
     return None
 
 

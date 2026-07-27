@@ -282,6 +282,21 @@ def test_a_refused_command_never_runs(repo: Path, monkeypatch):
         "git commit -m ok --no-verify",
         "/usr/bin/git push",
         "git push  # unbalanced quote '",
+        # A command that follows a readable one in the same line is still read.
+        "git status; git push origin main",
+        "git add -A; git commit -m 'wip'; git push",
+        "git status --porcelain\ngit push origin main",
+        "git status | tee out.txt; git push",
+        "(cd sub; git push)",
+        "xargs git push",
+        # Another interpreter is not a way around the limit.
+        "bash -c 'git push origin main'",
+        "bash -lc 'git push'",
+        "sh -c \"git reset --hard HEAD~1\"",
+        "eval 'git push'",
+        "python -c \"import subprocess; subprocess.run(['git', 'push'])\"",
+        "python3 -c 'import os; os.system(\"git reset --hard\")'",
+        "node -e \"require('child_process').execSync('git push')\"",
     ],
 )
 def test_the_shell_cannot_publish_or_rewrite_history(command):
@@ -301,6 +316,12 @@ def test_the_shell_cannot_publish_or_rewrite_history(command):
         "grep -rn 'git reset' docs/",
         "git log --grep=push",
         "git -C sub status",
+        "git status; git diff",
+        "git status --porcelain\ngit log --oneline",
+        "git log --oneline | head -5",
+        "bash -c 'git status'",
+        "python -c \"print('git is a program')\"",
+        "echo \"run git push yourself\" > NOTES.md",
     ],
 )
 def test_reading_a_repository_from_the_shell_still_works(command):
@@ -344,6 +365,46 @@ def test_a_destructive_command_really_does_not_run(repo: Path):
     bash = next(t for t in build_code_tools(gate) if t.name == "bash")
     asyncio.run(bash._execute(command="git reset --hard HEAD~1"))
     assert _git(repo, "rev-parse", "HEAD").strip() == head
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git status --porcelain; git push origin main",
+        "git status --porcelain\ngit push origin main",
+        "bash -c 'git push origin main'",
+        "sh -c 'git reset --hard HEAD~1'",
+        "eval 'git push origin main'",
+    ],
+)
+def test_a_chained_or_nested_command_reaches_neither_the_remote_nor_history(
+    repo: Path, tmp_path: Path, command: str
+):
+    # The refusal has to hold for the line the model actually writes, not only
+    # for a bare `git push`: a second command on the same line and a command
+    # handed to another interpreter are both read.
+    import asyncio
+
+    from effgen.cli.code.permissions import PermissionGate
+    from effgen.cli.code.tools import build_code_tools
+
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", "-q", str(remote))
+    _git(repo, "remote", "add", "origin", str(remote))
+    (repo / "second.py").write_text("y = 2\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "second")
+    head = _git(repo, "rev-parse", "HEAD").strip()
+
+    gate = PermissionGate(PermissionMode.YES, repo, interactive=False)
+    bash = next(t for t in build_code_tools(gate) if t.name == "bash")
+    result = asyncio.run(bash._execute(command=command))
+
+    assert result["success"] is False
+    assert "not available to a coding session" in result["error"]
+    assert [a.decision for a in gate.actions] == ["refused"]
+    assert _git(repo, "rev-parse", "HEAD").strip() == head
+    assert _git(remote, "rev-list", "--all", "--count").strip() == "0"
 
 
 def test_the_allowed_and_forbidden_sets_do_not_overlap():
@@ -540,6 +601,78 @@ def test_piped_run_commits_with_yes(repo: Path):
     # The decision is on the run's action log, so --json reports it.
     assert any(a.kind == "git" for a in result.actions)
     assert result.to_dict()["commit"]["paths"] == ["written.py"]
+
+
+def _run_code_command(monkeypatch, repo: Path, args_extra: dict):
+    """Drive ``run_code_command`` over *repo* with an agent that writes one file."""
+    import asyncio
+
+    from effgen.cli.code.tools import build_code_tools
+    from effgen.cli.commands import code as code_cmd
+
+    class _Agent:
+        def __init__(self, tools):
+            self._fops = tools[2]
+
+        def run(self, task):
+            asyncio.run(self._fops.execute(
+                operation="write", path="written.py", content="w = 1\n"
+            ))
+            return SimpleNamespace(
+                output="wrote it", success=True, metadata={"reason": "final_answer"},
+                iterations=1, tool_calls=1, tokens_used=10, execution_time=0.1,
+                provider="fake",
+            )
+
+        def close(self):
+            pass
+
+    class _PatchedEngine(CodeEngine):
+        def build_agent(self):
+            self._agent = _Agent(build_code_tools(self.gate))
+            return self._agent
+
+    monkeypatch.setattr(code_cmd, "CodeEngine", _PatchedEngine)
+    monkeypatch.setattr(code_cmd, "workspace_execution_note", lambda _ws: None)
+
+    args = SimpleNamespace(
+        task=None, print_task="write it", model="fake:model", provider=None,
+        workspace=str(repo), plan_only=False, auto_edit=False, assume_yes=False,
+        max_iterations=None, temperature=None, max_tokens=None,
+        output_json=False, quiet=False, commit=False, commit_message=None,
+    )
+    for key, value in args_extra.items():
+        setattr(args, key, value)
+
+    cli = _cli()
+    cli.console = None
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr("sys.stdout", out)
+    monkeypatch.setattr("sys.stderr", err)
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    exit_code = code_cmd.run_code_command(cli, args)
+    return exit_code, out.getvalue(), err.getvalue()
+
+
+def test_a_withheld_commit_is_reported_in_the_exit_code(repo: Path, monkeypatch):
+    # --auto-edit writes without asking but does not confirm a commit, and there
+    # is no terminal to ask on: the run did less than it was told to, so it exits
+    # 2 rather than reporting a clean success.
+    exit_code, _out, err = _run_code_command(
+        monkeypatch, repo, {"auto_edit": True, "commit": True}
+    )
+    assert exit_code == 2
+    assert (repo / "written.py").exists()
+    assert "Nothing was committed" in err
+    assert _git(repo, "log", "--format=%s").splitlines() == ["initial"]
+
+
+def test_a_commit_that_was_made_exits_zero(repo: Path, monkeypatch):
+    exit_code, _out, _err = _run_code_command(
+        monkeypatch, repo, {"assume_yes": True, "commit": True}
+    )
+    assert exit_code == 0
+    assert _git(repo, "log", "-1", "--format=%s").strip() == "Add written.py"
 
 
 # -- the interactive surface -------------------------------------------------
