@@ -971,7 +971,7 @@ class TestBashSecretProtection:
         res = await bt.execute(command="cat .env")
         assert res.success is False
 
-    def test_bash_description_is_honest_and_not_in_general(self):
+    def test_bash_description_states_it_is_not_a_sandbox(self):
         from effgen.presets.registry import PRESETS
         from effgen.tools.builtin.bash_tool import BashTool
 

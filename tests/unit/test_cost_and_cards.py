@@ -23,7 +23,7 @@ def test_format_cost_keeps_subcent_costs_visible():
     assert format_cost(4.9e-7) == "$4.9e-07"
 
 
-def test_format_cost_honest_zero_and_none():
+def test_format_cost_distinguishes_zero_from_unpriced():
     assert format_cost(0.0) == "$0.00"
     assert format_cost(None) is None
     assert format_cost("not a number") is None

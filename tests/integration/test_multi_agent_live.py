@@ -130,7 +130,7 @@ def test_dag_fanout_fanin_live():
             ag.close()
 
 
-def test_team_with_bad_model_is_honest_failure_live():
+def test_team_with_bad_model_reports_the_failure_live():
     from effgen import Agent, AgentConfig, MultiAgentOrchestrator, OrchestrationPattern
     good = _mk_agent("good")
     bad = Agent(AgentConfig(name="bad", model="totally-not-a-real-model-xyz",
@@ -150,7 +150,7 @@ def test_team_with_bad_model_is_honest_failure_live():
         bad.close()
 
 
-def test_dag_with_bad_node_is_honest_failure_live():
+def test_dag_with_bad_node_reports_the_failure_live():
     from effgen import Agent, AgentConfig, WorkflowDAG, WorkflowNode
     ok = _mk_agent("ok")
     bad = Agent(AgentConfig(name="bad", model="totally-not-a-real-model-xyz",

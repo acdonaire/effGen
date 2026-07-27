@@ -392,7 +392,7 @@ class TestEffgenAgent:
         assert mock_create.call_args[0][0] == "coding"
         assert calls and "quicksort" in calls[0]
 
-    def test_agent_handles_error_gracefully(self, monkeypatch):
+    def test_agent_error_is_displayed_not_raised(self, monkeypatch):
         """An exception in Agent.run should produce an error message, not raise."""
         displayed = []
 

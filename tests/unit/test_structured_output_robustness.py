@@ -104,7 +104,7 @@ def test_fast_path_value_already_valid_via_extract():
 # --------------------------------------------------------------------------- #
 # Reported failure
 # --------------------------------------------------------------------------- #
-def test_honest_failure_preserves_raw_and_reports_error():
+def test_failure_preserves_raw_and_reports_error():
     model = _PlainModel(["definitely not json", "still prose", "nope"])
     cfg = StructuredOutputConfig(schema=SCHEMA, max_retries=2)
     outcome = structured_generate(model, "capital?", SCHEMA, cfg)
@@ -289,7 +289,7 @@ def test_agent_fast_path_zero_attempts_when_answer_already_valid():
     assert resp.metadata["structured_output_method"] == "agent_output"
 
 
-def test_agent_honest_failure_marks_unsuccessful_and_preserves_raw():
+def test_agent_failure_marks_unsuccessful_and_preserves_raw():
     raw = "I think the capital is some city but I won't say."
     agent = _agent_with(_PlainModel(["still prose", "more prose", "nope"]))
     resp = agent._apply_structured_output(_response(raw), SCHEMA, None, "capital?")

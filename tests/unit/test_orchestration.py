@@ -112,7 +112,7 @@ def test_run_rejects_bad_type_with_clear_error():
     assert "node_id" in str(ei.value)
 
 
-def test_empty_workflow_is_honest_failure():
+def test_empty_workflow_reports_a_typed_failure():
     # A zero-node DAG must NOT report success=True (all([]) trap). Mirrors the
     # empty-team contract in MultiAgentOrchestrator.assign_task.
     from effgen.core.workflow import WorkflowDAG
@@ -123,7 +123,7 @@ def test_empty_workflow_is_honest_failure():
     assert res.node_results == []
 
 
-def test_empty_workflow_async_is_honest_failure():
+def test_empty_workflow_async_reports_a_typed_failure():
     import asyncio
 
     from effgen.core.workflow import WorkflowDAG
@@ -238,7 +238,7 @@ def test_assign_task_bad_type_raises_typeerror():
         orch.assign_task("hi", 123)
 
 
-def test_empty_team_is_honest_failure():
+def test_empty_team_reports_a_typed_failure():
     from effgen.core.orchestrator import MultiAgentOrchestrator, OrchestrationPattern, TeamConfig
     orch = MultiAgentOrchestrator()
     orch.teams["empty"] = TeamConfig(name="empty", pattern=OrchestrationPattern.SEQUENTIAL, agents=[])
@@ -283,7 +283,7 @@ def test_sequential_does_not_echo_input_on_failure():
 # --------------------------------------------------------------------------- #
 # COLLABORATIVE failure reporting (a failing collaborator must not pass silently)
 # --------------------------------------------------------------------------- #
-def test_collaborative_failure_is_honest():
+def test_collaborative_failure_is_reported_not_swallowed():
     from effgen.core.orchestrator import OrchestrationPattern
     orch = _orch_with_team(
         agents=[FakeAgent("billing"), FakeAgent("tech", succeed=False)],

@@ -252,7 +252,7 @@ def test_tool_stream_include_events_yields_typed_events():
             assert marker not in (e.text or "")
 
 
-def test_tool_stream_step_limit_is_honest_not_scaffolding():
+def test_tool_stream_step_limit_emits_a_plain_notice():
     """Hitting the step limit yields a plain notice, not raw bracket scaffolding."""
     from effgen.tools.builtin.calculator import Calculator
 

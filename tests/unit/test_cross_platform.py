@@ -123,7 +123,7 @@ class TestMLXImportsNonApple:
         engine = MLXVLMEngine(model_name="test-model")
         assert engine.model_type == ModelType.MLX_VLM
 
-    def test_mlx_engine_load_fails_gracefully_on_nvidia(self):
+    def test_mlx_engine_load_raises_a_clear_error_on_nvidia(self):
         """Loading MLX model on non-Apple should raise RuntimeError with helpful message."""
         if is_apple_silicon():
             pytest.skip("Running on Apple Silicon")
@@ -132,7 +132,7 @@ class TestMLXImportsNonApple:
         with pytest.raises(RuntimeError, match="Apple Silicon"):
             engine.load()
 
-    def test_mlx_vlm_engine_load_fails_gracefully_on_nvidia(self):
+    def test_mlx_vlm_engine_load_raises_a_clear_error_on_nvidia(self):
         """Loading MLX-VLM model on non-Apple should raise RuntimeError with helpful message."""
         if is_apple_silicon():
             pytest.skip("Running on Apple Silicon")
@@ -141,7 +141,7 @@ class TestMLXImportsNonApple:
         with pytest.raises(RuntimeError, match="Apple Silicon"):
             engine.load()
 
-    def test_load_model_mlx_fails_gracefully_on_nvidia(self):
+    def test_load_model_mlx_raises_a_clear_error_on_nvidia(self):
         """load_model with engine='mlx' on non-Apple should raise RuntimeError."""
         if is_apple_silicon():
             pytest.skip("Running on Apple Silicon")
@@ -149,7 +149,7 @@ class TestMLXImportsNonApple:
         with pytest.raises(RuntimeError, match="Apple Silicon"):
             load_model("test-model", engine="mlx")
 
-    def test_load_model_mlx_vlm_fails_gracefully_on_nvidia(self):
+    def test_load_model_mlx_vlm_raises_a_clear_error_on_nvidia(self):
         """load_model with engine='mlx_vlm' on non-Apple should raise RuntimeError."""
         if is_apple_silicon():
             pytest.skip("Running on Apple Silicon")

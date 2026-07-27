@@ -83,7 +83,7 @@ def test_rss_search_requires_query():
 
 
 @needs_net
-def test_rss_malformed_feed_returns_gracefully(caplog):
+def test_rss_malformed_feed_returns_a_typed_error(caplog):
     """Malformed/non-feed URL should not crash and should return empty entries."""
     caplog.set_level(logging.WARNING)
     r = _ok(_run(RSSFeedTool().execute(operation="fetch", url="https://example.com")))

@@ -71,7 +71,7 @@ class TestAgentInit:
         assert "calculator" in agent.tools
         assert "datetime" in agent.tools
 
-    def test_init_with_string_model_fails_gracefully(self):
+    def test_init_with_unresolvable_string_model_defers_the_error(self):
         config = AgentConfig(
             name="test",
             model="nonexistent/model",
