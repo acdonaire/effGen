@@ -25,9 +25,13 @@ gated vocabulary is the set that is essentially always editorializing when it
 describes the software's behavior: ``honest``/``honestly``/``honesty``,
 ``gracefully``, ``delightful``/``delightfully``, ``beautifully``,
 ``elegant``/``elegantly``, ``robustly``, ``seamless``/``seamlessly``,
-``effortlessly``, ``magically``, ``blazing``/``blazingly``,
+``effortless``/``effortlessly``, ``magically``, ``blazing``/``blazingly``,
 ``production-grade``, ``production-ready``, ``world-class``,
-``battle-tested``, ``bulletproof``, ``state-of-the-art``.
+``battle-tested``, ``bulletproof``, ``state-of-the-art``,
+``flawless``/``flawlessly``, ``rock-solid``, ``industrial-strength``,
+``enterprise-grade``, ``military-grade``, ``best-in-class``, ``turnkey``,
+``lightning-fast``, ``hassle-free``, ``painless``/``painlessly``, ``sleek``,
+``gorgeous``, ``stunning``.
 
 ``cleanly``/``properly``/``correctly`` are deliberately *not* machine-gated:
 they carry a large volume of plainly factual technical uses ("imports cleanly",
@@ -35,8 +39,14 @@ they carry a large volume of plainly factual technical uses ("imports cleanly",
 rare filler use, so blanket-gating them would force an unwieldy allowlist.
 ``first-class`` is excluded for the same reason: it is a term of art for a type
 or value the language/framework supports natively, and separating that from the
-promotional use ("a first-class experience") needs a human. Those words are
-scrubbed by human review, not by this gate.
+promotional use ("a first-class experience") needs a human. ``cutting-edge`` and
+``bleeding-edge`` are excluded too: they describe how recent a dependency or
+branch is ("installs the bleeding-edge main branch") as often as they praise.
+Those words are scrubbed by human review, not by this gate.
+
+Both classes are matched against each line twice: as written, and with
+identifiers broken into words, so a gated term hidden inside a function or class
+name (``test_fails_gracefully``, ``TestExecutorHonesty``) is caught too.
 
 A small, documented allowlist excuses the handful of *legitimate* occurrences
 (an SSN-format mask, files that intentionally exclude the internal planning
@@ -45,11 +55,23 @@ is intentionally narrow and self-tested so it cannot silently no-op: a planted
 violation of every pattern must be caught (see the ``test_detector_catches_*``
 tests).
 
-Scanning is by suffix (see ``_SOURCE_SUFFIXES``), so plain-text test data —
-``.txt``/``.jsonl`` fixtures and golden files — is out of scope by design.
-Those files hold quoted third-party prose (paper abstracts) and recorded model
-output, neither of which is effGen describing itself; gating them would mean
-allowlisting verbatim quotations.
+Scanning is by suffix (see ``_SOURCE_SUFFIXES``) and covers every file type
+effGen authors prose or markup in — including the bundled web surfaces
+(``.html``/``.css``), the brand assets (``.svg``), and the scaffolding templates
+the ``create-plugin`` command emits (``.tmpl``/``.tpl``), whose comments and
+copy ship to users like any other source. A file is matched on *any* of its
+dotted suffixes and on a variant name prefix, so the forms that park a real file
+type behind another word — a parked workflow (``release.yml.disabled``), a
+per-target image (``Dockerfile.sandbox``) — are scanned as what they are.
+
+Data files are out of scope by design:
+
+* ``.txt``/``.jsonl`` fixtures and golden files hold quoted third-party prose
+  (paper abstracts) and recorded model output — neither is effGen describing
+  itself, and gating them would mean allowlisting verbatim quotations;
+* ``.json`` is dependency lockfiles, provider catalog snapshots and generated
+  schemas — machine-written payloads with no authored prose;
+* ``.sql`` is query fixtures for the prompt-library evals.
 
 ``build_plan/`` is deliberately *not* scanned — it is gitignored internal
 scaffolding and is never shipped. The human-authored release narrative
@@ -71,12 +93,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _SOURCE_SUFFIXES = {
     ".py", ".pyi", ".md", ".rst", ".toml", ".cfg", ".ini",
     ".yaml", ".yml", ".sh", ".bash", ".ts", ".js", ".tsx", ".jsx",
+    # Authored markup that ships to users: the self-contained web surfaces,
+    # the brand assets, and the plugin scaffolding templates.
+    ".html", ".css", ".svg", ".tmpl", ".tpl",
 }
 _SOURCE_NAMES = {".gitignore", ".dockerignore", ".gitattributes", "MANIFEST.in", "Dockerfile"}
 
-# Directories never scanned: internal planning scaffolding (gitignored) and
-# bundled datasets (arbitrary natural-language payloads, not authored prose).
-_SKIP_DIR_PREFIXES = ("build_plan/", "examples/data/")
+# Names whose variant forms are authored the same way as the base name: a
+# per-target container image is conventionally ``Dockerfile.<variant>``.
+_SOURCE_NAME_PREFIXES = ("Dockerfile.",)
+
+# The only directory never scanned: internal planning scaffolding, which is
+# gitignored and never shipped. Bundled datasets need no directory rule — their
+# payload files are ``.txt``/``.json``/``.jsonl``, already out of scope by
+# suffix, while the scripts that fetch them are ordinary authored source.
+_SKIP_DIR_PREFIXES = ("build_plan/",)
 
 # This gate embeds every forbidden pattern as a literal, so it cannot scan
 # itself without self-tripping.
@@ -104,10 +135,14 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "milestone-reference": re.compile(
         r"\bPhase[ _-]?\d+\b|\bbuild[ _-]?plan\b|stabilization sprint", re.IGNORECASE
     ),
-    # author/process breadcrumbs
+    # author/process breadcrumbs. The role words (builder/verifier/explorer)
+    # are only flagged next to a process verb — "the verifier" is also the
+    # ordinary name for a hash-checking component, and "explorer" for a file
+    # browser.
     "process-breadcrumb": re.compile(
-        r"\bthis phase\b|\bas per audit\b|\bfixed in phase\b|"
-        r"\bbuilder agent\b|\bverifier (?:added|fixed)\b",
+        r"\bthis phase\b|\bas per (?:audit|the report)\b|\bfixed in phase\b|"
+        r"\bthe report (?:asked|requested|wanted)\b|\bbuilder agent\b|"
+        r"\b(?:builder|verifier|explorer) (?:added|fixed|confirmed|noted|reported)\b",
         re.IGNORECASE,
     ),
     # leftover debugging
@@ -127,7 +162,7 @@ EDITORIALIZING_PATTERNS: dict[str, re.Pattern[str]] = {
     "praise-elegant": re.compile(r"\belegant(?:ly)?\b", re.IGNORECASE),
     "praise-robustly": re.compile(r"\brobustly\b", re.IGNORECASE),
     "praise-seamless": re.compile(r"\bseamless(?:ly)?\b", re.IGNORECASE),
-    "praise-effortlessly": re.compile(r"\beffortlessly\b", re.IGNORECASE),
+    "praise-effortless": re.compile(r"\beffortless(?:ly)?\b", re.IGNORECASE),
     "praise-magically": re.compile(r"\bmagically\b", re.IGNORECASE),
     "praise-blazing": re.compile(r"\bblazing(?:ly)?\b", re.IGNORECASE),
     "praise-production-grade": re.compile(r"\bproduction[ -]grade\b", re.IGNORECASE),
@@ -136,6 +171,20 @@ EDITORIALIZING_PATTERNS: dict[str, re.Pattern[str]] = {
     "praise-battle-tested": re.compile(r"\bbattle[ -]tested\b", re.IGNORECASE),
     "praise-bulletproof": re.compile(r"\bbullet[ -]?proof\b", re.IGNORECASE),
     "praise-state-of-the-art": re.compile(r"\bstate[ -]of[ -]the[ -]art\b", re.IGNORECASE),
+    "praise-flawless": re.compile(r"\bflawless(?:ly)?\b", re.IGNORECASE),
+    "praise-rock-solid": re.compile(r"\brock[ -]solid\b", re.IGNORECASE),
+    "praise-industrial-strength": re.compile(r"\bindustrial[ -]strength\b", re.IGNORECASE),
+    "praise-enterprise-grade": re.compile(r"\benterprise[ -]grade\b", re.IGNORECASE),
+    "praise-military-grade": re.compile(r"\bmilitary[ -]grade\b", re.IGNORECASE),
+    "praise-best-in-class": re.compile(r"\bbest[ -]in[ -]class\b", re.IGNORECASE),
+    "praise-turnkey": re.compile(r"\bturn[ -]?key\b", re.IGNORECASE),
+    "praise-lightning-fast": re.compile(r"\blightning[ -]fast\b", re.IGNORECASE),
+    "praise-hassle-free": re.compile(r"\bhassle[ -]free\b", re.IGNORECASE),
+    "praise-painless": re.compile(r"\bpainless(?:ly)?\b", re.IGNORECASE),
+    # Visual self-praise, aimed at the bundled web surfaces now in scope.
+    "praise-sleek": re.compile(r"\bsleek\b", re.IGNORECASE),
+    "praise-gorgeous": re.compile(r"\bgorgeous\b", re.IGNORECASE),
+    "praise-stunning": re.compile(r"\bstunning\b", re.IGNORECASE),
 }
 
 # ── documented allowlist of legitimate occurrences ────────────────────────────
@@ -175,24 +224,50 @@ def _is_allowed(rel_path: str, line: str, allowlist: list[tuple[str, str]]) -> b
     return any(p == rel_path and needle in line for p, needle in allowlist)
 
 
-def find_violations(rel_path: str, text: str) -> list[tuple[int, str, str]]:
-    """Return ``(line_no, pattern_name, line)`` for every unjustified jargon hit."""
+# Every pattern below is anchored on ``\b``, and ``_`` is a word character while
+# a CamelCase hump is not a boundary at all — so a gated word sitting inside an
+# identifier (``test_fails_gracefully``, ``TestExecutorHonesty``) would never
+# match. Each line is therefore also searched in a form where identifiers are
+# broken into their constituent words. Splitting on the hump rather than on
+# every capital keeps acronyms intact, and words that merely *contain* a gated
+# stem (``dishonest``) stay unsplit and so stay unmatched.
+_CAMEL_HUMP = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _split_identifiers(line: str) -> str:
+    return _CAMEL_HUMP.sub(" ", line).replace("_", " ")
+
+
+def _scan(
+    rel_path: str,
+    text: str,
+    patterns: dict[str, re.Pattern[str]],
+    allowlist: list[tuple[str, str]],
+) -> list[tuple[int, str, str]]:
+    """Return ``(line_no, pattern_name, line)`` for every unjustified hit.
+
+    The allowlist is matched against the line as written, so an entry keeps
+    naming the real text of the line it excuses.
+    """
     out: list[tuple[int, str, str]] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
-        for name, pat in PATTERNS.items():
-            if pat.search(line) and not _is_allowed(rel_path, line, ALLOWLIST):
+        if _is_allowed(rel_path, line, allowlist):
+            continue
+        split = _split_identifiers(line)
+        for name, pat in patterns.items():
+            if pat.search(line) or (split != line and pat.search(split)):
                 out.append((lineno, name, line.strip()))
     return out
+
+
+def find_violations(rel_path: str, text: str) -> list[tuple[int, str, str]]:
+    """Return ``(line_no, pattern_name, line)`` for every unjustified jargon hit."""
+    return _scan(rel_path, text, PATTERNS, ALLOWLIST)
 
 
 def find_editorializing(rel_path: str, text: str) -> list[tuple[int, str, str]]:
     """Return ``(line_no, pattern_name, line)`` for every editorializing hit."""
-    out: list[tuple[int, str, str]] = []
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        for name, pat in EDITORIALIZING_PATTERNS.items():
-            if pat.search(line) and not _is_allowed(rel_path, line, EDITORIALIZING_ALLOWLIST):
-                out.append((lineno, name, line.strip()))
-    return out
+    return _scan(rel_path, text, EDITORIALIZING_PATTERNS, EDITORIALIZING_ALLOWLIST)
 
 
 def _tracked_source_files() -> list[str]:
@@ -210,7 +285,14 @@ def _tracked_source_files() -> list[str]:
         if rel.startswith(_SKIP_DIR_PREFIXES):
             continue
         name = rel.rsplit("/", 1)[-1]
-        if Path(rel).suffix in _SOURCE_SUFFIXES or name in _SOURCE_NAMES:
+        # Every dotted suffix is considered, not just the last one, so a file
+        # parked behind a trailing marker (``release.yml.disabled``) is scanned
+        # as the kind of file it is.
+        if (
+            any(s in _SOURCE_SUFFIXES for s in Path(rel).suffixes)
+            or name in _SOURCE_NAMES
+            or name.startswith(_SOURCE_NAME_PREFIXES)
+        ):
             files.append(rel)
     return files
 
@@ -276,6 +358,93 @@ def test_detector_catches_hyphenated_and_underscored_phase():
     )
 
 
+def test_detector_catches_report_and_role_breadcrumbs():
+    """Breadcrumbs naming the internal report or an internal role must fire."""
+    for sample in (
+        "as per the report, the retry budget was raised",
+        "the report asked for a clearer error here",
+        "the report requested a --json flag",
+        "builder added the fallback path",
+        "the verifier confirmed this on three families",
+        "explorer reported a cryptic traceback here",
+    ):
+        hits = find_violations("some/source.py", sample)
+        assert any(n == "process-breadcrumb" for _, n, _ in hits), sample
+    # The same role words in their ordinary technical sense must stay clean:
+    # a hash verifier, a file explorer, a package builder.
+    for ok in (
+        "EFFGEN_VERIFY_HASHES=1 must call the verifier",
+        "opens the path in the system file explorer",
+        "the wheel builder writes to dist/",
+    ):
+        assert not any(
+            n == "process-breadcrumb" for _, n, _ in find_violations("s.py", ok)
+        ), ok
+
+
+def test_detector_catches_gated_words_inside_identifiers():
+    """A gated word hidden in a snake_case or CamelCase name must still fire."""
+    snake = [
+        ("def test_init_with_string_model_fails_gracefully(self):", "praise-gracefully"),
+        ("def test_empty_workflow_is_honest_failure():", "praise-honest"),
+        ("def test_renders_beautifully_in_notebook():", "praise-beautifully"),
+        ("production_ready = True", "praise-production-ready"),
+    ]
+    camel = [
+        ("class TestPublicCodeExecutorHonesty:", "praise-honest"),
+        ("class SeamlessMigrationHelper:", "praise-seamless"),
+    ]
+    for sample, expected in snake + camel:
+        hits = find_editorializing("some/source.py", sample)
+        assert any(n == expected for _, n, _ in hits), sample
+
+    # Process jargon hidden in an identifier is caught the same way.
+    assert any(
+        n == "milestone-reference"
+        for _, n, _ in find_violations("s.py", "def test_phase_7_regression():")
+    )
+
+    # A word that merely *contains* a gated stem is not split, so it stays clean.
+    for ok in ("dishonest_input = True", "class Blazer:", "the production environment"):
+        assert not find_editorializing("some/source.py", ok), ok
+
+
+def test_allowlist_matches_the_line_as_written():
+    """Splitting identifiers must not defeat an allowlist entry."""
+    # ".gitignore" excuses the literal "build_plan"; the split form reads
+    # "build plan", which the milestone pattern also matches.
+    assert not find_violations(".gitignore", "build_plan/")
+    assert find_violations("some/source.py", "build_plan/")
+
+
+def test_scan_covers_authored_markup_suffixes():
+    """The bundled web surfaces and scaffolding templates are in scope."""
+    for suffix in (".html", ".css", ".svg", ".tmpl", ".tpl"):
+        assert suffix in _SOURCE_SUFFIXES, suffix
+    scanned = set(_tracked_source_files())
+    assert "effgen/dashboard/static/index.html" in scanned
+    assert "effgen/playground/static/index.html" in scanned
+    assert "effgen/cli/_templates/plugin/tools.py.tmpl" in scanned
+    # Recorded model output and third-party quotations stay out of scope.
+    for suffix in (".txt", ".jsonl", ".json", ".sql"):
+        assert suffix not in _SOURCE_SUFFIXES, suffix
+
+
+def test_scan_covers_files_whose_type_is_not_the_last_suffix():
+    """A parked workflow and a per-target image are scanned as what they are."""
+    scanned = set(_tracked_source_files())
+    assert ".github/workflows/release.yml.disabled" in scanned
+    assert "deploy/sandbox/Dockerfile.sandbox" in scanned
+
+
+def test_scan_covers_scripts_that_sit_beside_bundled_data():
+    """Only the dataset payloads are out of scope, not the code next to them."""
+    scanned = set(_tracked_source_files())
+    assert "examples/data/download_arc.py" in scanned
+    assert "examples/data/arc_easy_test.jsonl" not in scanned
+    assert "examples/data/arc_easy_test.txt" not in scanned
+
+
 def test_detector_catches_planted_editorializing():
     """The editorializing detector must actually fire on each gated word."""
     samples = [
@@ -298,7 +467,7 @@ def test_detector_catches_promotional_vocabulary():
     """Every promotional word carries its own pattern, in both spellings."""
     expected = {
         "praise-seamless": ["a seamless upgrade", "swaps seamlessly"],
-        "praise-effortlessly": ["scales effortlessly"],
+        "praise-effortless": ["scales effortlessly", "an effortless setup"],
         "praise-magically": ["the cache magically warms"],
         "praise-blazing": ["blazing throughput", "blazingly fast startup"],
         "praise-production-grade": ["a production-grade pipeline", "production grade RAG"],
@@ -307,6 +476,19 @@ def test_detector_catches_promotional_vocabulary():
         "praise-battle-tested": ["battle-tested retries", "battle tested sandbox"],
         "praise-bulletproof": ["bulletproof auth", "bullet-proof parsing"],
         "praise-state-of-the-art": ["state-of-the-art routing", "state of the art reranking"],
+        "praise-flawless": ["flawless recovery", "replays flawlessly"],
+        "praise-rock-solid": ["rock-solid checkpoints", "rock solid streaming"],
+        "praise-industrial-strength": ["industrial-strength queueing"],
+        "praise-enterprise-grade": ["enterprise-grade RBAC", "enterprise grade audit log"],
+        "praise-military-grade": ["military-grade encryption"],
+        "praise-best-in-class": ["best-in-class latency", "best in class recall"],
+        "praise-turnkey": ["a turnkey deployment", "turn-key onboarding"],
+        "praise-lightning-fast": ["lightning-fast cold starts"],
+        "praise-hassle-free": ["hassle-free upgrades"],
+        "praise-painless": ["a painless migration", "migrates painlessly"],
+        "praise-sleek": ["a sleek dashboard"],
+        "praise-gorgeous": ["gorgeous trace rendering"],
+        "praise-stunning": ["a stunning topology view"],
     }
     for name, samples in expected.items():
         for sample in samples:
@@ -317,6 +499,9 @@ def test_detector_catches_promotional_vocabulary():
         "the production environment variable",
         "class Blazer:",
         "artwork classification",
+        "the enterprise directory endpoint",
+        "flaws = validate(config)",
+        "installs the bleeding-edge main branch",
     ):
         assert not find_editorializing("some/source.py", ok), ok
 
