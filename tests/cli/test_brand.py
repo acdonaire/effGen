@@ -382,3 +382,55 @@ def test_public_surface_anchor_unchanged():
     import effgen
 
     assert len(effgen.__all__) == 206
+
+
+class TestLandingRendersEachLineAsOneSpan:
+    """A styled landing line carries one colour run, not a highlighted mosaic.
+
+    Rich recolours numbers, brackets and other repr-ish tokens inside a line it
+    is already styling, which splits ``effGen v0.3.2`` into three differently
+    coloured runs and bolds the parentheses in an action description. The chat
+    banner already turns that off; the landing is the first surface a user sees.
+    """
+
+    def _render_landing(self) -> str:
+        from effgen.cli import landing
+        from effgen.ui.theme import get_console
+
+        buf = _EncStringIO("utf-8")
+        console = get_console(file=buf, force_terminal=True, width=100,
+                              color_system="truecolor")
+        landing._render(console)
+        return buf.getvalue()
+
+    def _styled_lines(self, out: str) -> list[str]:
+        # Skip the logo: it is a per-column gradient by design.
+        body = out.split("\n")
+        start = max(
+            (i for i, ln in enumerate(body) if "effGen v" in _strip(ln)), default=0
+        )
+        return [ln for ln in body[start:] if _SGR.search(ln)]
+
+    def test_the_version_line_is_not_split_by_the_number_highlighter(self):
+        out = self._render_landing()
+        version_line = next(ln for ln in out.split("\n") if "effGen v" in _strip(ln))
+        # One opening sequence and one reset — a single span over the whole line.
+        assert len(_SGR.findall(version_line)) == 2, version_line
+        assert f"effGen v{__version__}" in _strip(version_line)
+
+    def test_the_environment_line_is_not_split(self):
+        out = self._render_landing()
+        env_line = next(ln for ln in out.split("\n") if "Python " in _strip(ln))
+        assert len(_SGR.findall(env_line)) == 2, env_line
+
+    def test_an_action_line_styles_only_its_key(self):
+        out = self._render_landing()
+        wizard = next(ln for ln in out.split("\n") if "[Enter]" in _strip(ln))
+        # The key is styled; the description that follows carries no styling of
+        # its own, so parentheses in it are not bolded.
+        assert len(_SGR.findall(wizard)) == 2, wizard
+        assert "(interactive wizard)" in _strip(wizard)
+
+    def test_every_styled_landing_line_is_a_single_span(self):
+        for line in self._styled_lines(self._render_landing()):
+            assert len(_SGR.findall(line)) == 2, line

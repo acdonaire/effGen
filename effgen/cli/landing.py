@@ -83,7 +83,13 @@ def should_show(cli: Any, args: Any) -> bool:
 
 
 def _render(console: Any) -> None:
-    """Draw the logo, version/environment lines, and the quick-action list."""
+    """Draw the logo, version/environment lines, and the quick-action list.
+
+    Every line is printed with value auto-highlighting off. Rich otherwise
+    recolors numbers and brackets inside an already-styled line, which splits
+    ``effGen v0.3.2`` into three differently coloured runs and bolds the
+    parentheses in an action description.
+    """
     import platform
 
     from effgen.ui.render import ascii_fold
@@ -98,15 +104,20 @@ def _render(console: Any) -> None:
     console.print(
         ascii_fold(f"effGen v{__version__} · agents on small (and cloud) models", stream),
         style="effgen.accent",
+        highlight=False,
     )
     console.print(
         ascii_fold(f"Python {py} · theme: {theme} · docs.effgen.org", stream),
         style="effgen.muted",
+        highlight=False,
     )
     console.print()
-    console.print("What next?", style="effgen.heading")
+    console.print("What next?", style="effgen.heading", highlight=False)
     for key, desc, _target in _ACTIONS:
-        console.print(f"  [effgen.accent]\\[{key}][/effgen.accent]  {ascii_fold(desc, stream)}")
+        console.print(
+            f"  [effgen.accent]\\[{key}][/effgen.accent]  {ascii_fold(desc, stream)}",
+            highlight=False,
+        )
     console.print()
 
 
@@ -153,7 +164,8 @@ def run(
             console.print(
                 f"[effgen.warning]{glyph('warning')}[/effgen.warning] "
                 f"Unknown choice '{choice}'.{tail} "
-                "Press Enter for the wizard, or [effgen.accent]h[/effgen.accent] for help."
+                "Press Enter for the wizard, or [effgen.accent]h[/effgen.accent] for help.",
+                highlight=False,
             )
             continue
         if target == _WIZARD:
