@@ -340,3 +340,96 @@ class TestVideoFromIntegration:
     def test_non_positive_fps_raises(self):
         with pytest.raises(InvalidMultimodalContent):
             video_from(b"\x00" * 10, fps=0)
+
+
+# ---------------------------------------------------------------------------
+# Inline data: URIs
+# ---------------------------------------------------------------------------
+
+
+def _data_uri(payload: bytes, mime: str) -> str:
+    import base64
+
+    return f"data:{mime};base64," + base64.b64encode(payload).decode()
+
+
+class TestInlineDataURIs:
+    """A ``data:`` URI is a source in its own right, not a filesystem path.
+
+    The OpenAI-compatible endpoint already accepts inline images, so the Python
+    entry point accepts the same form rather than reporting a missing file.
+    """
+
+    def test_image_from_decodes_a_base64_data_uri(self):
+        part = image_from(_data_uri(PNG_BYTES, "image/png"))
+        assert isinstance(part, ImagePart)
+        assert part.image == PNG_BYTES
+        assert part.mime == "image/png"
+
+    def test_audio_from_decodes_a_base64_data_uri(self):
+        part = audio_from(_data_uri(WAV_BYTES, "audio/wav"))
+        assert isinstance(part, AudioPart)
+        assert part.audio == WAV_BYTES
+        assert part.mime == "audio/wav"
+
+    def test_part_from_routes_a_data_uri_by_its_declared_type(self):
+        from effgen.core.multimodal import part_from
+
+        assert isinstance(part_from(_data_uri(PNG_BYTES, "image/png")), ImagePart)
+        assert isinstance(part_from(_data_uri(WAV_BYTES, "audio/wav")), AudioPart)
+
+    def test_percent_encoded_data_uri_is_decoded(self):
+        from effgen.core.multimodal import _decode_data_uri
+
+        assert _decode_data_uri("data:text/plain,hello%20world") == (
+            b"hello world",
+            "text/plain",
+        )
+
+    def test_a_non_data_source_falls_through(self):
+        from effgen.core.multimodal import _decode_data_uri
+
+        assert _decode_data_uri("/tmp/a.png") is None
+        assert _decode_data_uri("https://example.test/a.png") is None
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "data:image/png;base64",              # no comma
+            "data:image/png;base64,!!!not-b64!!!",  # undecodable payload
+            "data:image/png;base64,",             # empty payload
+        ],
+    )
+    def test_a_malformed_data_uri_is_refused_with_a_reason(self, bad):
+        with pytest.raises(InvalidMultimodalContent) as excinfo:
+            image_from(bad)
+        message = str(excinfo.value)
+        assert "data URI" in message or "no data" in message
+        assert "File not found" not in message
+
+
+class TestUnreadableSourceMessages:
+    """A source that cannot be read names the accepted forms and stays short."""
+
+    def test_a_missing_file_names_the_accepted_source_forms(self):
+        with pytest.raises(InvalidMultimodalContent) as excinfo:
+            image_from("/nonexistent/effgen-test/a.png")
+        message = str(excinfo.value)
+        assert "File not found" in message
+        assert "data: URI" in message
+
+    def test_a_long_value_is_abbreviated_rather_than_echoed_whole(self):
+        payload = "y" * 5000
+        with pytest.raises(InvalidMultimodalContent) as excinfo:
+            image_from(payload + ".png")
+        message = str(excinfo.value)
+        assert len(message) < 400
+        assert "5004 characters" in message
+
+    def test_a_path_the_filesystem_rejects_is_a_typed_error(self):
+        # Too long for any filesystem: the OS raises before the file is looked
+        # for. It must still surface as InvalidMultimodalContent, not OSError.
+        with pytest.raises(InvalidMultimodalContent):
+            image_from("z" * 5000 + ".png")
+        with pytest.raises(InvalidMultimodalContent):
+            image_from("has\x00a-nul.png")

@@ -93,10 +93,90 @@ def _fetch_url(url: str, timeout: float = 30.0) -> bytes:
         return resp.read()
 
 
+#: How much of a rejected source is echoed back. A refused value can be a whole
+#: base64 payload, and printing megabytes of it into a terminal or a log buries
+#: the reason it was refused.
+_ECHO_LIMIT = 120
+
+
+def _abbreviate(value: str) -> str:
+    """Shorten *value* for an error message, marking that it was cut."""
+    text = str(value)
+    if len(text) <= _ECHO_LIMIT:
+        return text
+    return f"{text[:_ECHO_LIMIT]}… ({len(text)} characters)"
+
+
+def _decode_data_uri(source: str) -> tuple[bytes, str | None] | None:
+    """Decode an inline ``data:`` URI into its bytes and declared MIME type.
+
+    Returns ``None`` when *source* is not a ``data:`` URI, so a caller can fall
+    through to its path/URL handling. Accepts the base64 form the
+    OpenAI-compatible endpoint accepts (``data:image/png;base64,<payload>``)
+    and the percent-encoded text form.
+
+    Raises:
+        InvalidMultimodalContent: if the URI is a ``data:`` URI but malformed.
+    """
+    if not source.startswith("data:"):
+        return None
+
+    header, _, payload = source[len("data:"):].partition(",")
+    if not _:
+        raise InvalidMultimodalContent(
+            "source",
+            f"Malformed data URI (no comma separating the header from the "
+            f"payload): {_abbreviate(source)}",
+        )
+
+    parameters = header.split(";")
+    is_base64 = parameters and parameters[-1].strip().lower() == "base64"
+    mime = parameters[0].strip() or None
+
+    try:
+        if is_base64:
+            import base64
+
+            data = base64.b64decode(payload, validate=True)
+        else:
+            import urllib.parse
+
+            data = urllib.parse.unquote_to_bytes(payload)
+    except Exception as exc:
+        raise InvalidMultimodalContent(
+            "source", f"Could not decode the data URI payload: {exc}"
+        ) from exc
+
+    if not data:
+        raise InvalidMultimodalContent("source", "The data URI carries no data.")
+    return data, mime
+
+
 def _path_to_bytes(path: str | Path) -> bytes:
+    """Read *path* as bytes, reporting anything unreadable as a typed error.
+
+    A value that is not a usable path at all — too long for the filesystem, an
+    embedded NUL — makes the operating system raise before the file is even
+    looked for; that is reported the same way a missing file is, so a caller
+    sees one error type for "this source could not be read".
+    """
     p = Path(path)
-    if not p.exists():
-        raise InvalidMultimodalContent("source", f"File not found: {p}")
+    accepted = (
+        "Accepted sources are a file path, an http(s):// URL, an inline data: "
+        "URI, or raw bytes."
+    )
+    try:
+        exists = p.exists()
+    except (OSError, ValueError) as exc:
+        raise InvalidMultimodalContent(
+            "source",
+            f"Not a usable file path ({exc.strerror or exc}): "
+            f"{_abbreviate(str(p))}. {accepted}",
+        ) from exc
+    if not exists:
+        raise InvalidMultimodalContent(
+            "source", f"File not found: {_abbreviate(str(p))}. {accepted}"
+        )
     return p.read_bytes()
 
 
@@ -121,7 +201,12 @@ def image_from(source: ImageSource, mime: str | None = None) -> ImagePart:
 
     elif isinstance(source, str | Path):
         src = str(source)
-        if src.startswith("http://") or src.startswith("https://"):
+        inline = _decode_data_uri(src)
+        if inline is not None:
+            data, declared = inline
+            if mime is None and declared and declared.startswith("image/"):
+                mime = declared
+        elif src.startswith("http://") or src.startswith("https://"):
             data = _fetch_url(src)
             if mime is None:
                 # Try to infer from URL extension
@@ -210,7 +295,12 @@ def audio_from(source: AudioSource, mime: str | None = None) -> AudioPart:
 
     elif isinstance(source, str | Path):
         src = str(source)
-        if src.startswith("http://") or src.startswith("https://"):
+        inline = _decode_data_uri(src)
+        if inline is not None:
+            data, declared = inline
+            if mime is None and declared and declared.startswith("audio/"):
+                mime = _normalise_mime(declared)
+        elif src.startswith("http://") or src.startswith("https://"):
             data = _fetch_url(src)
             if mime is None:
                 ext = os.path.splitext(src.split("?")[0])[-1].lower()
@@ -265,8 +355,12 @@ def video_from(
 
     from effgen.multimodal.video_pre import VideoSource as _VideoSource
 
-    if isinstance(source, str) and source.startswith(("http://", "https://")):
-        source = _fetch_url(source)
+    if isinstance(source, str):
+        inline = _decode_data_uri(source)
+        if inline is not None:
+            source = inline[0]
+        elif source.startswith(("http://", "https://")):
+            source = _fetch_url(source)
 
     vs = _VideoSource(source)
     try:
@@ -298,6 +392,13 @@ def _media_kind_from_name(name: str) -> str | None:
 
     Returns ``"image"``, ``"audio"``, ``"video"`` or ``None`` (unknown).
     """
+    # An inline data: URI declares its own type in the header; nothing after the
+    # comma is a filename, so the extension maps below would misread the payload.
+    if name.startswith("data:"):
+        declared = name[len("data:"):].split(";", 1)[0].split(",", 1)[0].strip()
+        top = declared.split("/", 1)[0]
+        return top if top in ("image", "audio", "video") else None
+
     # Strip any URL query/fragment before looking at the extension.
     base = name.split("?", 1)[0].split("#", 1)[0]
     ext = os.path.splitext(base)[1].lower()
