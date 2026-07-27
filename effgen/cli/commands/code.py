@@ -14,7 +14,8 @@ Output contract:
   with ``jq`` and with shell pipelines.
 - The exit code is ``0`` for a completed run, ``1`` for a failed one, and ``2``
   when the run completed but changes were withheld because there was no terminal
-  to confirm on and no ``--auto-edit``/``--yes`` was given.
+  to confirm on and no ``--auto-edit``/``--yes`` was given, or because a
+  ``--commit`` that was asked for could not be confirmed.
 
 When the workspace is in a git repository, the branch, the short status and a
 bounded file layout are read before the first model call and become part of the
@@ -485,9 +486,21 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
 
     if not result.success:
         return 1
-    if result.withheld and not mode_explicit:
+    if result.withheld and (not mode_explicit or _asked_for_withheld_commit(result)):
         return EXIT_WITHHELD
     return 0
+
+
+def _asked_for_withheld_commit(result: CodeRunResult) -> bool:
+    """True when ``--commit`` was given and the commit was withheld.
+
+    A permission flag speaks for the model's actions: choosing ``--auto-edit``
+    means accepting that a shell command still needs confirmation, so a run that
+    withholds one still exits 0. ``--commit`` is different — it asks for one
+    specific action by name. When that action is withheld the run did less than
+    it was told to, and the exit code says so.
+    """
+    return any(action.kind == "git" for action in result.withheld)
 
 
 def _report_to_stderr(cli: "CLIInterface", result: CodeRunResult) -> None:

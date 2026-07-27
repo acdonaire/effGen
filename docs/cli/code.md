@@ -140,7 +140,8 @@ in `diffs`; the ones that reached disk carry `"applied": true`, so
 `--plan --json` reports the changes it would make without writing any of them.
 
 Exit codes: `0` completed, `1` failed, `2` completed but changes were withheld
-because there was no terminal to confirm on and no `--auto-edit`/`--yes`.
+because there was no terminal to confirm on and no `--auto-edit`/`--yes` — which
+includes a `--commit` that could not be confirmed.
 
 `NO_COLOR`, `--no-animation` and a non-terminal stdout all render plain text
 with no escape codes.
