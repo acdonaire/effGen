@@ -702,15 +702,25 @@ class CodeREPL:
             return
         from effgen.cli.code.diffs import render_diff
 
-        self._say(f"Last turn's edits ({len(result.diffs)}):")
         stream = self.cli._human_stream()
         console = self.cli._human()
-        for diff in result.diffs:
-            plain, markup = render_diff(str(diff.get("diff", "")), stream)
-            if console:
-                console.print(markup, highlight=False)
-            else:
-                self._say(plain)
+
+        def show(diffs: list[Any], heading: str) -> None:
+            if not diffs:
+                return
+            self._say(f"{heading} ({len(diffs)}):")
+            for diff in diffs:
+                plain, markup = render_diff(str(diff.get("diff", "")), stream)
+                if console:
+                    console.print(markup, highlight=False)
+                else:
+                    self._say(plain)
+
+        show([d for d in result.diffs if d.get("applied", True)], "Last turn's edits")
+        show(
+            [d for d in result.diffs if not d.get("applied", True)],
+            "Proposed last turn, not written",
+        )
 
     def _staged_selection(self, arg: str) -> list[Any] | None:
         """Resolve ``/apply``/``/reject`` arguments to a list of staged edits.

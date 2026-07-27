@@ -224,8 +224,10 @@ class PermissionGate:
         self._on_diff = on_diff
         self.journal = journal
         self.actions: list[ActionRecord] = []
-        # A summary of each edit that reached disk, in write order, for the run
-        # report and ``--json`` output.
+        # A summary of each edit the run proposed, in write order, for the run
+        # report and ``--json`` output. Each entry carries ``applied``: false
+        # while the write is only proposed (plan mode, a decline, a withheld
+        # action), true once it reached disk.
         self.edits: list[dict[str, Any]] = []
         # Kinds the human answered "always" to for the rest of this run.
         self._always: set[str] = set()
@@ -336,7 +338,24 @@ class PermissionGate:
     # -- edits --------------------------------------------------------------
 
     def announce_edit(self, edit: ProposedEdit) -> None:
-        """Surface a pending edit's diff before the write is decided."""
+        """Surface a pending edit's diff before the write is decided.
+
+        The proposal is also entered in the run report with ``applied`` false,
+        so a run that never writes — plan mode, a decline, a withheld action —
+        still reports the diff it proposed. ``record_applied_edit`` flips the
+        entry once the write lands.
+        """
+        self.edits.append(
+            {
+                "path": edit.rel_path,
+                "added": edit.added,
+                "removed": edit.removed,
+                "is_new": edit.is_new,
+                "hunks_failed": 0,
+                "applied": False,
+                "diff": edit.diff_text,
+            }
+        )
         if self._on_diff is not None:
             self._on_diff(edit)
 
@@ -354,19 +373,26 @@ class PermissionGate:
         created it), captured so ``--undo`` can restore it. *failed_hunks* is how
         many of the edit's hunks did not apply because the file changed
         underneath — zero for the common case.
+
+        The report entry the matching ``announce_edit`` left is updated in place
+        rather than duplicated, so each proposal appears once.
         """
         if self.journal is not None:
             self.journal.record_write(edit.rel_path, before, after)
-        self.edits.append(
-            {
-                "path": edit.rel_path,
-                "added": edit.added,
-                "removed": edit.removed,
-                "is_new": edit.is_new,
-                "hunks_failed": failed_hunks,
-                "diff": edit.diff_text,
-            }
-        )
+        entry = {
+            "path": edit.rel_path,
+            "added": edit.added,
+            "removed": edit.removed,
+            "is_new": edit.is_new,
+            "hunks_failed": failed_hunks,
+            "applied": True,
+            "diff": edit.diff_text,
+        }
+        for pending in reversed(self.edits):
+            if pending["path"] == edit.rel_path and not pending["applied"]:
+                pending.update(entry)
+                return
+        self.edits.append(entry)
 
     # -- reporting ----------------------------------------------------------
 

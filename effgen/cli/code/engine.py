@@ -198,6 +198,8 @@ class CodeRunResult:
     partial: bool = False
     actions: list[ActionRecord] = field(default_factory=list)
     files_written: list[str] = field(default_factory=list)
+    # Every edit the run proposed, in order. ``applied`` is false for the ones
+    # that were only proposed (plan mode, a decline, a withheld action).
     diffs: list[dict[str, Any]] = field(default_factory=list)
     error: dict[str, Any] | None = None
     repo: dict[str, Any] | None = None

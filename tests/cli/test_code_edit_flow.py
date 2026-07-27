@@ -77,6 +77,10 @@ def test_ask_mode_accepts_one_file_and_rejects_another(workspace):
     # The rejection is recorded so the caller can report it.
     declined = [x for x in gate.actions if x.decision == "declined"]
     assert [d.target for d in declined] == ["b.py"]
+    # Both proposals are reported; only the accepted one is marked applied.
+    assert [(e["path"], e["applied"]) for e in gate.edits] == [
+        ("a.py", True), ("b.py", False),
+    ]
 
 
 def test_plan_mode_shows_the_diff_but_writes_nothing(workspace):
@@ -91,9 +95,12 @@ def test_plan_mode_shows_the_diff_but_writes_nothing(workspace):
     assert "plan mode" in (result.error or "").lower()
     # The proposal was still shown as a diff.
     assert len(seen) == 1
+    # ...and reported as a proposal that did not reach disk, so --plan --json
+    # (which prints no live diff) still carries the change it would make.
+    assert [(e["path"], e["applied"]) for e in gate.edits] == [("a.py", False)]
+    assert "+x" in gate.edits[0]["diff"]
     # Nothing was written and nothing recorded on the undo stack.
     assert not (workspace / "a.py").exists()
-    assert gate.edits == []
     assert len(EditJournal(workspace, root=workspace.parent / "h")) == 0
 
 
@@ -158,6 +165,24 @@ def test_result_diffs_and_json(tmp_path, monkeypatch):
     assert all(d["is_new"] for d in result.diffs)
     payload = result.to_dict()
     assert [d["path"] for d in payload["diffs"]] == ["a.py", "b.py"]
+    assert all(d["applied"] for d in payload["diffs"])
+    assert "+print(1)" in payload["diffs"][0]["diff"]
+
+
+def test_plan_mode_json_carries_the_diff_it_did_not_write(tmp_path, monkeypatch):
+    monkeypatch.setenv("EFFGEN_HOME", str(tmp_path / "home"))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    engine = CodeEngine(model="fake:model", workspace=ws, mode=PermissionMode.PLAN)
+    engine._agent = _FakeAgent(
+        build_code_tools(engine.gate), writes=[("a.py", "print(1)\n")],
+    )
+    result = engine.run("build")
+
+    assert result.files_written == []
+    assert not (ws / "a.py").exists()
+    payload = result.to_dict()
+    assert [(d["path"], d["applied"]) for d in payload["diffs"]] == [("a.py", False)]
     assert "+print(1)" in payload["diffs"][0]["diff"]
 
 
