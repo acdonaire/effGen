@@ -350,12 +350,24 @@ class TestNonTtyByteContract:
         assert out.stdout == f"effGen {__version__}\n"
         assert out.returncode == 0
 
+    def test_bare_piped_prints_only_the_hint(self):
+        from effgen.cli.commands.run import NO_TERMINAL_HINT
+
+        out = subprocess.run([_EFFGEN], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True)
+        # Nothing on stdout, the whole hint on stderr, and none of the wizard
+        # steps rendered on the way to it.
+        assert out.stdout == ""
+        assert out.stderr == NO_TERMINAL_HINT + "\n"
+        assert out.returncode == 2
+        assert "Interactive Setup" not in out.stderr
+        assert "Reasoning Style" not in out.stderr
+
     def test_bare_piped_has_no_landing(self):
         out = subprocess.run([_EFFGEN], stdin=subprocess.DEVNULL,
                              capture_output=True, text=True)
         combined = out.stdout + out.stderr
-        # The current wizard path, not the branded landing.
-        assert "Interactive Setup Wizard" in combined
+        # The branded landing is TTY-only and must not appear here.
         assert "What next?" not in combined
         assert "⚡ effGen" not in combined
 

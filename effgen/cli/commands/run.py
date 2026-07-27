@@ -57,24 +57,40 @@ def _failure_text(response: Any) -> str:
     return reason or "The run failed and reported no message."
 
 
+#: What a caller is told when the wizard is reached without a terminal to
+#: prompt on. Written to stderr as a single block so a pipeline sees nothing on
+#: stdout; pinned byte-for-byte by ``tests/cli/test_brand.py``.
+NO_TERMINAL_HINT = (
+    "No interactive terminal detected, so the setup wizard can't prompt for "
+    "input. Pass your task directly, e.g.:\n"
+    '    effgen run "What is the capital of France?"\n'
+    "  (add --provider/--model to pick a backend; see 'effgen run --help')."
+)
+
+
 def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
     """
     Interactive setup wizard for configuring and running agents.
 
-    Similar to smolagents CLI, guides users through:
-    - Agent type selection
-    - Tool selection from available toolbox
-    - Model configuration (type, ID, API settings)
-    - Advanced options like additional imports
-    - Task prompt input
+    Walks the caller through a reasoning style, a tool selection, a model, the
+    advanced options and the task prompt, then runs the agent it built.
+
+    Every step reads from stdin, so without a terminal the wizard cannot run at
+    all. In that case it writes :data:`NO_TERMINAL_HINT` to stderr, prints
+    nothing to stdout and returns 2 without rendering any of the steps.
 
     Args:
-        args: Parsed command-line arguments (may have partial values)
+        cli: The command-line interface the wizard prints and runs through.
+        args: Parsed command-line arguments (may have partial values).
 
     Returns:
-        Exit code
+        Exit code.
     """
     from effgen.cli import _main
+
+    if not sys.stdin.isatty():
+        print(NO_TERMINAL_HINT, file=sys.stderr)
+        return 2
 
     Agent, AgentConfig = _main.Agent, _main.AgentConfig
     # Rich renderables are only reached when ``cli.console`` exists, which is
@@ -391,15 +407,10 @@ def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
         cli.print("\n\nWizard cancelled")
         return 130
     except EOFError:
-        # No interactive terminal (piped stdin, CI, Docker, IDE run button).
-        # This is an expected condition, not a crash — give a clean,
-        # actionable message instead of dumping a traceback.
-        cli.print_error(
-            "No interactive terminal detected, so the setup wizard can't "
-            "prompt for input. Pass your task directly, e.g.:\n"
-            "    effgen run \"What is the capital of France?\"\n"
-            "  (add --provider/--model to pick a backend; see 'effgen run --help')."
-        )
+        # stdin was a terminal at the guard above but reached end-of-input part
+        # way through — a closed terminal or a harness that hands over a tty and
+        # then stops writing. Expected, not a crash: same hint, same exit code.
+        print(NO_TERMINAL_HINT, file=sys.stderr)
         return 2
     except Exception as e:
         cli.print_error(f"Error in interactive wizard: {e}")
