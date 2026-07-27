@@ -220,15 +220,15 @@ def run_all_tests(model, model_name="unknown"):
     results.append(run_multi_turn_test(
         agent, "T5", "Memory summarization trigger (max_tokens=512)",
         turns=[
-            ("I am a software engineer named Bob who works at Google on the search team. "
+            (("I am a software engineer named Bob who works at Google on the search team. "
              "I have 10 years of experience and I specialize in distributed systems. "
-             "My favorite programming language is Go and I also know Python, Java, and C++.", None),
-            ("Tell me about the latest trends in distributed systems and cloud computing. "
+             "My favorite programming language is Go and I also know Python, Java, and C++."), None),
+            (("Tell me about the latest trends in distributed systems and cloud computing. "
              "I'm particularly interested in how microservices architecture has evolved "
-             "and what the best practices are for service mesh implementations.", None),
-            ("What are the key differences between Kubernetes and Docker Swarm for "
+             "and what the best practices are for service mesh implementations."), None),
+            (("What are the key differences between Kubernetes and Docker Swarm for "
              "container orchestration? Which one would you recommend for a large-scale "
-             "production deployment?", None),
+             "production deployment?"), None),
             ("Now, can you remind me what my name is and where I work?", ["bob"]),
         ],
         check_fn=lambda final, alls: True,  # Main check: no crashes

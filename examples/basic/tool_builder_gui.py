@@ -287,11 +287,11 @@ def generate_tool_code(
     param_specs = []
     for p in _parameters:
         spec_parts = [
-            f'                    ParameterSpec(\n'
-            f'                        name="{p["name"]}",\n'
-            f'                        type=ParameterType.{p["type"].upper()},\n'
-            f'                        description="{p["description"]}",\n'
-            f'                        required={p.get("required", False)},\n'
+            (f'                    ParameterSpec(\n'
+             f'                        name="{p["name"]}",\n'
+             f'                        type=ParameterType.{p["type"].upper()},\n'
+             f'                        description="{p["description"]}",\n'
+             f'                        required={p.get("required", False)},\n')
         ]
         if p.get("default") is not None:
             spec_parts.append(f'                        default="{p["default"]}",\n')

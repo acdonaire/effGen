@@ -67,14 +67,14 @@ def main():
         "Calculate (17 * 23) + sqrt(144) + 2^8. Show each step and the final total.",
 
         # Temporal reasoning
-        "A project started 45 days before today. What was the start date? "
-        "How many weeks is 45 days (to 2 decimal places)?",
+        ("A project started 45 days before today. What was the start date? "
+         "How many weeks is 45 days (to 2 decimal places)?"),
 
         # Hard: portfolio analysis requiring multiple tool calls
-        "I have a portfolio: Asset A = 250 shares @ $42.50 each, "
-        "Asset B = 150 shares @ $87.20 each, Asset C = 75 shares @ $310.00 each. "
-        "Calculate: (1) total value of each asset, (2) total portfolio value, "
-        "(3) what percentage of the total is each asset (to 2 decimal places)?",
+        ("I have a portfolio: Asset A = 250 shares @ $42.50 each, "
+         "Asset B = 150 shares @ $87.20 each, Asset C = 75 shares @ $310.00 each. "
+         "Calculate: (1) total value of each asset, (2) total portfolio value, "
+         "(3) what percentage of the total is each asset (to 2 decimal places)?"),
     ]
 
     for task in tasks:
