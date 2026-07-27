@@ -158,10 +158,17 @@ def _prompt_confirm(question: str) -> str:
     Written to stderr so a piped stdout stays clean. Anything other than
     ``y``/``yes`` or ``a``/``always`` reads as no, and an interrupted or closed
     input also reads as no.
+
+    Any animating status line is taken down first: a live region repaints over
+    the same lines, so the question would otherwise be erased before it could
+    be read and the session would look like it had stalled.
     """
+    from effgen.cli.progress import suspend_live_status
+
     try:
-        print(f"{question} [y/N/a] ", end="", file=sys.stderr, flush=True)
-        answer = input().strip().lower()
+        with suspend_live_status():
+            print(f"{question} [y/N/a] ", end="", file=sys.stderr, flush=True)
+            answer = input().strip().lower()
     except (EOFError, KeyboardInterrupt, OSError):
         print(file=sys.stderr)
         return "n"

@@ -25,6 +25,8 @@ import json
 import os
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 try:  # rich is an install dependency, but degrade to plain output if it is absent.
@@ -257,6 +259,29 @@ class _StatusRenderable:
         return text
 
 
+# The live status currently animating, if any. A live region owns the terminal
+# and repaints over whatever else is written there, so anything that needs to
+# ask the human a question mid-run suspends it through
+# :func:`suspend_live_status` first.
+_ACTIVE_STATUS: "LiveStatus | None" = None
+
+
+@contextmanager
+def suspend_live_status() -> "Iterator[None]":
+    """Stop the animating status line for the duration of the block.
+
+    A prompt written while a live region is refreshing is erased by the next
+    frame, so a question asked mid-run would never be readable. Nothing happens
+    when no status is animating.
+    """
+    status = _ACTIVE_STATUS
+    if status is None:
+        yield
+        return
+    with status.paused():
+        yield
+
+
 class LiveStatus:
     """Context manager that animates a single live status line during a run.
 
@@ -289,8 +314,10 @@ class LiveStatus:
         self._active = bool(_RICH_AVAILABLE and console is not None)
 
     def __enter__(self) -> "LiveStatus":
+        global _ACTIVE_STATUS
         if not self._active:
             return self
+        _ACTIVE_STATUS = self
         if self.tracker is not None:
             try:
                 self.tracker.add_listener(self.on_event)
@@ -306,6 +333,9 @@ class LiveStatus:
         return self
 
     def __exit__(self, *exc: Any) -> bool:
+        global _ACTIVE_STATUS
+        if _ACTIVE_STATUS is self:
+            _ACTIVE_STATUS = None
         if self.tracker is not None:
             try:
                 self.tracker.remove_listener(self.on_event)
@@ -318,6 +348,30 @@ class LiveStatus:
                 pass
             self._live = None
         return False  # never suppress exceptions (Ctrl-C must propagate)
+
+    @contextmanager
+    def paused(self) -> "Iterator[None]":
+        """Take the status line down for the duration of the block, then resume.
+
+        Used when the run has to hand the terminal back — to ask the human a
+        question, for instance — because the live region repaints over anything
+        else written to the same stream.
+        """
+        live, self._live = self._live, None
+        if live is not None:
+            try:
+                live.stop()
+            except Exception:  # noqa: BLE001 - never let cosmetics break a run
+                live = None
+        try:
+            yield
+        finally:
+            if live is not None:
+                try:
+                    live.start(refresh=True)
+                    self._live = live
+                except Exception:  # noqa: BLE001
+                    self._live = None
 
     def on_event(self, event: Any) -> None:
         """Update the status label from an execution event (tracker listener)."""

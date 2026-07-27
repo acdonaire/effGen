@@ -327,3 +327,65 @@ def test_step_progress_noop_without_animation():
         bar.advance()
         bar.update(3, total=3)
     # no exception, no console required
+
+
+# ---------------------------------------------------------------------------
+# Suspending the live region so a question can be read
+# ---------------------------------------------------------------------------
+
+
+class _FakeLive:
+    """Records the start/stop calls ``LiveStatus`` makes on a live region."""
+
+    def __init__(self, events):
+        self._events = events
+
+    def __enter__(self):
+        self._events.append("enter")
+        return self
+
+    def __exit__(self, *_exc):
+        self._events.append("exit")
+        return False
+
+    def stop(self):
+        self._events.append("stop")
+
+    def start(self, refresh=False):
+        self._events.append("start")
+
+
+def _patch_live(monkeypatch, events):
+    monkeypatch.setattr(P, "_RICH_AVAILABLE", True)
+    monkeypatch.setattr(P, "Live", lambda *a, **k: _FakeLive(events), raising=False)
+
+
+def test_paused_stops_and_restarts_the_live_region(monkeypatch):
+    events: list[str] = []
+    _patch_live(monkeypatch, events)
+    status = P.LiveStatus(object(), model_label="m")
+    with status:
+        assert P._ACTIVE_STATUS is status
+        with status.paused():
+            events.append("asked")
+    assert events == ["enter", "stop", "asked", "start", "exit"]
+    assert P._ACTIVE_STATUS is None
+
+
+def test_suspend_live_status_is_a_noop_without_one():
+    with P.suspend_live_status():
+        pass  # nothing animating: the block still runs
+
+
+def test_confirmation_prompt_takes_the_status_line_down(monkeypatch, capsys):
+    """A question asked mid-run must not be repainted over by the status line."""
+    from effgen.cli.code import permissions
+
+    events: list[str] = []
+    _patch_live(monkeypatch, events)
+    monkeypatch.setattr("builtins.input", lambda: "y")
+    with P.LiveStatus(object(), model_label="m"):
+        answer = permissions._prompt_confirm("Write a.py (+1/-0)")
+    assert answer == "y"
+    assert events == ["enter", "stop", "start", "exit"]
+    assert "Write a.py (+1/-0) [y/N/a]" in capsys.readouterr().err
