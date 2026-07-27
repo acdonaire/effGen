@@ -64,17 +64,20 @@ def print_action(cli: "CLIInterface", record: "ActionRecord") -> None:
     from effgen.ui.palette import glyph
 
     stream = cli._human_stream()
-    mark = glyph(_DECISION_GLYPH.get(record.decision, "muted"), stream)
     if record.decision == "allowed" and record.outcome is None:
         # The tick is printed once the outcome is known, not twice.
         return
+    role = _DECISION_GLYPH.get(record.decision, "muted")
     text = record.summary
     if record.decision == "allowed":
         if record.outcome == "error":
+            # An action that was permitted and then failed is not a success:
+            # the glyph has to say so where there is no color to say it.
+            role = "error"
             text = f"{text} — failed: {record.detail}"
     else:
         text = f"{text} — {record.decision}: {record.reason}"
-    line = ascii_fold(f"  {mark} {text}", stream)
+    line = ascii_fold(f"  {glyph(role, stream)} {text}", stream)
     console = cli._human()
     if console and color_enabled():
         style = "effgen.success" if record.decision == "allowed" else "effgen.warning"

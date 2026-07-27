@@ -161,3 +161,30 @@ def test_bash_language_on_code_executor_is_shelled(workspace):
         result = _run(ce.execute(code="echo hi", language="bash"))
         assert result.success is allowed, mode
         assert gate.actions[-1].kind == "shell"
+
+
+def test_a_permitted_action_that_failed_does_not_tick_as_a_success(workspace, capsys):
+    # The glyph is the only signal when there is no color: an action that ran
+    # and failed reads as a failure, not as a completed step.
+    from effgen.cli import _main
+    from effgen.cli.code.permissions import ActionRecord
+    from effgen.cli.code.render import print_action
+
+    cli = _main.CLIInterface()
+    cli.console = None
+
+    done = ActionRecord(kind="run", summary="Run python: print(1)", decision="allowed",
+                        reason="", target="python_repl")
+    done.outcome = "ok"
+    failed = ActionRecord(kind="run", summary="Run python: import runpy", decision="allowed",
+                          reason="", target="python_repl")
+    failed.outcome, failed.detail = "error", "Import of 'runpy' is not allowed"
+
+    print_action(cli, done)
+    print_action(cli, failed)
+    ok_line, failed_line = capsys.readouterr().out.strip().splitlines()
+
+    assert "failed" not in ok_line
+    assert "failed: Import of 'runpy' is not allowed" in failed_line
+    # The two lines do not open with the same mark.
+    assert ok_line.strip()[0] != failed_line.strip()[0]
