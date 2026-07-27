@@ -629,7 +629,10 @@ class CodeREPL:
             self._status("warning", record.reason)
         if result.withheld:
             kinds = ", ".join(sorted({a.kind for a in result.withheld}))
-            if self.mode is PermissionMode.PLAN:
+            # Name the mode the turn actually ran under: ``/plan`` runs one turn
+            # in plan mode without changing the session's mode.
+            turn_mode = getattr(result, "permission_mode", "") or self.mode.value
+            if turn_mode == PermissionMode.PLAN.value:
                 self._say(
                     f"Plan mode: {len(result.withheld)} action(s) ({kinds}) were "
                     "proposed, not carried out. /apply to write staged edits, or "
@@ -638,7 +641,7 @@ class CodeREPL:
             else:
                 self._say(
                     f"{len(result.withheld)} action(s) ({kinds}) were not permitted "
-                    f"in {self.mode.value} mode. /mode auto-edit (or /mode yes) to allow."
+                    f"in {turn_mode} mode. /mode auto-edit (or /mode yes) to allow."
                 )
         if result.hit_iteration_cap:
             self._status(

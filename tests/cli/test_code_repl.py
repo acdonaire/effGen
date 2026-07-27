@@ -184,9 +184,12 @@ def test_plan_stages_then_apply_writes(tmp_path):
         actions=[("write", ("fib.py", "def fib(n):\n    return n\n"))],
     )
     # /plan runs in plan posture: nothing is written, the edit is staged.
-    _capture(repl, repl._dispatch, "/plan write fib.py")
+    out, err = _capture(repl, repl._dispatch, "/plan write fib.py")
     assert set(repl.pending_edits) == {"fib.py"}
     assert not (ws / "fib.py").exists()
+    # The note names the mode the turn ran under, not the session's mode.
+    assert "Plan mode:" in out + err
+    assert "in ask mode" not in out + err
     # The session mode is restored after the plan turn.
     assert repl.engine.gate.mode is PermissionMode.ASK
 
