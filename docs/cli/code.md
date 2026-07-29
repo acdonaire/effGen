@@ -138,6 +138,34 @@ action log (what was allowed, withheld, declined or refused, and why),
 iterations, tool calls, tokens, cost and duration. Every proposed edit appears
 in `diffs`; the ones that reached disk carry `"applied": true`, so
 `--plan --json` reports the changes it would make without writing any of them.
+`tool_calling` names the path the model's tool calls travelled on — `hybrid` and
+`native` send the tool definitions to the provider's tool-calling API, `react`
+reads the calls out of the model's text — and the report prints the same line
+under its summary.
+
+## When the model describes a call instead of making one
+
+Some small models answer with the tool call written out as text:
+
+```
+<file_operations> {"operation": "write", "path": "greet.py", …} </file_operations>
+```
+
+Nothing is written and nothing runs, so that turn is reported as a failure
+(`"reason": "written_tool_call"`, exit code 1) naming the tool whose call was
+written out and what to do about it, rather than as an answer describing work
+that did not happen. The remedy depends on the path the run used: a model that
+was sent the tool definitions natively and still answered in prose needs
+replacing with one that calls tools, while a run on the `react` text path can
+ask for the native path instead. Larger instruct models and the current cloud
+models complete the loop; `effgen models list` marks the models that advertise
+tool calling.
+
+An answer that *recaps* a call the run really made — asking the agent to report
+the arguments it used, for instance — keeps its result: the turn is reported as
+a failure only when the tool named in the block never ran, or when the answer is
+nothing but the block. A call inside backticks or a fenced block is
+documentation and is left alone either way.
 
 Exit codes: `0` completed, `1` failed, `2` completed but changes were withheld
 because there was no terminal to confirm on and no `--auto-edit`/`--yes` — which
