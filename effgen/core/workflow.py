@@ -471,14 +471,20 @@ class WorkflowDAG:
         )
 
         # Fold a running cost/token tab onto the result so a budget owner can read
-        # workflow spend without summing node_results by hand.
+        # workflow spend without summing node_results by hand. The tab sums the
+        # nodes that reported a cost; when none did (every model unpriced or
+        # local) it is ``None`` rather than ``$0``.
         total_cost = 0.0
+        priced_nodes = 0
         total_tokens = 0
         for n in self._nodes.values():
-            try:
-                total_cost += float(n.metadata.get("cost_usd") or 0.0)
-            except (TypeError, ValueError):
-                pass
+            raw_node_cost = n.metadata.get("cost_usd")
+            if raw_node_cost is not None:
+                try:
+                    total_cost += float(raw_node_cost)
+                    priced_nodes += 1
+                except (TypeError, ValueError):
+                    pass
             try:
                 total_tokens += int(n.metadata.get("tokens_used") or 0)
             except (TypeError, ValueError):
@@ -492,7 +498,7 @@ class WorkflowDAG:
             metadata={
                 "name": self.name,
                 "node_count": len(self._nodes),
-                "cost_usd": round(total_cost, 6),
+                "cost_usd": round(total_cost, 6) if priced_nodes else None,
                 "tokens_used": total_tokens,
                 # Carry the topology so any consumer can rebuild the graph from
                 # the result alone (the per-node dicts don't record edges).
@@ -551,13 +557,16 @@ class WorkflowDAG:
             node.output = response.output if hasattr(response, "output") else str(response)
 
             # Record this node's spend so the workflow can report a running tab
-            # (mirrors the per-run AgentResponse cost surface). Local models = $0.
+            # (mirrors the per-run AgentResponse cost surface). A node whose
+            # model publishes no price — a local engine, or a catalog id with no
+            # rate — records ``None``, not a zero the reader would take for a
+            # free call.
             r_meta = getattr(response, "metadata", None) or {}
             raw_cost = r_meta.get("cost_usd", r_meta.get("cost"))
             try:
-                node.metadata["cost_usd"] = float(raw_cost) if raw_cost is not None else 0.0
+                node.metadata["cost_usd"] = float(raw_cost) if raw_cost is not None else None
             except (TypeError, ValueError):
-                node.metadata["cost_usd"] = 0.0
+                node.metadata["cost_usd"] = None
             node.metadata["tokens_used"] = int(getattr(response, "tokens_used", 0) or 0)
 
             # Honour the agent's own success flag: a sub-agent that failed must

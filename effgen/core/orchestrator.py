@@ -50,19 +50,20 @@ def _error_text(err: Any) -> str:
     return str(err)
 
 
-def _response_cost(response: Any) -> float:
+def _response_cost(response: Any) -> float | None:
     """Pull the per-run cost (USD) off an ``AgentResponse``'s metadata.
 
     The single-agent surface records cost under ``metadata["cost_usd"]`` (older
-    runs used ``"cost"``); local models report ``0.0``. Returns ``0.0`` when the
-    provider gave us no usable number so summing never crashes.
+    runs used ``"cost"``). Returns ``None`` when the run carries no usable
+    number — a local engine, or a model the catalog publishes no rate for —
+    so a team tab never presents an unknown cost as a free one.
     """
     meta = getattr(response, "metadata", None) or {}
     raw = meta.get("cost_usd", meta.get("cost"))
     try:
-        return float(raw) if raw is not None else 0.0
+        return float(raw) if raw is not None else None
     except (TypeError, ValueError):
-        return 0.0
+        return None
 
 
 def _response_time(response: Any) -> float:
@@ -95,20 +96,26 @@ def _aggregate_usage(responses: list[dict[str, Any]]) -> dict[str, Any]:
 
     Mirrors the per-run ``AgentResponse.metadata`` cost surface so a
     budget-conscious caller can read team/workflow spend without re-summing by
-    hand. Missing/non-numeric values count as zero.
+    hand. The tab sums the members that reported a cost; when none did — every
+    member local or on a model with no published rate — ``cost_usd`` is
+    ``None`` rather than ``$0``. Non-numeric values are skipped.
     """
     cost = 0.0
+    priced = 0
     tokens = 0
     for r in responses:
-        try:
-            cost += float(r.get("cost_usd") or 0.0)
-        except (TypeError, ValueError):
-            pass
+        raw_cost = r.get("cost_usd")
+        if raw_cost is not None:
+            try:
+                cost += float(raw_cost)
+                priced += 1
+            except (TypeError, ValueError):
+                pass
         try:
             tokens += int(r.get("tokens_used") or 0)
         except (TypeError, ValueError):
             pass
-    return {"cost_usd": round(cost, 6), "tokens_used": tokens}
+    return {"cost_usd": round(cost, 6) if priced else None, "tokens_used": tokens}
 
 
 class OrchestrationPattern(Enum):

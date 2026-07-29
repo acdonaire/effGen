@@ -581,12 +581,18 @@ class AgentGenerationMixin:
         Lets :meth:`Agent.run` surface ``cost_usd`` and prompt/completion token
         counts on the response metadata for every run (tool loops included),
         without each call site reaching into the underlying GenerationResult.
+
+        A call on a model with no published price reports ``cost_usd`` as
+        ``None``. Those calls are counted separately rather than summed as
+        zero, so a run's total is never quietly understated.
         """
         if not result_metadata:
             return
         accum = getattr(self, "_run_cost_accum", None)
         if accum is None:
             return
+        if "cost_usd" in result_metadata and result_metadata["cost_usd"] is None:
+            accum["unpriced_calls"] = accum.get("unpriced_calls", 0) + 1
         for key in ("cost_usd", "prompt_tokens", "completion_tokens", "total_tokens"):
             val = result_metadata.get(key)
             if isinstance(val, int | float):
@@ -606,7 +612,9 @@ class AgentGenerationMixin:
         run made billable model calls, ``cost_usd`` plus ``prompt_tokens`` /
         ``completion_tokens`` / ``total_tokens`` (every call summed, tool loops
         included). Existing keys win, so a path that already set its own value is
-        left untouched. Cost is rounded to whole microdollars.
+        left untouched. Cost is rounded to whole microdollars. A run whose model
+        has no published price carries no ``cost_usd`` key at all and reports
+        ``unpriced_calls`` instead.
         """
         meta = response.metadata
         # Per-run latency, mirrored from execution_time so callers can read it
@@ -620,6 +628,11 @@ class AgentGenerationMixin:
             return
         if "cost_usd" in accum and "cost_usd" not in meta:
             meta["cost_usd"] = round(float(accum["cost_usd"]), 8)
+        # Calls the catalog publishes no price for. A run made only of those
+        # reports no cost_usd at all; a mixed run reports the cost of the calls
+        # that were priced, and this says how many are missing from it.
+        if accum.get("unpriced_calls") and "unpriced_calls" not in meta:
+            meta["unpriced_calls"] = int(accum["unpriced_calls"])
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
             if key in accum and key not in meta:
                 meta[key] = int(accum[key])
