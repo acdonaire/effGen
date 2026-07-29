@@ -215,6 +215,232 @@ DIRECT_CALL_REASONING_MAX_TOKENS = 16384
 
 
 # ---------------------------------------------------------------------------
+# Reasoning chains returned beside an empty answer
+# ---------------------------------------------------------------------------
+
+#: Attribute names OpenAI-compatible providers use for the chain a reasoning
+#: model emits before its visible answer. Together, Groq and Cerebras all send
+#: ``message.reasoning``; some deployments use ``reasoning_content``.
+_REASONING_MESSAGE_ATTRS = ("reasoning", "reasoning_content")
+
+# One warning per (model, finish reason): a batch job on a reasoning model would
+# otherwise log the same line on every call.
+_reasoning_only_warned: set[tuple[str, str]] = set()
+
+
+def extract_reasoning_text(message: Any) -> str:
+    """Return the reasoning chain attached to one chat message, or ``""``.
+
+    The chain is the model's internal reasoning, not its answer: it is reported
+    for diagnosis and never returned to the caller as the answer.
+    """
+    for attr in _REASONING_MESSAGE_ATTRS:
+        value = getattr(message, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def extract_reasoning_tokens(usage: Any) -> int:
+    """Return the reasoning-token count a provider reports for one call.
+
+    OpenAI, Groq and Cerebras nest it under
+    ``usage.completion_tokens_details.reasoning_tokens`` on the chat-completions
+    API and under ``usage.output_tokens_details.reasoning_tokens`` on the
+    Responses API; a few report a top-level ``usage.reasoning_tokens``. Returns
+    ``0`` when none is present or the value is not a positive integer.
+    """
+    details = getattr(usage, "completion_tokens_details", None)
+    output_details = getattr(usage, "output_tokens_details", None)
+    for candidate in (getattr(details, "reasoning_tokens", None),
+                      getattr(output_details, "reasoning_tokens", None),
+                      getattr(usage, "reasoning_tokens", None)):
+        try:
+            count = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        if count > 0:
+            return count
+    return 0
+
+
+def reasoning_only_message(
+    model_name: str,
+    *,
+    finish_reason: str,
+    reasoning_tokens: int,
+    reasoning_chars: int,
+    max_tokens: int | None,
+    completion_tokens: int | None = None,
+) -> str:
+    """Message for a turn whose whole output was reasoning and no visible text.
+
+    Names the model, the output cap in force and the reasoning budget spent, so
+    the caller can tell this apart from a flaky empty response and knows which
+    lever to pull.
+    """
+    spent = reasoning_tokens or completion_tokens or 0
+    budget = (
+        f"a max_tokens cap of {max_tokens}" if max_tokens
+        else "the provider's default max_tokens"
+    )
+    if finish_reason == FINISH_LENGTH:
+        cause = (
+            f"it spent the whole output budget on internal reasoning and hit "
+            f"{budget} (finish_reason='length')"
+        )
+        remedy = (
+            "Raise max_tokens — e.g. agent.run(task, max_tokens=8192) — or use "
+            "a model that answers without an extended reasoning chain."
+        )
+    else:
+        cause = (
+            f"generation ended (finish_reason={finish_reason!r}) after the "
+            f"reasoning chain and before the first visible token, under {budget}"
+        )
+        remedy = (
+            "Raise max_tokens, drop any stop sequence the reasoning chain can "
+            "match, or use a model that answers without an extended reasoning "
+            "chain."
+        )
+    if spent and reasoning_chars:
+        produced = f"{spent} reasoning tokens ({reasoning_chars} characters of reasoning)"
+    elif spent:
+        produced = f"{spent} reasoning tokens"
+    elif reasoning_chars:
+        produced = f"{reasoning_chars} characters of internal reasoning"
+    else:  # pragma: no cover - one of the two is always known here
+        produced = "internal reasoning"
+    return (
+        f"Model '{model_name}' returned no visible text: {cause}. "
+        f"It produced {produced} and no answer. {remedy}"
+    )
+
+
+def annotate_reasoning_only(
+    metadata: dict[str, Any],
+    *,
+    text: str,
+    reasoning_text: str,
+    reasoning_tokens: int,
+    model_name: str,
+    finish_reason: str,
+    max_tokens: int | None,
+    completion_tokens: int | None = None,
+    tool_calls: list[Any] | None = None,
+    logger: Any = None,
+) -> bool:
+    """Record a reasoning-only turn on *metadata* and return whether it was one.
+
+    A reasoning-only turn is an empty ``content`` and no tool call beside either
+    a populated reasoning chain or a non-zero reasoning-token count: the model
+    was billed for output the caller cannot see. Providers report one signal or
+    the other — Together, Groq and Cerebras send the chain text, OpenAI reports
+    only the token count — so either is enough. ``metadata`` gains
+    ``reasoning_tokens`` whenever the provider reports any, and — for a
+    reasoning-only turn — ``reasoning_only``, ``reasoning`` (when the chain text
+    is available), ``reasoning_chars`` and ``empty_response_reason`` carrying the
+    message from :func:`reasoning_only_message`.
+
+    A native tool call is a complete turn even with empty text, so it is never
+    reported as reasoning-only.
+    """
+    if reasoning_tokens:
+        metadata["reasoning_tokens"] = reasoning_tokens
+    reasoning_text = reasoning_text or ""
+    if tool_calls or (text or "").strip():
+        return False
+    if not reasoning_text.strip() and reasoning_tokens <= 0:
+        return False
+
+    message = reasoning_only_message(
+        model_name,
+        finish_reason=finish_reason,
+        reasoning_tokens=reasoning_tokens,
+        reasoning_chars=len(reasoning_text),
+        max_tokens=max_tokens,
+        completion_tokens=completion_tokens,
+    )
+    metadata["reasoning_only"] = True
+    metadata["reasoning_chars"] = len(reasoning_text)
+    metadata["empty_response_reason"] = message
+    if reasoning_text:
+        metadata["reasoning"] = reasoning_text
+
+    if logger is not None:
+        warn_key = (model_name, finish_reason)
+        if warn_key not in _reasoning_only_warned:
+            _reasoning_only_warned.add(warn_key)
+            logger.warning(message)
+    return True
+
+
+def reasoning_delta_text(delta: Any) -> str:
+    """Return the reasoning fragment carried by one streaming delta, or ``""``."""
+    for attr in _REASONING_MESSAGE_ATTRS:
+        value = getattr(delta, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def warn_reasoning_only_stream(
+    *,
+    model_name: str,
+    yielded_text: bool,
+    reasoning_text: str,
+    reasoning_tokens: int = 0,
+    finish_reason: Any = None,
+    max_tokens: int | None,
+    logger: Any,
+) -> None:
+    """Report a stream that ended without yielding a single visible token.
+
+    A streamed turn has no metadata channel back to the caller, so the same
+    message :func:`annotate_reasoning_only` records is logged instead — an empty
+    iterator would otherwise look like a call that simply had nothing to say.
+    """
+    if yielded_text:
+        return
+    if not (reasoning_text or "").strip() and reasoning_tokens <= 0:
+        return
+    finish = normalize_finish_reason(finish_reason)
+    message = reasoning_only_message(
+        model_name,
+        finish_reason=finish,
+        reasoning_tokens=reasoning_tokens,
+        reasoning_chars=len(reasoning_text or ""),
+        max_tokens=max_tokens,
+    )
+    warn_key = (model_name, f"stream:{finish}")
+    if warn_key in _reasoning_only_warned:
+        return
+    _reasoning_only_warned.add(warn_key)
+    logger.warning(message)
+
+
+def apply_stop_sequences(text: str, stop_sequences: list[str] | None) -> str:
+    """Truncate *text* at the earliest stop sequence it contains.
+
+    Used when the stop sequences cannot be sent to the provider — a provider
+    that streams a reasoning chain and the answer through one token stream
+    matches them against the chain as well, which can end generation before the
+    first visible token. Cutting the returned answer locally gives the same
+    visible result without that collision.
+    """
+    if not text or not stop_sequences:
+        return text
+    cut = len(text)
+    for sequence in stop_sequences:
+        if not sequence:
+            continue
+        index = text.find(sequence)
+        if index != -1:
+            cut = min(cut, index)
+    return text[:cut]
+
+
+# ---------------------------------------------------------------------------
 # Structured, redacted provider errors
 # ---------------------------------------------------------------------------
 
