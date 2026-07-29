@@ -224,6 +224,122 @@ _LEADING_TOOLCALL_ECHO_RE = re.compile(
     r")" + _JSON_OBJ + r">?[ \t\n]*"
 )
 
+# Fenced and inline code spans are stripped before scanning an answer for a
+# written-out tool call, so an answer that *documents* a call ("run `calculator
+# {\"expression\": \"2+2\"}`") is never mistaken for one the model tried to make.
+_FENCED_CODE_RE = re.compile(r"```.*?(?:```|\Z)|~~~.*?(?:~~~|\Z)", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+# A tool name immediately followed by its JSON argument object, with or without
+# the angle-bracket tag or ``function=`` prefix a family may wrap it in:
+# ``<file_operations> {"operation": …}``, ``<function=calculator>{…}``,
+# ``calculator {"expression": …}``. The name is only treated as a call when it
+# matches a tool the agent actually has, so ordinary prose never matches.
+_WRITTEN_CALL_RE = re.compile(
+    r"(?:\A|(?<=[\s>*`\-]))"
+    r"<?[ \t]*(?:function[ \t]*=[ \t]*)?"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_.\-]{1,63})"
+    r"[ \t]*>?[ \t\r\n]*"
+    r"(?=\{[ \t\r\n]*[\"}])"
+)
+# The tagged shapes carry the tool name inside the JSON object instead.
+_TAGGED_CALL_RE = re.compile(
+    r"<tool_call>|\[TOOL_CALLS\]|<\|python_tag\|>", re.IGNORECASE,
+)
+_CALL_NAME_FIELD_RE = re.compile(r"\"(?:name|function)\"[ \t]*:[ \t]*\"([\w.\-]+)\"")
+
+
+def find_written_tool_call(text: str | None, tool_names: Any) -> str | None:
+    """Return the tool whose call *text* writes out as prose, or ``None``.
+
+    A model that is offered tools but does not emit a call the runtime can
+    dispatch sometimes writes the call into its answer instead — a block such as
+    ``<file_operations> {"operation": "write", …}``. Nothing runs, yet the text
+    reads like work was done. This reports the name of the first such block that
+    matches a tool in *tool_names*, so the caller can report the turn as failed
+    rather than as an answer.
+
+    Fenced and inline code spans are ignored, and the name has to be one the
+    agent actually holds, so an answer that explains or documents a tool call is
+    not flagged.
+    """
+    if not text or not isinstance(text, str) or not tool_names:
+        return None
+    names = set(tool_names)
+    scan = _INLINE_CODE_RE.sub(" ", _FENCED_CODE_RE.sub(" ", text))
+    for match in _WRITTEN_CALL_RE.finditer(scan):
+        if match.group("name") in names:
+            return match.group("name")
+    # A tagged call the parser could not read (truncated or malformed JSON)
+    # still names its tool in a "name" field.
+    if _TAGGED_CALL_RE.search(scan):
+        for field_match in _CALL_NAME_FIELD_RE.finditer(scan):
+            if field_match.group(1) in names:
+                return field_match.group(1)
+    return None
+
+
+def _json_object_end(text: str, start: int) -> int:
+    """Index just past the JSON object opening at *start*, or ``len(text)``.
+
+    String-aware, so a brace inside a quoted value does not close the object.
+    An object that never closes (a call cut off by the token cap) runs to the
+    end of the text.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return len(text)
+
+
+def written_call_only(text: str | None, tool_names: Any) -> bool:
+    """True when *text* is nothing but written-out calls for the agent's tools.
+
+    Distinguishes a call block the model returned *as* its answer from an answer
+    that recaps a call it really made: with the call blocks and the tags around
+    them removed, an answer still has words left, a bare block does not.
+    """
+    if not find_written_tool_call(text, tool_names):
+        return False
+    names = set(tool_names)
+    source = text or ""
+    remainder: list[str] = []
+    position = 0
+    while position < len(source):
+        match = next(
+            (
+                m
+                for m in _WRITTEN_CALL_RE.finditer(source, position)
+                if m.group("name") in names
+            ),
+            None,
+        )
+        if match is None:
+            remainder.append(source[position:])
+            break
+        remainder.append(source[position:match.start()])
+        position = _json_object_end(source, match.end())
+    left = _TOOLCALL_TAG_RE.sub(" ", "".join(remainder))
+    left = re.sub(r"</?[^<>\n]{0,80}>", " ", left)
+    return not re.search(r"[A-Za-z]{3,}", left)
+
 
 def sanitize_final_answer(text: str | None) -> str | None:
     """Strip internal ReAct/tool scaffolding from a user-facing answer.

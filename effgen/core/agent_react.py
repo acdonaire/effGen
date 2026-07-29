@@ -59,7 +59,16 @@ from .agent_runtime import (  # noqa: E402
     NUDGE_NO_TOOLS,
     NUDGE_NOT_USABLE,
     _infer_provider_from_model,
+    find_written_tool_call,
     sanitize_final_answer,
+    written_call_only,
+)
+
+#: Models that complete a tool loop through the provider's tool-calling API,
+#: named in the hint a written-out call block produces. Kept short and stable;
+#: ``effgen models list`` marks every model that advertises tool calling.
+_TOOL_CALLING_EXAMPLES = (
+    "openai:gpt-5-nano, gemini:gemini-3.1-flash-lite or groq:llama-3.3-70b-versatile"
 )
 
 
@@ -135,6 +144,23 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         # attempt failed/was denied) — stops re-offering tools so the model
         # must synthesize a prose answer instead of retrying forever.
         _force_text_answer = False
+        # The tool whose call the model wrote out as text instead of making,
+        # and how many turns did it — one nudge is allowed before the run is
+        # reported as a turn that ran no tool.
+        _written_call: str | None = None
+        _written_call_turns = 0
+        # Tools this run actually dispatched. An answer that recaps a call the
+        # run really made is an answer, not a call the model only described.
+        _executed_tools: set[str] = set()
+
+        def _is_unmade_call(written: str, text: str) -> bool:
+            """True when a written-out call block means the work never happened.
+
+            Either the named tool never ran in this run, or the text is nothing
+            but the call — a recap beside a real answer is neither.
+            """
+            return written not in _executed_tools or written_call_only(text, self.tools)
+
         # Optional periodic checkpointing
         _ckpt_interval = _ckpt_interval_arg
         _ckpt_dir = _ckpt_dir_arg
@@ -309,6 +335,7 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                             except Exception:
                                 logger.debug("Failed to set tool span status", exc_info=True)
                         tool_calls += 1
+                        _executed_tools.add(_tname)
                         batch_observations.append(f"[{_tname}({_targs})] → {_obs}")
                         scratchpad += f"\nAction: {_tname}\nAction Input: {json.dumps(_targs)}\nObservation: {_obs}"
                     else:
@@ -350,7 +377,27 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
             ) -> AgentResponse:
                 """Helper to build response and attach debug trace."""
                 if success:
+                    raw_answer = output
                     output = sanitize_final_answer(output) or output
+                    # An answer that writes out a call for a tool this agent
+                    # holds means the tool never ran: the turn describes work
+                    # that did not happen, so it is reported as a failure.
+                    # Sanitizing a tagged call can leave its arguments behind as
+                    # a bare JSON fragment, so the text as the model wrote it is
+                    # scanned as well as the cleaned answer.
+                    written = find_written_tool_call(
+                        output, self.tools
+                    ) or find_written_tool_call(raw_answer, self.tools)
+                    if written and _is_unmade_call(written, raw_answer):
+                        return self._written_tool_call_response(
+                            written,
+                            output,
+                            iterations=_iterations,
+                            tool_calls=_tool_calls,
+                            tokens_used=_tokens_used,
+                            tool_ran=written in _executed_tools,
+                            debug_trace=debug_trace,
+                        )
                 meta: dict[str, Any] = {
                     "reason": "final_answer",
                     "tool_calling_strategy": self._tool_calling_strategy.name,
@@ -390,8 +437,26 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
 
             # A "final answer" that is purely leaked tool-call syntax /
             # scaffolding (sanitizes to nothing) is not a real answer — keep
-            # looping so the tool actually runs or a partial is extracted.
+            # looping so the tool actually runs or a partial is extracted. When
+            # what leaked is a call for a tool this agent holds, the model is
+            # writing the call instead of making it: nudge once, then report it
+            # rather than billing the rest of the iteration budget for the same
+            # outcome.
             if final_answer and not (sanitize_final_answer(final_answer) or "").strip():
+                written = find_written_tool_call(final_answer, self.tools)
+                if written and _is_unmade_call(written, final_answer):
+                    _written_call = _written_call or written
+                    _written_call_turns += 1
+                    if _written_call_turns > 1:
+                        return self._written_tool_call_response(
+                            _written_call,
+                            final_answer,
+                            iterations=iterations,
+                            tool_calls=tool_calls,
+                            tokens_used=tokens_used,
+                            tool_ran=_written_call in _executed_tools,
+                            debug_trace=debug_trace,
+                        )
                 logger.info(
                     "Discarding scaffolding-only final answer; continuing loop"
                 )
@@ -528,6 +593,7 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                             logger.debug("Failed to set tool span status", exc_info=True)
                     tool_elapsed = time.time() - tool_start
                     tool_calls += 1
+                    _executed_tools.add(action)
                     cur_observation = tool_result
 
                     # Metrics for tool execution
@@ -612,6 +678,27 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                         scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
 
             else:
+                # A turn that produced neither an action nor an answer, but did
+                # write out a call for a tool this agent holds, is the same
+                # failure the answer path reports: the model is writing the call
+                # instead of making it. Say so once, and on a second such turn
+                # report the cause rather than grinding to the iteration cap
+                # and reporting only that the cap was reached.
+                written = find_written_tool_call(response["text"], self.tools)
+                if written and _is_unmade_call(written, response["text"]):
+                    _written_call = _written_call or written
+                    _written_call_turns += 1
+                    if _written_call_turns > 1:
+                        return self._written_tool_call_response(
+                            _written_call,
+                            response["text"],
+                            iterations=iterations,
+                            tool_calls=tool_calls,
+                            tokens_used=tokens_used,
+                            tool_ran=_written_call in _executed_tools,
+                            debug_trace=debug_trace,
+                        )
+                    scratchpad += f"\nObservation: {NUDGE_NOT_USABLE}"
                 # No action specified, prompt to continue
                 scratchpad += "\nAction: (continue reasoning)"
 
@@ -631,8 +718,19 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                     scratchpad_snapshot=scratchpad,
                 ))
 
-        # Max iterations reached — try to extract partial answer from scratchpad
+        # Max iterations reached. When every turn wrote its tool call out as
+        # text and nothing ran, the cap is a symptom: report the cause instead.
         partial_answer = self._extract_partial_answer(scratchpad)
+        if _written_call and not partial_answer:
+            return self._written_tool_call_response(
+                _written_call,
+                "",
+                iterations=iterations,
+                tool_calls=tool_calls,
+                tokens_used=tokens_used,
+                tool_ran=_written_call in _executed_tools,
+                debug_trace=debug_trace,
+            )
         if partial_answer:
             partial_answer = sanitize_final_answer(partial_answer) or partial_answer
             logger.info("Max iterations reached, returning partial answer from scratchpad")
@@ -642,7 +740,11 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
             # success=False with partial=True and keep the recovered text in
             # output. A caller keyed on success then retries/branches instead of
             # treating a truncated multi-step run as finished.
-            meta: dict[str, Any] = {"reason": "max_iterations_partial", "partial": True}
+            meta: dict[str, Any] = {
+                "reason": "max_iterations_partial",
+                "partial": True,
+                "tool_calling_strategy": self._tool_calling_strategy.name,
+            }
             if debug_trace is not None:
                 debug_trace.total_tokens = tokens_used
                 debug_trace.final_answer = partial_answer
@@ -658,7 +760,10 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                 metadata=meta,
             )
 
-        meta_fail: dict[str, Any] = {"reason": "max_iterations_exhausted"}
+        meta_fail: dict[str, Any] = {
+            "reason": "max_iterations_exhausted",
+            "tool_calling_strategy": self._tool_calling_strategy.name,
+        }
         if debug_trace is not None:
             debug_trace.total_tokens = tokens_used
             debug_trace.success = False
@@ -671,6 +776,112 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
             tool_calls=tool_calls,
             tokens_used=tokens_used,
             metadata=meta_fail,
+        )
+
+    def _model_advertises_tool_calling(self) -> bool:
+        """True when the loaded model reports native tool-calling support."""
+        model = getattr(self, "model", None)
+        if model is None or not hasattr(model, "supports_tool_calling"):
+            return False
+        try:
+            return bool(model.supports_tool_calling())
+        except Exception:  # noqa: BLE001 - a capability probe never breaks a run
+            logger.debug("Tool-calling capability check failed", exc_info=True)
+            return False
+
+    def _written_tool_call_detail(
+        self, tool_name: str, answer: str, *, tool_ran: bool = False,
+    ) -> dict[str, Any]:
+        """Return the typed error for an answer that writes out a tool call.
+
+        The remediation depends on which tool-calling path ran: a model that was
+        sent the tool definitions natively and still answered with the call as
+        text needs replacing, while a model that advertises native tool calling
+        but ran the ReAct text protocol only needs to be asked for the native
+        path. *tool_ran* says whether the named tool was dispatched earlier in
+        the run, which decides what the answer failed to do.
+        """
+        strategy = self._tool_calling_strategy.name
+        model_id = (
+            getattr(self.model, "model_name", None) or self.model_name or "the model"
+        )
+        advertises = self._model_advertises_tool_calling()
+        if strategy in ("native", "hybrid") and advertises:
+            remedy = (
+                f"'{model_id}' was sent the tool definitions through the "
+                "provider's tool-calling API and answered with the call as text "
+                f"anyway. Run the task on a model that calls tools — "
+                f"{_TOOL_CALLING_EXAMPLES} — or on a larger local model."
+            )
+        elif advertises:
+            remedy = (
+                f"This run used the ReAct text protocol, but '{model_id}' "
+                "advertises native tool calling: build the agent with "
+                "AgentConfig(tool_calling_mode='native') so the tool definitions "
+                "reach the provider's tool-calling API."
+            )
+        else:
+            remedy = (
+                f"'{model_id}' does not advertise native tool calling. Run the "
+                f"task on a model that does — {_TOOL_CALLING_EXAMPLES}."
+            )
+        if tool_ran:
+            message = (
+                f"The model returned a '{tool_name}' tool call as its answer "
+                "instead of an answer, so the run has no result to report and "
+                "the call as written was not carried out. "
+            ) + remedy
+        else:
+            message = (
+                f"The model wrote a '{tool_name}' tool call into its answer "
+                f"instead of calling the tool, so {tool_name} never ran and "
+                f"nothing the answer describes was carried out. "
+            ) + remedy
+        preview = " ".join((answer or "").split())[:300]
+        return {
+            "type": "WrittenToolCall",
+            "category": "written_tool_call",
+            "provider": self._model_provider(self.model),
+            "model": model_id,
+            "tool": tool_name,
+            "tool_calling_strategy": strategy,
+            "answer_preview": preview,
+            "message": message,
+            "retryable": False,
+        }
+
+    def _written_tool_call_response(
+        self,
+        tool_name: str,
+        answer: str,
+        *,
+        iterations: int,
+        tool_calls: int,
+        tokens_used: int,
+        tool_ran: bool = False,
+        debug_trace: Any = None,
+    ) -> AgentResponse:
+        """Report a turn whose answer only describes the tool call it should have made."""
+        detail = self._written_tool_call_detail(tool_name, answer, tool_ran=tool_ran)
+        logger.warning("Tool call was written as text, not made: %s", detail["message"])
+        meta: dict[str, Any] = {
+            "reason": "written_tool_call",
+            "error": detail,
+            "tool_calling_strategy": detail["tool_calling_strategy"],
+        }
+        if debug_trace is not None:
+            debug_trace.total_tokens = tokens_used
+            debug_trace.final_answer = None
+            debug_trace.success = False
+            meta["debug_trace"] = debug_trace
+        return AgentResponse(
+            output=detail["message"],
+            success=False,
+            mode=AgentMode.SINGLE,
+            iterations=iterations,
+            tool_calls=tool_calls,
+            tokens_used=tokens_used,
+            metadata=meta,
         )
 
     def _is_context_retrieval_tool(self, action: str) -> bool:
@@ -1258,6 +1469,7 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         tool_calls_made = len(native_results)
 
         # Execute local tool calls and stitch their results into a follow-up
+        executed_tools: set[str] = set()
         if local_calls and function_specs:
             observations: list[str] = []
             for call in local_calls:
@@ -1271,6 +1483,7 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                 if fn_name in self.tools:
                     obs = self._execute_tool(fn_name, json.dumps(fn_args))
                     tool_calls_made += 1
+                    executed_tools.add(fn_name)
                     observations.append(f"[{fn_name}({fn_args})] → {obs}")
 
             if observations and not result.text:
@@ -1294,14 +1507,35 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         if not result.text and (result.metadata or {}).get("reasoning_only"):
             return self._reasoning_only_native_response(result, tool_calls_made)
 
+        answer = sanitize_final_answer(result.text) or ""
+        # Sanitizing a tagged call can leave its arguments behind as a bare JSON
+        # fragment, so the text as the model wrote it is scanned as well.
+        written = None
+        if result.text:
+            written = find_written_tool_call(
+                answer, self.tools
+            ) or find_written_tool_call(result.text, self.tools)
+        if written and (
+            written not in executed_tools or written_call_only(result.text, self.tools)
+        ):
+            return self._written_tool_call_response(
+                written,
+                result.text,
+                iterations=1,
+                tool_calls=tool_calls_made,
+                tokens_used=result.tokens_used,
+                tool_ran=written in executed_tools,
+            )
+        meta = dict(result.metadata or {})
+        meta.setdefault("tool_calling_strategy", "openai_native")
         return AgentResponse(
-            output=sanitize_final_answer(result.text) or "(no output from native tools call)",
+            output=answer or "(no output from native tools call)",
             success=bool(result.text),
             mode=AgentMode.SINGLE,
             iterations=1,
             tool_calls=tool_calls_made,
             tokens_used=result.tokens_used,
-            metadata=result.metadata,
+            metadata=meta,
         )
 
     def _reasoning_only_native_response(
@@ -1430,11 +1664,13 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         # Execute any local effGen function calls that came back
         local_tc = result.metadata.get("tool_calls") or []
         observations: list[str] = []
+        executed_tools: set[str] = set()
         for tc in local_tc:
             fn_name = tc.get("name", "")
             fn_args = tc.get("arguments", {})
             if fn_name in self.tools and not isinstance(self.tools[fn_name], GeminiNativeTool):
                 obs = self._execute_tool(fn_name, json.dumps(fn_args) if isinstance(fn_args, dict) else fn_args)
+                executed_tools.add(fn_name)
                 observations.append(f"[{fn_name}({fn_args})] → {obs}")
 
         if observations and not result.text.strip():
@@ -1457,12 +1693,33 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         if not result.text and (result.metadata or {}).get("reasoning_only"):
             return self._reasoning_only_native_response(result, tool_calls_made)
 
+        answer = sanitize_final_answer(result.text) or ""
+        # Sanitizing a tagged call can leave its arguments behind as a bare JSON
+        # fragment, so the text as the model wrote it is scanned as well.
+        written = None
+        if result.text:
+            written = find_written_tool_call(
+                answer, self.tools
+            ) or find_written_tool_call(result.text, self.tools)
+        if written and (
+            written not in executed_tools or written_call_only(result.text, self.tools)
+        ):
+            return self._written_tool_call_response(
+                written,
+                result.text,
+                iterations=1,
+                tool_calls=tool_calls_made,
+                tokens_used=result.tokens_used,
+                tool_ran=written in executed_tools,
+            )
+        meta = dict(result.metadata or {})
+        meta.setdefault("tool_calling_strategy", "gemini_native")
         return AgentResponse(
-            output=sanitize_final_answer(result.text) or "(no output from Gemini native tools call)",
+            output=answer or "(no output from Gemini native tools call)",
             success=bool(result.text),
             mode=AgentMode.SINGLE,
             iterations=1,
             tool_calls=tool_calls_made,
             tokens_used=result.tokens_used,
-            metadata=result.metadata,
+            metadata=meta,
         )

@@ -93,6 +93,18 @@ class AgentResponse:
               (``success=False``); rejected before any model call, so nothing
               is billed. ``metadata["error"]`` has the same shape as above with
               ``provider``/``model`` set to ``None``.
+            - ``"written_tool_call"`` — the model wrote a tool call into its
+              answer instead of calling the tool (``success=False``), either for
+              a tool that never ran in this run or as an answer that is nothing
+              but the call block. An answer that recaps a call the run really
+              made is not this failure. ``metadata["error"]`` adds ``tool`` (the
+              tool whose call was written out), ``tool_calling_strategy`` and a
+              short ``answer_preview`` to the structured shape above.
+
+            A run that went through the tool loop also carries
+            ``tool_calling_strategy`` — ``"react"``, ``"native"``, ``"hybrid"``,
+            ``"openai_native"`` or ``"gemini_native"`` — naming the tool-calling
+            path that produced the result.
 
             Success rule: ``success`` is ``True`` only when a run finished with a
             real answer (``final_answer``); a run truncated at the iteration cap
