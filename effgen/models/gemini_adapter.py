@@ -20,10 +20,12 @@ from collections.abc import Iterator
 from typing import Any
 
 from effgen.models._adapter_utils import (
+    annotate_reasoning_only,
     model_not_found_error,
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
+    warn_reasoning_only_stream,
 )
 from effgen.models._multimodal import (
     require_audio_support,
@@ -843,6 +845,22 @@ class GeminiAdapter(FunctionCallingModel):
             if thinking_text:
                 metadata["thinking"] = thinking_text
 
+            # A thinking model can spend the whole output budget on its thoughts
+            # and return no visible text. Report that turn the way every other
+            # adapter does, naming the cap and the thinking budget it spent.
+            annotate_reasoning_only(
+                metadata,
+                text=generated_text,
+                reasoning_text=thinking_text,
+                reasoning_tokens=thoughts_tokens,
+                model_name=self.model_name,
+                finish_reason=finish_reason,
+                max_tokens=getattr(gen_config, "max_output_tokens", None),
+                completion_tokens=completion_tokens,
+                tool_calls=tool_calls,
+                logger=logger,
+            )
+
             # Emit span attributes on the current active span
             _set_span_attr(ModelAttrs.PROVIDER, "google")
             _set_span_attr(ModelAttrs.NAME, self.model_name)
@@ -914,6 +932,7 @@ class GeminiAdapter(FunctionCallingModel):
             raw_tools = self._convert_tools_to_genai(kwargs.pop("tools"))
 
         _usage_metadata = None
+        _raw_finish_reason = None
         try:
             with timed_call("gemini", self.model_name) as _stream_timer:
                 response = self._generate_with_retry(
@@ -926,6 +945,9 @@ class GeminiAdapter(FunctionCallingModel):
                 for chunk in response:
                     if getattr(chunk, "usage_metadata", None) is not None:
                         _usage_metadata = chunk.usage_metadata
+                    candidates = getattr(chunk, "candidates", None) or []
+                    if candidates and getattr(candidates[0], "finish_reason", None):
+                        _raw_finish_reason = candidates[0].finish_reason
                     try:
                         if chunk.text:
                             if _first_token:
@@ -937,6 +959,19 @@ class GeminiAdapter(FunctionCallingModel):
         except Exception as exc:
             logger.error("Gemini streaming failed: %s", exc)
             raise provider_runtime_error("gemini", self.model_name, "stream", exc, message="Gemini streaming failed") from exc
+
+        # A stream has no metadata channel back to the caller, so a turn spent
+        # entirely on thinking is reported here instead of arriving as an empty
+        # iterator that reads as "the model had nothing to say".
+        warn_reasoning_only_stream(
+            model_name=self.model_name,
+            yielded_text=not _first_token,
+            reasoning_text="",  # thought parts are not streamed as text
+            reasoning_tokens=getattr(_usage_metadata, "thoughts_token_count", None) or 0,
+            finish_reason=_raw_finish_reason,
+            max_tokens=getattr(gen_config, "max_output_tokens", None),
+            logger=logger,
+        )
 
         # Record real usage from the streamed usage_metadata (the last chunk
         # carries the cumulative totals) so cost/token tracking and the CLI's

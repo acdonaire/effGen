@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from effgen.models._adapter_utils import (
+    annotate_reasoning_only,
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
@@ -383,6 +384,37 @@ class AnthropicAdapter(FunctionCallingModel):
         cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
         return usage.input_tokens, usage.output_tokens, cached_input, cache_creation
 
+    def _annotate_thinking_only(
+        self,
+        metadata: dict[str, Any],
+        *,
+        text: str,
+        thinking: list[str],
+        request: dict[str, Any],
+        completion_tokens: int,
+        response: Any,
+        tool_calls: list[Any] | None = None,
+    ) -> None:
+        """Record a turn whose whole output was extended thinking, no answer.
+
+        Extended thinking is billed as output, so a budget spent entirely on it
+        returns an empty answer the caller paid for. Anthropic reports the chain
+        as ``thinking`` blocks rather than a token count, so the chain text is
+        the signal.
+        """
+        annotate_reasoning_only(
+            metadata,
+            text=text,
+            reasoning_text="\n".join(thinking),
+            reasoning_tokens=0,
+            model_name=self.model_name,
+            finish_reason=normalize_finish_reason(response.stop_reason),
+            max_tokens=request.get("max_tokens"),
+            completion_tokens=completion_tokens,
+            tool_calls=tool_calls,
+            logger=logger,
+        )
+
     # ── Cost ──────────────────────────────────────────────────────────────
 
     def _calculate_cost(
@@ -508,6 +540,12 @@ class AnthropicAdapter(FunctionCallingModel):
                 metadata["thinking"] = thinking
             if redacted:
                 metadata["redacted_thinking"] = redacted
+
+            self._annotate_thinking_only(
+                metadata, text=text, thinking=thinking, request=request,
+                completion_tokens=completion_tokens, response=response,
+                tool_calls=[b for b in raw_blocks if b.get("type") == "tool_use"],
+            )
 
             # Emit span attributes on the current active span
             _set_span_attr(ModelAttrs.PROVIDER, "anthropic")
@@ -831,6 +869,12 @@ class AnthropicAdapter(FunctionCallingModel):
             if redacted:
                 metadata["redacted_thinking"] = redacted
 
+            self._annotate_thinking_only(
+                metadata, text=text, thinking=thinking, request=request,
+                completion_tokens=completion_tokens, response=response,
+                tool_calls=tool_uses,
+            )
+
             return GenerationResult(
                 text=text,
                 tokens_used=completion_tokens,
@@ -937,6 +981,12 @@ class AnthropicAdapter(FunctionCallingModel):
                 metadata["thinking"] = thinking
             if redacted:
                 metadata["redacted_thinking"] = redacted
+
+            self._annotate_thinking_only(
+                metadata, text=text, thinking=thinking, request=request,
+                completion_tokens=completion_tokens, response=response,
+                tool_calls=[b for b in raw_blocks if b.get("type") == "tool_use"],
+            )
 
             return GenerationResult(
                 text=text,
