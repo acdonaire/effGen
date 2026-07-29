@@ -22,10 +22,17 @@ from dataclasses import replace
 from typing import Any
 
 from effgen.models._adapter_utils import (
+    FINISH_CONTENT_FILTER,
+    FINISH_LENGTH,
+    annotate_reasoning_only,
+    extract_reasoning_text,
+    extract_reasoning_tokens,
     model_not_found_error,
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
+    reasoning_delta_text,
+    warn_reasoning_only_stream,
 )
 from effgen.models._multimodal import (
     require_audio_support,
@@ -479,6 +486,19 @@ class OpenAIAdapter(FunctionCallingModel):
                 f"Pass None to omit."
             )
 
+    @staticmethod
+    def _requested_output_cap(request_params: dict[str, Any]) -> int | None:
+        """Return the output-token cap a request asked for, whatever it is named.
+
+        Reasoning families take ``max_completion_tokens``; the chat families
+        take ``max_tokens``; the Responses API takes ``max_output_tokens``.
+        """
+        for key in ("max_completion_tokens", "max_tokens", "max_output_tokens"):
+            value = request_params.get(key)
+            if isinstance(value, int) and value > 0:
+                return value
+        return None
+
     def _build_request_params(
         self,
         messages: list[dict[str, Any]],
@@ -668,6 +688,18 @@ class OpenAIAdapter(FunctionCallingModel):
             prompt_tokens, completion_tokens, total_tokens, cached_tokens,
             cost, self.total_cost,
         )
+        annotate_reasoning_only(
+            metadata,
+            text=generated_text,
+            reasoning_text=extract_reasoning_text(choice.message),
+            reasoning_tokens=extract_reasoning_tokens(response.usage),
+            model_name=self.model_name,
+            finish_reason=finish_reason,
+            max_tokens=self._requested_output_cap(request_params),
+            completion_tokens=completion_tokens,
+            tool_calls=None,
+            logger=logger,
+        )
 
         _obs_log.model_event(
             "call.done",
@@ -722,6 +754,9 @@ class OpenAIAdapter(FunctionCallingModel):
         request_params.update(kwargs)
 
         _usage = None
+        _finish_reason = None
+        _reasoning_buf: list[str] = []
+        _yielded_text = False
         try:
             with timed_call("openai", self.model_name) as _stream_timer:
                 stream = self.client.chat.completions.create(**request_params)
@@ -729,14 +764,36 @@ class OpenAIAdapter(FunctionCallingModel):
                 for chunk in stream:
                     if getattr(chunk, "usage", None) is not None:
                         _usage = chunk.usage
+                    if chunk.choices:
+                        _choice = chunk.choices[0]
+                        if getattr(_choice, "finish_reason", None):
+                            _finish_reason = _choice.finish_reason
+                        _reasoning_buf.append(
+                            reasoning_delta_text(getattr(_choice, "delta", None))
+                        )
                     if chunk.choices and chunk.choices[0].delta.content is not None:
                         if _first_token:
                             _stream_timer.mark_first_token()
                             _first_token = False
+                        # An empty content delta is not a visible token: a
+                        # reasoning turn that never answers can still emit one.
+                        _yielded_text = _yielded_text or bool(
+                            chunk.choices[0].delta.content
+                        )
                         yield chunk.choices[0].delta.content
         except Exception as e:
             logger.error(f"OpenAI streaming failed: {e}")
             raise provider_runtime_error("openai", self.model_name, "stream", e, message="OpenAI streaming failed") from e
+
+        warn_reasoning_only_stream(
+            model_name=self.model_name,
+            yielded_text=_yielded_text,
+            reasoning_text="".join(_reasoning_buf),
+            reasoning_tokens=extract_reasoning_tokens(_usage),
+            finish_reason=_finish_reason,
+            max_tokens=self._requested_output_cap(request_params),
+            logger=logger,
+        )
 
         # Record real usage from the final chunk so cost/token tracking and the
         # CLI's per-turn footer reflect streamed turns too.
@@ -828,15 +885,29 @@ class OpenAIAdapter(FunctionCallingModel):
         )
         cost = self._record_cost(prompt_tokens, completion_tokens, total_tokens, cached_tokens)
 
+        metadata = usage_metadata(
+            prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+            cost, self.total_cost,
+        )
+        annotate_reasoning_only(
+            metadata,
+            text=generated_text,
+            reasoning_text=extract_reasoning_text(message),
+            reasoning_tokens=extract_reasoning_tokens(response.usage),
+            model_name=self.model_name,
+            finish_reason=finish_reason,
+            max_tokens=self._requested_output_cap(request_params),
+            completion_tokens=completion_tokens,
+            tool_calls=None,
+            logger=logger,
+        )
+
         return GenerationResult(
             text=generated_text,
             tokens_used=completion_tokens,
             finish_reason=finish_reason,
             model_name=self.model_name,
-            metadata=usage_metadata(
-                prompt_tokens, completion_tokens, total_tokens, cached_tokens,
-                cost, self.total_cost,
-            ),
+            metadata=metadata,
         )
 
     def generate_with_system_prompt(
@@ -890,15 +961,29 @@ class OpenAIAdapter(FunctionCallingModel):
         )
         cost = self._record_cost(prompt_tokens, completion_tokens, total_tokens, cached_tokens)
 
+        metadata = usage_metadata(
+            prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+            cost, self.total_cost,
+        )
+        annotate_reasoning_only(
+            metadata,
+            text=generated_text,
+            reasoning_text=extract_reasoning_text(choice.message),
+            reasoning_tokens=extract_reasoning_tokens(response.usage),
+            model_name=self.model_name,
+            finish_reason=finish_reason,
+            max_tokens=self._requested_output_cap(request_params),
+            completion_tokens=completion_tokens,
+            tool_calls=None,
+            logger=logger,
+        )
+
         return GenerationResult(
             text=generated_text,
             tokens_used=completion_tokens,
             finish_reason=finish_reason,
             model_name=self.model_name,
-            metadata=usage_metadata(
-                prompt_tokens, completion_tokens, total_tokens, cached_tokens,
-                cost, self.total_cost,
-            ),
+            metadata=metadata,
         )
 
     def generate_with_tools(
@@ -969,6 +1054,19 @@ class OpenAIAdapter(FunctionCallingModel):
         metadata["message"] = message
 
         generated_text = message.content or ""
+        annotate_reasoning_only(
+            metadata,
+            text=generated_text,
+            reasoning_text=extract_reasoning_text(message),
+            reasoning_tokens=extract_reasoning_tokens(response.usage),
+            model_name=self.model_name,
+            finish_reason=finish_reason,
+            max_tokens=self._requested_output_cap(request_params),
+            completion_tokens=completion_tokens,
+            tool_calls=metadata["tool_calls"],
+            logger=logger,
+        )
+
         return GenerationResult(
             text=generated_text,
             tokens_used=completion_tokens,
@@ -1182,13 +1280,47 @@ class OpenAIAdapter(FunctionCallingModel):
             "grounding_chunks": grounding_chunks,
         })
 
+        finish_reason = self._responses_finish_reason(response)
+        annotate_reasoning_only(
+            metadata,
+            text=output_text,
+            reasoning_text="",  # the Responses API does not return the chain
+            reasoning_tokens=extract_reasoning_tokens(usage),
+            model_name=self.model_name,
+            finish_reason=finish_reason,
+            max_tokens=self._requested_output_cap(params),
+            completion_tokens=completion_tokens,
+            tool_calls=tool_call_results,
+            logger=logger,
+        )
+
         return GenerationResult(
             text=output_text,
             tokens_used=completion_tokens,
-            finish_reason=normalize_finish_reason(getattr(response, "status", "completed")),
+            finish_reason=finish_reason,
             model_name=self.model_name,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _responses_finish_reason(response: Any) -> str:
+        """Canonical finish reason for one Responses-API response.
+
+        The Responses API reports a ``status`` (``"completed"`` /
+        ``"incomplete"``) and, when it stopped early, an
+        ``incomplete_details.reason``. A run cut off at ``max_output_tokens`` is
+        the same truncation the chat-completions API calls ``"length"``, so it
+        is reported as ``"length"`` — the agent grows the budget and retries on
+        that reason, and would not on a bare ``"incomplete"``.
+        """
+        status = getattr(response, "status", "completed")
+        details = getattr(response, "incomplete_details", None)
+        reason = getattr(details, "reason", None)
+        if reason == "max_output_tokens":
+            return FINISH_LENGTH
+        if reason == "content_filter":
+            return FINISH_CONTENT_FILTER
+        return normalize_finish_reason(status)
 
     def chat(
         self,
@@ -1249,10 +1381,24 @@ class OpenAIAdapter(FunctionCallingModel):
         metadata["tool_calls"] = tool_calls_from_message(message)
         metadata["message"] = message
 
+        finish_reason = normalize_finish_reason(choice.finish_reason)
+        annotate_reasoning_only(
+            metadata,
+            text=message.content or "",
+            reasoning_text=extract_reasoning_text(message),
+            reasoning_tokens=extract_reasoning_tokens(response.usage),
+            model_name=self.model_name,
+            finish_reason=finish_reason,
+            max_tokens=self._requested_output_cap(request_params),
+            completion_tokens=completion_tokens,
+            tool_calls=metadata["tool_calls"],
+            logger=logger,
+        )
+
         return GenerationResult(
             text=message.content or "",
             tokens_used=completion_tokens,
-            finish_reason=normalize_finish_reason(choice.finish_reason),
+            finish_reason=finish_reason,
             model_name=self.model_name,
             metadata=metadata,
         )
