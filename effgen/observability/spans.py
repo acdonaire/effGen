@@ -144,7 +144,8 @@ class ModelAttrs:
     #: Number of multimodal content parts (int, multimodal calls only)
     PARTS_COUNT: str = "effgen.model.parts_count"
 
-    #: Total cost of this call in USD (float, may be 0.0 when unknown)
+    #: Total cost of this call in USD (float; 0.0 on a free tier, and the
+    #: attribute is absent when the model publishes no price)
     COST_USD: str = "effgen.model.cost_usd"
 
     #: Generation outcome: ``"ok"`` | ``"error"`` | ``"timeout"`` (string)

@@ -125,6 +125,18 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
             return 'unpriced'
         return f"${cost:.6f}"
 
+    def _row_cost(row: dict) -> float | None:
+        """The row's spend, or ``None`` when the model publishes no price.
+
+        The ledger stores a non-null number for every call, so a row on an
+        unpriced model reads ``0.0`` there. Reporting that as the spend would
+        state a price nobody published; a reader of the JSON document gets the
+        same answer the table's label gives.
+        """
+        if _cost_label(row) == 'unpriced':
+            return None
+        return round(row['cost_usd'], 8)
+
     # Load budget for display
     budget_cfg = {}
     if budget_path.exists():
@@ -147,7 +159,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
                 "requests": r["requests"],
                 "prompt_tokens": r["prompt_tokens"],
                 "completion_tokens": r["completion_tokens"],
-                "cost_usd": round(r["cost_usd"], 8),
+                "cost_usd": _row_cost(r),
                 "cost_label": _cost_label(r),
             }
             for r in rows
