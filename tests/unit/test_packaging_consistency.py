@@ -71,9 +71,15 @@ def test_flash_attn_not_in_all_extra():
 
 
 def test_fast_movers_have_upper_bounds():
-    """Fast-moving majors must carry a tested `<` ceiling in the base deps."""
+    """Fast-moving majors must carry a tested `<` ceiling in the base deps.
+
+    An uncapped one takes the whole test suite down the day it ships a major:
+    `mcp` 2.x removed `mcp.server.fastmcp` and the `streamablehttp_client`
+    alias, so every module importing `effgen.tools.protocols` failed at
+    collection — including the thousands of tests that use no protocol at all.
+    """
     base = _cfg()["project"]["dependencies"]
     by_name = {dep.split(">=")[0].split("[")[0].strip().lower(): dep for dep in base}
-    for pkg in ("torch", "transformers", "numpy", "pandas", "fastapi", "starlette"):
+    for pkg in ("torch", "transformers", "numpy", "pandas", "fastapi", "starlette", "mcp"):
         spec = by_name.get(pkg, "")
         assert "<" in spec, f"{pkg} is missing a tested upper bound in pyproject.toml: {spec!r}"

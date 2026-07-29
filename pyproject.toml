@@ -116,8 +116,11 @@ dependencies = [
     "gputil>=1.4.0",
     "nvidia-ml-py>=11.495.46",
     # Protocol Support - MCP
-    # 1.28.1 is the first release that clears CVE-2026-59950.
-    "mcp>=1.28.1",
+    # 1.28.1 is the first release that clears CVE-2026-59950. The 2.x line
+    # removes `mcp.server.fastmcp` (which the effGen MCP server is built on),
+    # drops the `streamablehttp_client` alias and restructures `mcp.types`, so
+    # it needs a port rather than a version bump.
+    "mcp>=1.28.1,<2",
     # Performance Monitoring
     "psutil>=5.9.0",
     # Data Processing

@@ -16,7 +16,6 @@ from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import (
     CallToolResult,
     Prompt,
@@ -32,6 +31,15 @@ from ...base_tool import (
     ToolCategory,
     ToolMetadata,
 )
+
+# The streamable-HTTP transport factory was renamed in mcp 1.28; the old
+# ``streamablehttp_client`` spelling is deprecated there and absent from 2.x.
+try:
+    from mcp.client.streamable_http import streamable_http_client
+except ImportError:  # pragma: no cover - older SDKs carry only the old name
+    from mcp.client.streamable_http import (  # type: ignore[attr-defined]
+        streamablehttp_client as streamable_http_client,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +156,7 @@ class EffGenMCPClient:
                 if not self.config.url:
                     raise ValueError("URL required for HTTP transport")
 
-                transport_context = streamablehttp_client(self.config.url)
+                transport_context = streamable_http_client(self.config.url)
 
             else:
                 raise ValueError(f"Unsupported transport: {self.config.transport}")
