@@ -26,6 +26,12 @@ from effgen.models._cost import CostTracker  # noqa: E402
 from effgen.models.cerebras_adapter import CerebrasAdapter  # noqa: E402
 
 
+def _cost(row: dict) -> str:
+    """Render a row's spend. ``None`` means the model publishes no rate."""
+    cost = row["cost_usd"]
+    return "unpriced" if cost is None else f"${cost:.6f}"
+
+
 def print_summary(label: str) -> None:
     tracker = CostTracker.get()
     print(f"\n--- {label} ---")
@@ -40,7 +46,7 @@ def print_summary(label: str) -> None:
             f"    prompt:      {row['prompt_tokens']} tokens\n"
             f"    completion:  {row['completion_tokens']} tokens\n"
             f"    total:       {row['total_tokens']} tokens\n"
-            f"    cost:        ${row['cost_usd']:.6f} (free tier = $0)"
+            f"    cost:        {_cost(row)} (free tier = $0)"
         )
     total = tracker.total_cost()
     print(f"\n  Grand total cost: ${total:.6f}")

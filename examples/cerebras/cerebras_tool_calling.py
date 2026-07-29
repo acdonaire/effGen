@@ -78,11 +78,13 @@ def main():
     # Show cost (always $0 for Cerebras free tier)
     print("\n--- Cost Summary ---")
     for row in CostTracker.get().summary():
+        # ``cost_usd`` is None for a model the catalog publishes no rate for.
+        cost = row["cost_usd"]
         print(
             f"  {row['provider']}/{row['model']}: "
             f"requests={row['requests']} "
             f"tokens={row['total_tokens']} "
-            f"cost=${row['cost_usd']:.6f}"
+            f"cost={'unpriced' if cost is None else f'${cost:.6f}'}"
         )
 
 

@@ -69,10 +69,12 @@ def main():
     # Show cost summary — Cerebras free tier = $0
     print("\n--- Cost Summary (Cerebras free tier = $0) ---")
     for row in CostTracker.get().summary():
+        # ``cost_usd`` is None for a model the catalog publishes no rate for.
+        cost = row["cost_usd"]
         print(
             f"  {row['provider']}/{row['model']}: "
             f"prompt={row['prompt_tokens']} completion={row['completion_tokens']} "
-            f"cost=${row['cost_usd']:.6f}"
+            f"cost={'unpriced' if cost is None else f'${cost:.6f}'}"
         )
 
 
