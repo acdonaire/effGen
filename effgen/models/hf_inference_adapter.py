@@ -38,9 +38,14 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from effgen.models._adapter_utils import (
+    annotate_reasoning_only,
+    extract_reasoning_text,
+    extract_reasoning_tokens,
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
+    reasoning_delta_text,
+    warn_reasoning_only_stream,
 )
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_audio_support, require_vision_support
@@ -676,6 +681,9 @@ class HFInferenceAdapter(BaseModel):
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             tool_calls=tool_calls,
+            reasoning_text=extract_reasoning_text(choice.message),
+            reasoning_tokens=extract_reasoning_tokens(usage),
+            max_tokens=call_kwargs.get("max_tokens"),
         )
 
     def _generate_text(
@@ -804,6 +812,9 @@ class HFInferenceAdapter(BaseModel):
         output_tokens: int,
         total_tokens: int,
         tool_calls: list[dict[str, Any]],
+        reasoning_text: str = "",
+        reasoning_tokens: int = 0,
+        max_tokens: int | None = None,
     ) -> GenerationResult:
         """Assemble a GenerationResult and record cost."""
         cost_usd = self._price_tokens(input_tokens, output_tokens)
@@ -828,6 +839,19 @@ class HFInferenceAdapter(BaseModel):
                 "total_tokens": total_tokens,
             },
         }
+
+        annotate_reasoning_only(
+            metadata,
+            text=text,
+            reasoning_text=reasoning_text,
+            reasoning_tokens=reasoning_tokens,
+            model_name=self.model_name,
+            finish_reason=finish_reason,
+            max_tokens=max_tokens,
+            completion_tokens=output_tokens,
+            tool_calls=tool_calls,
+            logger=logger,
+        )
 
         _set_span_attr(ModelAttrs.PROVIDER, "hf_inference")
         _set_span_attr(ModelAttrs.NAME, self.model_name)
@@ -982,6 +1006,10 @@ class HFInferenceAdapter(BaseModel):
             call_kwargs["seed"] = config.seed
         call_kwargs.update(kwargs)
 
+        reasoning_buf: list[str] = []
+        yielded_text = False
+        self._last_stream_finish_reason: str | None = None
+
         try:
             for chunk in self._client.chat_completion(
                 messages=messages,
@@ -992,10 +1020,28 @@ class HFInferenceAdapter(BaseModel):
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:
                     self._last_stream_api_usage = usage
+                if chunk.choices:
+                    choice = chunk.choices[0]
+                    if getattr(choice, "finish_reason", None):
+                        self._last_stream_finish_reason = choice.finish_reason
+                    reasoning_buf.append(
+                        reasoning_delta_text(getattr(choice, "delta", None))
+                    )
                 if chunk.choices and chunk.choices[0].delta.content:
+                    yielded_text = True
                     yield chunk.choices[0].delta.content
         except Exception as exc:
             self._raise_for_unavailable(exc, context="streaming")
+
+        warn_reasoning_only_stream(
+            model_name=self.model_name,
+            yielded_text=yielded_text,
+            reasoning_text="".join(reasoning_buf),
+            reasoning_tokens=extract_reasoning_tokens(self._last_stream_api_usage),
+            finish_reason=self._last_stream_finish_reason,
+            max_tokens=call_kwargs.get("max_tokens"),
+            logger=logger,
+        )
 
     def _stream_text(
         self,

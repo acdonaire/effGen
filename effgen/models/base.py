@@ -343,10 +343,16 @@ def _warn_if_silently_empty(model: "BaseModel", result: Any) -> None:
     a caller using ``model.generate()`` directly has no such safety net, so an
     empty ``GenerationResult`` would otherwise look like a working call that
     produced nothing.
+
+    An adapter that saw the provider's reasoning chain reports the same turn in
+    more detail (``metadata["reasoning_only"]``, naming the cap and the reasoning
+    budget), so this stands down rather than saying it a second time.
     """
     if not isinstance(result, GenerationResult):
         return
     if result.text or result.finish_reason != "length":
+        return
+    if (result.metadata or {}).get("reasoning_only"):
         return
     from ._adapter_utils import needs_reasoning_headroom
     if not needs_reasoning_headroom(model):

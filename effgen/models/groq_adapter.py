@@ -21,9 +21,14 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from effgen.models._adapter_utils import (
+    annotate_reasoning_only,
+    extract_reasoning_text,
+    extract_reasoning_tokens,
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
+    reasoning_delta_text,
+    warn_reasoning_only_stream,
 )
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_vision_support
@@ -702,20 +707,34 @@ class GroqAdapter(BaseModel):
             _set_span_attr(ModelAttrs.COST_USD, float(cost))
         _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
+        metadata: dict[str, Any] = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "provider": "groq",
+            "cost_usd": cost,
+            "estimated_usage": estimated_usage,
+            "tool_calls": tool_calls,
+        }
+        annotate_reasoning_only(
+            metadata,
+            text=text,
+            reasoning_text=extract_reasoning_text(message),
+            reasoning_tokens=extract_reasoning_tokens(usage),
+            model_name=self.model_name,
+            finish_reason=finish_reason,
+            max_tokens=request_params.get("max_tokens"),
+            completion_tokens=completion_tokens,
+            tool_calls=tool_calls,
+            logger=logger,
+        )
+
         return GenerationResult(
             text=text,
             tokens_used=completion_tokens,
             finish_reason=finish_reason,
             model_name=self.model_name,
-            metadata={
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "provider": "groq",
-                "cost_usd": cost,
-                "estimated_usage": estimated_usage,
-                "tool_calls": tool_calls,
-            },
+            metadata=metadata,
         )
 
     def generate_with_tools(
@@ -813,6 +832,8 @@ class GroqAdapter(BaseModel):
                 prompt_tokens = 0
                 completion_tokens = 0
                 tool_calls_buf: dict[int, dict[str, Any]] = {}
+                reasoning_buf: list[str] = []
+                stream_usage: Any = None
 
                 for chunk in stream:
                     # The terminal usage chunk (some providers send it as a
@@ -821,6 +842,7 @@ class GroqAdapter(BaseModel):
                     # silently dropped and cost/tokens never get recorded.
                     if hasattr(chunk, "usage") and chunk.usage is not None:
                         usage = chunk.usage
+                        stream_usage = usage
                         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
                         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
 
@@ -850,8 +872,21 @@ class GroqAdapter(BaseModel):
                                 if getattr(fn, "arguments", None):
                                     buf["function"]["arguments"] += fn.arguments
 
+                    if delta:
+                        reasoning_buf.append(reasoning_delta_text(delta))
+
                     if choice.finish_reason:
                         self._last_stream_finish_reason = choice.finish_reason
+
+                warn_reasoning_only_stream(
+                    model_name=self.model_name,
+                    yielded_text=not _first_token,
+                    reasoning_text="".join(reasoning_buf),
+                    reasoning_tokens=extract_reasoning_tokens(stream_usage),
+                    finish_reason=self._last_stream_finish_reason,
+                    max_tokens=request_params.get("max_tokens"),
+                    logger=logger,
+                )
 
                 finalized: list[dict[str, Any]] = []
                 for _idx, buf in sorted(tool_calls_buf.items()):
