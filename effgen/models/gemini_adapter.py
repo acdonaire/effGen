@@ -225,18 +225,24 @@ class GeminiAdapter(FunctionCallingModel):
 
     def _settle_cost(
         self, prompt_tokens: int, completion_tokens: int, total_tokens: int
-    ) -> float:
+    ) -> float | None:
         """Price this call and fold it into the adapter's running session totals.
 
         Prefers the catalog-priced cost from the process-global tracker (so the
         number matches ``effgen cost`` and the dashboard); falls back to the
         local per-1M estimate when tracking is unavailable. Returns this call's
-        cost — the value reported as ``metadata["cost_usd"]``.
+        cost — the value reported as ``metadata["cost_usd"]`` — or ``None``
+        when the catalog publishes no rate for the model, in which case the
+        local estimate is not substituted and the session total is unchanged.
         """
+        from effgen.models._cost import pricing_status
+
+        unpriced = pricing_status("gemini", self.model_name) == "unpriced"
         cost = self._record_to_cost_tracker(prompt_tokens, completion_tokens)
-        if cost is None:
+        if cost is None and not unpriced:
             cost = self._calculate_cost(prompt_tokens, completion_tokens)
-        self.total_cost += cost
+        if cost is not None:
+            self.total_cost += cost
         self.total_tokens += total_tokens
         return cost
 
@@ -842,7 +848,8 @@ class GeminiAdapter(FunctionCallingModel):
             _set_span_attr(ModelAttrs.NAME, self.model_name)
             _set_span_attr(ModelAttrs.INPUT_TOKENS, prompt_tokens)
             _set_span_attr(ModelAttrs.OUTPUT_TOKENS, completion_tokens)
-            _set_span_attr(ModelAttrs.COST_USD, float(cost))
+            if cost is not None:
+                _set_span_attr(ModelAttrs.COST_USD, float(cost))
             _set_span_attr(ModelAttrs.OUTCOME, "ok")
             if thoughts_tokens:
                 _set_span_attr(ModelAttrs.THINKING_BUDGET, thoughts_tokens)

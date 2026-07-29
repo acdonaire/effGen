@@ -33,6 +33,7 @@ from effgen.models._multimodal import (
     require_vision_support,
 )
 from effgen.models._usage import (
+    cost_label,
     extract_openai_usage,
     record_tracker_cost,
     tool_calls_from_message,
@@ -540,8 +541,17 @@ class OpenAIAdapter(FunctionCallingModel):
         prompt_tokens: int,
         completion_tokens: int,
         cached_tokens: int = 0,
-    ) -> float:
-        """Estimate cost in USD from token counts, crediting cached tokens."""
+    ) -> float | None:
+        """Estimate cost in USD from token counts, crediting cached tokens.
+
+        Returns ``None`` when the catalog publishes no rate for this model, so
+        the call reports no price rather than a fabricated ``$0`` or a
+        placeholder rate.
+        """
+        from effgen.models._cost import pricing_status
+
+        if pricing_status("openai", self.model_name) == "unpriced":
+            return None
         input_price, cached_price, output_price = get_pricing(self.model_name)
         if input_price is None:
             logger.debug(f"No pricing for '{self.model_name}', defaulting to $2/$8 per 1M.")
@@ -560,16 +570,19 @@ class OpenAIAdapter(FunctionCallingModel):
         completion_tokens: int,
         total_tokens: int,
         cached_tokens: int = 0,
-    ) -> float:
+    ) -> float | None:
         """Price this call and fold it into the adapter's running session total.
 
         Returns this call's cost — the value every ``GenerationResult.metadata``
-        reports as ``cost_usd``. ``self.total_cost`` (surfaced as
+        reports as ``cost_usd`` — or ``None`` when the model publishes no rate.
+        An unpriced call leaves the session total where it was rather than
+        adding a zero. ``self.total_cost`` (surfaced as
         ``metadata["total_cost"]``) is a different number: the cumulative cost
         across every call made on this adapter instance so far, not an alias.
         """
         cost = self._calculate_cost(prompt_tokens, completion_tokens, cached_tokens)
-        self.total_cost += cost
+        if cost is not None:
+            self.total_cost += cost
         self.total_tokens += total_tokens
 
         # Always print token/cost breakdown so users can see what they're spending
@@ -578,7 +591,7 @@ class OpenAIAdapter(FunctionCallingModel):
             f"input={prompt_tokens}tok "
             f"(cached={cached_tokens}) "
             f"output={completion_tokens}tok "
-            f"| call=${cost:.6f} session=${self.total_cost:.6f}"
+            f"| call={cost_label(cost)} session=${self.total_cost:.6f}"
         )
 
         record_tracker_cost(
@@ -672,7 +685,8 @@ class OpenAIAdapter(FunctionCallingModel):
         _set_span_attr(ModelAttrs.OUTPUT_TOKENS, completion_tokens)
         if cached_tokens:
             _set_span_attr(ModelAttrs.CACHED_TOKENS, cached_tokens)
-        _set_span_attr(ModelAttrs.COST_USD, float(cost))
+        if cost is not None:
+            _set_span_attr(ModelAttrs.COST_USD, float(cost))
         _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
         return GenerationResult(

@@ -385,20 +385,32 @@ class AnthropicAdapter(FunctionCallingModel):
 
     # ── Cost ──────────────────────────────────────────────────────────────
 
-    def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+    def _calculate_cost(
+        self, prompt_tokens: int, completion_tokens: int
+    ) -> float | None:
+        """Price this call, or return ``None`` when the model publishes no rate."""
+        from effgen.models._cost import pricing_status
+
+        if pricing_status("anthropic", self.model_name) == "unpriced":
+            return None
         input_cost_pm, output_cost_pm = get_cost_per_million(self.model_name)
         return (prompt_tokens / 1_000_000) * input_cost_pm + (completion_tokens / 1_000_000) * output_cost_pm
 
-    def _record_usage(self, prompt_tokens: int, completion_tokens: int) -> float:
+    def _record_usage(
+        self, prompt_tokens: int, completion_tokens: int
+    ) -> float | None:
         """Price this call and fold it into the adapter's running session total.
 
         Returns this call's cost — the value every ``GenerationResult.metadata``
-        reports as ``cost_usd``. ``self.total_cost`` (surfaced as
-        ``metadata["total_cost"]``) is a different number: the cumulative cost
-        across every call made on this adapter instance so far, not an alias.
+        reports as ``cost_usd`` — or ``None`` when the model publishes no rate,
+        which leaves the session total unchanged rather than adding a zero.
+        ``self.total_cost`` (surfaced as ``metadata["total_cost"]``) is a
+        different number: the cumulative cost across every call made on this
+        adapter instance so far, not an alias.
         """
         cost = self._calculate_cost(prompt_tokens, completion_tokens)
-        self.total_cost += cost
+        if cost is not None:
+            self.total_cost += cost
         self.total_tokens += prompt_tokens + completion_tokens
         # Persist to the process-global tracker so `effgen cost` includes
         # Anthropic spend (the dashboard previously never saw it).
@@ -504,7 +516,8 @@ class AnthropicAdapter(FunctionCallingModel):
             _set_span_attr(ModelAttrs.OUTPUT_TOKENS, completion_tokens)
             if cached_input:
                 _set_span_attr(ModelAttrs.CACHED_TOKENS, cached_input)
-            _set_span_attr(ModelAttrs.COST_USD, float(cost))
+            if cost is not None:
+                _set_span_attr(ModelAttrs.COST_USD, float(cost))
             _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
             return GenerationResult(

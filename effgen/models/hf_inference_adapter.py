@@ -737,16 +737,20 @@ class HFInferenceAdapter(BaseModel):
             tool_calls=[],
         )
 
-    def _price_tokens(self, input_tokens: int, output_tokens: int) -> float:
+    def _price_tokens(self, input_tokens: int, output_tokens: int) -> float | None:
         """Price a call from the registry's per-1M-token rates.
 
-        Returns ``0.0`` for a model the registry carries no input price for,
-        which is how an unpriced Serverless model reads.
+        Returns ``None`` for a model the registry carries no input price for:
+        an unpriced Serverless model reports no cost rather than a ``$0`` a
+        reader cannot tell apart from a genuinely free call.  A call that sent
+        no input tokens is priced at ``0.0``.
         """
         info = self._info
         price_in = info.get("pricing_per_1m_input", 0.0)
         price_out = info.get("pricing_per_1m_output", 0.0)
-        if not (price_in and input_tokens):
+        if not price_in:
+            return None
+        if not input_tokens:
             return 0.0
         return (
             input_tokens * price_in / 1_000_000
@@ -754,10 +758,16 @@ class HFInferenceAdapter(BaseModel):
         )
 
     def _record_cost(
-        self, input_tokens: int, output_tokens: int, cost_usd: float
+        self, input_tokens: int, output_tokens: int, cost_usd: float | None
     ) -> None:
-        """Record a completed call's usage on the global ledger."""
-        if not (self._enable_cost_tracking and cost_usd):
+        """Record a completed call's usage on the global ledger.
+
+        A call the registry publishes no rate for (``cost_usd`` is ``None``) is
+        recorded too: its tokens are known even though its price is not, so it
+        appears on the ledger as an unpriced call rather than vanishing from
+        ``effgen cost`` altogether.
+        """
+        if not self._enable_cost_tracking:
             return
         try:
             CostTracker.get().record(
@@ -823,7 +833,8 @@ class HFInferenceAdapter(BaseModel):
         _set_span_attr(ModelAttrs.NAME, self.model_name)
         _set_span_attr(ModelAttrs.INPUT_TOKENS, input_tokens)
         _set_span_attr(ModelAttrs.OUTPUT_TOKENS, output_tokens)
-        _set_span_attr(ModelAttrs.COST_USD, float(cost_usd or 0.0))
+        if cost_usd is not None:
+            _set_span_attr(ModelAttrs.COST_USD, float(cost_usd))
         _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
         return GenerationResult(

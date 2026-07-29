@@ -627,7 +627,8 @@ class ReplicateAdapter(BaseModel):
         _set_span_attr(ModelAttrs.NAME, self.model_name)
         _set_span_attr(ModelAttrs.INPUT_TOKENS, input_tokens)
         _set_span_attr(ModelAttrs.OUTPUT_TOKENS, output_tokens)
-        _set_span_attr(ModelAttrs.COST_USD, float(cost_usd or 0.0))
+        if cost_usd is not None:
+            _set_span_attr(ModelAttrs.COST_USD, float(cost_usd))
         _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
         return GenerationResult(
@@ -640,14 +641,16 @@ class ReplicateAdapter(BaseModel):
 
     def _price_metrics(
         self, metrics: dict[str, Any]
-    ) -> tuple[float, int, int, float]:
+    ) -> tuple[float, int, int, float | None]:
         """Price a completed prediction from its ``metrics`` block.
 
         Returns ``(predict_time, input_tokens, output_tokens, cost_usd)``.
         Replicate bills per second of GPU compute, so ``predict_time`` times the
         registry's per-second rate is the cost for most models; the hosted
         per-token models (whose per-second rate is 0) are priced from their
-        token counts instead.
+        token counts instead.  ``cost_usd`` is ``None`` for a model the registry
+        carries neither rate for, so the call reports no price instead of a
+        ``$0`` a reader cannot tell apart from a free one.
         """
         predict_time = float(metrics.get("predict_time", 0.0) or 0.0)
         input_tokens = int(metrics.get("input_token_count", 0) or 0)
@@ -655,7 +658,8 @@ class ReplicateAdapter(BaseModel):
 
         info = self._info
         cost_per_sec = info.get("cost_per_second_usd", 0.0)
-        cost_usd = 0.0
+        has_rate = bool(cost_per_sec) or bool(info.get("pricing_per_1m_input"))
+        cost_usd: float | None = 0.0 if has_rate else None
         if cost_per_sec and predict_time:
             cost_usd = predict_time * cost_per_sec
         elif info.get("pricing_per_1m_input") and input_tokens:
@@ -666,10 +670,16 @@ class ReplicateAdapter(BaseModel):
         return predict_time, input_tokens, output_tokens, cost_usd
 
     def _record_cost(
-        self, input_tokens: int, output_tokens: int, cost_usd: float
+        self, input_tokens: int, output_tokens: int, cost_usd: float | None
     ) -> None:
-        """Record a completed call's usage on the global ledger."""
-        if not (self._enable_cost_tracking and cost_usd):
+        """Record a completed call's usage on the global ledger.
+
+        A prediction the registry publishes no rate for (``cost_usd`` is
+        ``None``) is recorded too: its tokens are known even though its price
+        is not, so it appears on the ledger as an unpriced call rather than
+        vanishing from ``effgen cost`` altogether.
+        """
+        if not self._enable_cost_tracking:
             return
         try:
             CostTracker.get().record(
