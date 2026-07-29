@@ -59,7 +59,9 @@ result = orch.assign_task("…", team)
 print(result.metadata["cost_usd"], result.metadata["tokens_used"])
 ```
 
-(Local models report `cost_usd == 0.0`.)
+A member on a local engine, or on a model the catalog publishes no rate for,
+contributes no cost; when no member reported one, `cost_usd` is `None` rather
+than `0.0`.
 
 ### Routing a ticket to one specialist (triage → handoff)
 

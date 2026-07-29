@@ -161,11 +161,11 @@ result.metadata = {
     "completion_tokens": 128,
     "total_tokens": 170,
     "provider": "groq",
-    "cost_usd": 0.0,        # free tier
+    "cost_usd": 0.00001234, # None when the catalog publishes no rate for the model
     "tool_calls": [...],    # parsed tool calls, if any
 }
 ```
 
 ## Cost Tracking
 
-Groq's free tier is $0. The adapter still records usage in `CostTracker` for consistency; paid-tier pricing can be added to `groq_models.py` when needed.
+The adapter records every call in `CostTracker` and reports the catalog price as `metadata["cost_usd"]`. Groq serves ids the catalog carries no rate for (`allam-2-7b`, the `groq/compound` systems); those report `cost_usd: None` and read as `unpriced` on every surface, never as a `$0` that would look like a free call.

@@ -70,6 +70,19 @@ On failure, `success` is `False`, the message is clear and redacted, and
 message, retryable}` dict — identical whether the failure came from the direct
 or the tool path.
 
+### Cost on the response
+
+`result.metadata["cost_usd"]` is the run's cost in USD, summed across every
+model call the run made. A run whose model publishes no per-token price carries
+**no `cost_usd` key at all** and reports `metadata["unpriced_calls"]` instead —
+the number of calls whose price is unknown. A run that mixed a priced model with
+an unpriced one carries both: the cost of the calls that were priced, and the
+count of the ones missing from it. A genuine free tier reports `cost_usd: 0.0`,
+which is a real answer, not a placeholder.
+
+Per model call, `GenerationResult.metadata["cost_usd"]` follows the same rule:
+a float (possibly `0.0`) when a rate is published, `None` when it is not.
+
 ## Streaming
 
 `agent.stream(task)` yields successive **answer-text** `str` chunks; joining them

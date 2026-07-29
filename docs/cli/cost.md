@@ -81,6 +81,25 @@ When a budget is configured, every paid API call checks cumulative daily and mon
 | >= 80% of budget | `UserWarning` emitted when the threshold is crossed |
 | >= 100% of budget | `BudgetExceededError` raised for paid calls; router fails over |
 
+### Models with no published price
+
+The catalog does not publish a per-token rate for every model. A call on one of
+those is **allowed at any budget level** — the gate refuses spend it can
+measure, and refusing on a price nobody published would block a model that may
+well be free. The call's token counts are still recorded; only its cost is
+unknown, so it is missing from the budget total. When a budget is configured,
+the first such call in a process emits a `UserWarning` naming the model:
+
+```
+effGen budget: no published price for 'groq:allam-2-7b', so this call's spend is
+not counted toward the configured budget. Run `effgen models refresh --provider
+groq` to pick up a published rate.
+```
+
+The heads-up fires once per model per process, not once per call. Everywhere a
+cost is reported, such a call reads `unpriced` (or `None` in JSON) rather than
+`$0.000000` — a real `$0.00` means a genuine free tier.
+
 ### Failover on budget exceed
 
 `BudgetExceededError` is classified as *retriable* by the router's `RetryPolicy`. When the router catches it, it:

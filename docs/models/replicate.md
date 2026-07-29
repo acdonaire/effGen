@@ -125,7 +125,7 @@ Replicate bills per second of GPU compute (`predict_time` from prediction metric
 ```python
 result = adapter.generate("Hello")
 print("compute_seconds:", result.metadata["compute_seconds"])
-print("cost_usd:", result.metadata["cost_usd"])
+print("cost_usd:", result.metadata["cost_usd"])  # None when the registry has no rate
 ```
 
 Typical hardware costs:

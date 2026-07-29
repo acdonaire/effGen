@@ -155,7 +155,7 @@ The event is visible in the span detail view in Jaeger/Grafana as `effgen.retry.
 | `effgen.model.input_tokens` | int | Prompt token count |
 | `effgen.model.output_tokens` | int | Completion token count |
 | `effgen.model.cached_tokens` | int | Cached input tokens (prompt caching) |
-| `effgen.model.cost_usd` | float | Per-call cost estimate |
+| `effgen.model.cost_usd` | float | Per-call cost; absent when the model publishes no rate |
 | `effgen.model.outcome` | string | `ok` \| `error` \| `timeout` |
 | `effgen.model.latency_ms` | float | End-to-end latency |
 | `effgen.model.reasoning_effort` | string | `low` / `medium` / `high` (reasoning models) |
