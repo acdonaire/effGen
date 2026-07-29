@@ -29,6 +29,7 @@ from effgen.models._adapter_utils import (
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
+from effgen.models._usage import cost_label
 from effgen.models.base import (
     BaseModel,
     GenerationConfig,
@@ -533,7 +534,7 @@ class TogetherAdapter(BaseModel):
                     },
                 })
 
-        cost = 0.0
+        cost: float | None = None
         if self._enable_cost_tracking:
             cost = CostTracker.get().record(
                 provider="together",
@@ -543,14 +544,15 @@ class TogetherAdapter(BaseModel):
             )
 
         logger.info(
-            "Together generated %d tokens (prompt=%d, completion=%d, cost=$%.6f)",
-            total_tokens, prompt_tokens, completion_tokens, cost,
+            "Together generated %d tokens (prompt=%d, completion=%d, cost=%s)",
+            total_tokens, prompt_tokens, completion_tokens, cost_label(cost),
         )
         _set_span_attr(ModelAttrs.PROVIDER, "together")
         _set_span_attr(ModelAttrs.NAME, self.model_name)
         _set_span_attr(ModelAttrs.INPUT_TOKENS, prompt_tokens)
         _set_span_attr(ModelAttrs.OUTPUT_TOKENS, completion_tokens)
-        _set_span_attr(ModelAttrs.COST_USD, float(cost))
+        if cost is not None:
+            _set_span_attr(ModelAttrs.COST_USD, float(cost))
         _set_span_attr(ModelAttrs.OUTCOME, "ok")
 
         return GenerationResult(
