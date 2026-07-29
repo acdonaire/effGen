@@ -61,6 +61,14 @@ budget for that reason. If you pass `max_tokens` yourself, keep it generous: a
 budget exhausted mid-thought returns empty `result.text` with
 `metadata["truncated"] is True`. Unused budget is not billed.
 
+Together sends the chain as `message.reasoning` beside an empty `content`, so a
+turn that produced nothing but reasoning comes back with
+`metadata["reasoning_only"] is True` and a `metadata["empty_response_reason"]`
+naming the cap and the reasoning budget it spent. See
+[API conventions](../api/conventions.md#reasoning-models-that-emit-no-visible-token)
+for the full contract, including why the agent applies its stop sequences to a
+reasoning model's answer rather than sending them to the provider.
+
 ## Streaming
 
 ```python

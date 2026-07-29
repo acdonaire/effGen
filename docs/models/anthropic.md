@@ -68,6 +68,11 @@ print("Thinking trace:", result.metadata.get("thinking"))
 - Temperature is automatically forced to `1.0` when thinking is enabled (Anthropic requirement).
 - `thinking` is silently ignored for models that do not expose extended thinking
   (Opus 4.7, Claude 3.5 and earlier). A debug log notes when this happens.
+- Thinking is billed as output, so a `max_tokens` spent entirely on it returns
+  an empty answer you paid for. That turn comes back with
+  `metadata["reasoning_only"] is True` and a `metadata["empty_response_reason"]`
+  naming the cap and what it spent. See
+  [API conventions](../api/conventions.md#reasoning-models-that-emit-no-visible-token).
 
 ## Redacted thinking (multi-turn)
 

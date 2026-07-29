@@ -83,6 +83,52 @@ which is a real answer, not a placeholder.
 Per model call, `GenerationResult.metadata["cost_usd"]` follows the same rule:
 a float (possibly `0.0`) when a rate is published, `None` when it is not.
 
+### Reasoning models that emit no visible token
+
+A reasoning model can spend a whole turn on its internal chain and return an
+empty answer you were still billed for. Providers report this in one of two
+ways — the chain itself, or a count of what it cost:
+
+| Provider | Signal |
+| --- | --- |
+| Together, Groq, Cerebras, Fireworks, HF router | `message.reasoning` (or `message.reasoning_content`) |
+| OpenAI | `reasoning_tokens` in the usage block — chat completions and the Responses API alike |
+| Gemini | thought parts plus `thoughts_token_count` |
+| Anthropic | `thinking` content blocks |
+
+Either way the answer is empty.
+
+**The contract.** The chain is diagnosis, never the answer — effGen does not
+return it as the result. A turn that produced only reasoning is reported, not
+retried at settings that already failed:
+
+- `GenerationResult.metadata["reasoning_only"]` is `True`, and
+  `metadata["empty_response_reason"]` names the model, the `max_tokens` cap in
+  force and the reasoning budget spent. `metadata["reasoning_tokens"]` carries
+  the count whenever the provider reports one (on any turn, not only this one),
+  `metadata["reasoning_chars"]` the length of the chain, and
+  `metadata["reasoning"]` the chain itself when the provider sent it.
+- Through `agent.run(...)`, the run fails with
+  `metadata["error"]["type"] == "ReasoningOnlyResponse"` (category
+  `reasoning_only`, `retryable: False`) carrying that message — or, when the
+  budget was the cause, `"TruncatedResponse"`, whose message now also names the
+  reasoning budget. Neither is the generic "empty response after retries".
+- A native tool call with empty text is a complete turn and is never reported
+  as reasoning-only. A server-side native-tool turn (OpenAI's Responses API,
+  Gemini's built-in tools) that produced only reasoning fails the same typed
+  way rather than reporting that there was simply no output.
+- A streamed turn has no metadata channel, so the same message is logged when a
+  stream ends without yielding one visible token.
+
+**Stop sequences.** A provider that streams the chain and the answer through one
+token stream matches stop sequences against the chain too, so a stop sequence
+can end generation before the first visible token. For a reasoning model the
+agent therefore holds its stop sequences back and applies them to the returned
+answer instead — the same visible result, without the collision. A model the
+catalog does not flag as a reasoning model is recognised from the first turn
+that shows the shape, and the recovery is remembered for the rest of the
+process, so at most one turn is spent on it.
+
 ## Streaming
 
 `agent.stream(task)` yields successive **answer-text** `str` chunks; joining them

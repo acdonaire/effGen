@@ -96,6 +96,11 @@ print("Thinking tokens:", result.metadata["thoughts_token_count"])
   but doesn't return the trace, saving output tokens.
 - The thinking trace can be long. Set `include_thoughts=True` only when you
   need to inspect reasoning.
+- A budget too small for both the thoughts and an answer returns empty
+  `result.text` with `metadata["reasoning_only"] is True` and a
+  `metadata["empty_response_reason"]` naming the cap and the thinking budget
+  spent. See
+  [API conventions](../api/conventions.md#reasoning-models-that-emit-no-visible-token).
 
 ### Models with thinking support
 

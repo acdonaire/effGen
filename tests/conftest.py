@@ -153,6 +153,7 @@ def _restore_provider_registry(_provider_registry_snapshot):
 _WARN_ONCE_RECORDS = (
     ("effgen.core._compat", "_warned_drift"),
     ("effgen.core.agent_generation", "_reasoning_budget_warned"),
+    ("effgen.models._adapter_utils", "_reasoning_only_warned"),
     ("effgen.core.agent_runtime", "_tool_output_injection_gap_warned"),
     ("effgen.models._catalog", "_WARNED"),
     ("effgen.models._cost", "_UNPRICED_BUDGET_WARNED"),
@@ -165,11 +166,18 @@ _WARN_ONCE_RECORDS = (
     ("effgen.security.sandbox", "_subprocess_fallback_warned"),
 )
 
+# Records of something the process learned once and reuses, cleared for the same
+# reason: a test that asserts the first-time behavior must not depend on whether
+# an earlier test already taught the process.
+_LEARNED_ONCE_RECORDS = (
+    ("effgen.core.agent_generation", "_reasoning_stream_models"),
+)
+
 
 @pytest.fixture(autouse=True)
 def _reset_warn_once_records():
     """Let every test see the one-time warnings it triggers itself."""
-    for module_name, attr in _WARN_ONCE_RECORDS:
+    for module_name, attr in _WARN_ONCE_RECORDS + _LEARNED_ONCE_RECORDS:
         module = sys.modules.get(module_name)
         if module is None:
             continue

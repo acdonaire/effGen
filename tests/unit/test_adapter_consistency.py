@@ -598,3 +598,187 @@ def test_api_key_alias_does_not_shift_positional_arguments(cls):
         if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
     ]
     assert names[-1] == "api_key", names
+
+
+# ---------------------------------------------------------------------------
+# Reasoning-only turns: one contract every OpenAI-compatible adapter runs
+# ---------------------------------------------------------------------------
+
+_REASONING_CHAIN = "Thinking Process:\n1. Analyze the request.\n2. Compute.\n"
+
+
+def _reasoning_only_response(finish_reason: str = "length"):
+    """An SDK response whose whole output was reasoning: no visible token."""
+    from unittest.mock import MagicMock
+
+    message = MagicMock()
+    message.content = ""
+    message.reasoning = _REASONING_CHAIN
+    message.tool_calls = []
+    message.refusal = None
+
+    choice = MagicMock()
+    choice.message = message
+    choice.finish_reason = finish_reason
+
+    usage = MagicMock()
+    usage.prompt_tokens = 559
+    usage.completion_tokens = 90
+    usage.total_tokens = 649
+    usage.completion_tokens_details.reasoning_tokens = 90
+    usage.prompt_tokens_details.cached_tokens = 0
+
+    response = MagicMock()
+    response.choices = [choice]
+    response.usage = usage
+    return response
+
+
+def _loaded_adapter(provider: str):
+    """Build one adapter of *provider* with a client that never leaves the process."""
+    import importlib
+    from unittest.mock import MagicMock
+
+    specs = {
+        "together": ("together_adapter", "TogetherAdapter", {}),
+        "groq": ("groq_adapter", "GroqAdapter", {}),
+        "cerebras": ("cerebras_adapter", "CerebrasAdapter", {}),
+        "fireworks": ("fireworks_adapter", "FireworksAdapter", {}),
+        "openai": ("openai_adapter", "OpenAIAdapter", {"model_name": "gpt-5-nano"}),
+        "hf_inference": ("hf_inference_adapter", "HFInferenceAdapter",
+                         {"model_name": "meta-llama/Llama-3.1-8B-Instruct"}),
+    }
+    module_name, class_name, kwargs = specs[provider]
+    module = importlib.import_module(f"effgen.models.{module_name}")
+    if provider == "hf_inference":
+        adapter = getattr(module, class_name)(api_key="test-key", **kwargs)
+    else:
+        adapter = getattr(module, class_name)(
+            api_key="test-key", enable_rate_limiting=False,
+            enable_cost_tracking=False, **kwargs,
+        )
+    client = MagicMock()
+    client.chat.completions.create.return_value = _reasoning_only_response()
+    client.chat_completion.return_value = _reasoning_only_response()
+    adapter._client = client
+    if hasattr(adapter, "client"):
+        adapter.client = client
+    adapter._is_loaded = True
+    return adapter
+
+
+def _set_response(adapter, response) -> None:
+    """Point *adapter*'s fake client at *response*, whichever call it makes."""
+    adapter._client.chat.completions.create.return_value = response
+    adapter._client.chat_completion.return_value = response
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ["together", "groq", "cerebras", "fireworks", "openai", "hf_inference"],
+)
+def test_every_adapter_reports_a_reasoning_only_turn(provider):
+    """A turn billed entirely to reasoning is never a bare empty string.
+
+    Each adapter flags it and carries a message naming the model, the cap in
+    force and the reasoning budget spent, so a direct ``generate()`` caller —
+    which has no agent loop watching — can tell it apart from a flaky empty.
+    """
+    from effgen.models.base import GenerationConfig
+
+    adapter = _loaded_adapter(provider)
+    result = adapter.generate("Question: 234 * 567?",
+                              config=GenerationConfig(max_tokens=64))
+
+    assert result.text == ""
+    assert result.metadata["reasoning_only"] is True
+    assert result.metadata["reasoning_tokens"] == 90
+    assert result.metadata["reasoning_chars"] == len(_REASONING_CHAIN)
+    reason = result.metadata["empty_response_reason"]
+    assert adapter.model_name in reason
+    assert "64" in reason  # the cap the request asked for
+    assert "90 reasoning tokens" in reason
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ["together", "groq", "cerebras", "fireworks", "openai", "hf_inference"],
+)
+def test_an_answer_is_never_flagged_reasoning_only(provider):
+    adapter = _loaded_adapter(provider)
+    response = _reasoning_only_response(finish_reason="stop")
+    response.choices[0].message.content = "132678"
+    _set_response(adapter, response)
+
+    result = adapter.generate("Question: 234 * 567?")
+
+    assert result.text == "132678"
+    assert "reasoning_only" not in result.metadata
+    assert result.metadata["reasoning_tokens"] == 90
+
+
+def _reasoning_only_stream(finish_reason: str = "length"):
+    """Streamed chunks carrying a reasoning chain and not one visible token."""
+    from unittest.mock import MagicMock
+
+    chunks = []
+    for fragment in ("Thinking Process:\n", "1. Analyze the request.\n"):
+        delta = MagicMock()
+        delta.content = None
+        delta.reasoning = fragment
+        delta.tool_calls = None
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = None
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        chunk.usage = None
+        chunks.append(chunk)
+
+    final_delta = MagicMock()
+    final_delta.content = None
+    final_delta.reasoning = None
+    final_delta.tool_calls = None
+    final_choice = MagicMock()
+    final_choice.delta = final_delta
+    final_choice.finish_reason = finish_reason
+    final = MagicMock()
+    final.choices = [final_choice]
+    final.usage = MagicMock()
+    final.usage.prompt_tokens = 20
+    final.usage.completion_tokens = 48
+    final.usage.total_tokens = 68
+    final.usage.completion_tokens_details.reasoning_tokens = 48
+    final.usage.prompt_tokens_details.cached_tokens = 0
+    chunks.append(final)
+    return chunks
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ["together", "groq", "cerebras", "fireworks", "openai", "hf_inference"],
+)
+def test_a_stream_that_yields_nothing_visible_reports_why(provider, caplog):
+    """An empty iterator would otherwise read as "the model had nothing to say".
+
+    A streamed turn has no metadata channel back to the caller, so the reason
+    is logged — naming the cap in force and the reasoning budget spent.
+    """
+    import logging
+
+    from effgen.models.base import GenerationConfig
+
+    adapter = _loaded_adapter(provider)
+    adapter._client.chat.completions.create.return_value = _reasoning_only_stream()
+    adapter._client.chat_completion.return_value = _reasoning_only_stream()
+
+    with caplog.at_level(logging.WARNING):
+        chunks = list(adapter.generate_stream(
+            "Question: 234 * 567?", config=GenerationConfig(max_tokens=48),
+        ))
+
+    assert chunks == [] or "".join(chunks) == ""
+    reported = [r.message for r in caplog.records if "no visible text" in r.message]
+    assert len(reported) == 1, [r.message for r in caplog.records]
+    assert adapter.model_name in reported[0]
+    assert "48" in reported[0]
