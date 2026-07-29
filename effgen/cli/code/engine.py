@@ -190,6 +190,10 @@ class CodeRunResult:
     provider: str | None
     workspace: str
     permission_mode: str
+    #: The tool-calling path the turn ran through — ``react``, ``native``,
+    #: ``hybrid`` or a provider-native path. Empty when the run failed before
+    #: the tool loop.
+    tool_calling: str = ""
     iterations: int = 0
     tool_calls: int = 0
     tokens: int = 0
@@ -248,6 +252,7 @@ class CodeRunResult:
             "provider": self.provider,
             "workspace": self.workspace,
             "permission_mode": self.permission_mode,
+            "tool_calling": self.tool_calling,
             "repo": self.repo,
             "commit": self.commit,
             "files_written": list(self.files_written),
@@ -476,6 +481,7 @@ class CodeEngine:
             provider=self.provider or getattr(response, "provider", None),
             workspace=str(self.workspace),
             permission_mode=self.mode.value,
+            tool_calling=str(metadata.get("tool_calling_strategy", "") or ""),
             iterations=int(getattr(response, "iterations", 0) or 0),
             tool_calls=int(getattr(response, "tool_calls", 0) or 0),
             tokens=int(getattr(response, "tokens_used", 0) or 0),

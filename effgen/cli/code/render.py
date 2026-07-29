@@ -40,6 +40,23 @@ _STATUS_ROLES: dict[str, str] = {
 }
 
 
+#: How each tool-calling path reads in the run report. A turn that produced no
+#: tool call at all is the one a user most needs this for, so the label says how
+#: the call was meant to travel rather than just naming the strategy.
+_TOOL_CALLING_LABELS: dict[str, str] = {
+    "react": "react — tool calls read out of the model's text",
+    "native": "native — tool definitions sent to the provider's tool API",
+    "hybrid": "hybrid — provider tool API first, falling back to the text",
+    "openai_native": "openai native tools — run through the Responses API",
+    "gemini_native": "gemini native tools — run through the Gemini tool API",
+}
+
+
+def tool_calling_label(name: str) -> str:
+    """Return the run-report description of tool-calling path *name*."""
+    return _TOOL_CALLING_LABELS.get(name, name)
+
+
 def print_plain(cli: "CLIInterface", text: str = "", *, style: str | None = None) -> None:
     """Print *text* exactly as given, with no console markup parsing.
 
@@ -112,7 +129,8 @@ def print_summary(cli: "CLIInterface", result: "CodeRunResult") -> None:
 
     Uses :func:`effgen.ui.render.summary_line` (the same footer ``effgen run``
     prints) but routes it through ``cli._human()`` so a piped run keeps it off
-    stdout.
+    stdout. The tool-calling path the turn ran through is named under it, so a
+    run that called no tool shows how the call was meant to travel.
     """
     from effgen.ui.render import summary_line
 
@@ -123,3 +141,6 @@ def print_summary(cli: "CLIInterface", result: "CodeRunResult") -> None:
         console.print(ascii_fold(markup, stream))
     else:
         print(ascii_fold(plain, stream), file=stream)
+    path = getattr(result, "tool_calling", "")
+    if path:
+        print_plain(cli, f"Tool calling: {tool_calling_label(path)}")

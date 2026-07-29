@@ -23,10 +23,12 @@ from effgen.memory.short_term import MessageRole, ShortTermMemory
 
 
 class _FakeResponse:
-    def __init__(self, output, success=True, reason="final_answer"):
+    def __init__(self, output, success=True, reason="final_answer", strategy=""):
         self.output = output
         self.success = success
         self.metadata = {"reason": reason}
+        if strategy:
+            self.metadata["tool_calling_strategy"] = strategy
         self.iterations = 1
         self.tool_calls = 1
         self.tokens_used = 42
@@ -38,8 +40,9 @@ class _FakeResponse:
 class _FakeAgent:
     """An agent whose ``run`` drives the gated tools, then returns a response."""
 
-    def __init__(self, tools, *, actions, answer="done"):
+    def __init__(self, tools, *, actions, answer="done", strategy=""):
         self.tools = {t.name: t for t in tools}
+        self._strategy = strategy
         self._ce, self._repl, self._fops, self._bash = tools
         self._actions = actions
         self._answer = answer
@@ -52,7 +55,7 @@ class _FakeAgent:
     def run(self, task, mode=None):
         for action in self._actions:
             asyncio.run(self._apply(action))
-        return _FakeResponse(self._answer)
+        return _FakeResponse(self._answer, strategy=self._strategy)
 
     async def _apply(self, action):
         kind, arg = action
@@ -71,7 +74,8 @@ class _FakeAgent:
         self.closed = True
 
 
-def _make_repl(tmp_path, *, mode=PermissionMode.ASK, actions=None, answer="done", console=None):
+def _make_repl(tmp_path, *, mode=PermissionMode.ASK, actions=None, answer="done",
+               console=None, strategy=""):
     ws = tmp_path / "ws"
     ws.mkdir(exist_ok=True)
     args = SimpleNamespace(
@@ -91,7 +95,10 @@ def _make_repl(tmp_path, *, mode=PermissionMode.ASK, actions=None, answer="done"
         model="fake:model", workspace=ws, mode=mode, interactive=True,
         on_event=repl._on_event, on_diff=repl._on_diff,
     )
-    engine._agent = _FakeAgent(build_code_tools(engine.gate), actions=actions or [], answer=answer)
+    engine._agent = _FakeAgent(
+        build_code_tools(engine.gate), actions=actions or [], answer=answer,
+        strategy=strategy,
+    )
     repl.engine = engine
     return repl, ws
 
@@ -262,6 +269,17 @@ def test_turn_writes_inline_in_auto_edit(tmp_path):
     assert repl.turns == 1
     assert repl.last_result is not None
     assert repl.last_result.files_written == ["main.py"]
+
+
+def test_session_names_the_tool_calling_path_once(tmp_path):
+    """The path a session's tool calls travel on is stated once, not per turn."""
+    repl, _ws = _make_repl(
+        tmp_path, mode=PermissionMode.AUTO_EDIT, answer="done", strategy="hybrid",
+    )
+    _out, err = _capture(repl, repl._do_turn, "first")
+    assert "Tool calling: hybrid" in err
+    _out2, err2 = _capture(repl, repl._do_turn, "second")
+    assert "Tool calling" not in err2
 
 
 # -- session save / load round-trip -----------------------------------------

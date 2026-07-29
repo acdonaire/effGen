@@ -42,19 +42,24 @@ class _FakeResponse:
 class _FakeAgent:
     """An agent whose ``run`` drives the gated tools, then returns a response."""
 
-    def __init__(self, tools, *, actions, answer="done", success=True, reason="final_answer"):
+    def __init__(self, tools, *, actions, answer="done", success=True,
+                 reason="final_answer", strategy=""):
         # Tools are the engine's gated instances, in preset order.
         self._ce, self._repl, self._fops, self._bash = tools
         self._actions = actions
         self._answer = answer
         self._success = success
         self._reason = reason
+        self._strategy = strategy
         self.closed = False
 
     def run(self, task):
         for action in self._actions:
             asyncio.run(self._apply(action))
-        return _FakeResponse(self._answer, success=self._success, reason=self._reason)
+        meta = {"tool_calling_strategy": self._strategy} if self._strategy else {}
+        return _FakeResponse(
+            self._answer, success=self._success, reason=self._reason, **meta,
+        )
 
     async def _apply(self, action):
         kind, arg = action
@@ -116,6 +121,21 @@ def test_auto_edit_writes_and_records(tmp_path):
     assert payload["files_written"] == ["main.py"]
     assert payload["workspace"] == str(ws)
     assert {a["kind"] for a in payload["actions"]} == {"write", "run"}
+
+
+def test_run_record_names_the_tool_calling_path(tmp_path):
+    """The record says which path the turn's tool calls travelled on."""
+    engine, ws = _engine(
+        tmp_path, PermissionMode.AUTO_EDIT, actions=[], strategy="hybrid",
+    )
+    result = engine.run("build it")
+    assert result.tool_calling == "hybrid"
+    assert result.to_dict()["tool_calling"] == "hybrid"
+
+
+def test_run_record_tool_calling_is_empty_without_one(tmp_path):
+    engine, _ws = _engine(tmp_path, PermissionMode.AUTO_EDIT, actions=[])
+    assert engine.run("build it").tool_calling == ""
 
 
 def test_workspace_env_is_set_during_run_and_restored(tmp_path, monkeypatch):
@@ -268,6 +288,31 @@ def test_conflicting_permission_flags_error(monkeypatch, tmp_path):
     )
     assert exit_code == 1
     assert "cannot be combined" in stderr
+
+
+def test_report_names_the_tool_calling_path(monkeypatch, tmp_path):
+    """The run report says how the tool calls were meant to travel."""
+    exit_code, stdout, stderr = _run_command(
+        monkeypatch, tmp_path,
+        {"auto_edit": True},
+        actions=[],
+        answer="nothing to do", strategy="react",
+    )
+    assert exit_code == 0
+    assert stdout.strip() == "nothing to do"
+    assert "Tool calling: react" in stderr
+    assert "read out of the model's text" in stderr
+
+
+def test_json_document_carries_the_tool_calling_path(monkeypatch, tmp_path):
+    exit_code, stdout, _stderr = _run_command(
+        monkeypatch, tmp_path,
+        {"auto_edit": True, "output_json": True},
+        actions=[],
+        answer="ok", strategy="hybrid",
+    )
+    assert exit_code == 0
+    assert json.loads(stdout)["tool_calling"] == "hybrid"
 
 
 def test_failed_run_exits_one(monkeypatch, tmp_path):

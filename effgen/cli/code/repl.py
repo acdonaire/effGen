@@ -157,6 +157,7 @@ class CodeREPL:
         self.turns = 0
         self.last_trace: list[dict[str, Any]] | None = None
         self.last_result: Any = None
+        self._named_tool_calling = False
         self._last_task = ""
         self._history_file = _history_dir() / "code_input_history"
 
@@ -615,6 +616,15 @@ class CodeREPL:
         """Surface files written, refusals, withheld actions and the iteration cap."""
         if self.quiet:
             return
+        # Named once, on the first turn that reaches the tool loop: which path
+        # the model's tool calls travel on decides what a turn that called no
+        # tool means, and it is the same for the rest of the session.
+        path = getattr(result, "tool_calling", "")
+        if path and not self._named_tool_calling:
+            from .render import tool_calling_label
+
+            self._named_tool_calling = True
+            self._say(f"Tool calling: {tool_calling_label(path)}")
         if result.files_written:
             self._say(f"Files written: {', '.join(result.files_written)}")
         for diff in result.diffs:
