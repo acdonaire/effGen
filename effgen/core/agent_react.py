@@ -1217,12 +1217,26 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
 
         system_prompt = self.config.system_prompt if self.config.stable_system_prompt else None
 
+        # The native-tool call honours the same per-run settings every other
+        # path does; a reasoning model in particular needs the budget the
+        # caller asked for, or it can spend the default on reasoning alone.
+        gen_config = GenerationConfig(
+            temperature=kwargs.get("temperature", self.config.temperature),
+            max_tokens=kwargs.get(
+                "max_tokens",
+                self.config.max_tokens or default_max_output_tokens(self.model, base=2048),
+            ),
+            top_p=kwargs.get("top_p", self.config.top_p),
+            seed=kwargs.get("seed", self.config.seed),
+        )
+
         try:
             result = adapter.generate_with_native_tools(
                 prompt=task,
                 native_tool_specs=native_specs,
                 function_tool_specs=function_specs if function_specs else None,
                 system_prompt=system_prompt,
+                config=gen_config,
             )
         except Exception as e:
             logger.debug("Native tool generation failed", exc_info=True)
@@ -1277,6 +1291,9 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                 except Exception:
                     logger.debug("Native tool follow-up assembly failed; using prior result", exc_info=True)
 
+        if not result.text and (result.metadata or {}).get("reasoning_only"):
+            return self._reasoning_only_native_response(result, tool_calls_made)
+
         return AgentResponse(
             output=sanitize_final_answer(result.text) or "(no output from native tools call)",
             success=bool(result.text),
@@ -1285,6 +1302,37 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
             tool_calls=tool_calls_made,
             tokens_used=result.tokens_used,
             metadata=result.metadata,
+        )
+
+    def _reasoning_only_native_response(
+        self, result: Any, tool_calls_made: int,
+    ) -> AgentResponse:
+        """Failure response for a native-tool turn that produced only reasoning.
+
+        The adapter already worked out why the answer is empty and named the cap
+        and the reasoning budget; report that instead of stating only that there
+        was no output.
+        """
+        meta = result.metadata or {}
+        detail = {
+            "type": "ReasoningOnlyResponse",
+            "category": "reasoning_only",
+            "provider": self._model_provider(self.model),
+            "model": getattr(self.model, "model_name", None) or self.model_name or "unknown",
+            "message": meta.get("empty_response_reason") or (
+                "The model produced only internal reasoning and no answer."
+            ),
+            "reasoning_tokens": meta.get("reasoning_tokens", 0),
+            "retryable": False,
+        }
+        return AgentResponse(
+            output=f"Generation failed: {detail['message']}",
+            success=False,
+            mode=AgentMode.SINGLE,
+            iterations=1,
+            tool_calls=tool_calls_made,
+            tokens_used=result.tokens_used,
+            metadata={"reason": "generation_failed", "error": detail},
         )
 
     def _has_gemini_native_tools(self) -> bool:
@@ -1330,7 +1378,12 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
 
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=kwargs.get("max_tokens", default_max_output_tokens(self.model, base=2048)),
+            max_tokens=kwargs.get(
+                "max_tokens",
+                self.config.max_tokens or default_max_output_tokens(self.model, base=2048),
+            ),
+            top_p=kwargs.get("top_p", self.config.top_p),
+            seed=kwargs.get("seed", self.config.seed),
         )
 
         system_note = ""
@@ -1400,6 +1453,9 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                 )
             except Exception:
                 logger.debug("Native tool follow-up assembly failed; using prior result", exc_info=True)
+
+        if not result.text and (result.metadata or {}).get("reasoning_only"):
+            return self._reasoning_only_native_response(result, tool_calls_made)
 
         return AgentResponse(
             output=sanitize_final_answer(result.text) or "(no output from Gemini native tools call)",

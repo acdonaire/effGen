@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..models._adapter_utils import (
     FINISH_LENGTH,
+    apply_stop_sequences,
     default_max_output_tokens,
     needs_reasoning_headroom,
 )
@@ -46,6 +47,18 @@ _TRUNCATION_MAX_TOKENS_CEILING = 8192
 # JSON/schema structure before any field value). Below this, warn at call time
 # instead of only after a billed, truncated failure.
 _REASONING_STRUCTURED_OUTPUT_MIN_TOKENS = 8192
+
+# Models observed to return their reasoning chain and their answer through one
+# token stream, keyed ``"provider:model"``. A stop sequence sent to such a model
+# is matched against the chain too, so generation can end at the boundary
+# between the chain and the answer — before the first visible token, with a
+# ``"stop"`` finish reason and an empty, still-billed result. For a model in
+# this set the agent holds its stop sequences back and applies them to the text
+# the model returns instead (see ``apply_stop_sequences``), which is the same
+# visible result without the collision. Populated from the catalog flag at call
+# time and from an observed collision, so the wasted call happens at most once
+# per model per process.
+_reasoning_stream_models: set[str] = set()
 
 if TYPE_CHECKING:
     pass
@@ -293,11 +306,14 @@ class AgentGenerationMixin:
         ]
 
         last_error = None
-        truncation_detail: dict[str, Any] | None = None
+        deterministic_detail: dict[str, Any] | None = None
         # A non-retryable failure (auth/not-found/invalid) is already logged once,
         # in full, at ERROR below. Track that so the final summary doesn't re-log
         # the same failure a second time at WARNING (the "logged 3×" noise).
         nonretryable_logged = False
+        # Same for a deterministic empty outcome (truncation / reasoning-only):
+        # the branch that detects it logs the full message once.
+        deterministic_logged = False
         total_tokens = 0
         # Whether the caller pinned max_tokens; if they didn't we may grow the
         # budget to recover a reasoning model from a "length"-truncated empty.
@@ -319,6 +335,16 @@ class AgentGenerationMixin:
                 else default_max_output_tokens(current_model)
             )
 
+            requested_stop_sequences = kwargs.get('stop_sequences', default_stop_sequences)
+            # A model that streams its reasoning chain and its answer through one
+            # token stream matches stop sequences against the chain as well, so
+            # sending them can end generation before the first visible token.
+            # Cut the returned answer here instead.
+            local_stop_sequences = (
+                list(requested_stop_sequences or [])
+                if self._interleaves_reasoning(current_model) else None
+            )
+
             for attempt in range(max_retries):
                 try:
                     # Slightly increase temperature on retries to get different output
@@ -333,7 +359,9 @@ class AgentGenerationMixin:
                         presence_penalty=kwargs.get('presence_penalty', self.config.presence_penalty),
                         frequency_penalty=kwargs.get('frequency_penalty', self.config.frequency_penalty),
                         repetition_penalty=kwargs.get('repetition_penalty', self.config.repetition_penalty),
-                        stop_sequences=kwargs.get('stop_sequences', default_stop_sequences)
+                        stop_sequences=(
+                            None if local_stop_sequences else requested_stop_sequences
+                        ),
                     )
 
                     # Pass through extra kwargs (e.g. tools for native calling)
@@ -344,6 +372,10 @@ class AgentGenerationMixin:
                     result = current_model.generate(prompt, config=gen_config, **extra_gen_kwargs)
 
                     response_text = result.text if result and result.text else ""
+                    if local_stop_sequences:
+                        response_text = apply_stop_sequences(
+                            response_text, local_stop_sequences,
+                        )
                     tokens_used = result.tokens_used if result and hasattr(result, 'tokens_used') else 0
                     finish_reason = result.finish_reason if result and hasattr(result, 'finish_reason') else "unknown"
                     total_tokens += tokens_used
@@ -388,10 +420,36 @@ class AgentGenerationMixin:
                             )
                             current_max_tokens = grown
                             continue
-                        truncation_detail = self._truncation_error_detail(
-                            current_model, current_max_tokens,
+                        deterministic_detail = self._truncation_error_detail(
+                            current_model, current_max_tokens, result_metadata,
                         )
-                        logger.warning("Generation failed: %s", truncation_detail["message"])
+                        deterministic_logged = True
+                        logger.warning("Generation failed: %s", deterministic_detail["message"])
+                        break  # deterministic for this model; outer loop may failover
+
+                    # Empty content beside a reasoning chain: the model spent the
+                    # turn reasoning and emitted no visible token. Deterministic
+                    # at these settings, so retrying identical ones bills again
+                    # for the same outcome. When the stop sequences went upstream
+                    # they can have ended generation at the boundary between the
+                    # chain and the answer — retry that once with them applied
+                    # locally instead; otherwise report it.
+                    if (result_metadata or {}).get("reasoning_only"):
+                        if local_stop_sequences is None and requested_stop_sequences:
+                            self._remember_reasoning_stream_model(current_model)
+                            local_stop_sequences = list(requested_stop_sequences)
+                            logger.info(
+                                "'%s' returned only reasoning with stop sequences in "
+                                "force; retrying once with them applied to the answer "
+                                "instead of sent to the provider",
+                                getattr(current_model, "model_name", "?"),
+                            )
+                            continue
+                        deterministic_detail = self._reasoning_only_error_detail(
+                            current_model, current_max_tokens, result_metadata,
+                        )
+                        deterministic_logged = True
+                        logger.warning("Generation failed: %s", deterministic_detail["message"])
                         break  # deterministic for this model; outer loop may failover
 
                     # Empty response — retry
@@ -441,8 +499,8 @@ class AgentGenerationMixin:
         # so callers (both the tool loop and the direct path) can fail explicitly.
         if last_error is not None:
             detail = self._build_error_detail(last_error, current_model)
-        elif truncation_detail is not None:
-            detail = truncation_detail
+        elif deterministic_detail is not None:
+            detail = deterministic_detail
         else:
             detail = {
                 "type": "EmptyResponse",
@@ -452,8 +510,8 @@ class AgentGenerationMixin:
                 "message": "Model returned an empty response after retries.",
                 "retryable": True,
             }
-        # Avoid re-logging a non-retryable failure already reported at ERROR above.
-        if nonretryable_logged:
+        # Avoid re-logging a failure already reported in full above.
+        if nonretryable_logged or deterministic_logged:
             logger.debug("Generation failed: %s", detail["message"])
         else:
             logger.warning("Generation failed: %s", detail["message"])
@@ -551,7 +609,53 @@ class AgentGenerationMixin:
         _reasoning_budget_warned.add(warn_key)
         logger.warning(hint)
 
-    def _truncation_error_detail(self, model: Any, max_tokens: int) -> dict[str, Any]:
+    def _reasoning_stream_key(self, model: Any) -> str:
+        """Key a model by provider and name for the reasoning-stream registry."""
+        name = getattr(model, "model_name", None) or self.model_name or "unknown"
+        return f"{self._model_provider(model)}:{name}"
+
+    def _interleaves_reasoning(self, model: Any) -> bool:
+        """Return True if *model* streams its reasoning chain with its answer.
+
+        True for the reasoning families the catalog flags, and for any model
+        already observed ending a turn at a stop sequence before its first
+        visible token. The agent applies its stop sequences to such a model's
+        returned answer rather than sending them to the provider.
+        """
+        if model is None:
+            return False
+        return (
+            needs_reasoning_headroom(model)
+            or self._reasoning_stream_key(model) in _reasoning_stream_models
+        )
+
+    def _remember_reasoning_stream_model(self, model: Any) -> None:
+        """Record that *model* interleaves its reasoning chain with its answer."""
+        if model is not None:
+            _reasoning_stream_models.add(self._reasoning_stream_key(model))
+
+    @staticmethod
+    def _reasoning_budget_note(result_metadata: dict[str, Any] | None) -> str:
+        """Describe the reasoning budget one call spent, or ``""`` if unknown."""
+        meta = result_metadata or {}
+        tokens = meta.get("reasoning_tokens") or 0
+        chars = meta.get("reasoning_chars") or 0
+        if not tokens and not chars:
+            return ""
+        if tokens and chars:
+            spent = f"{tokens} reasoning tokens ({chars} characters of reasoning)"
+        elif tokens:
+            spent = f"{tokens} reasoning tokens"
+        else:
+            spent = f"{chars} characters of reasoning"
+        return f" It spent the budget on {spent} and returned no answer."
+
+    def _truncation_error_detail(
+        self,
+        model: Any,
+        max_tokens: int,
+        result_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Structured error for a deterministic ``max_tokens`` truncation.
 
         Distinct from the generic empty-response error: the model produced no
@@ -565,6 +669,7 @@ class AgentGenerationMixin:
             "produced no output (finish_reason='length'). Increase max_tokens — "
             "e.g. agent.run(task, max_tokens=8192); reasoning models can spend "
             "the whole budget on internal reasoning before any visible token."
+            + self._reasoning_budget_note(result_metadata)
         )
         return {
             "type": "TruncatedResponse",
@@ -572,6 +677,39 @@ class AgentGenerationMixin:
             "provider": self._model_provider(model),
             "model": name,
             "message": hint,
+            "retryable": False,
+        }
+
+    def _reasoning_only_error_detail(
+        self,
+        model: Any,
+        max_tokens: int,
+        result_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Structured error for a turn that produced reasoning and no answer.
+
+        The model was billed for output the caller cannot see, and the outcome
+        is deterministic at these settings — so the message names the model, the
+        cap in force and the reasoning budget spent instead of the generic
+        "empty response after retries", and it is not retryable unchanged. The
+        reasoning chain is never returned as the answer.
+        """
+        name = getattr(model, "model_name", None) or self.model_name or "unknown"
+        meta = result_metadata or {}
+        hint = meta.get("empty_response_reason") or (
+            f"Model '{name}' returned no visible text: it produced only internal "
+            f"reasoning under a max_tokens cap of {max_tokens}. Raise max_tokens, "
+            "drop any stop sequence the reasoning chain can match, or use a model "
+            "that answers without an extended reasoning chain."
+        )
+        return {
+            "type": "ReasoningOnlyResponse",
+            "category": "reasoning_only",
+            "provider": self._model_provider(model),
+            "model": name,
+            "message": hint,
+            "max_tokens": max_tokens,
+            "reasoning_tokens": meta.get("reasoning_tokens", 0),
             "retryable": False,
         }
 
