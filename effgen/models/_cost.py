@@ -3,8 +3,10 @@ Cost tracker for effGen model adapters.
 
 Accumulates prompt and completion token counts per (provider, model) pair
 and converts them to USD using per-provider rate tables.  Cerebras free-tier
-cost is $0.  The process-global tracker persists events to SQLite so the
-``effgen cost`` CLI can summarize spend across restarts.
+cost is $0; a model the catalog publishes no rate for reports ``None`` instead,
+so "this was free" and "we do not know what this cost" stay distinguishable.
+The process-global tracker persists events to SQLite so the ``effgen cost`` CLI
+can summarize spend across restarts.
 
 Usage::
 
@@ -287,7 +289,9 @@ def _rate(provider: str, model: str) -> tuple[float, float]:
     Catalog-first (the single source of truth shared with the adapters); falls
     back to the small legacy table for ids the catalog does not carry.  Returns
     ``(0.0, 0.0)`` for genuinely free/unpriced/unknown ids — pricing is never
-    invented.
+    invented.  A caller that has to tell a free tier apart from a model with no
+    published price must use :func:`call_cost`, which returns ``None`` for the
+    latter instead of a rate of zero.
     """
     catalog = _catalog_pricing(provider, model)
     if catalog is not None:
@@ -315,6 +319,83 @@ def pricing_status(provider: str, model: str) -> str:
     return "unpriced"
 
 
+def call_cost(
+    provider: str, model: str, prompt_tokens: int, completion_tokens: int
+) -> float | None:
+    """Price one call, or return ``None`` when *model* has no published rate.
+
+    This is the one place a per-call ``cost_usd`` is derived, so every adapter
+    reports the same number for the same usage.  ``0.0`` means the call really
+    was free — a free tier, or a model billed outside the token price
+    (``metered``), whose real cost arrives through
+    :meth:`CostTracker.record`'s ``cost_usd`` argument.  ``None`` means the
+    catalog publishes no price for this id, so no cost can be stated; callers
+    render that as "unpriced" rather than a fabricated ``$0.000000``.
+    """
+    if pricing_status(provider, model) == "unpriced":
+        return None
+    input_rate, output_rate = _rate(provider, model)
+    return (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000
+
+
+# Guard so the "no published price, so this spend is not counted" heads-up
+# fires at most once per provider/model per process.
+_UNPRICED_BUDGET_WARNED: set[str] = set()
+
+
+def reset_unpriced_budget_warnings() -> None:
+    """Clear the once-per-process unpriced-spend warning guard (test helper)."""
+    _UNPRICED_BUDGET_WARNED.clear()
+
+
+#: Ledger provider keys that are not the catalog's name for the same provider.
+#: ``effgen models refresh`` only accepts the catalog name, so a heads-up that
+#: names the ledger key would hand the user a command that fails.
+_REFRESH_PROVIDER_ALIASES = {"hf_inference": "hf"}
+
+
+def _refresh_hint(provider: str) -> str:
+    """The ``effgen models refresh`` sentence for *provider*, when it has one.
+
+    Empty for a provider the command does not accept (a local engine, a name
+    with no published catalog), so the heads-up never suggests a command that
+    would come back with "Unknown provider".
+    """
+    name = _REFRESH_PROVIDER_ALIASES.get(provider, provider)
+    try:
+        from effgen.models._catalog import known_providers
+
+        refreshable = name in known_providers()
+    except Exception:  # pragma: no cover - catalog import is best-effort
+        logger.debug("Could not list refreshable providers", exc_info=True)
+        return ""
+    if not refreshable:
+        return ""
+    return f" Run `effgen models refresh --provider {name}` to pick up a published rate."
+
+
+def _warn_unpriced_spend(provider: str, model: str) -> None:
+    """Say once that *provider*/*model* spend cannot be counted toward a budget.
+
+    A model the catalog has no rate for is still billed by the provider, so a
+    configured budget silently undercounts it.  The budget is not enforced on a
+    price we do not know — the call is allowed — but the user is told which
+    model is missing from the total, once per process, so the heads-up does not
+    repeat on every call of a loop.
+    """
+    key = f"{provider.lower()}:{model}"
+    if key in _UNPRICED_BUDGET_WARNED:
+        return
+    _UNPRICED_BUDGET_WARNED.add(key)
+    warnings.warn(
+        f"effGen budget: no published price for '{key}', so this call's spend is "
+        f"not counted toward the configured budget."
+        f"{_refresh_hint(provider.lower())}",
+        UserWarning,
+        stacklevel=5,
+    )
+
+
 @dataclass
 class _ModelStats:
     """Per-(provider, model) accumulated stats."""
@@ -324,6 +405,9 @@ class _ModelStats:
     completion_tokens: int = 0
     requests: int = 0
     total_cost_usd: float = 0.0
+    #: Calls whose price the catalog does not publish. They contribute tokens
+    #: but no money, so a caller can tell "spent nothing" from "cost unknown".
+    unpriced_requests: int = 0
 
 
 class CostTracker:
@@ -341,6 +425,9 @@ class CostTracker:
     - At 100% → :class:`~effgen.models.errors.BudgetExceededError` is raised
       for paid calls. Zero-cost calls are still allowed so router failover can
       land on free-tier providers.
+    - A call on a model with no published price is allowed at any budget level
+      and emits a :class:`UserWarning` once per model saying its spend is not
+      counted, rather than being silently added as $0.
 
     The router catches ``BudgetExceededError`` and fails over to a free-tier
     provider when available.
@@ -349,7 +436,8 @@ class CostTracker:
 
         tracker = CostTracker.get()
         cost = tracker.record("cerebras", "llama3.1-8b", 50, 20)
-        print(f"Cost: ${cost:.6f}")  # 0.000000 for Cerebras free tier
+        # 0.000000 for the Cerebras free tier; None for a model with no rate
+        print(f"Cost: ${cost:.6f}" if cost is not None else "Cost: unpriced")
     """
 
     _instance: "CostTracker | None" = None
@@ -407,7 +495,7 @@ class CostTracker:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cost_usd: float | None = None,
-    ) -> float:
+    ) -> float | None:
         """Record a completed API call and return the USD cost.
 
         Args:
@@ -421,7 +509,10 @@ class CostTracker:
                 do not bill by prompt/completion token price.
 
         Returns:
-            USD cost for this call (0.0 for Cerebras free tier).
+            USD cost for this call — ``0.0`` when the call really was free (a
+            free tier), or ``None`` when the catalog publishes no price for
+            this model, so no cost can be stated.  The token counts are still
+            recorded in that case; only the money is unknown.
 
         Raises:
             BudgetExceededError: If daily budget is configured and exceeded.
@@ -433,12 +524,11 @@ class CostTracker:
         if output_tokens is not None:
             completion_tokens = output_tokens
 
-        input_rate, output_rate = _rate(provider, model)
-        cost = (
-            float(cost_usd)
-            if cost_usd is not None
-            else (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000
-        )
+        cost: float | None
+        if cost_usd is not None:
+            cost = float(cost_usd)
+        else:
+            cost = call_cost(provider, model, prompt_tokens, completion_tokens)
 
         key = (provider.lower(), model)
         with self._lock:
@@ -448,7 +538,10 @@ class CostTracker:
             stats.prompt_tokens += prompt_tokens
             stats.completion_tokens += completion_tokens
             stats.requests += 1
-            stats.total_cost_usd += cost
+            if cost is None:
+                stats.unpriced_requests += 1
+            else:
+                stats.total_cost_usd += cost
 
         if self._storage is not None:
             try:
@@ -457,15 +550,16 @@ class CostTracker:
                     model=model,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
-                    cost_usd=cost,
+                    cost_usd=cost or 0.0,
                     timestamp=time.time(),
                 )
             except Exception as exc:
                 logger.warning("CostStore insert failed: %s", exc)
 
         logger.debug(
-            "CostTracker.record %s/%s: prompt=%d completion=%d cost=$%.6f",
-            provider, model, prompt_tokens, completion_tokens, cost,
+            "CostTracker.record %s/%s: prompt=%d completion=%d cost=%s",
+            provider, model, prompt_tokens, completion_tokens,
+            "unpriced" if cost is None else f"${cost:.6f}",
         )
 
         self._check_budget(provider=provider, model=model, cost=cost)
@@ -495,10 +589,22 @@ class CostTracker:
                     model=model,
                 )
 
-    def _check_budget(self, provider: str, model: str, cost: float) -> None:
-        """Emit a warning or raise BudgetExceededError for configured budgets."""
+    def _check_budget(self, provider: str, model: str, cost: float | None) -> None:
+        """Emit a warning or raise BudgetExceededError for configured budgets.
+
+        A call whose price is unknown (``cost is None`` — the catalog publishes
+        no rate for the model) is allowed through: the gate refuses spend it can
+        measure, and refusing on a price nobody published would block a model
+        that may well be free.  Instead the user is told once, per model, that
+        this spend is missing from the budget total.
+        """
         budget_cfg = _load_budget()
-        for period, budget_usd in _configured_budgets(budget_cfg):
+        budgets = _configured_budgets(budget_cfg)
+        if cost is None:
+            if budgets:
+                _warn_unpriced_spend(provider, model)
+            return
+        for period, budget_usd in budgets:
             spend = self._period_spend(period)
             previous_spend = max(0.0, spend - cost)
             ratio = spend / budget_usd
@@ -585,11 +691,16 @@ class CostTracker:
         Returns:
             List of dicts with keys: ``provider``, ``model``, ``requests``,
             ``prompt_tokens``, ``completion_tokens``, ``total_tokens``,
-            ``cost_usd``.
+            ``cost_usd``, ``unpriced_requests`` and ``pricing``.  ``cost_usd``
+            is ``None`` when every recorded call was on a model with no
+            published price — the tokens are known, the money is not.
         """
         with self._lock:
             rows = []
             for stats in self._data.values():
+                all_unpriced = (
+                    stats.requests > 0 and stats.unpriced_requests == stats.requests
+                )
                 rows.append({
                     "provider": stats.provider,
                     "model": stats.model,
@@ -597,7 +708,8 @@ class CostTracker:
                     "prompt_tokens": stats.prompt_tokens,
                     "completion_tokens": stats.completion_tokens,
                     "total_tokens": stats.prompt_tokens + stats.completion_tokens,
-                    "cost_usd": round(stats.total_cost_usd, 8),
+                    "cost_usd": None if all_unpriced else round(stats.total_cost_usd, 8),
+                    "unpriced_requests": stats.unpriced_requests,
                     "pricing": pricing_status(stats.provider, stats.model),
                 })
         return rows

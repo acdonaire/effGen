@@ -33,19 +33,26 @@ def extract_openai_usage(usage: Any) -> tuple[int, int, int, int]:
     return prompt_tokens, completion_tokens, total_tokens, cached_tokens
 
 
+def cost_label(cost: float | None) -> str:
+    """Render a per-call cost for a log line, or say the model has no price."""
+    return "unpriced" if cost is None else f"${cost:.6f}"
+
+
 def usage_metadata(
     prompt_tokens: int,
     completion_tokens: int,
     total_tokens: int,
     cached_tokens: int,
-    cost: float,
+    cost: float | None,
     total_cost: float,
 ) -> dict[str, Any]:
     """Build the canonical per-call token/cost metadata block.
 
-    ``cost_usd`` is this call's cost. ``total_cost`` is a different number,
-    not an alias: the cumulative cost across every call made on the adapter
-    instance so far (including this one).
+    ``cost_usd`` is this call's cost, or ``None`` when the model publishes no
+    per-token price — never a fabricated ``0.0``, which a reader cannot tell
+    from a genuine free tier. ``total_cost`` is a different number, not an
+    alias: the cumulative cost across every call made on the adapter instance
+    so far (including this one).
     """
     return {
         "prompt_tokens": prompt_tokens,
@@ -84,10 +91,10 @@ def record_tracker_cost(
     """Record one call in the process-global :class:`CostTracker`.
 
     Returns the catalog-priced USD cost (so it matches the model catalog and
-    ``effgen cost``), or ``None`` when tracking is unavailable.
-    :class:`BudgetExceededError` propagates so budget limits stop the run; any
-    other tracker failure is confined to a debug log — accounting must never
-    break a successful generation.
+    ``effgen cost``), or ``None`` when the model has no published price or
+    tracking is unavailable. :class:`BudgetExceededError` propagates so budget
+    limits stop the run; any other tracker failure is confined to a debug log —
+    accounting must never break a successful generation.
     """
     try:
         from effgen.models._cost import CostTracker
@@ -107,6 +114,7 @@ def record_tracker_cost(
 
 __all__ = [
     "extract_openai_usage",
+    "cost_label",
     "usage_metadata",
     "tool_calls_from_message",
     "record_tracker_cost",

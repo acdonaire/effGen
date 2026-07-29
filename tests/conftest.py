@@ -155,6 +155,7 @@ _WARN_ONCE_RECORDS = (
     ("effgen.core.agent_generation", "_reasoning_budget_warned"),
     ("effgen.core.agent_runtime", "_tool_output_injection_gap_warned"),
     ("effgen.models._catalog", "_WARNED"),
+    ("effgen.models._cost", "_UNPRICED_BUDGET_WARNED"),
     ("effgen.presets.registry", "_tool_overhead_warned"),
     ("effgen.server.auth", "_AUTH_UNCONFIGURED_WARNED"),
     ("effgen.server.auth", "_DEV_MODE_WARNED"),
