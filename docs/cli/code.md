@@ -19,6 +19,45 @@ effgen code "fix the failing test" --auto-edit --commit
 On a terminal with no task it opens an interactive session. A task argument,
 `-p`, piped stdin, or `--json` runs once and exits.
 
+## Stdin
+
+When stdin is not a terminal it is read **to EOF before the run starts**. With a
+task already given the piped text becomes context in front of it; with no task
+the piped text *is* the task:
+
+```bash
+cat pytest.log | effgen code -p "why did this fail?"   # log becomes context
+echo "add a --retries flag to cli.py" | effgen code    # stdin is the task
+```
+
+Reading to EOF is what lets a producer that writes slowly — a build log, `tail
+-f` — be folded in whole. The consequence is that a pipe which never closes
+holds the run: an open stdin inherited from a supervisor, an agent harness or a
+job-control shell keeps the command waiting even though a task was supplied.
+That wait is announced rather than silent — after about two seconds the command
+prints a line to stderr naming what it is waiting for:
+
+```
+Reading piped stdin as context before starting; the stream has not closed.
+Close it (Ctrl-D) or re-run with < /dev/null to skip it.
+```
+
+With no task given the piped text is the task, and the note names that instead:
+
+```
+Reading the task from piped stdin; the stream has not closed.
+Close it (Ctrl-D), or pass the task with -p to skip the read.
+```
+
+Redirect stdin from `/dev/null` when a caller has no context to pipe in:
+
+```bash
+effgen code -p "write fib.py" -w WS --auto-edit --json < /dev/null
+```
+
+The note goes to stderr, so stdout still carries only the answer or the JSON
+document.
+
 ## The workspace
 
 The agent reads, edits and runs in one directory:
