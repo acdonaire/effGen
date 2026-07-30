@@ -1,10 +1,11 @@
 """A run truncated at the iteration cap is not reported as a completed success.
 
 When the ReAct loop reaches ``max_iterations`` before the model produces a final
-answer, the best recovered progress is still returned in ``output``, but the
-outcome is ``success=False`` with ``partial=True`` metadata so a caller does not
-treat a truncated multi-step run as finished. The CLI summary renders this
-distinctly from both a success and an outright failure.
+answer, the outcome is ``success=False`` with ``partial=True`` metadata so a
+caller does not treat a truncated multi-step run as finished. The CLI summary
+renders this distinctly from both a success and an outright failure. What the
+run had reached is kept in ``metadata["partial_output"]``; the shape of that
+outcome is pinned by ``test_iteration_cap_outcome.py``.
 
 Uses an in-process scripted model (no network) to drive the loop
 deterministically — not a mock of live API behavior, which the project forbids.
@@ -82,8 +83,9 @@ def test_max_iterations_partial_is_not_success():
     assert resp.success is False, "a run cut off at the iteration cap is not a success"
     assert resp.metadata.get("reason") == "max_iterations_partial"
     assert resp.metadata.get("partial") is True
-    # The recovered progress is still returned, not discarded.
+    # The run says what stopped it, and the recovered progress is kept.
     assert resp.output and resp.output.strip()
+    assert resp.metadata.get("partial_output")
 
 
 def test_partial_run_summary_line_is_distinct():

@@ -20,7 +20,14 @@ def _assert_reached_answer(result, needle: str) -> None:
     assert result.metadata.get("reason") in _COMPLETED_REASONS, (
         f"unexpected end reason: {result.metadata.get('reason')}"
     )
-    assert needle in result.output or needle in str(result.execution_trace)
+    # A run stopped at the cap keeps what it reached under partial_output rather
+    # than in the answer, so the value can be in either place.
+    haystacks = (
+        result.output,
+        str(result.metadata.get("partial_output") or ""),
+        str(result.execution_trace),
+    )
+    assert any(needle in h for h in haystacks)
 
 
 @pytest.mark.gpu
