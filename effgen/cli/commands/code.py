@@ -139,10 +139,15 @@ def _report(cli: "CLIInterface", result: CodeRunResult, *, quiet: bool) -> None:
     """Print the framed answer, the summary line and the file/refusal list.
 
     Used for an interactive run; the answer is rendered to the human console.
+    A run stopped at its iteration cap has no answer: the panel carries what
+    stopped it, and the tool output and reasoning it had reached follows in its
+    own panel, labelled as progress.
     """
+    from effgen.cli.commands.run import PARTIAL_PROGRESS_TITLE
     from effgen.ui.render import answer_surface
 
     console = cli._human()
+    stopped = not result.success and result.partial
     if not result.success and not result.partial:
         cli.print_error_panel(result.answer or "The run produced no answer.", title="Error")
     elif console:
@@ -151,11 +156,25 @@ def _report(cli: "CLIInterface", result: CodeRunResult, *, quiet: bool) -> None:
             success=result.success,
             partial=result.partial,
             framed=True,
-            title="Coding Agent",
+            title="Stopped" if stopped else "Coding Agent",
             console=console,
         )
+        if stopped and result.partial_output:
+            answer_surface(
+                result.partial_output,
+                success=False,
+                partial=True,
+                framed=True,
+                title=PARTIAL_PROGRESS_TITLE,
+                console=console,
+            )
     else:
         print(result.answer, file=cli._human_stream())
+        if stopped and result.partial_output:
+            print(
+                f"\n{PARTIAL_PROGRESS_TITLE}:\n{result.partial_output}",
+                file=cli._human_stream(),
+            )
 
     if quiet:
         return
@@ -475,11 +494,9 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
             _report_to_stderr(cli, result)
 
     if result.hit_iteration_cap and not quiet:
-        cli.print_warning(
-            f"Stopped at the iteration cap ({result.iterations} iterations) "
-            "without a final answer. Raise it with --max-iterations or narrow "
-            "the task."
-        )
+        # The answer already names the cap and what it cost; this adds the flag
+        # that raises it from the command line.
+        cli.print_warning("Raise the cap for this task with --max-iterations N.")
 
     if result.withheld and not quiet:
         cli.print(_withheld_note(result, mode_explicit))

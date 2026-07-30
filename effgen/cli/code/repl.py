@@ -593,9 +593,12 @@ class CodeREPL:
             return self.agent.run(task, mode=AgentMode.AUTO)
 
     def _render_answer(self, result: Any) -> None:
+        from effgen.cli.commands.run import PARTIAL_PROGRESS_TITLE
         from effgen.ui.render import answer_surface
 
         console = self.cli._human()
+        stopped = not result.success and result.partial
+        progress = getattr(result, "partial_output", "") if stopped else ""
         if not result.success and not result.partial:
             self.cli.print_error_panel(
                 result.answer or "The run produced no answer.", title="Error"
@@ -609,8 +612,19 @@ class CodeREPL:
                 label="agent",
                 console=console,
             )
+            if progress:
+                answer_surface(
+                    progress,
+                    success=False,
+                    partial=True,
+                    framed=True,
+                    title=PARTIAL_PROGRESS_TITLE,
+                    console=console,
+                )
         else:
             self._say(result.answer)
+            if progress:
+                self._say(f"{PARTIAL_PROGRESS_TITLE}:\n{progress}")
 
     def _post_turn_notes(self, result: Any) -> None:
         """Surface files written, refusals, withheld actions and the iteration cap."""
@@ -654,10 +668,10 @@ class CodeREPL:
                     f"in {turn_mode} mode. /mode auto-edit (or /mode yes) to allow."
                 )
         if result.hit_iteration_cap:
+            # The answer already names the cap and what it cost; this adds the
+            # flag that raises it for the session.
             self._status(
-                "warning",
-                f"Stopped at the iteration cap ({result.iterations} iterations). "
-                "Raise it with --max-iterations or narrow the task."
+                "warning", "Raise the cap for this session with --max-iterations N."
             )
 
     def _print_footer(self, elapsed: float, tokens: int, cost: float) -> None:

@@ -200,6 +200,9 @@ class CodeRunResult:
     cost_usd: float | None = None
     duration_s: float = 0.0
     partial: bool = False
+    #: What the run had reached when its iteration cap stopped it — tool output
+    #: and reasoning, never an answer. Empty for every other outcome.
+    partial_output: str = ""
     actions: list[ActionRecord] = field(default_factory=list)
     files_written: list[str] = field(default_factory=list)
     # Every edit the run proposed, in order. ``applied`` is false for the ones
@@ -246,6 +249,7 @@ class CodeRunResult:
         return {
             "task": self.task,
             "answer": self.answer,
+            "partial_output": self.partial_output,
             "success": self.success,
             "reason": self.reason,
             "model": self.model,
@@ -488,6 +492,7 @@ class CodeEngine:
             cost_usd=metadata.get("cost_usd"),
             duration_s=float(getattr(response, "execution_time", 0.0) or 0.0),
             partial=bool(metadata.get("partial")),
+            partial_output=str(metadata.get("partial_output") or ""),
             actions=list(self.gate.actions),
             files_written=self.gate.files_written,
             diffs=list(self.gate.edits),
