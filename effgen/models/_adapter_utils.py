@@ -18,11 +18,18 @@ uniform contract:
   remediation}``. :func:`not_loaded_error` gives the same shape to the guard
   every adapter runs when a call arrives before ``load()``.
 
+* **per-call sampling overrides** — a caller may pass ``seed=``/``temperature=``
+  and the rest of the sampling settings straight to ``generate()`` instead of
+  building a ``GenerationConfig``. :func:`merge_call_overrides` folds those
+  keywords into the call's config and takes them out of the keyword dict, so a
+  backend whose own entry point has no parameter of that name never receives one.
+
 These are internal helpers (no public API surface change).
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from .errors import (
@@ -440,6 +447,56 @@ def apply_stop_sequences(text: str, stop_sequences: list[str] | None) -> str:
     return text[:cut]
 
 
+# Sampling fields a caller may override for a single call by passing the name as
+# a keyword argument to ``generate()``/``generate_stream()``/``generate_batch()``
+# instead of (or beside) a ``GenerationConfig``. Every name is a field of
+# :class:`~effgen.models.base.GenerationConfig`; ``stop`` is the OpenAI-style
+# alias for ``stop_sequences``.
+CALL_OVERRIDE_FIELDS: tuple[str, ...] = (
+    "temperature",
+    "top_p",
+    "top_k",
+    "max_tokens",
+    "stop_sequences",
+    "presence_penalty",
+    "frequency_penalty",
+    "repetition_penalty",
+    "seed",
+)
+
+CALL_OVERRIDE_ALIASES: dict[str, str] = {"stop": "stop_sequences"}
+
+
+def merge_call_overrides(config: Any, kwargs: dict[str, Any]) -> Any:
+    """Return *config* with the per-call sampling keywords in *kwargs* applied.
+
+    A per-call value supersedes the config's field for that call only — the
+    config object passed in is never mutated. Recognised keys are **removed**
+    from *kwargs*, so they are not also forwarded to a provider call that has no
+    parameter of that name (vLLM's ``LLM.generate`` accepts neither ``seed`` nor
+    ``temperature``, and mlx-lm's generate takes its sampling settings from the
+    keywords this builds). Unrecognised keys stay in *kwargs* for the caller to
+    forward or ignore as its backend requires.
+
+    A bare string is accepted for ``stop``/``stop_sequences`` — the shape the
+    OpenAI API takes — and becomes a one-element list, because
+    ``GenerationConfig.stop_sequences`` carries a list and the backends iterate
+    it: a string left as-is would be walked character by character and cut the
+    text at the first matching letter.
+    """
+    overrides: dict[str, Any] = {}
+    for key in list(kwargs):
+        field = CALL_OVERRIDE_ALIASES.get(key, key)
+        if field in CALL_OVERRIDE_FIELDS:
+            value = kwargs.pop(key)
+            if field == "stop_sequences" and isinstance(value, str):
+                value = [value]
+            overrides[field] = value
+    if not overrides:
+        return config
+    return replace(config, **overrides)
+
+
 # ---------------------------------------------------------------------------
 # Structured, redacted provider errors
 # ---------------------------------------------------------------------------
@@ -607,7 +664,10 @@ def attach_error_context(
 
 
 __all__ = [
+    "CALL_OVERRIDE_ALIASES",
+    "CALL_OVERRIDE_FIELDS",
     "CANONICAL_FINISH_REASONS",
+    "merge_call_overrides",
     "normalize_finish_reason",
     "needs_reasoning_headroom",
     "default_max_output_tokens",

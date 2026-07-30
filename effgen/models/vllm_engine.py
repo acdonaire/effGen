@@ -6,7 +6,7 @@ This module provides high-performance inference using vLLM with features includi
 - Quantization support (4-bit, 8-bit)
 - Dynamic batching for throughput optimization
 - Streaming token generation
-- Graceful fallback handling
+- Raw-prompt fallback for a model that has no chat template
 - Automatic chat template application for instruction-tuned models
 """
 
@@ -20,6 +20,7 @@ import torch
 
 from effgen.models._adapter_utils import (
     attach_error_context,
+    merge_call_overrides,
     not_loaded_error,
     provider_runtime_error,
 )
@@ -353,13 +354,19 @@ class VLLMEngine(BatchModel):
 
     def _create_sampling_params(
         self,
-        config: GenerationConfig | None = None
+        config: GenerationConfig | None = None,
+        call_kwargs: dict[str, Any] | None = None,
     ) -> "SamplingParams":  # noqa: F821
         """
         Create vLLM SamplingParams from GenerationConfig.
 
         Args:
             config: Generation configuration
+            call_kwargs: The call's keyword arguments. A sampling keyword found
+                here (``seed``, ``temperature``, ``max_tokens``, ...) supersedes
+                the config's field for this call and is removed from the dict —
+                ``LLM.generate()`` has no parameter of that name and would
+                raise ``TypeError`` if one were forwarded to it.
 
         Returns:
             vLLM SamplingParams object
@@ -368,6 +375,8 @@ class VLLMEngine(BatchModel):
 
         if config is None:
             config = GenerationConfig()
+        if call_kwargs:
+            config = merge_call_overrides(config, call_kwargs)
 
         # Normalize deterministic generation: vLLM treats temperature=0 as greedy
         # decoding. Clamp temperature<=0 to exactly 0.0 (vLLM rejects negatives)
@@ -411,7 +420,10 @@ class VLLMEngine(BatchModel):
             system_prompt: Optional system prompt to use (overrides instance-level system_prompt)
             skip_chat_template: If True, skip chat template even if apply_chat_template is enabled.
                                Useful when passing pre-formatted prompts.
-            **kwargs: Additional generation parameters
+            **kwargs: Per-call sampling overrides (``seed``, ``temperature``,
+                ``top_p``, ``top_k``, ``max_tokens``, ``stop``, the penalties)
+                take precedence over the same field on *config*; any other
+                keyword is forwarded to vLLM's ``LLM.generate()``.
 
         Returns:
             GenerationResult with generated text and metadata
@@ -431,10 +443,11 @@ class VLLMEngine(BatchModel):
 
         self.validate_prompt(formatted_prompt)
 
-        sampling_params = self._create_sampling_params(config)
+        sampling_params = self._create_sampling_params(config, kwargs)
+        kwargs.setdefault("use_tqdm", self.use_tqdm)
 
         try:
-            outputs = self.llm.generate([formatted_prompt], sampling_params, use_tqdm=self.use_tqdm, **kwargs)
+            outputs = self.llm.generate([formatted_prompt], sampling_params, **kwargs)
             output = outputs[0]
 
             generated_text = output.outputs[0].text
@@ -486,7 +499,10 @@ class VLLMEngine(BatchModel):
             config: Generation configuration
             system_prompt: Optional system prompt to use
             skip_chat_template: If True, skip chat template application
-            **kwargs: Additional generation parameters
+            **kwargs: Per-call sampling overrides (``seed``, ``temperature``,
+                ``top_p``, ``top_k``, ``max_tokens``, ``stop``, the penalties)
+                take precedence over the same field on *config*; any other
+                keyword is forwarded to vLLM's ``LLM.generate()``.
 
         Yields:
             str: Generated text chunks
@@ -506,11 +522,12 @@ class VLLMEngine(BatchModel):
 
         self.validate_prompt(formatted_prompt)
 
-        sampling_params = self._create_sampling_params(config)
+        sampling_params = self._create_sampling_params(config, kwargs)
+        kwargs.setdefault("use_tqdm", self.use_tqdm)
 
         try:
             # vLLM's streaming interface
-            for output in self.llm.generate([formatted_prompt], sampling_params, use_tqdm=self.use_tqdm, **kwargs):
+            for output in self.llm.generate([formatted_prompt], sampling_params, **kwargs):
                 # Stream each token as it's generated
                 for token_output in output.outputs:
                     yield token_output.text
@@ -538,7 +555,10 @@ class VLLMEngine(BatchModel):
             config: Generation configuration
             system_prompt: Optional system prompt to use for all prompts
             skip_chat_template: If True, skip chat template application
-            **kwargs: Additional generation parameters
+            **kwargs: Per-call sampling overrides (``seed``, ``temperature``,
+                ``top_p``, ``top_k``, ``max_tokens``, ``stop``, the penalties)
+                take precedence over the same field on *config*; any other
+                keyword is forwarded to vLLM's ``LLM.generate()``.
 
         Returns:
             List of GenerationResult objects
@@ -563,10 +583,11 @@ class VLLMEngine(BatchModel):
         for prompt in formatted_prompts:
             self.validate_prompt(prompt)
 
-        sampling_params = self._create_sampling_params(config)
+        sampling_params = self._create_sampling_params(config, kwargs)
+        kwargs.setdefault("use_tqdm", self.use_tqdm)
 
         try:
-            outputs = self.llm.generate(formatted_prompts, sampling_params, use_tqdm=self.use_tqdm, **kwargs)
+            outputs = self.llm.generate(formatted_prompts, sampling_params, **kwargs)
 
             results = []
             for output in outputs:
