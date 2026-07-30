@@ -667,6 +667,22 @@ class ChatREPL:
 
         answer_surface(answer, framed=False, label="assistant", console=self.console)
 
+    def _show_progress(self, text: str) -> None:
+        """Print what a stopped turn had reached, labelled as progress.
+
+        Rendered under the reply rather than as part of it: it is tool output and
+        reasoning the model never wrote up as an answer. A piped session gets it
+        on stdout beside the reply it belongs to, as plain text.
+        """
+        from effgen.cli.commands.run import PARTIAL_PROGRESS_TITLE
+        from effgen.ui.render import answer_surface
+
+        if not self.interactive:
+            sys.stdout.write(f"\n{PARTIAL_PROGRESS_TITLE}:\n{text}\n")
+            return
+        self.cli.print_warning(f"{PARTIAL_PROGRESS_TITLE}:")
+        answer_surface(text, framed=False, console=self.console)
+
     def _stream_plain(self, user_input: str) -> str:
         """Stream the model's answer, rendering markdown the way tool turns do.
 
@@ -719,14 +735,26 @@ class ChatREPL:
             self.last_trace = None
 
         answer = response.output or ""
+        meta = response.metadata or {}
+        # A turn stopped at the iteration cap has no answer: the reply says what
+        # stopped it, and what the turn had reached follows under its own label,
+        # so the tool output it recovered is not read as the reply.
+        progress = (
+            str(meta.get("partial_output") or "")
+            if not response.success and meta.get("partial")
+            else ""
+        )
         if not self.interactive:
             sys.stdout.write((answer or "") + "\n")
+            if progress:
+                self._show_progress(progress)
             sys.stdout.flush()
         else:
             self._show_answer(answer)
+            if progress:
+                self._show_progress(progress)
 
         # Prefer the response's own accounting for the footer when available.
-        meta = response.metadata or {}
         self._turn_response_tokens = int(getattr(response, "tokens_used", 0) or 0)
         self._turn_response_cost = _progress._extract_cost(meta) or 0.0
         if not response.success:
