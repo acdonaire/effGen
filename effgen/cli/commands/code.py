@@ -17,6 +17,13 @@ Output contract:
   to confirm on and no ``--auto-edit``/``--yes`` was given, or because a
   ``--commit`` that was asked for could not be confirmed.
 
+Stdin contract: when stdin is not a terminal it is read to EOF before the run
+starts — with a task in hand the piped text becomes context in front of it,
+without one it *is* the task. Reading to EOF is what lets a slow producer be
+folded in whole, so a pipe that stays open holds the run; a stream that has not
+closed within a couple of seconds prints a note on stderr naming the wait and
+how to skip it (``< /dev/null``), rather than waiting silently.
+
 When the workspace is in a git repository, the branch, the short status and a
 bounded file layout are read before the first model call and become part of the
 agent's context. ``--commit`` offers to commit the files the run wrote — only
@@ -30,6 +37,7 @@ import argparse
 import json
 import logging
 import sys
+import threading
 from typing import TYPE_CHECKING, Any
 
 from effgen.cli.code.engine import (
@@ -60,6 +68,8 @@ from effgen.cli.commands._shared import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from effgen.cli._main import CLIInterface
 
 logger = logging.getLogger(__name__)
@@ -91,12 +101,78 @@ def _resolve_mode(args: argparse.Namespace, interactive: bool) -> tuple[Permissi
     return default_mode(interactive), False, None
 
 
-def _read_piped_stdin() -> str:
-    """Return piped stdin, or an empty string when stdin is a terminal."""
+#: Seconds a piped-stdin read may go without closing before the wait is announced.
+STDIN_WAIT_NOTE_SECONDS = 2.0
+
+
+def _stdin_wait_note(has_task: bool) -> str:
+    """Return the one-line stderr note for a piped stdin that has not closed."""
+    if has_task:
+        return (
+            "Reading piped stdin as context before starting; the stream has not "
+            "closed. Close it (Ctrl-D) or re-run with < /dev/null to skip it."
+        )
+    return (
+        "Reading the task from piped stdin; the stream has not closed. "
+        "Close it (Ctrl-D), or pass the task with -p to skip the read."
+    )
+
+
+class _WaitNotice:
+    """Call *notify* once if it is not cancelled within *delay* seconds.
+
+    Used to announce a stdin read that has not finished, from a timer thread,
+    while the reading thread is still blocked. Firing and leaving the block race
+    for the same flag, so *notify* runs at most once and never after the read has
+    returned; leaving also waits for a note that won the race to finish printing,
+    and leaves no live timer thread behind.
+    """
+
+    def __init__(self, notify: "Callable[[], None]", delay: float) -> None:
+        self._notify = notify
+        self._lock = threading.Lock()
+        self._settled = False
+        self._timer = threading.Timer(delay, self._fire)
+        self._timer.daemon = True
+
+    def _claim(self) -> bool:
+        with self._lock:
+            if self._settled:
+                return False
+            self._settled = True
+            return True
+
+    def _fire(self) -> None:
+        if self._claim():
+            self._notify()
+
+    def __enter__(self) -> "_WaitNotice":
+        self._timer.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._claim()
+        self._timer.cancel()
+        # Join so a note that won the race has finished printing before the run
+        # continues; a cancelled timer returns from its wait immediately.
+        self._timer.join(timeout=5.0)
+
+
+def _read_piped_stdin(on_wait: "Callable[[], None] | None" = None) -> str:
+    """Return piped stdin, or an empty string when stdin is a terminal.
+
+    The read runs to EOF, so a producer that writes slowly (a build log, ``tail
+    -f``) is folded in whole. A stream that has not closed within
+    ``STDIN_WAIT_NOTE_SECONDS`` calls *on_wait* once, which lets the caller name
+    what the command is waiting for instead of leaving it silent.
+    """
     try:
         if sys.stdin is None or sys.stdin.isatty():
             return ""
-        return sys.stdin.read()
+        if on_wait is None:
+            return sys.stdin.read()
+        with _WaitNotice(on_wait, STDIN_WAIT_NOTE_SECONDS):
+            return sys.stdin.read()
     except (ValueError, OSError):  # pragma: no cover - closed stdin
         return ""
 
@@ -106,10 +182,18 @@ def _resolve_task(args: argparse.Namespace, interactive: bool) -> tuple[str | No
 
     Piped stdin with a task becomes context in front of it (``cat err.log |
     effgen code -p "explain this"``); piped stdin with no task *is* the task.
+    The read waits for the stream to close either way; when it has not closed
+    within a couple of seconds a note naming the wait goes to stderr, so an open
+    pipe inherited from a supervisor or a harness is visible rather than silent.
     """
     explicit = getattr(args, "print_task", None)
     task = explicit if explicit else getattr(args, "task", None)
-    piped = _read_piped_stdin()
+    has_task = bool(task and task.strip())
+
+    def _announce() -> None:
+        print(_stdin_wait_note(has_task), file=sys.stderr, flush=True)
+
+    piped = _read_piped_stdin(on_wait=_announce)
 
     if piped.strip():
         if task and task.strip():
