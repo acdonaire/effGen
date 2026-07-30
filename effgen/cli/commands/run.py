@@ -57,6 +57,56 @@ def _failure_text(response: Any) -> str:
     return reason or "The run failed and reported no message."
 
 
+#: Heading over the text a run had reached when its iteration cap stopped it.
+PARTIAL_PROGRESS_TITLE = "Partial progress (not an answer)"
+
+
+def present_response(cli: "CLIInterface", response: Any) -> None:
+    """Print a finished run: its answer, or what stopped it.
+
+    Three outcomes read differently. A success is framed as the answer. A run
+    stopped at its iteration cap has no answer, so the panel carries what
+    stopped it and what to do, and the tool output and reasoning it had reached
+    follows in its own panel under :data:`PARTIAL_PROGRESS_TITLE` — labelled as
+    progress, so retrieved passages are not read as a result. Any other failure
+    reads as a red "Error" panel, the same as a model-load failure.
+    """
+    metadata = getattr(response, "metadata", None) or {}
+    partial = bool(metadata.get("partial"))
+    stopped = not response.success and partial
+    progress = str(metadata.get("partial_output") or "") if stopped else ""
+
+    if not response.success and not partial:
+        cli.print_error_panel(_failure_text(response), title="Error")
+        return
+    if cli.console:
+        from effgen.ui.render import answer_surface
+
+        answer_surface(
+            response.output,
+            success=response.success,
+            partial=partial,
+            framed=True,
+            title="Stopped" if stopped else "Agent Response",
+            console=cli.console,
+        )
+        if progress:
+            answer_surface(
+                progress,
+                success=False,
+                partial=True,
+                framed=True,
+                title=PARTIAL_PROGRESS_TITLE,
+                console=cli.console,
+            )
+        return
+    print(response.output)
+    if progress:
+        print()
+        print(f"{PARTIAL_PROGRESS_TITLE}:")
+        print(progress)
+
+
 #: What a caller is told when the wizard is reached without a terminal to
 #: prompt on. Written to stderr as a single block so a pipeline sees nothing on
 #: stdout; pinned byte-for-byte by ``tests/cli/test_brand.py``.
@@ -738,28 +788,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             if not json_mode:
                 # Display response
                 cli.print_header("Response")
-
-                # A partial (iteration-cap) run still shows its recovered
-                # text, framed distinctly from a success or an outright
-                # failure. An outright failure reads the same as a
-                # model-load failure below — a red "Error" panel.
-                _partial = bool((response.metadata or {}).get("partial"))
-                if not response.success and not _partial:
-                    cli.print_error_panel(
-                        _failure_text(response), title="Error"
-                    )
-                elif cli.console:
-                    from effgen.ui.render import answer_surface
-                    answer_surface(
-                        response.output,
-                        success=response.success,
-                        partial=_partial,
-                        framed=True,
-                        title="Agent Response",
-                        console=cli.console,
-                    )
-                else:
-                    print(response.output)
+                present_response(cli, response)
 
                 # Frozen one-glance summary: ✓ Done in 3.2s · 2 tools · 1,204 tokens · $…
                 if not quiet:

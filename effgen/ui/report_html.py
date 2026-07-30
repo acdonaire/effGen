@@ -625,11 +625,22 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
     if provider:
         target = f"{target} ({provider})"
 
+    # A run stopped at its iteration cap has no answer but is not an outright
+    # failure: it reads as its own outcome so the progress below is not taken
+    # for a result.
+    stopped = not success and bool(metadata.get("partial"))
+    if success:
+        verdict = _badge("succeeded", "ok")
+    elif stopped:
+        verdict = _badge("stopped at the iteration cap", "warn")
+    else:
+        verdict = _badge("failed", "err")
+
     parts: list[str] = [
         '<div class="verdict">'
         '<div class="verdict-label">Task</div>'
         f'<div class="verdict-value task-text" id="run-task">{_esc(task) or _DASH}</div>'
-        f'<p class="verdict-note">{_badge("succeeded" if success else "failed", "ok" if success else "err")} '
+        f'<p class="verdict-note">{verdict} '
         f"on {_esc(target)}"
         + (f" · run {_esc(run_id)}" if run_id else "")
         + "</p></div>"
@@ -667,7 +678,7 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
 
     error = metadata.get("error")
     if not success and isinstance(error, dict):
-        parts.append("<h2>Error</h2>")
+        parts.append("<h2>Outcome</h2>" if stopped else "<h2>Error</h2>")
         parts.append(_table(
             ["Field", "Value"],
             [
@@ -684,18 +695,34 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
         parts.append(f'<div class="prose">{_esc(data.get("error"))}</div>')
 
     answer = str(data.get("output") or "")
-    parts.append("<h2>Answer</h2>")
-    if answer.strip():
-        parts.append(f'<div class="prose">{_esc(answer)}</div>')
-        if summary_only:
+    if stopped:
+        # The run has no answer; ``output`` is the outcome already shown above.
+        # What it did reach is shown as progress, under its own heading.
+        progress = str(metadata.get("partial_output") or "")
+        parts.append("<h2>Partial progress</h2>")
+        if progress.strip():
             parts.append(
-                '<p class="empty">Rendered from stored run history, which keeps a '
-                "truncated answer and no step trace. Export at run time with "
-                "<code>effgen run --card</code> for the full answer, the tool "
-                "trace and sources.</p>"
+                '<p class="empty">Tool output and reasoning the run had reached '
+                "when the cap stopped it — not an answer.</p>"
+            )
+            parts.append(f'<div class="prose">{_esc(progress)}</div>')
+        else:
+            parts.append(
+                '<p class="empty">The run reached the cap with nothing to report.</p>'
             )
     else:
-        parts.append('<p class="empty">The run produced no answer text.</p>')
+        parts.append("<h2>Answer</h2>")
+        if answer.strip():
+            parts.append(f'<div class="prose">{_esc(answer)}</div>')
+            if summary_only:
+                parts.append(
+                    '<p class="empty">Rendered from stored run history, which keeps a '
+                    "truncated answer and no step trace. Export at run time with "
+                    "<code>effgen run --card</code> for the full answer, the tool "
+                    "trace and sources.</p>"
+                )
+        else:
+            parts.append('<p class="empty">The run produced no answer text.</p>')
 
     if steps:
         parts.append("<h2>Steps</h2>")
