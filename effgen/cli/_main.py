@@ -3241,10 +3241,13 @@ def main() -> None:
         _silence_broken_pipe()
         sys.exit(141)
     except KeyboardInterrupt:
-        print("\n\nInterrupted by user")
+        # Both of these are for the human, so they go to stderr: a command
+        # interrupted or failed mid-pipeline must not put prose on stdout where
+        # a `--json` reader or a downstream `jq` expects the result alone.
+        print("\n\nInterrupted by user", file=sys.stderr)
         sys.exit(130)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         if getattr(args, 'verbose', False):
             import traceback
             traceback.print_exc()

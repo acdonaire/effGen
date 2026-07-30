@@ -463,3 +463,37 @@ def test_piping_to_a_short_reader_exits_141_with_no_stderr_noise(argv):
     assert writer.returncode in (0, 141), f"exit={writer.returncode} stderr={stderr!r}"
     assert "BrokenPipeError" not in stderr, stderr
     assert "Traceback" not in stderr, stderr
+
+
+# --------------------------------------------------------------------------- #
+# an interrupted or failed command leaves stdout for the result alone
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("raised", "code", "marker"),
+    [
+        (KeyboardInterrupt(), 130, "Interrupted by user"),
+        (RuntimeError("upstream refused the request"), 1, "upstream refused the request"),
+    ],
+)
+def test_an_interrupted_run_reports_on_stderr_not_stdout(raised, code, marker, monkeypatch, capsys):
+    """Ctrl-C and an unhandled failure are reported to stderr.
+
+    A run that is interrupted mid-pipeline — ``effgen code`` waiting on a pipe
+    that never closes is one way to get there — still has a reader on stdout
+    expecting the answer or the JSON document, so the message about why it ended
+    belongs on stderr.
+    """
+    def _boom(*_args, **_kwargs):
+        raise raised
+
+    monkeypatch.setattr(_main, "_dispatch", _boom)
+    monkeypatch.setattr(sys, "argv", ["effgen", "code", "-p", "write fib.py", "--json"])
+
+    with pytest.raises(SystemExit) as exc:
+        _main.main()
+
+    captured = capsys.readouterr()
+    assert exc.value.code == code
+    assert marker in captured.err
+    assert marker not in captured.out
+    assert captured.out.strip() == ""
