@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from http.client import HTTPException
 from typing import Any
@@ -38,6 +39,12 @@ logger = logging.getLogger(__name__)
 NCBI_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 # Fixed API host (pinned; the shared SSRF guard also blocks internal targets).
 _ALLOWED_HOSTS = frozenset({"eutils.ncbi.nlm.nih.gov"})
+
+# The two elements an efetch response wraps a record in. A journal article is a
+# ``PubmedArticle``; a chapter indexed from the NCBI Bookshelf (StatPearls,
+# GeneReviews) is a ``PubmedBookArticle`` whose ``BookDocument`` carries the same
+# fields this reads.
+_ARTICLE_TAGS = frozenset({"PubmedArticle", "PubmedBookArticle"})
 
 
 def _user_agent() -> str:
@@ -261,6 +268,15 @@ class PubMedTool(BaseTool):
         raw = await self._http_get_throttled(url)
         data = json.loads(raw.decode("utf-8"))
         esearch = data.get("esearchresult", {}) or {}
+        # A search that matches nothing is an answer; an ERROR field is not one.
+        # NCBI reports a rejected or unserviceable search that way, with HTTP 200
+        # and an empty id list. (``errorlist``/``warninglist`` are advisory —
+        # a phrase not indexed, a term corrected — and stay a successful search.)
+        upstream_error = esearch.get("ERROR") or data.get("ERROR")
+        if upstream_error:
+            raise ConnectionError(
+                f"PubMed returned an error for the search {query!r}: {upstream_error}"
+            )
         ids: list[str] = esearch.get("idlist", []) or []
         summaries: list[dict[str, Any]] = []
         if ids:
@@ -310,9 +326,17 @@ class PubMedTool(BaseTool):
         url = f"{NCBI_BASE}/efetch.fcgi?{params}{self._api_key_query()}"
         raw = await self._http_get_throttled(url, accept="application/xml")
         root = ET.fromstring(raw)
-        articles: list[dict[str, Any]] = []
-        for art in root.findall(".//PubmedArticle"):
-            articles.append(_parse_pubmed_article(art))
+        # Journal articles and Bookshelf chapters are both records; document order
+        # is preserved so a comma-separated fetch answers in the order it read.
+        if root.tag in _ARTICLE_TAGS:
+            found = [root]
+        else:
+            found = [el for el in root.iter() if el.tag in _ARTICLE_TAGS]
+        articles: list[dict[str, Any]] = [_parse_pubmed_article(art) for art in found]
+        if not articles:
+            # A fetch names the records it wants, so a response carrying none is
+            # a failed call — not a result with an empty list in it.
+            raise _no_record_error(pmid_clean, raw, root)
         return {
             "pmid": pmid_clean,
             "count": len(articles),
@@ -340,11 +364,58 @@ def _text(el: ET.Element | None) -> str:
     return "".join(el.itertext()).strip()
 
 
+def _first(art: ET.Element, *paths: str) -> ET.Element | None:
+    """Return the first element matching any of *paths*.
+
+    An element with no children is falsy, so ``find(a) or find(b)`` silently
+    discards a leaf match like ``<Year>2016</Year>`` and falls through to the
+    alternative. These are all leaves, so the identity check is the only correct
+    test.
+    """
+    for path in paths:
+        el = art.find(path)
+        if el is not None:
+            return el
+    return None
+
+
+def _no_record_error(pmid: str, raw: bytes, root: ET.Element) -> Exception:
+    """Return the error for an efetch response that carried no article record.
+
+    The three shapes are reported apart, because they call for different things
+    from the caller: NCBI's own error document names the reason, a response with
+    no article markup at all is an absent or withheld record (or a service under
+    load, which is worth retrying), and a response that *does* carry article
+    markup this parser could not reach is a defect here.
+    """
+    # ``<PubmedArticleSet>`` shares the prefix, so require the tag to end here —
+    # by whitespace, by ``>``, or by the ``/`` of a self-closing element.
+    if re.search(rb"<Pubmed(Book)?Article[\s>/]", raw):
+        return ValueError(
+            f"PubMed returned a record for pmid {pmid} in a structure this tool "
+            "could not read; please report it with that id."
+        )
+    upstream = " ".join(
+        text
+        for text in (_text(el) for el in root.iter() if el.tag.upper() == "ERROR")
+        if text
+    )
+    detail = f" NCBI reported: {upstream}." if upstream else ""
+    first = pmid.split(",")[0]
+    return ConnectionError(
+        f"PubMed returned no record for pmid {pmid}.{detail} Check the id at "
+        f"https://pubmed.ncbi.nlm.nih.gov/{first}/ — if it resolves there, the "
+        "service returned an empty response and the call is worth retrying."
+    )
+
+
 def _parse_pubmed_article(art: ET.Element) -> dict[str, Any]:
     pmid_el = art.find(".//PMID")
-    title_el = art.find(".//ArticleTitle")
-    journal_el = art.find(".//Journal/Title")
-    year_el = art.find(".//PubDate/Year") or art.find(".//PubDate/MedlineDate")
+    # A record for a whole book carries no chapter title, so it is named by its
+    # book; a chapter has no journal, and its book is the containing work.
+    title_el = _first(art, ".//ArticleTitle", ".//Book/BookTitle")
+    journal_el = _first(art, ".//Journal/Title", ".//Book/BookTitle")
+    year_el = _first(art, ".//PubDate/Year", ".//PubDate/MedlineDate")
     authors: list[str] = []
     for au in art.findall(".//AuthorList/Author"):
         last = au.findtext("LastName") or ""
