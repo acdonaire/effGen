@@ -18,7 +18,11 @@ import logging
 from collections.abc import Iterator
 from typing import Any
 
-from effgen.models._adapter_utils import not_loaded_error, provider_runtime_error
+from effgen.models._adapter_utils import (
+    merge_call_overrides,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models.base import (
     BatchModel,
     GenerationConfig,
@@ -286,7 +290,9 @@ class MLXEngine(BatchModel):
             config: Generation configuration
             system_prompt: Optional system prompt override
             skip_chat_template: If True, skip chat template application
-            **kwargs: Additional generation parameters
+            **kwargs: Per-call sampling overrides (``seed``, ``temperature``,
+                ``top_p``, ``max_tokens``, ``stop``, ``repetition_penalty``)
+                take precedence over the same field on *config*.
 
         Returns:
             GenerationResult with generated text and metadata
@@ -301,6 +307,9 @@ class MLXEngine(BatchModel):
 
         if config is None:
             config = GenerationConfig()
+        # A per-call sampling keyword supersedes the config's field for this call
+        # and is consumed here, so it is not also forwarded to mlx-lm.
+        config = merge_call_overrides(config, kwargs)
 
         # Apply chat template
         if not skip_chat_template:
@@ -384,7 +393,9 @@ class MLXEngine(BatchModel):
             config: Generation configuration
             system_prompt: Optional system prompt override
             skip_chat_template: If True, skip chat template application
-            **kwargs: Additional generation parameters
+            **kwargs: Per-call sampling overrides (``seed``, ``temperature``,
+                ``top_p``, ``max_tokens``, ``stop``, ``repetition_penalty``)
+                take precedence over the same field on *config*.
 
         Yields:
             str: Generated text chunks
@@ -399,6 +410,9 @@ class MLXEngine(BatchModel):
 
         if config is None:
             config = GenerationConfig()
+        # A per-call sampling keyword supersedes the config's field for this call
+        # and is consumed here, so it is not also forwarded to mlx-lm.
+        config = merge_call_overrides(config, kwargs)
 
         # Apply chat template
         if not skip_chat_template:
@@ -477,7 +491,9 @@ class MLXEngine(BatchModel):
             config: Generation configuration
             system_prompt: Optional system prompt for all prompts
             skip_chat_template: If True, skip chat template application
-            **kwargs: Additional generation parameters
+            **kwargs: Per-call sampling overrides (``seed``, ``temperature``,
+                ``top_p``, ``max_tokens``, ``stop``, ``repetition_penalty``)
+                take precedence over the same field on *config*.
 
         Returns:
             List of GenerationResult objects

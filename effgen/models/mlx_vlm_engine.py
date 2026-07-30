@@ -13,7 +13,11 @@ import logging
 from collections.abc import Iterator
 from typing import Any
 
-from effgen.models._adapter_utils import not_loaded_error, provider_runtime_error
+from effgen.models._adapter_utils import (
+    merge_call_overrides,
+    not_loaded_error,
+    provider_runtime_error,
+)
 from effgen.models.base import GenerationConfig, GenerationResult, ModelType
 from effgen.models.mlx_engine import MLXEngine
 
@@ -227,7 +231,9 @@ class MLXVLMEngine(MLXEngine):
             skip_chat_template: If True, skip chat template application
             images: List of image paths (str), URLs (str), or PIL Image objects.
                     Pass None or empty list for text-only generation.
-            **kwargs: Additional generation parameters
+            **kwargs: Per-call sampling overrides (``seed``, ``temperature``,
+                ``max_tokens``, ``stop``) take precedence over the same field
+                on *config*.
 
         Returns:
             GenerationResult with generated text and metadata
@@ -252,6 +258,8 @@ class MLXVLMEngine(MLXEngine):
 
         if config is None:
             config = GenerationConfig()
+        # A per-call sampling keyword supersedes the config's field for this call.
+        config = merge_call_overrides(config, kwargs)
 
         try:
             # Format prompt with VLM-specific template that handles image tokens
@@ -351,7 +359,9 @@ class MLXVLMEngine(MLXEngine):
             system_prompt: Optional system prompt override
             skip_chat_template: If True, skip chat template application
             images: List of image paths, URLs, or PIL Image objects
-            **kwargs: Additional generation parameters
+            **kwargs: Per-call sampling overrides (``seed``, ``temperature``,
+                ``max_tokens``, ``stop``) take precedence over the same field
+                on *config*.
 
         Yields:
             str: Generated text chunks
@@ -400,7 +410,9 @@ class MLXVLMEngine(MLXEngine):
             skip_chat_template: If True, skip chat template application
             images_list: Optional list of image lists, one per prompt.
                          Use None entries for text-only prompts in the batch.
-            **kwargs: Additional generation parameters
+            **kwargs: Per-call sampling overrides (``seed``, ``temperature``,
+                ``max_tokens``, ``stop``) take precedence over the same field
+                on *config*.
 
         Returns:
             List of GenerationResult objects, one per prompt
