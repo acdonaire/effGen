@@ -80,11 +80,17 @@ class AgentResponse:
               ``loop_detected``, ``direct_calculator_result``) for heuristically
               recovered answers.
             - ``"max_iterations_partial"`` — the tool loop hit its iteration cap
-              before producing a final answer; the best progress so far is
-              returned in ``output`` (``success=False``, ``partial=True``). The
-              run was truncated, so it is not reported as a completed success.
-            - ``"max_iterations_exhausted"`` — the loop gave up with no answer
-              (``success=False``).
+              before producing a final answer (``success=False``,
+              ``partial=True``). The run has no answer, so ``output`` is the
+              typed outcome: what stopped the run and what to do about it.
+              What the run had reached — tool observations and reasoning, which
+              the model never wrote up as an answer — is kept beside it in
+              ``metadata["partial_output"]``. ``metadata["error"]`` has the
+              structured shape below with ``category="max_iterations"`` and the
+              cap in ``max_iterations``.
+            - ``"max_iterations_exhausted"`` — the loop hit the same cap with no
+              recoverable progress (``success=False``); ``output`` and
+              ``metadata["error"]`` are as above, without ``partial_output``.
             - ``"generation_failed"`` — the model/provider call failed
               (``success=False``); ``metadata["error"]`` is a structured dict
               ``{type, category, provider, model, message, retryable}`` and is
@@ -108,9 +114,9 @@ class AgentResponse:
 
             Success rule: ``success`` is ``True`` only when a run finished with a
             real answer (``final_answer``); a run truncated at the iteration cap
-            (``max_iterations_partial``) reports ``success=False`` with the
-            recovered text in ``output``. ``success`` is never ``True`` with
-            empty output.
+            (``max_iterations_partial``) reports ``success=False`` and never puts
+            the text it recovered where an answer goes. ``success`` is never
+            ``True`` with empty output.
     """
     output: str
     success: bool = True

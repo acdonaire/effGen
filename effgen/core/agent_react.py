@@ -731,51 +731,43 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                 tool_ran=_written_call in _executed_tools,
                 debug_trace=debug_trace,
             )
+        # The run stopped without a final answer. Whatever the scratchpad holds
+        # is a tool observation or a half-finished thought — source material, not
+        # something the model wrote as its answer — so it is reported as progress
+        # under ``partial_output`` and the outcome itself states what happened
+        # and what to do about it.
         if partial_answer:
             partial_answer = sanitize_final_answer(partial_answer) or partial_answer
-            logger.info("Max iterations reached, returning partial answer from scratchpad")
-            # The run was cut off at the iteration cap before the model produced a
-            # final answer. The recovered text is the best progress so far, not a
-            # completed result, so the outcome is not a success: report
-            # success=False with partial=True and keep the recovered text in
-            # output. A caller keyed on success then retries/branches instead of
-            # treating a truncated multi-step run as finished.
-            meta: dict[str, Any] = {
-                "reason": "max_iterations_partial",
-                "partial": True,
-                "tool_calling_strategy": self._tool_calling_strategy.name,
-            }
-            if debug_trace is not None:
-                debug_trace.total_tokens = tokens_used
-                debug_trace.final_answer = partial_answer
-                debug_trace.success = False
-                meta["debug_trace"] = debug_trace
-            return AgentResponse(
-                output=partial_answer,
-                success=False,
-                mode=AgentMode.SINGLE,
-                iterations=iterations,
-                tool_calls=tool_calls,
-                tokens_used=tokens_used,
-                metadata=meta,
-            )
-
-        meta_fail: dict[str, Any] = {
-            "reason": "max_iterations_exhausted",
+        detail = self._iteration_cap_detail(max_iterations, partial_answer)
+        meta: dict[str, Any] = {
+            "reason": (
+                "max_iterations_partial" if partial_answer else "max_iterations_exhausted"
+            ),
+            "error": detail,
             "tool_calling_strategy": self._tool_calling_strategy.name,
         }
+        if partial_answer:
+            meta["partial"] = True
+            meta["partial_output"] = partial_answer
+            logger.info(
+                "Max iterations reached; reporting the cap with the recovered "
+                "progress under partial_output"
+            )
+        else:
+            logger.info("Max iterations reached with no recoverable progress")
         if debug_trace is not None:
             debug_trace.total_tokens = tokens_used
+            debug_trace.final_answer = None
             debug_trace.success = False
-            meta_fail["debug_trace"] = debug_trace
+            meta["debug_trace"] = debug_trace
         return AgentResponse(
-            output="Maximum iterations reached without final answer.",
+            output=detail["message"],
             success=False,
             mode=AgentMode.SINGLE,
             iterations=iterations,
             tool_calls=tool_calls,
             tokens_used=tokens_used,
-            metadata=meta_fail,
+            metadata=meta,
         )
 
     def _model_advertises_tool_calling(self) -> bool:
@@ -883,6 +875,43 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
             tokens_used=tokens_used,
             metadata=meta,
         )
+
+    def _iteration_cap_detail(self, cap: int, progress: str | None) -> dict[str, Any]:
+        """Return the typed outcome for a run that stopped at its iteration cap.
+
+        The loop ran out of iterations before the model wrote a final answer, so
+        the run has no answer to report. What the scratchpad holds at that point
+        is tool output and reasoning: returning it as the result presents a
+        retrieved passage as if the model had written it. The outcome therefore
+        states what happened and what to do, and the recovered text travels
+        beside it as ``metadata["partial_output"]``.
+        """
+        model_id = (
+            getattr(self.model, "model_name", None) or self.model_name or "the model"
+        )
+        step = "iteration" if cap == 1 else "iterations"
+        message = (
+            f"Stopped after {cap} {step} without a final answer: '{model_id}' "
+            "was still taking tool steps when the limit was reached."
+        )
+        if progress:
+            message += (
+                " What it had reached by then is reported as partial progress "
+                "— tool output and reasoning, not an answer."
+            )
+        message += (
+            f" Raise max_iterations above {cap} to give the run more steps, or "
+            "run the task on a model that needs fewer."
+        )
+        return {
+            "type": "MaxIterationsReached",
+            "category": "max_iterations",
+            "provider": self._model_provider(self.model),
+            "model": model_id,
+            "max_iterations": cap,
+            "message": message,
+            "retryable": False,
+        }
 
     def _is_context_retrieval_tool(self, action: str) -> bool:
         """True when ``action`` is a knowledge-base/search tool whose output is
