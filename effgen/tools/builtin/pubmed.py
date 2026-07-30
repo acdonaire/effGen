@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import time
+from http.client import HTTPException
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -91,8 +92,30 @@ def _bucket() -> _TokenBucket:
     return _BUCKETS[key]
 
 
-class _RateLimited(Exception):
+class _Transient(Exception):
+    """An upstream condition worth retrying with backoff.
+
+    Subclasses carry the short label the backoff log names.
+    """
+
+    label = "transient error"
+
+
+class _RateLimited(_Transient):
     """Raised on 429 from NCBI E-utilities to trigger caller backoff."""
+
+    label = "429"
+
+
+class _Truncated(_Transient):
+    """Raised when the connection closes before the response body is complete.
+
+    NCBI sheds load this way as well as with a 429 — a burst that draws 429s
+    often ends with a body cut short mid-read — so it gets the same backoff
+    rather than surfacing as a failed tool call.
+    """
+
+    label = "truncated response"
 
 
 def _http_get(url: str, accept: str = "application/json", timeout: int = 20) -> bytes:
@@ -104,10 +127,19 @@ def _http_get(url: str, accept: str = "application/json", timeout: int = 20) -> 
             return resp.read()
     except HTTPError as e:
         if e.code == 429:
-            raise _RateLimited(f"HTTP 429 from {url}")
-        raise ConnectionError(f"HTTP {e.code} from {url}: {e.reason}")
+            raise _RateLimited(f"HTTP 429 from {url}") from e
+        if e.code in (502, 503, 504):
+            raise _Truncated(f"HTTP {e.code} from {url}: {e.reason}") from e
+        raise ConnectionError(f"HTTP {e.code} from {url}: {e.reason}") from e
     except URLError as e:
-        raise ConnectionError(f"Network error fetching {url}: {e.reason}")
+        if isinstance(e.reason, TimeoutError | ConnectionResetError):
+            raise _Truncated(f"Connection to {url} dropped: {e.reason}") from e
+        raise ConnectionError(f"Network error fetching {url}: {e.reason}") from e
+    except (HTTPException, ConnectionResetError, TimeoutError) as e:
+        # A body cut short (``IncompleteRead``), a reset, or a read timeout
+        # arrives here rather than as a URLError, because the connection was
+        # already open when it broke.
+        raise _Truncated(f"Truncated response from {url}: {e!r}") from e
 
 
 class PubMedTool(BaseTool):
@@ -178,20 +210,22 @@ class PubMedTool(BaseTool):
         self, url: str, accept: str = "application/json", *, retries: int = 4
     ) -> bytes:
         backoff = 1.0
+        last: _Transient | None = None
         for attempt in range(retries + 1):
             await _bucket().acquire()
             try:
                 return await asyncio.to_thread(_http_get, url, accept)
-            except _RateLimited:
+            except _Transient as exc:
+                last = exc
                 if attempt == retries:
-                    raise ConnectionError(f"HTTP 429 from {url} after {retries} retries")
+                    break
                 logger.warning(
-                    "PubMed 429 — backing off %.1fs (attempt %d/%d)",
-                    backoff, attempt + 1, retries,
+                    "PubMed %s — backing off %.1fs (attempt %d/%d)",
+                    exc.label, backoff, attempt + 1, retries,
                 )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 16.0)
-        raise ConnectionError(f"HTTP 429 from {url}")  # unreachable
+        raise ConnectionError(f"{last} after {retries} retries")
 
     async def _execute(
         self,
