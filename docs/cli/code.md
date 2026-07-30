@@ -167,6 +167,16 @@ a failure only when the tool named in the block never ran, or when the answer is
 nothing but the block. A call inside backticks or a fenced block is
 documentation and is left alone either way.
 
+## When the run stops at its iteration cap
+
+A run that spends every step without writing a final answer has no answer to
+report (`"reason": "max_iterations_partial"`, or `max_iterations_exhausted` when
+nothing was recovered). The answer states what stopped it and what to do — raise
+the cap, or run the task on a model that needs fewer steps — and whatever the
+run had reached is reported separately, as `partial_output` in `--json` and
+under a *Partial progress* heading in the terminal. It is tool output and
+reasoning, never presented as a result.
+
 Exit codes: `0` completed, `1` failed, `2` completed but changes were withheld
 because there was no terminal to confirm on and no `--auto-edit`/`--yes` — which
 includes a `--commit` that could not be confirmed.

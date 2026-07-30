@@ -91,7 +91,11 @@ one-shot run and a conversational turn read as the same tool:
 - **The answer.** `run` frames the finished answer in a bordered panel; `chat`
   shows it inline under an `assistant` label. Both render markdown — headings,
   lists, fenced code, and tables — through the same renderer, and both take
-  their color from the selected theme.
+  their color from the selected theme. A run that stopped at its iteration cap
+  has no answer: the panel says what stopped it and what to do, and the tool
+  output and reasoning the run had reached follows below it, labelled as partial
+  progress so retrieved passages are not read as a result — a second panel in
+  `run`, a labelled block under the reply in `chat`.
 - **Streaming.** With `--stream` (and in `chat`), the answer renders live as it
   arrives: a brief `Thinking…` spinner until the first token, then a markdown
   region that updates in place. On a pipe, a redirect, a non-terminal, or with
