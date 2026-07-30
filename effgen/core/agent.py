@@ -1259,7 +1259,10 @@ Question: {task}
                 output_tokens=_safe_int_or_none(output_tokens),
                 duration_s=response.execution_time,
                 cost_usd=_safe_float_or_none(cost),
-                error=error if error is not None else (None if response.success else response.output[:200]),
+                # The store bounds the message itself, marking a cut with an
+                # ellipsis — a stop or classification message is a sentence or
+                # two and reaches the history file intact.
+                error=error if error is not None else (None if response.success else response.output),
                 run_id=metadata.get("run_id"),
                 task=task,
                 output=response.output if response.success else None,

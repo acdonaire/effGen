@@ -119,7 +119,8 @@ def record_run(
     cost_usd:
         Estimated cost in USD, if known.
     error:
-        Short error message if the run failed; ``None`` on success.
+        Message if the run failed; ``None`` on success. Stored truncated to
+        ``PREVIEW_CHARS``, so a caller may pass the whole message.
     run_id:
         Identifier shared with the run's trace spans, so a record can be
         opened and joined to its trace.
@@ -176,7 +177,7 @@ def record_run(
         "output_tokens": output_tokens,
         "duration_s": duration_s,
         "cost_usd": cost_usd,
-        "error": error,
+        "error": _preview(error),
     }
     with _lock:
         _runs.append(record)
