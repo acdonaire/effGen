@@ -53,6 +53,24 @@ def test_same_seed_is_reproducible(engine):
     assert a == b
 
 
+def test_per_call_seed_kwarg_is_reproducible(engine):
+    """``seed=`` passed as a bare keyword behaves like the config field.
+
+    The same call shape is pinned for the other local engines — under test for
+    vLLM and MLX in ``tests/unit/test_local_engine_call_overrides.py``, live for
+    Transformers in ``tests/integration/test_local_seed_reproducible_live.py``.
+    """
+    prompt = "Write one short sentence about the sea."
+    cfg = {"temperature": 0.8, "max_tokens": 12}
+    a = engine.generate(prompt, seed=1234, **cfg).text
+    b = engine.generate(prompt, seed=1234, **cfg).text
+    c = engine.generate(prompt, seed=4321, **cfg).text
+    assert a == b
+    assert a != c
+    # A per-call seed supersedes the config's field for that call.
+    assert engine.generate(prompt, GenerationConfig(seed=4321, **cfg), seed=1234).text == a
+
+
 def test_different_seed_differs(engine):
     prompt = "Write one short sentence about the sea."
     cfg = {"temperature": 0.8, "max_tokens": 12}
