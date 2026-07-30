@@ -42,6 +42,13 @@ def _xfail_if_fireworks_transient(exc: Exception) -> None:
         "503",
         "500",
         "internal server",
+        # Fireworks answers a 503 with a body whose text carries no status code:
+        # {"code": "invalid_request_error", "message": "service overloaded,
+        # please try again later"}. Matching the code alone misses it.
+        "service overloaded",
+        "service unavailable",
+        "overloaded",
+        "capacity",
     )
     if any(marker in msg for marker in transient_markers):
         pytest.xfail(f"Fireworks transient service failure: {exc}")
