@@ -8,6 +8,8 @@ the provider SDK's native quirks:
   collapse to ``"stop"``).
 * provider failures carry a structured, **redacted** ``error_context`` with
   ``{provider, model, request_type, retry_status, remediation, category}``.
+* ``metadata["tool_calls"]`` reports one shape whatever the provider SDK
+  returns, so a single reader works everywhere.
 
 The finish-reason cases below are *golden fixtures* of the raw values each
 provider SDK actually emits, captured so a provider SDK change is caught here
@@ -782,3 +784,506 @@ def test_a_stream_that_yields_nothing_visible_reports_why(provider, caplog):
     assert len(reported) == 1, [r.message for r in caplog.records]
     assert adapter.model_name in reported[0]
     assert "48" in reported[0]
+
+
+# ---------------------------------------------------------------------------
+# Tool calls: one shape every adapter reports
+# ---------------------------------------------------------------------------
+#
+# The shape is defined in ``effgen.models._usage.tool_calls_from_message`` and
+# documented in ``docs/models/tool-calls.md``. Provider SDKs disagree about it:
+# the OpenAI-compatible ones hand back a JSON string, Gemini hands back parsed
+# arguments in a flat block, Anthropic names the block ``tool_use``. The
+# fixtures below reproduce each SDK's own return value so the adapter's real
+# conversion runs, and the assertions are the documented rules.
+
+_MODEL_ARGUMENTS = '{"expression": "6*7"}'
+
+
+def _openai_style_tool_call_response():
+    """A chat-completions response carrying one tool call.
+
+    Every OpenAI-compatible SDK reports ``function.arguments`` as the JSON
+    string the model generated — never as a parsed mapping.
+    """
+    from unittest.mock import MagicMock
+
+    call = MagicMock()
+    call.id = "call_abc123"
+    call.type = "function"
+    call.function.name = "calculator"
+    call.function.arguments = _MODEL_ARGUMENTS
+
+    message = MagicMock()
+    message.content = ""
+    message.reasoning = None
+    message.refusal = None
+    message.tool_calls = [call]
+
+    choice = MagicMock()
+    choice.message = message
+    choice.finish_reason = "tool_calls"
+
+    usage = MagicMock()
+    usage.prompt_tokens = 40
+    usage.completion_tokens = 12
+    usage.total_tokens = 52
+    usage.completion_tokens_details.reasoning_tokens = 0
+    usage.prompt_tokens_details.cached_tokens = 0
+
+    response = MagicMock()
+    response.choices = [choice]
+    response.usage = usage
+    return response
+
+
+class _FakeFunctionCall:
+    """google-genai ``types.FunctionCall``: a call id and parsed ``args``."""
+
+    def __init__(self) -> None:
+        self.id = "iqYraksP"
+        self.name = "calculator"
+        self.args = {"expression": "6*7"}
+
+
+class _FakePart:
+    def __init__(self) -> None:
+        self.thought = False
+        self.text = None
+        self.function_call = _FakeFunctionCall()
+        self.code_execution_result = None
+
+
+class _FakeGeminiUsage:
+    prompt_token_count = 40
+    candidates_token_count = 12
+    total_token_count = 52
+    thoughts_token_count = 0
+
+
+class _FakeTextPart:
+    """A part carrying a plain answer — the turn called nothing."""
+
+    thought = False
+    text = "42"
+    function_call = None
+    code_execution_result = None
+
+
+class _FakeGeminiContent:
+    def __init__(self, parts) -> None:
+        self.parts = parts
+
+
+class _FakeGeminiCandidate:
+    def __init__(self, parts) -> None:
+        self.content = _FakeGeminiContent(parts)
+        self.finish_reason = "STOP"
+        self.grounding_metadata = None
+
+
+class _FakeGeminiResponse:
+    def __init__(self, parts=None) -> None:
+        self.candidates = [_FakeGeminiCandidate(parts or [_FakePart()])]
+        self.usage_metadata = _FakeGeminiUsage()
+        self.safety_ratings = None
+        self.grounding_metadata = None
+
+
+def _loaded_gemini_adapter(*, calls_a_tool: bool = True):
+    """A Gemini adapter whose client returns one part, with or without a call."""
+    from unittest.mock import MagicMock
+
+    from effgen.models.gemini_adapter import GeminiAdapter
+
+    parts = [_FakePart()] if calls_a_tool else [_FakeTextPart()]
+    adapter = GeminiAdapter(model_name="gemini-3.1-flash-lite", api_key="test-key")
+    client = MagicMock()
+    client.models.generate_content.return_value = _FakeGeminiResponse(parts)
+    client.models.count_tokens.return_value.total_tokens = 12
+    adapter.client = client
+    adapter._is_loaded = True
+    return adapter
+
+
+def _tool_calls_of(provider: str) -> list[dict]:
+    """Run *provider*'s adapter over its own SDK's tool-call response."""
+    if provider == "gemini":
+        adapter = _loaded_gemini_adapter()
+    else:
+        adapter = _loaded_adapter(provider)
+        _set_response(adapter, _openai_style_tool_call_response())
+    result = adapter.generate_with_tools("What is 6*7?", _TOOL_SCHEMA)
+    return result.metadata["tool_calls"]
+
+
+_TOOL_SHAPE_PROVIDERS = [
+    "openai", "groq", "cerebras", "together", "fireworks", "hf_inference", "gemini",
+]
+
+
+@pytest.mark.parametrize("provider", _TOOL_SHAPE_PROVIDERS)
+def test_tool_call_shape_is_uniform(provider):
+    """One reader works on every provider.
+
+    ``json.loads(tc["function"]["arguments"])`` is the idiom the OpenAI
+    ecosystem uses and the one effGen's own examples ship; it must succeed
+    whatever SDK produced the call.
+    """
+    import json
+
+    calls = _tool_calls_of(provider)
+
+    assert isinstance(calls, list)
+    assert len(calls) == 1, f"{provider} lost or duplicated the call: {calls}"
+
+    call = calls[0]
+    assert isinstance(call["id"], str)
+    assert isinstance(call["type"], str) and call["type"]
+    assert call["function"]["name"] == "calculator"
+
+    arguments = call["function"]["arguments"]
+    assert isinstance(arguments, str), (
+        f"{provider} reports arguments as {type(arguments).__name__}; the shape "
+        "is a JSON string, which is what the OpenAI-compatible wire requires"
+    )
+    assert json.loads(arguments) == {"expression": "6*7"}
+
+
+@pytest.mark.parametrize("provider", _TOOL_SHAPE_PROVIDERS)
+def test_a_turn_with_no_tool_call_reports_an_empty_list(provider):
+    """The key is present on every turn, so a reader needs no guard."""
+    if provider == "gemini":
+        adapter = _loaded_gemini_adapter(calls_a_tool=False)
+        result = adapter.generate_with_tools("What is 6*7?", _TOOL_SCHEMA)
+        assert result.metadata["tool_calls"] == []
+        return
+    adapter = _loaded_adapter(provider)
+    response = _openai_style_tool_call_response()
+    response.choices[0].message.tool_calls = []
+    response.choices[0].message.content = "42"
+    _set_response(adapter, response)
+
+    result = adapter.generate_with_tools("What is 6*7?", _TOOL_SCHEMA)
+
+    assert result.metadata["tool_calls"] == []
+
+
+def test_an_adapter_never_parses_the_model_s_arguments():
+    """Malformed JSON reaches the caller as the model wrote it.
+
+    Parsing at the adapter turns a call the model got wrong into a call with
+    no arguments, and the caller has no way to tell the two apart.
+    """
+    malformed = '{"expression": "6*7"'  # the model never closed the object
+    adapter = _loaded_adapter("groq")
+    response = _openai_style_tool_call_response()
+    response.choices[0].message.tool_calls[0].function.arguments = malformed
+    _set_response(adapter, response)
+
+    result = adapter.generate_with_tools("What is 6*7?", _TOOL_SCHEMA)
+
+    assert result.metadata["tool_calls"][0]["function"]["arguments"] == malformed
+
+
+def test_gemini_keeps_its_flat_keys_beside_the_nested_block():
+    """Callers written against Gemini's earlier flat shape keep working."""
+    call = _tool_calls_of("gemini")[0]
+
+    assert call["name"] == "calculator"
+    assert call["arguments"] == {"expression": "6*7"}
+    assert call["id"] == "iqYraksP"
+
+
+def test_a_local_engine_turn_reports_an_empty_tool_call_list():
+    """A local engine reports tool calls as text, but the key is still there."""
+    from effgen.models.base import GenerationResult, _stamp_latency
+
+    result = _stamp_latency(
+        GenerationResult(text="42", tokens_used=2, finish_reason="stop",
+                         model_name="Qwen/Qwen2.5-1.5B-Instruct",
+                         metadata={"device": "cuda:0"}),
+        0.5,
+    )
+
+    assert result.metadata["tool_calls"] == []
+
+
+class _FakeResponsesFunctionCall:
+    """A Responses API ``function_call`` output item."""
+
+    type = "function_call"
+    id = "fc_1"
+    name = "calculator"
+    arguments = _MODEL_ARGUMENTS
+
+
+class _FakeResponsesSearchCall:
+    """A server-side tool result the caller must not try to run locally."""
+
+    type = "web_search_call"
+    id = "ws_1"
+    action = None
+
+
+class _FakeResponsesUsage:
+    input_tokens = 40
+    output_tokens = 12
+    input_tokens_details = None
+
+
+class _FakeResponses:
+    id = "resp_1"
+    output = [_FakeResponsesFunctionCall(), _FakeResponsesSearchCall()]
+    usage = _FakeResponsesUsage()
+    status = "completed"
+
+
+def _responses_result():
+    """Run the OpenAI adapter's Responses path over a call to a local tool."""
+    from unittest.mock import MagicMock
+
+    from effgen.models.openai_adapter import OpenAIAdapter
+
+    adapter = OpenAIAdapter(model_name="gpt-5-nano", api_key="test-key")
+    client = MagicMock()
+    client.responses.create.return_value = _FakeResponses()
+    adapter._client = client
+    adapter.client = client
+    adapter._is_loaded = True
+    return adapter.generate_with_native_tools(
+        "What is 6*7?",
+        native_tool_specs=[{"type": "web_search_preview"}],
+        function_tool_specs=[{
+            "type": "function",
+            "name": "calculator",
+            "parameters": {"type": "object", "properties": {}},
+        }],
+    )
+
+
+def test_the_openai_responses_path_still_dispatches_local_tools():
+    """The Responses API names a call ``function_call``, not ``function``.
+
+    The native tool loop filters on that name to decide what to execute
+    locally; an entry that lost it would silently stop the loop from running
+    the tool while still reporting a successful turn.
+    """
+    native_results = _responses_result().metadata["native_tool_results"]
+
+    local_calls = [
+        r for r in native_results
+        if r.get("type") in ("function_call", "function")
+    ]
+
+    assert len(local_calls) == 1
+    call = local_calls[0]
+    assert call["name"] == "calculator"
+    assert call["arguments"] == _MODEL_ARGUMENTS
+
+
+def test_the_openai_responses_path_also_reports_the_nested_block():
+    """A Responses function call is readable with the shape every adapter uses."""
+    import json
+
+    native_results = _responses_result().metadata["native_tool_results"]
+    call = next(r for r in native_results if r.get("type") == "function_call")
+
+    assert call["function"]["name"] == "calculator"
+    assert json.loads(call["function"]["arguments"]) == {"expression": "6*7"}
+
+
+def test_anthropic_reports_tool_calls_beside_its_own_tool_uses():
+    """Anthropic names a call ``tool_use`` and parses its input.
+
+    ``metadata["tool_uses"]`` keeps that native form; ``metadata["tool_calls"]``
+    reports the same calls in the shape every adapter uses, so a reader written
+    once works here too. No key is available on this host, so the conversion is
+    covered against the SDK's own block shape rather than a live call.
+    """
+    import json
+
+    from effgen.models.anthropic_adapter import _tool_calls_from_blocks
+
+    blocks = [
+        {"type": "text", "text": "Let me calculate."},
+        {"type": "tool_use", "id": "toolu_01A", "name": "calculator",
+         "input": {"expression": "6*7"}},
+    ]
+
+    calls = _tool_calls_from_blocks(blocks)
+
+    assert len(calls) == 1
+    assert calls[0]["id"] == "toolu_01A"
+    assert calls[0]["type"] == "function"
+    assert calls[0]["function"]["name"] == "calculator"
+    assert json.loads(calls[0]["function"]["arguments"]) == {"expression": "6*7"}
+
+
+def _replicate_adapter():
+    """A Replicate adapter that advertises native tools and never calls out."""
+    from effgen.models.replicate_adapter import ReplicateAdapter
+
+    adapter = ReplicateAdapter(
+        model_name="ibm-granite/granite-3.3-8b-instruct",
+        api_token="test-key",
+        enable_rate_limiting=False,
+        enable_cost_tracking=False,
+    )
+    adapter._info = dict(adapter._info or {})
+    adapter._info["supports_native_tools"] = True
+    return adapter
+
+
+@pytest.mark.parametrize(
+    ("label", "text", "raw_output"),
+    [
+        ("structured output", "", [{"tool_calls": [
+            {"name": "calculator", "arguments": {"expression": "6*7"}}]}]),
+        ("json text",
+         ('{"tool_calls": [{"name": "calculator", '
+          '"arguments": {"expression": "6*7"}}]}'), None),
+    ],
+)
+def test_replicate_normalizes_a_hosted_model_s_flat_call(label, text, raw_output):
+    """Replicate reports whatever the hosted model emitted.
+
+    The shape is the model's rather than the provider's, so a flat element is
+    coerced into the reported one on each route the adapter reads it from.
+    """
+    import json
+
+    adapter = _replicate_adapter()
+
+    calls = adapter._extract_tool_calls(text, raw_output)
+
+    assert len(calls) == 1, label
+    assert calls[0]["type"] == "function"
+    assert calls[0]["function"]["name"] == "calculator"
+    assert json.loads(calls[0]["function"]["arguments"]) == {"expression": "6*7"}
+
+
+def test_replicate_passes_an_unrecognized_element_through():
+    """An element in neither known form reaches the caller as it arrived.
+
+    Dropping it would hide what the model actually produced, which is the one
+    thing a caller driving an arbitrary hosted model needs to see.
+    """
+    adapter = _replicate_adapter()
+
+    calls = adapter._extract_tool_calls(
+        "", [{"tool_calls": [{"something_else": True}]}]
+    )
+
+    assert calls == [{"something_else": True}]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda a: a.generate_structured(
+                "Give me an object.",
+                {"type": "json_schema",
+                 "json_schema": {"name": "r", "schema": {"type": "object"}}},
+            ),
+            id="generate_structured",
+        ),
+        pytest.param(
+            lambda a: a.generate_with_system_prompt("Hi", "You are terse."),
+            id="generate_with_system_prompt",
+        ),
+    ],
+)
+def test_every_openai_entry_point_reports_the_key(call):
+    """Rule 1 holds on the less-travelled entry points too.
+
+    ``generate`` and ``generate_with_tools`` are the ones a reader reaches for,
+    but the key has to be there on every call that returns a result, or the
+    "no guard needed" promise is only true some of the time.
+    """
+    adapter = _loaded_adapter("openai")
+    response = _openai_style_tool_call_response()
+    response.choices[0].message.tool_calls = []
+    response.choices[0].message.content = '{"answer": 42}'
+    _set_response(adapter, response)
+
+    result = call(adapter)
+
+    assert result.metadata["tool_calls"] == []
+
+
+def _tool_call_delta_chunks():
+    """A stream that splits one call's arguments across several deltas.
+
+    This is how every OpenAI-compatible SDK streams a tool call: the name
+    arrives once, the arguments arrive as fragments that only form valid JSON
+    once concatenated.
+    """
+    from unittest.mock import MagicMock
+
+    def chunk(*, tc_id=None, name=None, args=None, finish=None, usage=None):
+        c = MagicMock()
+        c.usage = usage
+        if usage is None and finish is None and name is None and args is None \
+                and tc_id is None:
+            c.choices = []
+            return c
+        delta = MagicMock()
+        delta.content = None
+        delta.reasoning = None
+        delta.reasoning_content = None
+        if name is None and args is None and tc_id is None:
+            delta.tool_calls = None
+        else:
+            call = MagicMock()
+            call.index = 0
+            call.id = tc_id
+            call.function.name = name
+            call.function.arguments = args
+            delta.tool_calls = [call]
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = finish
+        c.choices = [choice]
+        return c
+
+    usage = MagicMock()
+    usage.prompt_tokens = 40
+    usage.completion_tokens = 12
+    usage.completion_tokens_details.reasoning_tokens = 0
+    usage.prompt_tokens_details.cached_tokens = 0
+
+    return [
+        chunk(tc_id="call_1", name="calculator", args='{"expr'),
+        chunk(args='ession": '),
+        chunk(args='"6*7"}'),
+        chunk(finish="tool_calls", usage=usage),
+    ]
+
+
+@pytest.mark.parametrize(
+    "provider", ["groq", "cerebras", "together", "fireworks"],
+)
+def test_a_streamed_turn_keeps_the_accumulated_argument_string(provider):
+    """Streaming accumulates ``arguments`` deltas; the string is not re-parsed.
+
+    Re-parsing at the end would make a streamed call disagree with the same
+    call made without streaming, which is the divergence this shape removes.
+    """
+    import json
+
+    adapter = _loaded_adapter(provider)
+    adapter._client.chat.completions.create.return_value = _tool_call_delta_chunks()
+
+    list(adapter.generate_stream("What is 6*7?"))
+
+    calls = adapter._last_stream_tool_calls
+    assert len(calls) == 1
+    assert calls[0]["id"] == "call_1"
+    assert calls[0]["type"] == "function"
+    assert calls[0]["function"]["name"] == "calculator"
+    arguments = calls[0]["function"]["arguments"]
+    assert isinstance(arguments, str)
+    assert arguments == '{"expression": "6*7"}'
+    assert json.loads(arguments) == {"expression": "6*7"}
