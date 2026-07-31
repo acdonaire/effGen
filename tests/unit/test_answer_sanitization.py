@@ -254,6 +254,31 @@ def test_every_injected_nudge_is_stripped():
         assert nudge not in sanitize(leaked), f"nudge not stripped: {nudge!r}"
 
 
+def test_every_unknown_tool_observation_is_stripped():
+    """The unknown-tool observation is built per agent, so cover its shapes.
+
+    It names the action the model wrote and lists the agent's tools, so it is
+    not a fixed literal and cannot ride on the ``NUDGE_*`` list above. The
+    observation is generated here rather than hardcoded, so rewording it
+    without updating the strip pattern fails this test.
+    """
+    from effgen.core.agent_runtime import unknown_tool_observation
+
+    cases = [
+        ("weather_lookup", ["calculator"]),
+        ("x", ["calculator", "wikipedia", "web_search"]),
+        ('calculator | Action Input: {"expression": "2 + 2"}', ["calculator"]),
+        ("it's a tool", ["calculator"]),
+        ("", []),
+    ]
+    for action, tools in cases:
+        observation = unknown_tool_observation(action, tools)
+        cleaned = sanitize(f"42 {observation} done")
+        assert "No tool named" not in cleaned, f"not stripped: {observation!r}"
+        assert "The tools you can use are" not in cleaned
+        assert "Use one of them" not in cleaned
+
+
 def test_injection_sites_use_the_shared_nudges():
     """The agent_react injection sites must reference the shared NUDGE_* values.
 
@@ -270,3 +295,16 @@ def test_injection_sites_use_the_shared_nudges():
                  "NUDGE_ALREADY_COMPUTED", "NUDGE_NO_TOOLS", "NUDGE_NOT_USABLE"):
         assert getattr(rt, name, None), f"missing nudge constant {name}"
         assert name in src, f"agent_react no longer references {name}"
+
+    # The unknown-tool observation is built, not a constant. Both loops must
+    # build it from the one shared function, or run() and stream() diverge on
+    # the same model output.
+    import effgen.core.agent_streaming as st
+
+    assert callable(getattr(rt, "unknown_tool_observation", None))
+    for module in (ar, st):
+        # The call, not the import — a module that keeps the import but writes
+        # its own observation text is exactly the drift this guards.
+        assert "unknown_tool_observation(" in inspect.getsource(module), (
+            f"{module.__name__} no longer builds the shared unknown-tool observation"
+        )
