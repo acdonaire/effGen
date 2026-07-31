@@ -20,7 +20,11 @@ from ..models._adapter_utils import default_max_output_tokens
 from ..models.base import GenerationConfig
 from .agent_config import AgentMode
 from .agent_response import StreamEvent
-from .agent_runtime import sanitize_final_answer
+from .agent_runtime import (
+    NUDGE_NO_TOOLS,
+    sanitize_final_answer,
+    unknown_tool_observation,
+)
 
 if TYPE_CHECKING:
     from .messages import Message
@@ -476,16 +480,23 @@ class AgentStreamingMixin:
                             kind="observation", tool=action, text=str(tool_result)
                         )
                 else:
+                    # Same observation the non-streaming loop uses, so run() and
+                    # stream() tell the model the same thing about the same text.
+                    observation = (
+                        unknown_tool_observation(action, list(self.tools))
+                        if self.tools
+                        else NUDGE_NO_TOOLS
+                    )
                     scratchpad += f"\nAction: {action}"
                     scratchpad += f"\nAction Input: {action_input}"
-                    scratchpad += f"\nObservation: Tool '{action}' not found."
+                    scratchpad += f"\nObservation: {observation}"
                     if on_observation:
-                        on_observation(f"Tool '{action}' not found.")
+                        on_observation(observation)
                     if include_events:
                         yield StreamEvent(
                             kind="observation",
                             tool=action,
-                            text=f"Tool '{action}' not found.",
+                            text=observation,
                         )
             else:
                 scratchpad += "\nAction: (continue reasoning)"

@@ -36,6 +36,7 @@ from .execution_tracker import EventType, ExecutionEvent
 from .router import RoutingDecision, RoutingStrategy
 from .tool_calling import (
     ToolCallResult,
+    action_name,
 )
 
 if TYPE_CHECKING:
@@ -58,9 +59,11 @@ from .agent_runtime import (  # noqa: E402
     NUDGE_HAVE_RESULTS,
     NUDGE_NO_TOOLS,
     NUDGE_NOT_USABLE,
+    TEMPLATE_TOOL_USE_INSTRUCTION,
     _infer_provider_from_model,
     find_written_tool_call,
     sanitize_final_answer,
+    unknown_tool_observation,
     written_call_only,
 )
 
@@ -233,6 +236,14 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                 # a custom persona is dropped the moment a tool is attached, even
                 # though the ReAct-text and Gemini-native paths honor it.
                 prompt = f"{self._persona_prefix()}{prompt}"
+                # A chat template hands the model the tool definitions and says
+                # nothing about using them, so state the expectation once, on the
+                # opening turn. Continuation turns already carry their own
+                # instruction, and provider-side tool calling is left alone: it
+                # decides for itself, and the extra line only pushes it into
+                # calls it was right to skip.
+                if not scratchpad and self.tools and self._model_tool_call_support() == "template":
+                    prompt = f"{prompt}\n\n{TEMPLATE_TOOL_USE_INSTRUCTION}"
                 # Pass tool definitions for the chat template
                 tool_defs = self._tool_calling_strategy.format_tools_for_prompt(
                     list(self.tools.values())
@@ -351,7 +362,8 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                 # Convert to legacy dict format for compatibility with rest of loop
                 parsed = self._tool_call_result_to_dict(strategy_result)
             else:
-                strategy_result = self._tool_calling_strategy.parse_response(
+                parse_strategy = self._text_parse_strategy(use_native_prompt)
+                strategy_result = parse_strategy.parse_response(
                     response["text"], tools=self.tools,
                 )
                 # Convert to legacy dict format for compatibility with rest of loop
@@ -577,11 +589,19 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
 
                 # Check if tool is available (handle no-tool mode without raising)
                 if not self.tools or action not in self.tools:
-                    # No tools available - model is hallucinating tools
-                    # Guide it to provide direct answer
+                    # The action names no tool the agent holds. With tools
+                    # attached, say which ones are callable — telling a model
+                    # that owns a calculator there are "no tools available"
+                    # sends it off to do the work itself. With no tools at all,
+                    # answering directly is the only option left.
+                    observation = (
+                        unknown_tool_observation(action, list(self.tools))
+                        if self.tools
+                        else NUDGE_NO_TOOLS
+                    )
                     scratchpad += f"\nAction: {action}"
                     scratchpad += f"\nAction Input: {action_input}"
-                    scratchpad += f"\nObservation: {NUDGE_NO_TOOLS}"
+                    scratchpad += f"\nObservation: {observation}"
                 else:
                     # Execute tool inside tracing span
                     tool_start = time.time()
@@ -781,6 +801,54 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
             logger.debug("Tool-calling capability check failed", exc_info=True)
             return False
 
+    def _model_tool_call_support(self) -> str:
+        """How the loaded model receives tool definitions.
+
+        One of ``"api"``, ``"template"`` or ``"none"`` — see
+        :meth:`effgen.models.base.BaseModel.tool_call_support`. A model that
+        predates the method, or one whose probe raises, is treated as ``"none"``
+        so no prompt changes on its account.
+        """
+        model = getattr(self, "model", None)
+        if model is None or not hasattr(model, "tool_call_support"):
+            return "none"
+        try:
+            return str(model.tool_call_support())
+        except Exception:  # noqa: BLE001 - a capability probe never breaks a run
+            logger.debug("Tool-calling support check failed", exc_info=True)
+            return "none"
+
+    def _text_parse_strategy(self, used_native_prompt: bool) -> Any:
+        """The strategy that reads this turn's text, matched to its prompt.
+
+        ``native`` reads only the tool-call syntax a chat template teaches. When
+        the model cannot be given the definitions at all, the turn above was
+        prompted as ReAct instead, and the native reader finds neither a call
+        nor an answer in it — the run then repeats the same turn to its
+        iteration cap and ends with nothing. Reading such a turn with the
+        hybrid strategy keeps the native syntax first and falls back to the
+        ReAct text that actually arrived.
+
+        Args:
+            used_native_prompt: Whether this turn was prompted for native tool
+                calling.
+
+        Returns:
+            The strategy to parse the turn's text with.
+        """
+        strategy = self._tool_calling_strategy
+        if used_native_prompt or strategy.name != "native":
+            return strategy
+        if self._model_tool_call_support() != "none":
+            return strategy
+        cached = getattr(self, "_text_fallback_strategy", None)
+        if cached is None:
+            from .tool_calling import HybridStrategy
+
+            cached = HybridStrategy()
+            self._text_fallback_strategy = cached
+        return cached
+
     def _written_tool_call_detail(
         self, tool_name: str, answer: str, *, tool_ran: bool = False,
     ) -> dict[str, Any]:
@@ -790,8 +858,10 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         sent the tool definitions natively and still answered with the call as
         text needs replacing, while a model that advertises native tool calling
         but ran the ReAct text protocol only needs to be asked for the native
-        path. *tool_ran* says whether the named tool was dispatched earlier in
-        the run, which decides what the answer failed to do.
+        path. It also names how the definitions reached the model — a provider's
+        tool-calling API or a local chat template — so the advice matches what
+        actually happened. *tool_ran* says whether the named tool was dispatched
+        earlier in the run, which decides what the answer failed to do.
         """
         strategy = self._tool_calling_strategy.name
         model_id = (
@@ -799,11 +869,16 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         )
         advertises = self._model_advertises_tool_calling()
         if strategy in ("native", "hybrid") and advertises:
+            delivery = (
+                "rendered into the prompt by its chat template"
+                if self._model_tool_call_support() == "template"
+                else "sent through the provider's tool-calling API"
+            )
             remedy = (
-                f"'{model_id}' was sent the tool definitions through the "
-                "provider's tool-calling API and answered with the call as text "
-                f"anyway. Run the task on a model that calls tools — "
-                f"{_TOOL_CALLING_EXAMPLES} — or on a larger local model."
+                f"'{model_id}' had the tool definitions {delivery} and answered "
+                "with the call as text anyway. Run the task on a model that "
+                f"calls tools — {_TOOL_CALLING_EXAMPLES} — or on a larger local "
+                "model."
             )
         elif advertises:
             remedy = (
@@ -1272,6 +1347,9 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                         action = action_match.group(1).strip()
                         # Clean up common artifacts
                         action = action.replace('"', '').replace("'", "")
+                        # Drop a same-line "Action Input:"/"Args:" section so the
+                        # name resolves against the registry.
+                        action = action_name(action)
 
                         # Check if action is actually "Final Answer" - treat it as final answer, not tool
                         if action.lower() in ["final answer", "finalanswer", "answer"]:
@@ -1337,7 +1415,11 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
                 input_patterns = [
                     r"Action Input:\s*(.+?)(?=\n(?:Observation|Thought|Action|Question|Final Answer):|$)",
                     r"Input:\s*(.+?)(?=\n(?:Observation|Thought|Action|Question):|$)",
-                    r"Parameters?:\s*(.+?)(?=\n(?:Observation|Thought|Action|Question):|$)"
+                    r"Parameters?:\s*(.+?)(?=\n(?:Observation|Thought|Action|Question):|$)",
+                    # The name is trimmed at an `Args:`/`Arguments:` label too,
+                    # so read the arguments from it rather than calling the tool
+                    # with none.
+                    r"Arg(?:ument)?s:\s*(.+?)(?=\n(?:Observation|Thought|Action|Question):|$)",
                 ]
 
                 for pattern in input_patterns:

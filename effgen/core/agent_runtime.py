@@ -127,9 +127,24 @@ NUDGE_ALREADY_COMPUTED = (
     "using 'Final Answer:' now."
 )
 NUDGE_NO_TOOLS = "No tools available. Please provide your answer directly using 'Final Answer:'."
+# Closing sentence of the unknown-tool observation (built by
+# ``unknown_tool_observation`` below). Kept as its own constant so the text and
+# the pattern that strips it cannot drift apart.
+UNKNOWN_TOOL_CLOSE = "Use one of them, or answer directly using 'Final Answer:'."
 NUDGE_NOT_USABLE = (
     "That was not a usable answer. Call the tool correctly or give a "
     "plain Final Answer."
+)
+
+# Closes the first prompt of a run whose tools reach the model only through a
+# local chat template. Such a template prints the definitions and stops there;
+# nothing tells the model it is expected to use them, and a small model will
+# often answer the question itself instead — returning a confident wrong number
+# rather than calling the tool that would have been right. One line naming the
+# expectation is enough. It is deliberately NOT sent to provider-side tool
+# calling, where it pushes models into calls they were right to skip.
+TEMPLATE_TOOL_USE_INSTRUCTION = (
+    "Use the tools you have been given when they apply to the task."
 )
 
 # Closes a tool prompt when the last observation was a computed result.
@@ -164,6 +179,13 @@ _SCAFFOLD_LITERALS: tuple[str, ...] = (
 )
 _SCAFFOLD_LITERAL_RES: tuple[re.Pattern[str], ...] = tuple(
     re.compile(r"[ \t]*\n?[ \t]*" + re.escape(lit)) for lit in _SCAFFOLD_LITERALS
+)
+# The unknown-tool observation names the action and lists the agent's tools, so
+# it cannot be a fixed literal. Match the whole sentence pair instead, anchored
+# on both fixed ends, so no part of it can reach a user-facing answer.
+_UNKNOWN_TOOL_OBS_RE = re.compile(
+    r"[ \t]*\n?[ \t]*No tool named '[^\n]*?' is available\.[ \t]*"
+    r"The tools you can use are:[^\n]*?" + re.escape(UNKNOWN_TOOL_CLOSE)
 )
 
 # A line-anchored "Final Answer:" / "Answer:" label (allows quote/list prefixes).
@@ -246,6 +268,29 @@ _TAGGED_CALL_RE = re.compile(
     r"<tool_call>|\[TOOL_CALLS\]|<\|python_tag\|>", re.IGNORECASE,
 )
 _CALL_NAME_FIELD_RE = re.compile(r"\"(?:name|function)\"[ \t]*:[ \t]*\"([\w.\-]+)\"")
+
+
+def unknown_tool_observation(action: str, tool_names: list[str] | tuple[str, ...]) -> str:
+    """Observation for an action that names no tool the agent holds.
+
+    The agent has tools here — the name simply did not resolve, usually because
+    the model invented one or wrapped it in extra text. Saying "no tools
+    available" would be false and steers a recoverable step into answering from
+    memory, so the observation names the action that failed and lists what is
+    actually callable.
+
+    Args:
+        action: The unresolved tool name as the model wrote it.
+        tool_names: Names of the tools the agent holds.
+
+    Returns:
+        str: The observation text to append to the scratchpad.
+    """
+    available = ", ".join(tool_names)
+    return (
+        f"No tool named '{action}' is available. "
+        f"The tools you can use are: {available}. {UNKNOWN_TOOL_CLOSE}"
+    )
 
 
 def find_written_tool_call(text: str | None, tool_names: Any) -> str | None:
@@ -361,6 +406,8 @@ def sanitize_final_answer(text: str | None) -> str | None:
     # 1. Remove literal loop-bookkeeping strings (with any adjacent newline).
     for pat in _SCAFFOLD_LITERAL_RES:
         s = pat.sub("", s)
+    # 1b. Remove the unknown-tool observation, whose middle varies per agent.
+    s = _UNKNOWN_TOOL_OBS_RE.sub("", s)
     # 2. Remove tool-echo prefixes, keeping the result after the arrow.
     s = _TOOL_ECHO_RE.sub("", s)
     # 2b. Remove leaked model tool-call syntax (whole constructs, then stray tags).
