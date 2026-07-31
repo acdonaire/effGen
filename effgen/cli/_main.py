@@ -785,9 +785,11 @@ Model id formats:
             "\n"
             "Environment:\n"
             "  EFFGEN_WORKSPACE   directory where the file and shell tools read\n"
-            "                     and write by default. Set it to keep files an\n"
-            "                     agent generates out of the current directory\n"
-            "                     (created if missing). Unset: the current dir.\n"
+            "                     and write by default, and the only directory\n"
+            "                     sandboxed code may write to. Set it to keep\n"
+            "                     files an agent generates out of the current\n"
+            "                     directory (created if missing). Unset: the\n"
+            "                     current dir.\n"
         ),
     )
     run_parser.add_argument('task', nargs='?', default=None, help='Task description (launches interactive wizard if not provided)')
@@ -1076,13 +1078,17 @@ Model id formats:
             "to skip the read.\n"
             "\n"
             "Environment:\n"
-            "  EFFGEN_WORKSPACE          the directory the agent reads and writes\n"
-            "                            (created if missing). Unset: the current\n"
-            "                            directory. -w/--workspace overrides it.\n"
+            "  EFFGEN_WORKSPACE          the directory the agent reads and writes,\n"
+            "                            and the only one sandboxed code may write\n"
+            "                            to (created if missing). Unset: the\n"
+            "                            current directory. -w/--workspace\n"
+            "                            overrides it.\n"
             "  EFFGEN_SANDBOX_BACKEND    docker|subprocess. Docker confines the\n"
             "                            filesystem and network for executed code;\n"
-            "                            the subprocess fallback isolates network\n"
-            "                            and /tmp only.\n"
+            "                            the subprocess fallback isolates the\n"
+            "                            network and confines writes to the\n"
+            "                            workspace, leaving the rest of the\n"
+            "                            filesystem readable but read-only.\n"
         ),
     )
     code_parser.add_argument('task', nargs='?', default=None,
@@ -2482,10 +2488,10 @@ def _quickstart_code_step(
     # take; here the directory follows EFFGEN_HOME, so name that instead.
     if workspace_execution_note(workspace) is not None:
         cli.print_warning(
-            f"Code run in the sandbox cannot read {workspace}: a workspace under "
-            "the system temp directory is not visible to executed code, so the "
-            "file will be written but running it will fail. Set EFFGEN_HOME to a "
-            "directory outside the system temp directory."
+            f"Code run in the sandbox cannot read {workspace}: this sandbox "
+            "cannot bind the workspace into the code's private temp directory, "
+            "so the file will be written but running it will fail. Set "
+            "EFFGEN_HOME to a directory outside the system temp directory."
         )
 
     engine = CodeEngine(

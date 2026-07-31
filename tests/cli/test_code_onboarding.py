@@ -122,6 +122,36 @@ def test_subprocess_backend_is_usable_but_reports_its_limit(tmp_path, monkeypatc
     assert "network isolated" in check.detail and "Docker" in check.fix
 
 
+def test_sandbox_check_does_not_claim_confinement_the_host_cannot_deliver(
+    tmp_path, monkeypatch,
+):
+    """The readiness line states what this host enforces, never more.
+
+    A host without the namespaces the subprocess backend needs still runs
+    code — it just confines nothing. Reporting "writes confined to the
+    workspace" there would send the user into a coding session trusting a
+    boundary that is not present.
+    """
+    from effgen.cli.code import readiness as readiness_mod
+
+    monkeypatch.setenv("EFFGEN_SANDBOX_BACKEND", "subprocess")
+
+    monkeypatch.setattr(readiness_mod, "_subprocess_isolation", lambda: (True, False))
+    check = _named(code_readiness(str(tmp_path)), "sandbox")
+    assert "confined to the workspace" not in check.detail
+    assert "cannot confine" in check.detail
+    assert "network isolated" in check.detail
+
+    monkeypatch.setattr(readiness_mod, "_subprocess_isolation", lambda: (False, False))
+    check = _named(code_readiness(str(tmp_path)), "sandbox")
+    assert "confined to the workspace" not in check.detail
+    assert "no user namespaces" in check.detail
+
+    monkeypatch.setattr(readiness_mod, "_subprocess_isolation", lambda: (True, True))
+    check = _named(code_readiness(str(tmp_path)), "sandbox")
+    assert "writes confined to the workspace" in check.detail
+
+
 def test_a_known_but_unimplemented_backend_says_so(tmp_path, monkeypatch):
     """firecracker resolves as a name but cannot run code, so say that."""
     monkeypatch.setenv("EFFGEN_SANDBOX_BACKEND", "firecracker")

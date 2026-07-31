@@ -183,6 +183,75 @@ def _probe_docker() -> bool:
     return proc.returncode == 0
 
 
+def _subprocess_isolation() -> tuple[bool, bool]:
+    """Return ``(network_isolated, writes_confined)`` for the subprocess backend.
+
+    Asks the backend's own probes, so the line this check prints is the
+    isolation a run on this host would actually get. The two are independent:
+    a host can isolate the network through a user namespace yet still refuse
+    the locked read-only remounts that confine writes. Any error answers
+    ``(False, False)`` — understating isolation is safe, overstating it is not.
+    """
+    import asyncio
+
+    from effgen.security.sandbox import SubprocessSandbox
+
+    async def _probe() -> tuple[bool, bool]:
+        await SubprocessSandbox._probe_caps()
+        unshare_bin = shutil.which("unshare")
+        if not (unshare_bin and SubprocessSandbox._userns_ok):
+            return False, False
+        if not SubprocessSandbox._mountns_ok:
+            return True, False
+        await SubprocessSandbox._probe_confinement(unshare_bin)
+        return True, SubprocessSandbox._confine_ok
+
+    try:
+        return asyncio.run(_probe())
+    except Exception:  # noqa: BLE001 - a diagnostic never fails the run
+        return False, False
+
+
+def _subprocess_readiness(fix_when_confined: str) -> ReadinessCheck:
+    """Describe the subprocess backend as this host can actually run it."""
+    network_isolated, writes_confined = _subprocess_isolation()
+    if writes_confined:
+        return ReadinessCheck(
+            name="sandbox",
+            ok=True,
+            status="limited",
+            detail="subprocess — network isolated, writes confined to the workspace",
+            fix=fix_when_confined,
+        )
+    if network_isolated:
+        return ReadinessCheck(
+            name="sandbox",
+            ok=True,
+            status="limited",
+            detail=(
+                "subprocess — network isolated, but this host cannot confine "
+                "writes: executed code can write anywhere you can"
+            ),
+            fix=(
+                "Install Docker, or run on a host with unprivileged user "
+                "namespaces, to confine writes by executed code."
+            ),
+        )
+    return ReadinessCheck(
+        name="sandbox",
+        ok=True,
+        status="limited",
+        detail=(
+            "subprocess — this host has no user namespaces, so neither the "
+            "network nor writes by executed code are isolated"
+        ),
+        fix=(
+            "Install Docker, or enable unprivileged user namespaces "
+            "(kernel.unprivileged_userns_clone=1), to isolate executed code."
+        ),
+    )
+
+
 def _sandbox_check() -> ReadinessCheck:
     """Report which backend would run the code a session writes.
 
@@ -218,12 +287,8 @@ def _sandbox_check() -> ReadinessCheck:
         )
 
     if configured == "subprocess":
-        return ReadinessCheck(
-            name="sandbox",
-            ok=True,
-            status="limited",
-            detail="subprocess — network isolated, filesystem shared with this machine",
-            fix="Install Docker and unset EFFGEN_SANDBOX_BACKEND for filesystem isolation as well.",
+        return _subprocess_readiness(
+            "Install Docker and unset EFFGEN_SANDBOX_BACKEND to confine reads as well."
         )
 
     if configured == "firecracker":
@@ -253,12 +318,8 @@ def _sandbox_check() -> ReadinessCheck:
             status="ready",
             detail="docker — executed code has no network and its own filesystem",
         )
-    return ReadinessCheck(
-        name="sandbox",
-        ok=True,
-        status="limited",
-        detail="subprocess — network isolated, filesystem shared with this machine",
-        fix="Install Docker for filesystem isolation as well; the subprocess sandbox is used until then.",
+    return _subprocess_readiness(
+        "Install Docker to confine reads as well; the subprocess sandbox is used until then."
     )
 
 

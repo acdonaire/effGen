@@ -76,13 +76,16 @@ def resolve_workspace(explicit: str | None = None) -> Path:
 def workspace_execution_note(workspace: Path) -> str | None:
     """Return a note when executed code cannot reach *workspace*, else ``None``.
 
-    The subprocess sandbox mounts a private ``tmpfs`` over ``/tmp``, so a
-    workspace inside the system temp directory is written by the file tool but
-    invisible to the code the sandbox runs — an import of a file the agent just
-    created would fail with a confusing "no such module". This runs one short
-    probe through the configured sandbox and reports the mismatch up front
-    instead of leaving it to surface mid-loop. Any error in the probe returns
-    ``None``: it informs, it never blocks a run.
+    A sandbox that shields ``/tmp`` with a private ``tmpfs`` but cannot confine
+    writes leaves a workspace inside the system temp directory written by the
+    file tool yet invisible to the code the sandbox runs — an import of a file
+    the agent just created would fail with a confusing "no such module". This
+    runs one short probe through the configured sandbox and reports the
+    mismatch up front instead of leaving it to surface mid-loop. Any error in
+    the probe returns ``None``: it informs, it never blocks a run.
+
+    Where writes are confined, the workspace is bound into the sandbox
+    read-write whatever directory it lives in, so this returns ``None``.
     """
     import asyncio
 
@@ -104,11 +107,12 @@ def workspace_execution_note(workspace: Path) -> str | None:
     if verdict != "hidden":
         return None
     return (
-        f"Code executed in the sandbox cannot see {workspace}: the sandbox gives "
-        "executed code a private temp directory, so a workspace under the system "
-        "temp directory is not readable from it. Files written there are real, "
-        "but running them will fail. Pass -w/--workspace with a directory outside "
-        "the system temp directory."
+        f"Code executed in the sandbox cannot see {workspace}: this sandbox "
+        "gives executed code a private temp directory but cannot bind the "
+        "workspace into it, so a workspace under the system temp directory is "
+        "not readable from it. Files written there are real, but running them "
+        "will fail. Pass -w/--workspace with a directory outside the system "
+        "temp directory."
     )
 
 
