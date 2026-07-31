@@ -132,6 +132,71 @@ def _as_tool_call(
     return name, {}
 
 
+# The scaffolding labels that can follow a tool name on the same line. Each must
+# be followed by ``:`` or ``=`` so a tool genuinely called ``read_input`` or
+# ``list_args`` is never mistaken for one. An optional ``|``/``,``/``;``/``-``
+# separator in front is dropped with the label.
+_SAME_LINE_MARKER_RE = re.compile(
+    r"\s*[|,;-]?\s*\b(?:action\s*)?(?:input|parameters|params|args|arguments)\s*[:=]",
+    re.IGNORECASE,
+)
+_OPENING_BRACKETS = "([{"
+_CLOSING_BRACKETS = ")]}"
+
+
+def _bracket_depths(text: str) -> list[int]:
+    """Bracket nesting depth at each character of *text*.
+
+    An opening bracket reports the depth outside it and a closing bracket the
+    depth it returns to, so a whole ``name(...)`` construct except its interior
+    sits at the depth the name itself does.
+    """
+    depths: list[int] = []
+    depth = 0
+    for char in text:
+        if char in _OPENING_BRACKETS:
+            depths.append(depth)
+            depth += 1
+        elif char in _CLOSING_BRACKETS:
+            depth = max(0, depth - 1)
+            depths.append(depth)
+        else:
+            depths.append(depth)
+    return depths
+
+
+def action_name(raw: str) -> str:
+    """Return just the tool name from the text following an ``Action:`` label.
+
+    Models often put the whole step on one line —
+    ``Action: calculator | Action Input: {"expression": "2 * 3"}`` — and reading
+    to the end of the line makes the tool name the entire remainder, which
+    resolves against nothing. Cutting at the first argument label recovers the
+    name; the arguments are extracted separately and are unaffected.
+
+    Only a label outside brackets ends the name. A call written as
+    ``calculator(input="2 * 3")`` carries the same words inside its argument
+    list, and cutting there would leave ``calculator(`` — so the whole
+    construct is returned and the function-call reader downstream takes it.
+
+    Args:
+        raw: The text captured after ``Action:``/``Tool:``, already stripped of
+            surrounding quotes.
+
+    Returns:
+        str: The tool name, trimmed of the argument section and trailing
+        punctuation. Text with no argument label outside brackets is returned
+        unchanged.
+    """
+    depths = _bracket_depths(raw)
+    name = raw
+    for marker in _SAME_LINE_MARKER_RE.finditer(raw):
+        if depths[marker.start()] == 0:
+            name = raw[: marker.start()]
+            break
+    return name.strip().rstrip(",;|-").strip()
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -361,6 +426,9 @@ class ReActStrategy(ToolCallingStrategy):
                     if action_match:
                         action = action_match.group(1).strip()
                         action = action.replace('"', '').replace("'", "")
+                        # Drop a same-line "Action Input:"/"Args:" section so the
+                        # name resolves against the registry.
+                        action = action_name(action)
 
                         # "Action: Final Answer" → treat as final answer
                         if action.lower() in ["final answer", "finalanswer", "answer"]:
@@ -416,6 +484,10 @@ class ReActStrategy(ToolCallingStrategy):
                     r"Action Input:\s*(.+?)(?=\n(?:Observation|Thought|Action|Question|Final Answer):|$)",
                     r"Input:\s*(.+?)(?=\n(?:Observation|Thought|Action|Question):|$)",
                     r"Parameters?:\s*(.+?)(?=\n(?:Observation|Thought|Action|Question):|$)",
+                    # The name is trimmed at an `Args:`/`Arguments:` label too,
+                    # so read the arguments from it rather than calling the tool
+                    # with none.
+                    r"Arg(?:ument)?s:\s*(.+?)(?=\n(?:Observation|Thought|Action|Question):|$)",
                 ]
                 for pattern in input_patterns:
                     try:
