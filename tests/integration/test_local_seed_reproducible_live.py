@@ -15,23 +15,36 @@ import pytest
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-try:
-    import torch
-
-    _HAS_CUDA = torch.cuda.is_available()
-except Exception:  # pragma: no cover - torch always present in this env
-    _HAS_CUDA = False
-
 from effgen.models import load_model
 from effgen.models.base import GenerationConfig
 
 MODEL_NAME = "transformers:Qwen/Qwen2.5-1.5B-Instruct"
 PROMPT = "Write one imaginative sentence about the ocean."
+NEEDS_GB = 5
 
 
-@pytest.mark.skipif(not _HAS_CUDA, reason="SKIPPED: no CUDA device for local model")
-def test_local_engine_seed_makes_sampling_reproducible():
-    model = load_model(MODEL_NAME)
+def _load(gpu_id):
+    """Load the model on a device with room for it, or skip.
+
+    The box these run on is shared, so a device that is merely present is not
+    a device this can use; without the free-memory check a busy neighbour turns
+    the test into an allocator error instead of a skip.
+    """
+    if gpu_id is None:
+        pytest.skip("SKIPPED: no CUDA device with free memory for local model")
+    import torch
+
+    free, _total = torch.cuda.mem_get_info(int(gpu_id))
+    if free < NEEDS_GB * 1024**3:
+        pytest.skip(
+            f"SKIPPED: device {gpu_id} has {free / 1024**3:.1f} GiB free, "
+            f"needs {NEEDS_GB} GiB"
+        )
+    return load_model(MODEL_NAME, device_map={"": int(gpu_id)})
+
+
+def test_local_engine_seed_makes_sampling_reproducible(gpu_id):
+    model = _load(gpu_id)
 
     def _cfg(seed: int) -> GenerationConfig:
         return GenerationConfig(temperature=0.8, top_p=0.95, max_tokens=40, seed=seed)
@@ -45,10 +58,9 @@ def test_local_engine_seed_makes_sampling_reproducible():
     assert first != other, "a different seed must change the sampled text"
 
 
-@pytest.mark.skipif(not _HAS_CUDA, reason="SKIPPED: no CUDA device for local model")
-def test_local_engine_seed_honored_as_a_per_call_kwarg():
+def test_local_engine_seed_honored_as_a_per_call_kwarg(gpu_id):
     """``seed=`` passed alongside the other sampling kwargs behaves like the config field."""
-    model = load_model(MODEL_NAME)
+    model = _load(gpu_id)
     sampling = {"temperature": 0.8, "top_p": 0.95, "max_tokens": 40}
 
     first = model.generate(PROMPT, seed=1234, **sampling).text
@@ -64,10 +76,9 @@ def test_local_engine_seed_honored_as_a_per_call_kwarg():
     assert model.generate(PROMPT, config, seed=1234).text == first
 
 
-@pytest.mark.skipif(not _HAS_CUDA, reason="SKIPPED: no CUDA device for local model")
-def test_local_engine_streaming_is_seeded_too():
+def test_local_engine_streaming_is_seeded_too(gpu_id):
     """A streamed generation reproduces from a fixed seed, same as a buffered one."""
-    model = load_model(MODEL_NAME)
+    model = _load(gpu_id)
 
     def _stream(**kw) -> str:
         return "".join(model.generate_stream(PROMPT, **kw))
