@@ -43,6 +43,7 @@ from effgen.models._usage import (
     cost_label,
     extract_openai_usage,
     record_tracker_cost,
+    stringify_tool_arguments,
     tool_calls_from_message,
     usage_metadata,
 )
@@ -889,6 +890,7 @@ class OpenAIAdapter(FunctionCallingModel):
             prompt_tokens, completion_tokens, total_tokens, cached_tokens,
             cost, self.total_cost,
         )
+        metadata["tool_calls"] = tool_calls_from_message(message)
         annotate_reasoning_only(
             metadata,
             text=generated_text,
@@ -965,6 +967,7 @@ class OpenAIAdapter(FunctionCallingModel):
             prompt_tokens, completion_tokens, total_tokens, cached_tokens,
             cost, self.total_cost,
         )
+        metadata["tool_calls"] = tool_calls_from_message(choice.message)
         annotate_reasoning_only(
             metadata,
             text=generated_text,
@@ -1249,11 +1252,20 @@ class OpenAIAdapter(FunctionCallingModel):
                     "results": results,
                 })
             elif item_type == "function_call":
+                # The Responses API names a function call "function_call" and
+                # reports it flat. Both are kept — they are what the native
+                # tool loop dispatches on — and the nested ``function`` block
+                # every adapter reports is added beside them.
+                arguments = getattr(item, "arguments", "{}")
                 tool_call_results.append({
                     "type": "function_call",
                     "id": getattr(item, "id", ""),
                     "name": getattr(item, "name", ""),
-                    "arguments": getattr(item, "arguments", "{}"),
+                    "arguments": arguments,
+                    "function": {
+                        "name": getattr(item, "name", ""),
+                        "arguments": stringify_tool_arguments(arguments),
+                    },
                 })
 
         # Usage
