@@ -57,6 +57,7 @@ from effgen.models._adapter_utils import (
 )
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
+from effgen.models._usage import normalize_tool_calls
 from effgen.models.base import (
     BaseModel,
     GenerationConfig,
@@ -704,6 +705,11 @@ class ReplicateAdapter(BaseModel):
         when the messages+tools input schema is used.  The output may be a
         list with a dict element containing a ``tool_calls`` key, or the text
         may be a JSON string.
+
+        The shape is the hosted model's, so each call is coerced into the
+        reported shape: a flat ``{name, arguments}`` element becomes the
+        nested form and an already-parsed ``arguments`` is re-serialized. An
+        element in neither form is passed through as the model wrote it.
         """
         if not self._info.get("supports_native_tools"):
             return []
@@ -714,7 +720,7 @@ class ReplicateAdapter(BaseModel):
                 if isinstance(item, dict) and "tool_calls" in item:
                     tcs = item["tool_calls"]
                     if isinstance(tcs, list):
-                        return tcs
+                        return normalize_tool_calls(tcs)
 
         # Try to parse text as JSON
         stripped = text.strip()
@@ -722,11 +728,11 @@ class ReplicateAdapter(BaseModel):
             try:
                 parsed = json.loads(stripped)
                 if isinstance(parsed, dict) and "tool_calls" in parsed:
-                    return parsed["tool_calls"]
+                    return normalize_tool_calls(parsed["tool_calls"])
                 if isinstance(parsed, list):
                     for item in parsed:
                         if isinstance(item, dict) and "tool_calls" in item:
-                            return item["tool_calls"]
+                            return normalize_tool_calls(item["tool_calls"])
             except (json.JSONDecodeError, ValueError):
                 pass
 

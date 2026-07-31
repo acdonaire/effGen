@@ -32,7 +32,7 @@ from effgen.models._multimodal import (
     require_video_support,
     require_vision_support,
 )
-from effgen.models._usage import record_tracker_cost
+from effgen.models._usage import record_tracker_cost, tool_call_entry
 from effgen.models.base import (
     FunctionCallingModel,
     GenerationConfig,
@@ -748,7 +748,15 @@ class GeminiAdapter(FunctionCallingModel):
                                 args = dict(fc.args)
                             except Exception:
                                 args = {k: fc.args[k] for k in fc.args}
-                        tool_calls.append({"name": fc.name, "arguments": args})
+                        # The nested block is the shape every adapter reports;
+                        # the flat ``name``/``arguments`` keys are kept beside
+                        # it for callers written against the earlier shape.
+                        entry = tool_call_entry(
+                            fc.name, args, call_id=getattr(fc, "id", "") or "",
+                        )
+                        entry["name"] = fc.name
+                        entry["arguments"] = args
+                        tool_calls.append(entry)
                     # Code execution result — surface output in generated text
                     cer = getattr(part, "code_execution_result", None)
                     if cer is not None:

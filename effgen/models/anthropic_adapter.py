@@ -26,6 +26,7 @@ from effgen.models._adapter_utils import (
     provider_runtime_error,
 )
 from effgen.models._multimodal import require_audio_support, require_vision_support
+from effgen.models._usage import tool_call_entry
 from effgen.models.anthropic_cache import validate_breakpoint_count
 from effgen.models.anthropic_models import (
     get_context_length,
@@ -46,6 +47,21 @@ from effgen.observability.spans import ModelAttrs
 from effgen.observability.tracing import set_span_attribute as _set_span_attr
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_calls_from_blocks(raw_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Anthropic ``tool_use`` content blocks into the reported shape.
+
+    Anthropic names a call ``tool_use`` and hands back its input already
+    parsed; the reported ``arguments`` is that input re-serialized, so one
+    reader works across providers.
+    """
+    return [
+        tool_call_entry(b.get("name"), b.get("input"), call_id=b.get("id", ""))
+        for b in raw_blocks
+        if b.get("type") == "tool_use"
+    ]
+
 
 # Anthropic content block types that must be preserved verbatim on re-submit
 _PRESERVE_BLOCK_TYPES = {"thinking", "redacted_thinking", "tool_use"}
@@ -530,6 +546,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 # Prompt caching usage (0 when not used).
                 "cached_input_tokens": cached_input,
                 "cache_creation_tokens": cache_creation,
+                "tool_calls": _tool_calls_from_blocks(raw_blocks),
                 # Preserve ALL content blocks for multi-turn re-submission.
                 # Include this list verbatim as the assistant message content
                 # on the next turn — stripping redacted_thinking causes 400.
@@ -826,8 +843,10 @@ class AnthropicAdapter(FunctionCallingModel):
         """
         Generate text with tool use support.
 
-        Tool use results are surfaced in result.metadata["tool_uses"].
-        Multiple parallel tool_use blocks are supported.
+        Tool calls are surfaced in ``result.metadata["tool_calls"]`` in the
+        shape every adapter reports, and in ``result.metadata["tool_uses"]``
+        in Anthropic's own ``{id, name, input}`` form. Multiple parallel
+        tool_use blocks are supported.
         """
         if not self._is_loaded:
             raise not_loaded_error("anthropic", self.model_name, "generate_with_tools")
@@ -861,6 +880,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 "cached_input_tokens": cached_input,
                 "cache_creation_tokens": cache_creation,
                 "tool_uses": tool_uses,
+                "tool_calls": _tool_calls_from_blocks(raw_blocks),
                 "raw_content_blocks": raw_blocks,
             }
 
@@ -975,6 +995,7 @@ class AnthropicAdapter(FunctionCallingModel):
                 "total_cost": self.total_cost,
                 "cached_input_tokens": cached_input,
                 "cache_creation_tokens": cache_creation,
+                "tool_calls": _tool_calls_from_blocks(raw_blocks),
                 "raw_content_blocks": raw_blocks,
             }
             if thinking:
