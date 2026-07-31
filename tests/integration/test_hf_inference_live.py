@@ -158,6 +158,7 @@ class TestHFInferenceLive:
             assert result.metadata["tool_calls"], "Expected tool calls in response"
             tc = result.metadata["tool_calls"][0]
             assert tc["function"]["name"] == "get_weather"
+            assert isinstance(tc["function"]["arguments"], str)
         finally:
             adapter.unload()
 

@@ -195,6 +195,7 @@ class TestFireworksLiveTools:
         tc = result.metadata.get("tool_calls", [])
         assert len(tc) >= 1, f"Expected at least 1 tool call, got: {tc}"
         assert tc[0]["function"]["name"] == "calculator"
+        assert isinstance(tc[0]["function"]["arguments"], str)
 
     def test_supports_tool_calling(self, tool_adapter):
         assert tool_adapter.supports_tool_calling() is True

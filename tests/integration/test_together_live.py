@@ -141,6 +141,7 @@ class TestTogetherLive:
             tool_calls = result.metadata.get("tool_calls", [])
             assert len(tool_calls) >= 1, f"Expected at least 1 tool call, got {tool_calls}"
             assert tool_calls[0]["function"]["name"] == "get_weather"
+            assert isinstance(tool_calls[0]["function"]["arguments"], str)
         finally:
             adapter.unload()
 

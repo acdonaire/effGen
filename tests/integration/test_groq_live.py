@@ -117,6 +117,9 @@ class TestGroqLive:
             assert len(result.metadata["tool_calls"]) >= 1
             tc = result.metadata["tool_calls"][0]
             assert tc["function"]["name"] == "calculator"
+            # The reported arguments are the JSON string the model generated,
+            # never a mapping the adapter parsed on the caller's behalf.
+            assert isinstance(tc["function"]["arguments"], str)
         finally:
             adapter.unload()
 
