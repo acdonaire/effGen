@@ -72,10 +72,33 @@ print(parsed.answer)  # 30.0
 ```python
 model = load_model("Qwen/Qwen2.5-3B-Instruct")
 print(model.supports_tool_calling())  # True
+print(model.tool_call_support())      # "template"
 
-model = load_model("some-small-model")
-print(model.supports_tool_calling())  # False — use "react" or "auto"
+model = load_model("google/gemma-2-2b-it")
+print(model.supports_tool_calling())  # False — "auto" resolves to ReAct
+print(model.tool_call_support())      # "none"
 ```
+
+`tool_call_support()` names the mechanism behind the boolean, because the two
+mechanisms behave differently:
+
+| value | meaning |
+|---|---|
+| `"api"` | The provider takes tool definitions as a request parameter and returns any call as structured data. A cloud adapter reports this whenever it advertises tool calling for the model. |
+| `"template"` | The definitions are rendered into the prompt by a local chat template. Nothing enforces the format — whether a call is emitted is up to the model. |
+| `"none"` | No native tool calling. The ReAct text protocol is the only way to reach a tool. |
+
+On a local engine, `supports_tool_calling()` asks whether the chat template
+**renders** the definitions, not whether it accepts a `tools` argument. Some
+templates — gemma-2 and Phi-3.5 among them — take the argument and discard it,
+producing a prompt byte-identical to one built with no tools at all. Those
+report `False`, so `"auto"` sends them down the ReAct path, where the tools are
+described in the prompt text and the model can actually reach them.
+
+Because a chat template says nothing about *using* the tools it printed, the
+first turn of a `"template"` model's run closes with one line asking it to use
+them when they apply. Provider-side tool calling does not get that line; it
+makes the call decision itself.
 
 ## How It Works
 

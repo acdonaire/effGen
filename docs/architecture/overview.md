@@ -64,7 +64,16 @@ Abstraction over multiple LLM backends:
 | `MLXVLMEngine` | `mlx_vlm_engine.py` | Apple Silicon vision-language |
 | `GGUFEngine` | `gguf_engine.py` | GGUF quantized models (llama-cpp) |
 
-All implement `BaseModel` with: `generate()`, `generate_stream()`, `count_tokens()`, `get_context_length()`, `load()`, `unload()`, `supports_tool_calling()`
+All implement `BaseModel` with: `generate()`, `generate_stream()`, `count_tokens()`, `get_context_length()`, `load()`, `unload()`, `supports_tool_calling()`, `tool_call_support()`
+
+`tool_call_support()` names the mechanism behind the boolean — `"api"` for
+provider-side tool calling, `"template"` when a local chat template renders the
+definitions into the prompt, `"none"` for neither. It defaults to
+`"api" if supports_tool_calling() else "none"`, so an adapter that implements
+only the boolean needs no change. The chat-template engines override it, and
+report `supports_tool_calling()` as True only when the template actually renders
+the definitions — a template that accepts a `tools` argument and discards it
+gives the model nothing to call.
 
 Additional model infrastructure:
 - `router.py`: `ModelRouter` — automatic model selection by query complexity
