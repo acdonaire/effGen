@@ -11,7 +11,6 @@ model IDs in the format ``accounts/fireworks/models/<id>``.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import random
@@ -31,7 +30,7 @@ from effgen.models._adapter_utils import (
 )
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
-from effgen.models._usage import cost_label
+from effgen.models._usage import cost_label, tool_call_entry, tool_calls_from_message
 from effgen.models.base import (
     BaseModel,
     GenerationConfig,
@@ -444,23 +443,7 @@ class FireworksAdapter(BaseModel):
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
         total_tokens = getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0
 
-        tool_calls: list[dict[str, Any]] = []
-        if hasattr(message, "tool_calls") and message.tool_calls:
-            for tc in message.tool_calls:
-                try:
-                    arguments = tc.function.arguments
-                    if isinstance(arguments, str):
-                        arguments = json.loads(arguments)
-                except (json.JSONDecodeError, AttributeError):
-                    arguments = {}
-                tool_calls.append({
-                    "id": getattr(tc, "id", ""),
-                    "type": getattr(tc, "type", "function"),
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": arguments,
-                    },
-                })
+        tool_calls = tool_calls_from_message(message)
 
         cost: float | None = None
         if self._enable_cost_tracking:
@@ -645,22 +628,17 @@ class FireworksAdapter(BaseModel):
                     logger=logger,
                 )
 
-                finalized: list[dict[str, Any]] = []
-                for _idx, buf in sorted(tool_calls_buf.items()):
-                    raw_args = buf["function"]["arguments"]
-                    try:
-                        parsed_args = json.loads(raw_args) if raw_args else {}
-                    except (json.JSONDecodeError, TypeError):
-                        parsed_args = {}
-                    finalized.append({
-                        "id": buf["id"],
-                        "type": buf["type"],
-                        "function": {
-                            "name": buf["function"]["name"],
-                            "arguments": parsed_args,
-                        },
-                    })
-                self._last_stream_tool_calls = finalized
+                # The accumulated ``arguments`` deltas are kept as the JSON
+                # string the model streamed, matching the non-streaming shape.
+                self._last_stream_tool_calls = [
+                    tool_call_entry(
+                        buf["function"]["name"],
+                        buf["function"]["arguments"],
+                        call_id=buf["id"],
+                        call_type=buf["type"],
+                    )
+                    for _idx, buf in sorted(tool_calls_buf.items())
+                ]
 
             if self._enable_cost_tracking and (prompt_tokens or completion_tokens):
                 cost = CostTracker.get().record(

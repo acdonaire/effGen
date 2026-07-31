@@ -30,7 +30,6 @@ and in docs/models/hf_inference.md.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -50,6 +49,7 @@ from effgen.models._adapter_utils import (
 from effgen.models._cost import CostTracker
 from effgen.models._multimodal import require_audio_support, require_vision_support
 from effgen.models._rate_limit import RateLimitCoordinator
+from effgen.models._usage import tool_calls_from_message
 from effgen.models.base import (
     BaseModel,
     GenerationConfig,
@@ -649,24 +649,7 @@ class HFInferenceAdapter(BaseModel):
         text = choice.message.content or ""
         finish_reason = normalize_finish_reason(choice.finish_reason)
 
-        # Extract tool calls if present
-        tool_calls = []
-        if choice.message.tool_calls:
-            for tc in choice.message.tool_calls:
-                args = tc.function.arguments
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                tool_calls.append({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": args,
-                    },
-                })
+        tool_calls = tool_calls_from_message(choice.message)
 
         # Usage
         usage = resp.usage
