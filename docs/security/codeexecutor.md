@@ -14,17 +14,20 @@ exfiltrates secrets via network calls.
 | Control | DockerSandbox | SubprocessSandbox |
 |---|---|---|
 | Network isolation | ✅ `--network=none` | ✅ `unshare --map-root-user --net` (Linux, no privileges) |
-| Filesystem isolation | ✅ `--read-only` | ⚠️ private tmpfs over `/tmp` via `unshare --mount` (rest of host FS readable) |
+| Write confinement | ✅ `--read-only` | ✅ every mount remounted read-only except the working directory, locked by a nested `unshare --mount` |
+| Read confinement | ✅ `--read-only` (no host mount) | ❌ the host filesystem stays readable |
 | Memory cap | ✅ `--memory=256m` | ⚠️ `ulimit -v` (advisory) |
 | CPU cap | ✅ `--cpus=1` | ⚠️ `ulimit -t` (advisory) |
 | PID limit | ✅ `--pids-limit=100` | ⚠️ `ulimit -u 256` |
 | Capability drop | ✅ `--cap-drop=ALL` | ⚠️ unprivileged user namespace (no host root) |
 | Privilege escalation | ✅ `--no-new-privileges` | ⚠️ user-namespace UID mapping |
 
-> The SubprocessSandbox network and `/tmp` isolation use **unprivileged user
+> The SubprocessSandbox network and write isolation use **unprivileged user
 > namespaces** — they do **not** require `CAP_SYS_ADMIN` or root. If user
 > namespaces are disabled on the host, the sandbox degrades to `ulimit`-only
-> mode and logs a warning naming exactly which protections are inactive.
+> mode and logs a warning naming exactly which protections are inactive. Every
+> `SandboxResult` reports what the run actually enforced in
+> `filesystem_confined` and `writable_root`, so a caller never has to assume.
 
 ---
 
@@ -63,32 +66,65 @@ docker build -f deploy/sandbox/Dockerfile.sandbox \
 ### SubprocessSandbox (Fallback)
 
 Used when Docker daemon is unreachable. Provides **partial isolation** via an
-unprivileged user namespace. Code is fed to the interpreter over **stdin**, so
-no script file is written to the host filesystem.
+unprivileged user namespace: the network is isolated and writes are confined to
+one directory, but reads are not. Code is fed to the interpreter over **stdin**,
+so no script file is written to the host filesystem.
+
+The **scratch space** — the one writable directory — is `SandboxConfig.workdir`,
+else the workspace directory (`EFFGEN_WORKSPACE`), else the calling process's own
+directory. That is the same root the file and shell tools use, so executed code
+can write the files the agent just created and nothing else.
 
 On Linux with unprivileged user namespaces available:
 
 ```bash
-unshare --map-root-user --mount --net bash -c \
-  "ulimit -v 262144 -t 10 -u 256; mount -t tmpfs none /tmp; exec python3 -"
+unshare --map-root-user --mount --net bash -c '
+  ulimit -v 262144 -t 10 -u 256
+  mount --bind "$ROOT" "$ROOT"              # the scratch space, kept writable
+  while IFS= read -r line; do               # every other mount goes read-only
+    ...                                     # (skipping /proc and existing ro mounts)
+    mount -o remount,bind,ro "$mountpoint"
+  done < /proc/self/mountinfo
+  mount -t tmpfs none /tmp                  # private temp directory
+  mount -t tmpfs none /dev/shm              # shared memory keeps working
+  cd "$ROOT"
+  exec unshare --map-root-user --mount python3 -
+'
 ```
 
 - `--map-root-user` — root inside the namespace only; no host privileges.
 - `--net`           — fresh network namespace with no interfaces → outbound
                       network blocked (DNS + connect fail). No `CAP_SYS_ADMIN`.
-- `--mount` + tmpfs — a private tmpfs over `/tmp`, so `rm -rf /tmp/...` and other
-                      writes/deletes under `/tmp` never touch the host.
+- `--mount`         — a private mount namespace in which every mount is
+                      remounted read-only except the scratch space and the
+                      private `/tmp` and `/dev/shm`.
+- the **nested** `unshare` — hands the interpreter a fresh user and mount
+                      namespace, which makes the kernel lock those mounts.
+                      Without it, executed code (root in the outer namespace)
+                      remounts them read-write in one line.
+
+Availability is probed by running the real command over two throwaway
+directories and requiring both halves of the contract: a write inside the
+scratch space succeeds and a write outside it fails. Anything short of that
+leaves confinement off — the result then reports `filesystem_confined=False`
+and the previous behavior applies.
 
 **Caveats:**
-- Filesystem isolation only shields `/tmp`; the rest of the host FS remains
-  *readable* (though not writable as host-root). Use DockerSandbox for full FS
-  isolation.
+- **Reads are not confined.** Executed code can read every file the calling user
+  can read. Use DockerSandbox when reads must be confined too.
+- `/proc` stays writable, because the nested `unshare` writes
+  `/proc/self/uid_map`; executed code therefore sees the host process table.
+- A mount nested *inside* the scratch space becomes read-only; the scratch
+  space's own mount is the one bound read-write.
 - Requires unprivileged user namespaces (`kernel.unprivileged_userns_clone=1`
   / `user.max_user_namespaces>0`). When unavailable, the sandbox degrades to
   `ulimit`-only mode and logs a warning listing the inactive protections.
 - Memory limit is advisory (`ulimit -v`), not enforced by cgroups.
 - A loud `WARNING` is emitted at startup when this fallback is selected as the
   default.
+
+To let a task write somewhere else, widen `EFFGEN_WORKSPACE` to a directory that
+contains it — or, for fully trusted code, set `EFFGEN_SANDBOX_BACKEND=off`.
 
 ### OffSandbox (Explicit opt-out — UNSAFE)
 
@@ -176,6 +212,8 @@ async def main():
     )
     print(f"stdout: {result.stdout}")
     print(f"backend: {result.backend_used}")
+    print(f"writes confined: {result.filesystem_confined}")
+    print(f"writable root: {result.writable_root}")
 
 asyncio.run(main())
 ```
@@ -219,8 +257,11 @@ except Exception as e:
    ```
 4. **Monitor container resource usage** via Docker stats or cAdvisor to detect
    abuse.
-5. **Treat SubprocessSandbox as a development-only fallback.** Never rely on it
-   for production workloads handling untrusted code.
+5. **Treat SubprocessSandbox as a development-only fallback.** It confines
+   writes to the working directory, but reads are not confined, so code that
+   can be prompted into reading a credentials file still can. Never rely on it
+   for workloads handling untrusted code; check `filesystem_confined` on the
+   result if you need to know what a given run enforced.
 
 ---
 

@@ -69,16 +69,25 @@ The agent reads, edits and runs in one directory:
 A file path outside that root is refused with the path named, not silently
 redirected. The deny-list for credential files and sensitive locations
 (`~/.ssh`, `~/.aws`, `.env`, …) applies inside the workspace too. Shell commands
-and executed code start in the workspace, but their reach is decided by the
-sandbox backend below — only Docker gives them a filesystem boundary.
+and executed code start in the workspace, and how far they can reach is decided
+by the sandbox backend below.
 
 Executed code runs in the sandbox effGen already ships — Docker when its daemon
 is reachable, otherwise a subprocess sandbox that isolates the network and
-`/tmp` but shares the filesystem. `EFFGEN_SANDBOX_BACKEND=docker|subprocess`
-pins one. Because the subprocess sandbox gives executed code a private `/tmp`,
-a workspace under the system temp directory is written but not readable from
-executed code; the command says so before the run rather than letting it fail
-mid-loop.
+confines writes to the workspace, leaving the rest of the filesystem readable
+but read-only. `EFFGEN_SANDBOX_BACKEND=docker|subprocess` pins one. A write
+outside the workspace fails with a read-only-filesystem error naming where
+writes are allowed, so the model corrects the path instead of silently
+scattering files across the machine. Only Docker also confines *reads*.
+
+Confinement is not assumed — the sandbox proves it can hold before claiming it,
+and reports what each run actually enforced. A host that allows the namespaces
+but refuses the locked read-only mounts keeps network isolation and says writes
+are not confined; a host without unprivileged user namespaces at all isolates
+neither, and says that too. On those hosts a workspace under the system temp
+directory is written but not readable from executed code, and the command
+reports that before the run rather than letting it fail mid-loop. `effgen
+doctor` names whichever of the three states applies.
 
 `effgen doctor` reports all of this — the workspace it would use, the sandbox
 backend, and whether git is present — with the fix for anything that is not
