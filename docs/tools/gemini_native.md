@@ -168,7 +168,10 @@ except ToolIncompatibleError as e:
 
 Gemini can return multiple `functionCall` parts in a single response turn.
 effGen's adapter encodes **all** of them as `<tool_call>` blocks and surfaces
-them in `GenerationResult.metadata["tool_calls"]` (a list).  The Agent loop
+them in `GenerationResult.metadata["tool_calls"]`, one element per call, in
+the shape every adapter reports (see [Tool calls](../models/tool-calls.md)).
+Gemini additionally carries top-level `name` and `arguments` keys on each
+element for callers written against its earlier flat shape.  The Agent loop
 processes all parallel calls in one iteration.
 
 ```python

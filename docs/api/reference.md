@@ -33,6 +33,10 @@ Run a task synchronously. Returns `AgentResponse` with:
 - `execution_time: float` — Wall-clock seconds
 - `execution_trace: List[Dict]` — Full ReAct trace
 
+`tool_calls` here is a count. The calls themselves are reported by the model
+adapter in `GenerationResult.metadata["tool_calls"]`, in one shape for every
+provider — see [Tool calls](../models/tool-calls.md).
+
 #### `agent.stream(task, mode=AgentMode.AUTO) -> Iterator[str]`
 
 Stream response tokens. Yields strings as they are generated.

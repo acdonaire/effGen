@@ -70,6 +70,9 @@ result = adapter.generate_with_tools("Weather in Paris?", tools=[tool])
 print(result.metadata["tool_calls"])
 ```
 
+The shape of `metadata["tool_calls"]` is the same for every adapter — see
+[Tool calls](tool-calls.md).
+
 For models without native tools, use an Agent with
 `tool_calling_mode="react"`.
 

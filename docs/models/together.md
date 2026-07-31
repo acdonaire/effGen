@@ -116,6 +116,9 @@ print(f"Tool calls: {tool_calls}")
 adapter.unload()
 ```
 
+The shape of `metadata["tool_calls"]` is the same for every adapter — see
+[Tool calls](tool-calls.md).
+
 ## Via ModelLoader
 
 ```python

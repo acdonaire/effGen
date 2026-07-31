@@ -105,10 +105,13 @@ tools = [
 adapter = OpenAIAdapter("gpt-5.4-nano")
 adapter.load()
 result = adapter.generate_with_tools("What is the weather in Tokyo?", tools=tools)
-tool_calls = result.metadata.get("tool_calls", [])
+tool_calls = result.metadata["tool_calls"]
 print(tool_calls)
 adapter.unload()
 ```
+
+The shape of `metadata["tool_calls"]` is the same for every adapter — see
+[Tool calls](tool-calls.md).
 
 ## Using with the Agent
 

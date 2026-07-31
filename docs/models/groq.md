@@ -76,10 +76,15 @@ adapter.load()
 
 result = adapter.generate_with_tools("What is 17 * 23?", tools)
 tool_calls = result.metadata["tool_calls"]
-print(tool_calls)  # [{"function": {"name": "calculator", "arguments": {"expression": "17 * 23"}}}]
+print(tool_calls)
+# [{"id": "call_...", "type": "function",
+#   "function": {"name": "calculator", "arguments": '{"expression": "17 * 23"}'}}]
 
 adapter.unload()
 ```
+
+The shape of `metadata["tool_calls"]` is the same for every adapter — see
+[Tool calls](tool-calls.md).
 
 ## Models
 

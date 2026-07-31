@@ -87,10 +87,13 @@ tools = [
 
 result = adapter.generate_with_tools("What is 17 * 23?", tools=tools)
 print(result.text)
-print("Tool calls:", result.tool_calls)
+print("Tool calls:", result.metadata["tool_calls"])
 
 adapter.unload()
 ```
+
+The hosted model decides what it emits, so each call is coerced into the
+shape every adapter reports — see [Tool calls](tool-calls.md).
 
 For models that don't support native tools, `generate_with_tools()` raises `NotImplementedError` — use an Agent with `strategy="react"` instead.
 

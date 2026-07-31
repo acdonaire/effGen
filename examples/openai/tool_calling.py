@@ -112,7 +112,10 @@ def run_tool_loop(adapter: OpenAIAdapter, user_prompt: str) -> str:
         # Append the assistant message (which includes tool_calls)
         messages.append(result.metadata["message"])
 
-        # Execute each tool and append result messages
+        # Execute each tool and append result messages. Every effGen adapter
+        # reports a call in this shape, so this block is not OpenAI-specific;
+        # the surrounding loop is, because it re-submits the raw assistant
+        # message (metadata["message"]) that only this adapter carries.
         for tc in tool_calls:
             fn_name = tc["function"]["name"]
             fn_args = json.loads(tc["function"]["arguments"])
