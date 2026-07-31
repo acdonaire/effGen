@@ -21,7 +21,9 @@ Skip markers:
 from __future__ import annotations
 
 import asyncio
+import os
 import platform
+import shlex
 import shutil
 import subprocess as sp
 import tempfile
@@ -71,8 +73,56 @@ def _userns_works() -> bool:
         return False
 
 
+def _confinement_works() -> bool:
+    """Return True if this **host** provides the primitives write confinement needs.
+
+    Deliberately does not consult the sandbox's own probe. Asking the
+    implementation whether it works makes the guard self-referential: a
+    regression that breaks confinement also makes the probe report "cannot
+    confine", so every test pinning the contract would skip instead of fail and
+    the suite would stay green through the exact regression it exists to catch.
+
+    So exercise the kernel primitives directly, in a namespace of this
+    function's own making: bind-mount two throwaway directories, remount one
+    read-only, hand the result to a nested user + mount namespace, and require
+    that a write inside succeeds, a write outside fails, and the read-only
+    mount cannot be remounted read-write. When all of that holds the host is
+    capable, and any failure below is the sandbox's, not the environment's.
+    """
+    if not _userns_works() or not shutil.which("unshare"):
+        return False
+    parent = tempfile.mkdtemp(prefix="effgen_host_confine_cap_")
+    try:
+        inside = os.path.join(parent, "in")
+        outside = os.path.join(parent, "out")
+        os.mkdir(inside)
+        os.mkdir(outside)
+        q_in, q_out = shlex.quote(inside), shlex.quote(outside)
+        nested = (
+            f"touch {q_in}/x 2>/dev/null || exit 13; "
+            f"touch {q_out}/y 2>/dev/null && exit 14; "
+            f"mount -o remount,bind,rw {q_out} 2>/dev/null && exit 15; "
+            "exit 0"
+        )
+        inner = (
+            f"mount --bind {q_in} {q_in} 2>/dev/null || exit 10; "
+            f"mount --bind {q_out} {q_out} 2>/dev/null || exit 11; "
+            f"mount -o remount,bind,ro {q_out} 2>/dev/null || exit 12; "
+            f"exec unshare --map-root-user --mount bash -c {shlex.quote(nested)}"
+        )
+        return sp.run(
+            ["unshare", "--map-root-user", "--mount", "bash", "-c", inner],
+            capture_output=True, timeout=60,
+        ).returncode == 0
+    except Exception:
+        return False
+    finally:
+        shutil.rmtree(parent, ignore_errors=True)
+
+
 DOCKER_AVAILABLE = _docker_available()
 USERNS_AVAILABLE = _userns_works()
+CONFINEMENT_AVAILABLE = _confinement_works()
 
 docker_required = pytest.mark.skipif(
     not DOCKER_AVAILABLE,
@@ -81,6 +131,10 @@ docker_required = pytest.mark.skipif(
 userns_required = pytest.mark.skipif(
     not USERNS_AVAILABLE,
     reason="unprivileged user namespaces not available",
+)
+confinement_required = pytest.mark.skipif(
+    not CONFINEMENT_AVAILABLE,
+    reason="this host cannot confine sandbox writes (no locked mount namespace)",
 )
 
 
@@ -234,38 +288,273 @@ class TestSubprocessSandbox:
         finally:
             sentinel.unlink(missing_ok=True)
 
+    @confinement_required
+    def test_unmounting_the_private_tmp_does_not_reveal_the_host_tmp(self):
+        """The private tmpfs must not be removable from inside the sandbox.
+
+        Executed code is root in the sandbox's user namespace, so an unlocked
+        tmpfs over /tmp is one ``umount`` away from the writable host /tmp
+        underneath. The nested namespace locks it: the unmount is refused and
+        a write to the host path leaves nothing behind.
+        """
+        sentinel = Path("/tmp/effgen_host_tmp_unmount_probe.txt")
+        sentinel.unlink(missing_ok=True)
+        workspace = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        try:
+            sb = SubprocessSandbox()
+            cfg = SandboxConfig(
+                backend="subprocess", timeout=15, workdir=str(workspace)
+            )
+            code = (
+                "umount /tmp 2>&1 | head -1\n"
+                f"echo escaped > {sentinel} 2>&1 || echo 'write refused'\n"
+                "echo done\n"
+            )
+            result = _run(sb.run(code, "bash", cfg))
+            assert "done" in result.stdout, result.stdout
+            assert not sentinel.exists(), (
+                "unmounting the private /tmp exposed the writable host /tmp"
+            )
+        finally:
+            sentinel.unlink(missing_ok=True)
+            shutil.rmtree(workspace, ignore_errors=True)
+
+    @confinement_required
+    def test_scratch_root_with_spaces_and_quotes_is_handled(self):
+        """The scratch root is the first caller-controlled string in the
+        sandbox command, so it must survive shell metacharacters."""
+        parent = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        workspace = parent / "a b'c $d*"
+        workspace.mkdir()
+        try:
+            sb = SubprocessSandbox()
+            cfg = SandboxConfig(
+                backend="subprocess", timeout=15, workdir=str(workspace)
+            )
+            code = (
+                "import os\n"
+                "open('inside.txt', 'w').write('ok')\n"
+                "print('cwd', os.getcwd())\n"
+            )
+            result = _run(sb.run(code, "python", cfg))
+            assert result.exit_code == 0, result.stderr
+            assert (workspace / "inside.txt").read_text() == "ok"
+            assert result.writable_root == str(workspace.resolve())
+        finally:
+            shutil.rmtree(parent, ignore_errors=True)
+
+    def test_result_reports_what_the_backend_enforced(self):
+        """``filesystem_confined``/``writable_root`` describe the run that
+        happened, never a guarantee the environment could not provide."""
+        workspace = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        try:
+            sb = SubprocessSandbox()
+            cfg = SandboxConfig(
+                backend="subprocess", timeout=15, workdir=str(workspace)
+            )
+            result = _run(sb.run("print('ok')", "python", cfg))
+            assert result.exit_code == 0, result.stderr
+            assert result.network_isolated is USERNS_AVAILABLE
+            if CONFINEMENT_AVAILABLE:
+                assert result.filesystem_confined is True
+                assert result.writable_root == str(workspace.resolve())
+            else:
+                assert result.filesystem_confined is False
+                assert result.writable_root is None
+        finally:
+            shutil.rmtree(workspace, ignore_errors=True)
+
+    def test_confinement_is_not_claimed_when_the_probe_fails(self, monkeypatch):
+        """A host that cannot lock the mounts gets the previous behavior and
+        says so, rather than reporting a boundary that is not there."""
+        workspace = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        target = workspace.parent / "degraded_probe_target.txt"
+        target.unlink(missing_ok=True)
+        try:
+            reset_sandbox_cache()
+
+            async def _probe_fails(cls, unshare_bin):
+                cls._confine_probed = True
+                cls._confine_ok = False
+
+            monkeypatch.setattr(
+                SubprocessSandbox,
+                "_probe_confinement",
+                classmethod(_probe_fails),
+            )
+            sb = SubprocessSandbox()
+            cfg = SandboxConfig(
+                backend="subprocess", timeout=15, workdir=str(workspace)
+            )
+            result = _run(
+                sb.run(f"open({str(target)!r}, 'w').write('x')", "python", cfg)
+            )
+            assert result.filesystem_confined is False
+            assert result.writable_root is None
+            if USERNS_AVAILABLE:
+                # Unconfined is exactly the previous behavior: the write lands.
+                assert result.exit_code == 0, result.stderr
+                assert target.exists()
+        finally:
+            target.unlink(missing_ok=True)
+            shutil.rmtree(workspace, ignore_errors=True)
+            reset_sandbox_cache()
+
     def test_parse_mem_kb(self):
         assert SubprocessSandbox._parse_mem_kb("256m") == 256 * 1024
         assert SubprocessSandbox._parse_mem_kb("1g") == 1024 * 1024
         assert SubprocessSandbox._parse_mem_kb("512k") == 512
 
-    def test_fs_outside_tmp_is_writable_by_calling_user(self):
-        """Documents (and proves) the real guarantee: the mount namespace
-        only shields /tmp. Anything the calling user owns outside /tmp is
-        still readable AND writable by executed code — this is why the
-        fallback carries a loud warning rather than being called "secure".
+    @confinement_required
+    def test_write_outside_the_scratch_root_is_refused(self):
+        """The contract: executed code writes only inside its scratch space.
 
-        Uses a directory under the home tree (NOT pytest's tmp_path, which
-        defaults to a subdirectory of /tmp and would be shielded by the very
-        isolation this test is proving does NOT extend past /tmp)."""
-        SubprocessSandbox._caps_probed = False
-        if not _run(SubprocessSandbox._unshare_succeeds(["--map-root-user", "true"])):
-            pytest.skip("user namespaces not available")
+        The run's working directory is the one writable host path; every other
+        mount is read-only, so a write to a directory the calling user owns
+        outside it fails with a read-only-filesystem error and leaves no file
+        behind.
+
+        Uses a directory under the home tree (NOT pytest's tmp_path, so the
+        refusal cannot be confused with the private /tmp shadowing the path)."""
         probe_dir = Path(tempfile.mkdtemp(dir=str(Path.home())))
-        target = probe_dir / "outside_tmp_probe.txt"
+        workspace = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        target = probe_dir / "outside_root_probe.txt"
         try:
             sb = SubprocessSandbox()
-            cfg = SandboxConfig(backend="subprocess", timeout=10)
+            cfg = SandboxConfig(
+                backend="subprocess", timeout=15, workdir=str(workspace)
+            )
             code = f"""
 with open({str(target)!r}, "w") as f:
     f.write("written-from-sandbox")
 """
             result = _run(sb.run(code, "python", cfg))
-            assert result.exit_code == 0
-            assert target.exists()
-            assert target.read_text() == "written-from-sandbox"
+            assert result.exit_code != 0, (
+                f"write outside the scratch root succeeded: {result.stdout!r}"
+            )
+            assert "Read-only file system" in result.stderr, result.stderr
+            assert not target.exists(), "a host file was created outside the scratch root"
+            assert result.filesystem_confined is True
+            assert result.writable_root == str(workspace.resolve())
         finally:
             shutil.rmtree(probe_dir, ignore_errors=True)
+            shutil.rmtree(workspace, ignore_errors=True)
+
+    @confinement_required
+    def test_reads_outside_the_scratch_root_still_work(self):
+        """Reads are deliberately NOT confined — only writes are.
+
+        The companion to the test above: the same path that refuses a write is
+        still readable, which is why the fallback warning names read exposure.
+        """
+        probe_dir = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        workspace = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        source = probe_dir / "readable.txt"
+        source.write_text("readable-from-sandbox", encoding="utf-8")
+        try:
+            sb = SubprocessSandbox()
+            cfg = SandboxConfig(
+                backend="subprocess", timeout=15, workdir=str(workspace)
+            )
+            result = _run(sb.run(f"print(open({str(source)!r}).read())", "python", cfg))
+            assert result.exit_code == 0, result.stderr
+            assert "readable-from-sandbox" in result.stdout
+        finally:
+            shutil.rmtree(probe_dir, ignore_errors=True)
+            shutil.rmtree(workspace, ignore_errors=True)
+
+    @confinement_required
+    def test_writes_inside_the_scratch_root_work_relative_and_absolute(self):
+        """The behavior confinement must preserve: the agent's own files.
+
+        Executed code starts in the scratch root, so both a relative path and
+        the absolute form of the same directory are writable.
+        """
+        workspace = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        try:
+            sb = SubprocessSandbox()
+            cfg = SandboxConfig(
+                backend="subprocess", timeout=15, workdir=str(workspace)
+            )
+            code = (
+                "open('relative.txt', 'w').write('r')\n"
+                f"open({str(workspace / 'absolute.txt')!r}, 'w').write('a')\n"
+                "print('both written')\n"
+            )
+            result = _run(sb.run(code, "python", cfg))
+            assert result.exit_code == 0, result.stderr
+            assert (workspace / "relative.txt").read_text() == "r"
+            assert (workspace / "absolute.txt").read_text() == "a"
+        finally:
+            shutil.rmtree(workspace, ignore_errors=True)
+
+    @confinement_required
+    def test_executed_code_cannot_unlock_the_read_only_mounts(self):
+        """Executed code is root in the sandbox's user namespace, so the
+        read-only remounts are only a boundary while the kernel keeps them
+        locked. Remounting read-write, unmounting, and doing either from a
+        nested user namespace of the code's own making must all be refused —
+        and no host file may appear afterwards."""
+        probe_dir = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        workspace = Path(tempfile.mkdtemp(dir=str(Path.home())))
+        target = probe_dir / "after_escape.txt"
+        try:
+            sb = SubprocessSandbox()
+            cfg = SandboxConfig(
+                backend="subprocess", timeout=25, workdir=str(workspace)
+            )
+            code = (
+                "mount -o remount,bind,rw / 2>&1 | head -1\n"
+                "umount / 2>&1 | head -1\n"
+                "unshare --map-root-user --mount "
+                "mount -o remount,bind,rw / 2>&1 | head -1\n"
+                f"echo escaped > {target} 2>&1 || echo 'write still refused'\n"
+            )
+            result = _run(sb.run(code, "bash", cfg))
+            assert "write still refused" in result.stdout, result.stdout
+            assert not target.exists(), "escaped the scratch root after remount attempts"
+        finally:
+            shutil.rmtree(probe_dir, ignore_errors=True)
+            shutil.rmtree(workspace, ignore_errors=True)
+
+    @confinement_required
+    def test_scratch_root_under_the_temp_directory_is_usable(self):
+        """A workspace inside the system temp directory is writable, and the
+        host temp directory around it is not.
+
+        The private tmpfs that shields /tmp would hide such a workspace, so it
+        is skipped there; the read-only remount covers the host temp directory
+        instead, and TMPDIR points at the workspace so temp files still work.
+        """
+        workspace = Path(tempfile.mkdtemp(prefix="effgen_tmp_workspace_"))
+        host_probe = Path(tempfile.gettempdir()) / "effgen_host_tmp_write_probe.txt"
+        host_probe.unlink(missing_ok=True)
+        try:
+            sb = SubprocessSandbox()
+            cfg = SandboxConfig(
+                backend="subprocess", timeout=15, workdir=str(workspace)
+            )
+            code = (
+                "import tempfile\n"
+                "open('relative.txt', 'w').write('r')\n"
+                f"open({str(workspace / 'absolute.txt')!r}, 'w').write('a')\n"
+                "print('scratch:', tempfile.mkstemp()[1])\n"
+                "try:\n"
+                f"    open({str(host_probe)!r}, 'w').write('x')\n"
+                "    print('HOST TMP WRITABLE')\n"
+                "except OSError as exc:\n"
+                "    print('host tmp refused:', exc.strerror)\n"
+            )
+            result = _run(sb.run(code, "python", cfg))
+            assert result.exit_code == 0, result.stderr
+            assert (workspace / "relative.txt").exists()
+            assert (workspace / "absolute.txt").exists()
+            assert "host tmp refused: Read-only file system" in result.stdout
+            assert not host_probe.exists()
+            assert f"scratch: {workspace}" in result.stdout, result.stdout
+        finally:
+            host_probe.unlink(missing_ok=True)
+            shutil.rmtree(workspace, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +565,11 @@ class TestSubprocessFallbackWarning:
     """A WARNING naming the real filesystem exposure fires the first time
     SubprocessSandbox is resolved — whether via auto-fallback (Docker
     unavailable) or an explicit EFFGEN_SANDBOX_BACKEND=subprocess, which
-    previously skipped the warning entirely."""
+    previously skipped the warning entirely.
+
+    The exposure the banner must name is *reads*: the subprocess backend
+    confines writes to the run's working directory but lets executed code read
+    anything the calling user can read."""
 
     def setup_method(self):
         reset_sandbox_cache()
@@ -290,7 +583,7 @@ class TestSubprocessFallbackWarning:
         with caplog.at_level(logging.WARNING, logger="effgen.security.sandbox"):
             _run(get_sandbox(SandboxConfig(backend="subprocess")))
         assert any(
-            "READ and WRITE" in rec.message for rec in caplog.records
+            "reads are NOT confined" in rec.message for rec in caplog.records
         ), "explicit subprocess backend must warn about filesystem exposure"
 
     def test_auto_fallback_warns_when_docker_unavailable(self, caplog, monkeypatch):
@@ -305,7 +598,7 @@ class TestSubprocessFallbackWarning:
         with caplog.at_level(logging.WARNING, logger="effgen.security.sandbox"):
             _run(get_sandbox(SandboxConfig(backend="auto")))
         assert any(
-            "READ and WRITE" in rec.message for rec in caplog.records
+            "reads are NOT confined" in rec.message for rec in caplog.records
         )
 
     def test_warning_fires_once_per_process(self, caplog):
@@ -314,7 +607,9 @@ class TestSubprocessFallbackWarning:
         with caplog.at_level(logging.WARNING, logger="effgen.security.sandbox"):
             _run(get_sandbox(SandboxConfig(backend="subprocess")))
             _run(get_sandbox(SandboxConfig(backend="subprocess")))
-        hits = [rec for rec in caplog.records if "READ and WRITE" in rec.message]
+        hits = [
+            rec for rec in caplog.records if "reads are NOT confined" in rec.message
+        ]
         assert len(hits) == 1
 
     def test_docker_backend_does_not_warn(self, caplog):
@@ -325,7 +620,9 @@ class TestSubprocessFallbackWarning:
             pytest.skip("Docker not available in this environment")
         with caplog.at_level(logging.WARNING, logger="effgen.security.sandbox"):
             _run(get_sandbox(SandboxConfig(backend="docker")))
-        assert not any("READ and WRITE" in rec.message for rec in caplog.records)
+        assert not any(
+            "reads are NOT confined" in rec.message for rec in caplog.records
+        )
 
 
 # ---------------------------------------------------------------------------

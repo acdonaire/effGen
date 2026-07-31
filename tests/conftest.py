@@ -164,6 +164,7 @@ _WARN_ONCE_RECORDS = (
     ("effgen.ui.theme", "_warned_unknown"),
     ("effgen.gpu.cuda_compat", "_warned"),
     ("effgen.security.sandbox", "_subprocess_fallback_warned"),
+    ("effgen.security.sandbox", "_confinement_degraded_warned"),
 )
 
 # Records of something the process learned once and reuses, cleared for the same

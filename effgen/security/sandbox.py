@@ -7,8 +7,12 @@ execution must be isolated from the host.
 Backends (in order of preference):
   DockerSandbox     — Docker container with --read-only --network=none --cap-drop=ALL
                       --pids-limit=100 --memory=256m. Default when Docker is reachable.
-  SubprocessSandbox — fork/exec with ulimit + unshare(1) on Linux. Best-effort.
-                      Used when Docker is unavailable; emits a loud warning.
+  SubprocessSandbox — fork/exec with ulimit + unshare(1) on Linux. Used when Docker is
+                      unavailable; emits a loud warning. Inside its mount namespace every
+                      mount is remounted read-only except the run's scratch space (the
+                      configured workdir, else the workspace directory, else the calling
+                      process's directory) and a private /tmp and /dev/shm, so executed
+                      code writes only inside that scratch space. Reads are not confined.
   FirecrackerSandbox — Stub only; not implemented in this release.
 
 Selection:
@@ -28,6 +32,7 @@ import asyncio
 import logging
 import os
 import platform
+import shlex
 import shutil
 import tempfile
 import time
@@ -83,7 +88,21 @@ class SandboxConfig:
 
 @dataclass
 class SandboxResult:
-    """Result of a sandboxed code execution."""
+    """Result of a sandboxed code execution.
+
+    :attr:`filesystem_confined` and :attr:`writable_root` report what the
+    backend that ran this call actually enforced, so a caller never has to
+    assume a guarantee the environment could not provide:
+
+    ==============================  ====================  ==================
+    Backend state                   ``filesystem_confined``  ``writable_root``
+    ==============================  ====================  ==================
+    docker                          ``True``              ``None``
+    subprocess, namespaces present  ``True``              the scratch root
+    subprocess, degraded            ``False``             ``None``
+    off                             ``False``             ``None``
+    ==============================  ====================  ==================
+    """
 
     stdout: str = ""
     stderr: str = ""
@@ -92,6 +111,27 @@ class SandboxResult:
     timed_out: bool = False
     backend_used: str = ""
     error: str | None = None
+    #: True when writes by the executed code were confined by the backend.
+    filesystem_confined: bool = False
+    #: The only directory writable by the executed code, when the backend
+    #: confined writes to a host path. ``None`` when the backend used its own
+    #: filesystem (docker) or did not confine writes at all.
+    writable_root: str | None = None
+    #: True when the executed code had no outbound network access.
+    network_isolated: bool = False
+
+
+@dataclass
+class _CommandPlan:
+    """The command to run plus what isolation it will actually enforce."""
+
+    argv: list[str]
+    network_isolated: bool = False
+    filesystem_confined: bool = False
+    writable_root: str | None = None
+    #: Directory to advertise as the temp directory, when the sandbox could not
+    #: mount a private ``/tmp`` over the host one.
+    tmpdir_override: str | None = None
 
 
 def _resolve_workdir(config: SandboxConfig) -> str | None:
@@ -112,6 +152,108 @@ def _resolve_workdir(config: SandboxConfig) -> str | None:
         "directory instead.", workdir,
     )
     return None
+
+
+def _is_within(root: str, path: str) -> bool:
+    """True when *path* is *root* itself or lives underneath it."""
+    try:
+        root_r = os.path.realpath(root).rstrip(os.sep) or os.sep
+        path_r = os.path.realpath(path).rstrip(os.sep) or os.sep
+    except OSError:
+        return False
+    return path_r == root_r or path_r.startswith(root_r + os.sep)
+
+
+def _scratch_root(config: SandboxConfig) -> str | None:
+    """Return the one directory executed code may write into, or ``None``.
+
+    Resolved with the same rule the file and shell tools use, so executed code
+    and the tools that wrote the files agree on a single root:
+    :attr:`SandboxConfig.workdir`, else the configured workspace directory
+    (``EFFGEN_WORKSPACE``), else the calling process's own directory.
+
+    ``None`` means no root can be claimed — the candidate is missing, is not a
+    directory, or is the filesystem root itself (confining writes to ``/``
+    would confine nothing). Callers treat ``None`` as "do not claim
+    confinement".
+    """
+    candidate = _resolve_workdir(config)
+    if candidate is None:
+        workspace = None
+        try:
+            from ..tools.builtin._fs import default_workspace
+            workspace = default_workspace()
+        except Exception:  # noqa: BLE001 - the workspace helper is optional here
+            workspace = None
+        if workspace is not None:
+            candidate = str(workspace)
+        else:
+            try:
+                candidate = os.getcwd()
+            except OSError:
+                return None
+    try:
+        root = os.path.realpath(candidate)
+    except OSError:
+        return None
+    if root == os.sep:
+        logger.warning(
+            "Sandbox writes cannot be confined: the run directory is the "
+            "filesystem root. Set EFFGEN_WORKSPACE to a project directory to "
+            "narrow it."
+        )
+        return None
+    if not os.path.isdir(root):
+        return None
+    return root
+
+
+def _confine_script(root: str, private_tmp: bool) -> str:
+    """Build the shell prologue that makes *root* the only writable directory.
+
+    Runs as root inside the sandbox's own user namespace, so every step is an
+    unprivileged mount operation on the private mount namespace:
+
+    1. bind *root* onto itself, giving it a mount entry of its own;
+    2. remount every other mount read-only, skipping ``/proc`` (the nested
+       ``unshare`` writes ``uid_map`` there) and mounts that already are;
+    3. mount a fresh ``tmpfs`` over ``/tmp`` (unless *root* lives under the
+       temp directory, where that would hide the workspace) and over
+       ``/dev/shm``, so temp files and shared memory keep working;
+    4. ``cd`` into *root* — the inherited working directory was opened before
+       the bind, so relative writes would otherwise land on the read-only
+       mount underneath.
+
+    The caller appends ``exec unshare --map-root-user --mount <interpreter>``:
+    handing the interpreter a nested user and mount namespace is what makes the
+    kernel mark these mounts locked. Without it the executed code — which is
+    root in the outer namespace — simply remounts them read-write again.
+    """
+    quoted = shlex.quote(root)
+    parts = [
+        f"mount --bind {quoted} {quoted} 2>/dev/null; ",
+        # No globbing while the mountinfo line is split into fields.
+        "set -f; ",
+        "while IFS= read -r __l; do ",
+        'set -- $__l; ',
+        # Field 5 is the mount point (\040-escaped), field 6 its options.
+        '__m=$(printf "%b" "$5"); ',
+        'case "$__m" in /proc|/proc/*) continue;; esac; ',
+        'case "$6" in ro|ro,*) continue;; esac; ',
+        f'if [ "$__m" = {quoted} ]; then continue; fi; ',
+        'mount -o remount,bind,ro "$__m" 2>/dev/null; ',
+        "done < /proc/self/mountinfo; ",
+        "set +f; ",
+    ]
+    if private_tmp:
+        parts.append("mount -t tmpfs none /tmp 2>/dev/null; ")
+    parts.append("mount -t tmpfs none /dev/shm 2>/dev/null; ")
+    parts.append(
+        f"cd {quoted} 2>/dev/null || "
+        "{ echo 'sandbox: the writable directory could not be entered' >&2; "
+        "exit 1; }; "
+    )
+    return "".join(parts)
 
 
 def _killed_at_deadline(exit_code: int | None, elapsed: float, timeout: float) -> bool:
@@ -290,6 +432,11 @@ class DockerSandbox(SandboxBase):
                 execution_time=time.monotonic() - start,
                 timed_out=timed_out,
                 backend_used="docker",
+                # The container runs --read-only on its own filesystem and no
+                # host path is mounted writable, so there is no host root to
+                # name. Isolation itself is unchanged.
+                filesystem_confined=True,
+                network_isolated=not config.network_enabled,
             )
 
         except Exception as exc:
@@ -379,10 +526,20 @@ class SubprocessSandbox(SandboxBase):
 
     - ``--net``   a fresh network namespace with no interfaces → outbound
                   network is blocked (DNS + connect fail).
-    - ``--mount`` a private mount namespace in which a fresh ``tmpfs`` is
-                  mounted over ``/tmp``, so writes/deletes under ``/tmp``
-                  (e.g. ``rm -rf /tmp/evil``) never reach the host.
+    - ``--mount`` a private mount namespace in which every mount is remounted
+                  **read-only** except the run's scratch space, which is bound
+                  back read-write, plus a fresh ``tmpfs`` over ``/tmp`` and
+                  ``/dev/shm``. The interpreter is then handed off through a
+                  *nested* ``unshare --map-root-user --mount``, which makes the
+                  kernel lock those mounts: executed code cannot remount them
+                  read-write or unmount them, from its own namespace or a
+                  nested one it creates.
     - ``ulimit``  address-space, CPU-time and process-count caps.
+
+    The scratch space is :attr:`SandboxConfig.workdir`, else the configured
+    workspace directory (``EFFGEN_WORKSPACE``), else the calling process's own
+    directory — the same root the file and shell tools use, so executed code
+    can write the files the agent just created and nothing else.
 
     Code is fed to the interpreter over **stdin** (``python3 -`` / ``bash -s``),
     so no script file is written to the host filesystem.
@@ -390,17 +547,21 @@ class SubprocessSandbox(SandboxBase):
     Capability probing happens once per process. Each isolation primitive
     degrades independently: if user namespaces are unavailable the sandbox
     falls back to ``ulimit``-only mode and emits a warning describing exactly
-    which protections are NOT in effect.
+    which protections are NOT in effect. Write confinement is probed by running
+    the real command and checking that a write inside the scratch space
+    succeeds while one outside it fails; anything short of that leaves
+    confinement off rather than claimed. Every result reports what was actually
+    enforced in ``filesystem_confined`` / ``writable_root``.
 
     **Caveats / limitations:**
-    - Filesystem isolation only shields ``/tmp`` and namespace-private mounts;
-      the rest of the host filesystem is still reachable with the calling
-      user's own permissions — readable everywhere that user can read, and
-      **writable** everywhere that user can write (the user namespace maps
-      "root" inside the sandbox to the real invoking uid, it does not grant
-      extra privilege). Use DockerSandbox for filesystem confinement.
+    - **Reads are not confined.** Executed code can read every file the calling
+      user can read. Use DockerSandbox when reads must be confined too.
+    - ``/proc`` stays writable, because the nested ``unshare`` needs to write
+      ``/proc/self/uid_map``; executed code therefore sees the host process
+      table.
     - Requires unprivileged user namespaces to be enabled
       (``kernel.unprivileged_userns_clone=1`` / ``user.max_user_namespaces>0``).
+      Without them nothing is confined and a warning says so.
     - Memory limit is advisory (via ``ulimit -v``), not hard-enforced like cgroups.
     - Should only be used when Docker is unavailable.
 
@@ -423,6 +584,10 @@ class SubprocessSandbox(SandboxBase):
     _userns_ok: bool = False
     _mountns_ok: bool = False
 
+    # Probed once per process: does the read-only remount recipe actually hold?
+    _confine_probed: bool = False
+    _confine_ok: bool = False
+
     async def is_available(self) -> bool:
         """Always available (subprocess is a Python built-in)."""
         return True
@@ -436,13 +601,15 @@ class SubprocessSandbox(SandboxBase):
         """Run *code* in an isolated subprocess (user-namespace confinement when available)."""
         start = time.monotonic()
         try:
-            cmd, net_isolated, fs_isolated = await self._build_cmd(language, config)
+            plan = await self._build_cmd(language, config)
+            cmd = plan.argv
             logger.debug(
-                "SubprocessSandbox cmd: %s (net=%s, fs=%s)",
-                " ".join(cmd), net_isolated, fs_isolated,
+                "SubprocessSandbox cmd: %s (net=%s, fs=%s, root=%s)",
+                " ".join(cmd), plan.network_isolated,
+                plan.filesystem_confined, plan.writable_root,
             )
 
-            env = self._build_env()
+            env = self._build_env(plan.tmpdir_override)
 
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -481,6 +648,9 @@ class SubprocessSandbox(SandboxBase):
                 execution_time=time.monotonic() - start,
                 timed_out=timed_out,
                 backend_used="subprocess",
+                filesystem_confined=plan.filesystem_confined,
+                writable_root=plan.writable_root,
+                network_isolated=plan.network_isolated,
             )
         except Exception as exc:
             logger.error("SubprocessSandbox error: %s", exc)
@@ -495,53 +665,72 @@ class SubprocessSandbox(SandboxBase):
 
     async def _build_cmd(
         self, language: str, config: SandboxConfig
-    ) -> tuple[list[str], bool, bool]:
-        """
-        Assemble the execution command.
-
-        Returns:
-            (cmd_list, net_isolated, fs_isolated)
-        """
+    ) -> _CommandPlan:
+        """Assemble the execution command and report what it will enforce."""
         stdin_cmd = self._LANG_STDIN_CMD.get(language, ["python3", "-"])
         interpreter = " ".join(stdin_cmd)
         mem_kb = self._parse_mem_kb(config.memory_limit)
         ulimit_prefix = (
             f"ulimit -v {mem_kb} -t {config.timeout} -u 256 2>/dev/null; "
         )
+        plain = _CommandPlan(argv=["bash", "-c", f"{ulimit_prefix}exec {interpreter}"])
 
         if platform.system() != "Linux":
-            return ["bash", "-c", f"{ulimit_prefix}exec {interpreter}"], False, False
+            return plain
 
         await self._probe_caps()
         unshare_bin = shutil.which("unshare")
 
-        if unshare_bin and self._userns_ok:
-            # Build the inner shell: mount a private tmpfs over /tmp when the
-            # mount namespace is available (we are root inside the user ns),
-            # then apply ulimits and exec the interpreter reading from stdin.
-            want_net = not config.network_enabled
-            inner = ulimit_prefix
+        if not (unshare_bin and self._userns_ok):
+            # Degraded: no user namespaces. ulimit-only, no net/fs isolation.
+            logger.warning(
+                "SubprocessSandbox: unprivileged user namespaces unavailable; "
+                "running in ulimit-only mode. Network is NOT isolated and "
+                "filesystem writes are NOT confined. Install Docker or enable "
+                "kernel.unprivileged_userns_clone for stronger isolation."
+            )
+            return plain
+
+        want_net = not config.network_enabled
+        root: str | None = None
+        if self._mountns_ok:
+            root = _scratch_root(config)
+            if root is not None:
+                await self._probe_confinement(unshare_bin)
+                if not self._confine_ok:
+                    _warn_confinement_degraded()
+                    root = None
+
+        inner = ulimit_prefix
+        tmpdir_override: str | None = None
+        if root is not None:
+            # A scratch space under the system temp directory would be hidden by
+            # a private tmpfs over /tmp; skip it there and point temp-file APIs
+            # at the scratch space instead. Host /tmp is read-only either way.
+            private_tmp = not _is_within(tempfile.gettempdir(), root)
+            if not private_tmp:
+                tmpdir_override = root
+            inner += _confine_script(root, private_tmp)
+            # The nested namespace is what locks the mounts above in place.
+            inner += f"exec {unshare_bin} --map-root-user --mount {interpreter}"
+        else:
             if self._mountns_ok:
                 # /tmp gets a fresh tmpfs so host /tmp is untouched.
                 inner += "mount -t tmpfs none /tmp 2>/dev/null; "
             inner += f"exec {interpreter}"
 
-            unshare_flags = [unshare_bin, "--map-root-user"]
-            if self._mountns_ok:
-                unshare_flags.append("--mount")
-            if want_net:
-                unshare_flags.append("--net")
-            cmd = unshare_flags + ["bash", "-c", inner]
-            return cmd, want_net, self._mountns_ok
-
-        # Degraded: no user namespaces. ulimit-only, no net/fs isolation.
-        logger.warning(
-            "SubprocessSandbox: unprivileged user namespaces unavailable; "
-            "running in ulimit-only mode. Network is NOT isolated and "
-            "filesystem writes are NOT confined. Install Docker or enable "
-            "kernel.unprivileged_userns_clone for stronger isolation."
+        unshare_flags = [unshare_bin, "--map-root-user"]
+        if self._mountns_ok:
+            unshare_flags.append("--mount")
+        if want_net:
+            unshare_flags.append("--net")
+        return _CommandPlan(
+            argv=unshare_flags + ["bash", "-c", inner],
+            network_isolated=want_net,
+            filesystem_confined=root is not None,
+            writable_root=root,
+            tmpdir_override=tmpdir_override,
         )
-        return ["bash", "-c", f"{ulimit_prefix}exec {interpreter}"], False, False
 
     @classmethod
     async def _probe_caps(cls) -> None:
@@ -553,6 +742,63 @@ class SubprocessSandbox(SandboxBase):
             ["--map-root-user", "--mount", "true"]
         )
         cls._caps_probed = True
+
+    @classmethod
+    async def _probe_confinement(cls, unshare_bin: str) -> None:
+        """Probe (once) whether write confinement really holds in this environment.
+
+        Availability is not "does ``unshare`` exist": the recipe needs
+        ``mount(8)``, a mount namespace *and* a nested user namespace, any of
+        which a hardened container or a restricted runtime can withhold. So run
+        the real command over two throwaway directories and require both halves
+        of the contract — a write inside the scratch space succeeds, a write
+        outside it fails. Anything else leaves confinement off, because
+        remounts that executed code can undo are a boundary in name only.
+        """
+        if cls._confine_probed:
+            return
+        cls._confine_probed = True
+        cls._confine_ok = False
+        parent = None
+        proc = None
+        try:
+            parent = tempfile.mkdtemp(prefix="effgen_confine_probe_")
+            inside = os.path.join(parent, "in")
+            outside = os.path.join(parent, "out")
+            os.mkdir(inside)
+            os.mkdir(outside)
+            # ``outside`` sits under the system temp directory, so this also
+            # checks that the host temp directory is read-only.
+            body = (
+                f"touch {shlex.quote(os.path.join(inside, 'x'))} 2>/dev/null "
+                "|| exit 3; "
+                f"touch {shlex.quote(os.path.join(outside, 'y'))} 2>/dev/null "
+                "&& exit 4; "
+                "exit 0"
+            )
+            inner = _confine_script(inside, private_tmp=False) + (
+                f"exec {unshare_bin} --map-root-user --mount "
+                f"bash -c {shlex.quote(body)}"
+            )
+            proc = await asyncio.create_subprocess_exec(
+                unshare_bin, "--map-root-user", "--mount", "bash", "-c", inner,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=30)
+            cls._confine_ok = proc.returncode == 0
+        except Exception as exc:  # noqa: BLE001 - a failed probe degrades, never raises
+            logger.debug("Sandbox confinement probe failed: %s", exc)
+            cls._confine_ok = False
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:  # noqa: BLE001 - best-effort cleanup
+                    pass
+        finally:
+            if parent:
+                shutil.rmtree(parent, ignore_errors=True)
 
     @staticmethod
     async def _unshare_succeeds(args: list[str]) -> bool:
@@ -581,8 +827,14 @@ class SubprocessSandbox(SandboxBase):
         return int(mem_str)  # assume bytes, convert to KB approximately
 
     @staticmethod
-    def _build_env() -> dict[str, str]:
-        """Return a minimal environment stripping sensitive vars."""
+    def _build_env(tmpdir_override: str | None = None) -> dict[str, str]:
+        """Return a minimal environment stripping sensitive vars.
+
+        *tmpdir_override* names the writable directory temp-file APIs should
+        use. It is set when the sandbox could not give the run a private
+        ``/tmp``, so ``tempfile.mkstemp``, ``mktemp`` and ``os.tmpdir()`` keep
+        working instead of hitting the read-only host temp directory.
+        """
         safe_keys = {
             "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE",
             "TERM", "USER", "LOGNAME", "SHELL",
@@ -590,6 +842,10 @@ class SubprocessSandbox(SandboxBase):
             "PYTHONPATH", "PYTHONDONTWRITEBYTECODE",
         }
         env = {k: v for k, v in os.environ.items() if k in safe_keys}
+        if tmpdir_override:
+            env["TMPDIR"] = tmpdir_override
+            env["TEMP"] = tmpdir_override
+            env["TMP"] = tmpdir_override
         # Harden Python
         env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
         env.setdefault("PYTHONUNBUFFERED", "1")
@@ -725,6 +981,9 @@ class OffSandbox(SandboxBase):
                 execution_time=time.monotonic() - start,
                 timed_out=timed_out,
                 backend_used="off",
+                filesystem_confined=False,
+                writable_root=None,
+                network_isolated=False,
             )
         except Exception as exc:
             logger.error("OffSandbox error: %s", exc)
@@ -754,6 +1013,9 @@ _resolved_backend: SandboxBase | None = None
 # via "auto" fallback or an explicit EFFGEN_SANDBOX_BACKEND=subprocess.
 _subprocess_fallback_warned: bool = False
 
+# Emitted once per process when namespaces exist but write confinement does not.
+_confinement_degraded_warned: bool = False
+
 
 def _warn_subprocess_fallback() -> None:
     global _subprocess_fallback_warned
@@ -766,18 +1028,35 @@ def _warn_subprocess_fallback() -> None:
         "│  effGen SANDBOX WARNING                                      │\n"
         "│                                                              │\n"
         "│  Code execution is using SubprocessSandbox, which provides   │\n"
-        "│  PARTIAL isolation only — not a filesystem boundary.         │\n"
+        "│  PARTIAL isolation only.                                     │\n"
         "│                                                              │\n"
         "│  Limitations:                                                │\n"
-        "│  • Executed code can READ and WRITE any host file the        │\n"
-        "│    calling process's user can read/write, outside of the     │\n"
-        "│    private /tmp mount (when available)                       │\n"
+        "│  • Executed code can READ any host file the calling          │\n"
+        "│    process's user can read — reads are NOT confined          │\n"
+        "│  • Writes are confined to the run's working directory only   │\n"
+        "│    where the kernel allows it; each result reports what was  │\n"
+        "│    enforced in 'filesystem_confined' / 'writable_root'       │\n"
         "│  • Network isolation via unshare (may require privileges)    │\n"
         "│  • Memory limit is advisory, not hard-enforced               │\n"
         "│                                                              │\n"
-        "│  To confine the filesystem, install Docker and ensure the    │\n"
+        "│  To confine reads as well, install Docker and ensure the     │\n"
         "│  daemon is running and accessible by the current user.       │\n"
         "└─────────────────────────────────────────────────────────────┘\n"
+    )
+
+
+def _warn_confinement_degraded() -> None:
+    """Say once that writes are not confined, so no caller assumes they are."""
+    global _confinement_degraded_warned
+    if _confinement_degraded_warned:
+        return
+    _confinement_degraded_warned = True
+    logger.warning(
+        "SubprocessSandbox: this environment cannot confine writes by executed "
+        "code (the read-only remount or the nested user namespace was "
+        "refused), so executed code can write anywhere the calling user can. "
+        "Results report filesystem_confined=False. Install Docker, or run on a "
+        "host with unprivileged user namespaces, to confine writes."
     )
 
 
@@ -843,10 +1122,17 @@ async def get_sandbox(config: SandboxConfig | None = None) -> SandboxBase:
 
 
 def reset_sandbox_cache() -> None:
-    """Reset the cached sandbox backend and warning state (useful for testing)."""
+    """Reset the cached sandbox backend, probes and warning state (useful for testing)."""
     global _resolved_backend, _subprocess_fallback_warned
+    global _confinement_degraded_warned
     _resolved_backend = None
     _subprocess_fallback_warned = False
+    _confinement_degraded_warned = False
+    SubprocessSandbox._caps_probed = False
+    SubprocessSandbox._userns_ok = False
+    SubprocessSandbox._mountns_ok = False
+    SubprocessSandbox._confine_probed = False
+    SubprocessSandbox._confine_ok = False
 
 
 __all__ = [
