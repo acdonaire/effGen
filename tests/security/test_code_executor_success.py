@@ -98,6 +98,53 @@ def test_javascript_runtime_error_is_failure():
     assert "nope" in r.error
 
 
+def test_result_reports_the_confinement_the_backend_applied(tmp_path):
+    ex = CodeExecutor(workdir=str(tmp_path))
+    _run(ex.initialize())
+    r = _run(ex.execute(code="print('hi')", language="python"))
+    assert r.success is True
+    assert "filesystem_confined" in r.output
+    assert "writable_root" in r.output
+    if r.output["filesystem_confined"]:
+        assert r.output["writable_root"] == str(tmp_path.resolve())
+    else:
+        assert r.output["writable_root"] is None
+
+
+def test_write_outside_the_workspace_names_the_writable_root(tmp_path):
+    """A refused write must tell the caller where writes are allowed.
+
+    Without it the caller sees a bare ``[Errno 30] Read-only file system`` and
+    retries the same path.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = tmp_path / "outside" / "note.txt"
+    target.parent.mkdir()
+
+    ex = CodeExecutor(workdir=str(workspace))
+    _run(ex.initialize())
+    r = _run(ex.execute(
+        code=f"open({str(target)!r}, 'w').write('x')", language="python",
+    ))
+    if not r.output["filesystem_confined"]:
+        pytest.skip("this host cannot confine sandbox writes")
+    assert r.success is False
+    assert not target.exists()
+    assert "writes are confined to" in r.error
+    assert str(workspace.resolve()) in r.error
+
+
+def test_read_only_filesystem_error_is_recognised():
+    assert CodeExecutor._is_read_only_filesystem_error(
+        "OSError: [Errno 30] Read-only file system: '/etc/x'"
+    )
+    assert CodeExecutor._is_read_only_filesystem_error("Error: EROFS: read-only")
+    assert not CodeExecutor._is_read_only_filesystem_error(
+        "ValueError: boom"
+    )
+
+
 def test_memory_floor_only_raises_below_the_minimum():
     ex = CodeExecutor()
     # JavaScript has a floor; a request below it is raised, an equal/higher

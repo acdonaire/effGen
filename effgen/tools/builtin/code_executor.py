@@ -9,12 +9,16 @@ Sandbox dispatch:
   - DockerSandbox (default when Docker daemon is available): confines both
       filesystem and network —
       --read-only --network=none --cap-drop=ALL --pids-limit=100 --memory=256m
-  - SubprocessSandbox (fallback): ulimit + unshare --net on Linux. Isolates
-      network and /tmp only — the rest of the host filesystem is reachable
-      (read AND write) with the calling process's own permissions. See
+  - SubprocessSandbox (fallback): ulimit + unshare on Linux. Isolates the
+      network and confines writes to the working directory; the rest of the
+      host filesystem is readable but read-only. See
       ``effgen.security.sandbox.SubprocessSandbox``'s docstring.
   - Backend configurable via EFFGEN_SANDBOX_BACKEND=docker|subprocess
   - Timeout configurable via EFFGEN_SANDBOX_TIMEOUT=<seconds>
+
+Every result carries ``sandbox_backend``, ``filesystem_confined`` and
+``writable_root``, so a caller reads what the run actually enforced instead of
+assuming a guarantee the host could not provide.
 """
 
 from __future__ import annotations
@@ -59,11 +63,13 @@ class CodeExecutor(BaseTool):
 
     Security:
     - Filesystem AND network isolation via DockerSandbox when Docker is
-      available. Without Docker, the SubprocessSandbox fallback isolates
-      network and /tmp only — it does not confine the rest of the host
-      filesystem (readable and writable with the calling user's own
-      permissions). A ``WARNING`` is logged the first time the fallback is
-      used; check ``result["sandbox_backend"]`` to see which one ran.
+      available. Without Docker, the SubprocessSandbox fallback isolates the
+      network and confines writes to the working directory; the rest of the
+      host filesystem stays readable but read-only, so reads are not confined.
+      A ``WARNING`` is logged the first time the fallback is used; check
+      ``result["sandbox_backend"]`` to see which one ran, and
+      ``result["filesystem_confined"]`` / ``result["writable_root"]`` for what
+      it enforced.
     - Configurable resource limits
     - Network restricted by default
     - Timeout mechanisms
@@ -122,14 +128,16 @@ class CodeExecutor(BaseTool):
                     "read-only, capability-dropped) when the Docker daemon is "
                     "reachable — this confines the filesystem and network. "
                     "Without Docker, falls back to a subprocess sandbox that "
-                    "isolates network and the /tmp directory but does NOT confine "
-                    "the rest of the filesystem: executed code can read and write "
-                    "any file the calling process's user can, and CPU/process "
-                    "limits are enforced by ulimit, not cgroups. Check the "
-                    "'sandbox_backend' field in the result to see which backend "
-                    "ran a given call. Outside Docker the code starts in the "
-                    "workspace directory, so a relative path reads and writes "
-                    "the files there."
+                    "isolates the network and allows writes ONLY inside the "
+                    "working directory: the code starts there, so a relative "
+                    "path reads and writes the files there, while every path "
+                    "outside it is read-only and a write to one fails with a "
+                    "read-only-filesystem error. Reading anywhere the user can "
+                    "read still works, and CPU/process limits are enforced by "
+                    "ulimit, not cgroups. The result reports which backend ran "
+                    "('sandbox_backend'), whether writes were confined "
+                    "('filesystem_confined') and the directory writes are "
+                    "allowed in ('writable_root')."
                 ),
                 category=ToolCategory.CODE_EXECUTION,
                 parameters=[
@@ -192,6 +200,8 @@ class CodeExecutor(BaseTool):
                         "execution_time": {"type": "number"},
                         "timed_out": {"type": "boolean"},
                         "sandbox_backend": {"type": "string"},
+                        "filesystem_confined": {"type": "boolean"},
+                        "writable_root": {"type": ["string", "null"]},
                     },
                 },
                 timeout_seconds=300,
@@ -275,7 +285,7 @@ class CodeExecutor(BaseTool):
 
         Returns:
             Dict with stdout, stderr, exit_code, execution_time, timed_out,
-            sandbox_backend.
+            sandbox_backend, filesystem_confined and writable_root.
         """
         if language not in self.SUPPORTED_LANGUAGES:
             raise CodeExecutionError(
@@ -322,6 +332,8 @@ class CodeExecutor(BaseTool):
             "execution_time": result.execution_time,
             "timed_out": result.timed_out,
             "sandbox_backend": result.backend_used,
+            "filesystem_confined": result.filesystem_confined,
+            "writable_root": result.writable_root,
         }
         # The tool result mirrors the program's own outcome: it succeeds only when
         # the process exited 0 without timing out. A non-zero exit — an uncaught
@@ -372,8 +384,26 @@ class CodeExecutor(BaseTool):
                 "memory_limit; raise memory_limit (node/V8 needs about 1g)"
             )
         base = f"Code exited with status {result.exit_code}"
+        writable_root = getattr(result, "writable_root", None)
+        if writable_root and self._is_read_only_filesystem_error(stderr):
+            # Without the writable root named, the caller sees a bare
+            # "[Errno 30] Read-only file system" and retries the same path.
+            return (
+                f"{base}: writes are confined to {writable_root}; write inside "
+                "it (the rest of the filesystem is read-only)"
+            )
         detail = self._stderr_summary(stderr)
         return f"{base}: {detail}" if detail else base
+
+    @staticmethod
+    def _is_read_only_filesystem_error(stderr: str) -> bool:
+        """True when the run failed because it wrote outside the writable root."""
+        lowered = stderr.lower()
+        return (
+            "read-only file system" in lowered
+            or "errno 30" in lowered
+            or "erofs" in lowered
+        )
 
     @staticmethod
     def _stderr_summary(stderr: str) -> str:
