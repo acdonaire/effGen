@@ -617,6 +617,30 @@ class BaseModel(ABC):
         """
         return False
 
+    def tool_call_support(self) -> str:
+        """Report *how* the model receives tool definitions.
+
+        Two mechanisms hide behind the single boolean of
+        :meth:`supports_tool_calling`, and they behave differently:
+
+        - ``"api"`` — the provider accepts tool definitions as a request
+          parameter and returns any tool call as structured data. Whether a
+          call is emitted is decided by the provider's tool-calling layer.
+        - ``"template"`` — the definitions are rendered into the prompt by a
+          local chat template. Nothing enforces the format; whether the model
+          emits a call is up to the model.
+        - ``"none"`` — no native tool calling. The ReAct text protocol is the
+          only way to reach a tool.
+
+        The default derives the value from :meth:`supports_tool_calling`, so a
+        subclass that only implements the boolean keeps working unchanged. The
+        local chat-template engines override it.
+
+        Returns:
+            str: One of ``"api"``, ``"template"`` or ``"none"``.
+        """
+        return "api" if self.supports_tool_calling() else "none"
+
     def is_loaded(self) -> bool:
         """
         Check if the model is currently loaded.

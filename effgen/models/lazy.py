@@ -114,6 +114,10 @@ class LazyModel(BaseModel):
         """Delegate to the wrapped model."""
         return self._inner.supports_tool_calling()
 
+    def tool_call_support(self) -> str:
+        """Delegate to the wrapped model."""
+        return self._inner.tool_call_support()
+
     def get_metadata(self) -> dict[str, Any]:
         """Delegate to the wrapped model."""
         return self._inner.get_metadata()

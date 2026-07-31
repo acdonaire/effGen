@@ -42,6 +42,61 @@ from .errors import (
     error_context_dict,
 )
 
+# Probe used to decide whether a local chat template renders tool definitions.
+# The name is deliberately unusual so finding it in the rendered prompt means the
+# template printed *this* definition rather than something it already contained.
+TOOL_PROBE_NAME = "effgen_probe_tool"
+_TOOL_PROBE = [
+    {
+        "type": "function",
+        "function": {
+            "name": TOOL_PROBE_NAME,
+            "description": "capability probe",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+]
+_TOOL_PROBE_MESSAGES = [{"role": "user", "content": "test"}]
+
+
+def chat_template_renders_tools(tokenizer: Any) -> bool:
+    """Report whether *tokenizer*'s chat template puts tool definitions in the prompt.
+
+    Accepting a ``tools`` keyword is not the same as using it: several templates
+    (gemma-2, Phi-3.5) take the argument and discard it, so a model driven
+    through them never sees the tools at all. Rendering the same messages twice —
+    once plain, once with one probe tool — separates the two cases: a template
+    that uses the definitions produces different text containing the probe
+    tool's name.
+
+    Args:
+        tokenizer: Any object exposing ``apply_chat_template``.
+
+    Returns:
+        bool: True when the tools rendering differs from the plain one *and*
+        names the probe tool. A tokenizer without a usable chat template, or one
+        whose template raises, returns False.
+    """
+    if tokenizer is None or not hasattr(tokenizer, "apply_chat_template"):
+        return False
+    try:
+        plain = tokenizer.apply_chat_template(
+            _TOOL_PROBE_MESSAGES, tokenize=False, add_generation_prompt=True
+        )
+        with_tools = tokenizer.apply_chat_template(
+            _TOOL_PROBE_MESSAGES,
+            tools=_TOOL_PROBE,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    except Exception:  # noqa: BLE001 - a capability probe never breaks a load
+        return False
+    if plain is None or with_tools is None:
+        return False
+    rendered = str(with_tools)
+    return rendered != str(plain) and TOOL_PROBE_NAME in rendered
+
+
 # Canonical finish reasons. Keep this set small and OpenAI-flavoured because
 # that is what the agent loop and the bulk of adapters already emit.
 FINISH_STOP = "stop"
@@ -664,6 +719,8 @@ def attach_error_context(
 
 
 __all__ = [
+    "TOOL_PROBE_NAME",
+    "chat_template_renders_tools",
     "CALL_OVERRIDE_ALIASES",
     "CALL_OVERRIDE_FIELDS",
     "CANONICAL_FINISH_REASONS",
