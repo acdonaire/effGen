@@ -11,6 +11,7 @@ Internal module — no public API surface.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -64,19 +65,114 @@ def usage_metadata(
     }
 
 
+def stringify_tool_arguments(arguments: Any) -> str:
+    """Render one tool call's arguments as the JSON string the shape requires.
+
+    A string passes through byte-for-byte, including one the model wrote
+    malformed — the caller needs to see what was actually generated rather than
+    a substituted empty object. Anything else (most often a mapping an SDK has
+    already parsed) is serialized; ``None`` becomes ``"{}"``.
+    """
+    if isinstance(arguments, str):
+        return arguments
+    if arguments is None:
+        return "{}"
+    try:
+        return json.dumps(arguments, default=str)
+    except (TypeError, ValueError):
+        return "{}"
+
+
+def tool_call_entry(
+    name: Any,
+    arguments: Any,
+    *,
+    call_id: Any = "",
+    call_type: Any = "function",
+) -> dict[str, Any]:
+    """Build one element of ``metadata["tool_calls"]`` in the documented shape."""
+    return {
+        "id": str(call_id) if call_id else "",
+        "type": str(call_type) if call_type else "function",
+        "function": {
+            "name": str(name) if name else "",
+            "arguments": stringify_tool_arguments(arguments),
+        },
+    }
+
+
+def normalize_tool_calls(raw: Any) -> list[dict[str, Any]]:
+    """Coerce a provider's tool-call list into the documented shape.
+
+    Accepts the nested OpenAI form and the flat ``{"name", "arguments"}`` form,
+    stringifying an already-parsed ``arguments`` in either. An element that
+    matches neither is passed through unchanged rather than dropped, so a
+    provider shape that is not modelled here still reaches the caller. A
+    non-list *raw* yields ``[]``.
+    """
+    if not isinstance(raw, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+        function = item.get("function")
+        if isinstance(function, dict) and function.get("name"):
+            entry = dict(item)
+            entry["id"] = str(item["id"]) if item.get("id") else ""
+            entry["type"] = str(item.get("type") or "function")
+            entry["function"] = {
+                **function,
+                "name": str(function["name"]),
+                "arguments": stringify_tool_arguments(function.get("arguments")),
+            }
+            normalized.append(entry)
+        elif item.get("name"):
+            normalized.append(tool_call_entry(
+                item["name"],
+                item.get("arguments"),
+                call_id=item.get("id", ""),
+                call_type=item.get("type", "function"),
+            ))
+        else:
+            normalized.append(item)
+    return normalized
+
+
 def tool_calls_from_message(message: Any) -> list[dict[str, Any]]:
-    """Convert OpenAI-style ``message.tool_calls`` into a list of plain dicts."""
+    """Convert OpenAI-style ``message.tool_calls`` into a list of plain dicts.
+
+    This is the definition of the tool-call shape every adapter reports in
+    ``GenerationResult.metadata["tool_calls"]``:
+
+    1. The key is always present and always a list — ``[]`` for a turn that
+       called nothing, so a reader never has to guard against a missing key.
+    2. Every element carries ``id`` (the provider's call id, ``""`` when the
+       provider sends none), ``type`` (``"function"`` for a function call) and
+       ``function`` with ``name`` and ``arguments``.
+    3. ``arguments`` is a JSON **string**, exactly as the model generated it.
+       Adapters never parse it: OpenAI-compatible wire formats require the
+       string, and a model that emits malformed JSON stays visible instead of
+       arriving as an empty argument set.
+    4. Elements keep the provider's order, and parallel calls are separate
+       elements.
+
+    The Gemini adapter carries top-level ``name``/``arguments`` keys beside the
+    nested block for callers written against its previous flat shape, and the
+    OpenAI Responses API entries keep their ``type: "function_call"``
+    discriminator and flat keys beside it.
+    """
     tool_calls: list[dict[str, Any]] = []
-    if message.tool_calls:
-        for tc in message.tool_calls:
-            tool_calls.append({
-                "id": tc.id,
-                "type": tc.type,
-                "function": {
-                    "name": tc.function.name,
-                    "arguments": tc.function.arguments,
-                },
-            })
+    raw_calls = getattr(message, "tool_calls", None)
+    if raw_calls:
+        for tc in raw_calls:
+            tool_calls.append(tool_call_entry(
+                tc.function.name,
+                tc.function.arguments,
+                call_id=getattr(tc, "id", ""),
+                call_type=getattr(tc, "type", "function"),
+            ))
     return tool_calls
 
 
@@ -116,6 +212,9 @@ __all__ = [
     "extract_openai_usage",
     "cost_label",
     "usage_metadata",
+    "stringify_tool_arguments",
+    "tool_call_entry",
+    "normalize_tool_calls",
     "tool_calls_from_message",
     "record_tracker_cost",
 ]

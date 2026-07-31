@@ -124,8 +124,10 @@ def _stamp_latency(result: Any, elapsed_s: float) -> Any:
     a raw ``generate()`` result. Also adds ``truncated`` (``finish_reason ==
     "length"``) so a caller working directly with ``model.generate()`` (no
     ``Agent`` in between) can detect a truncated/empty-from-truncation result
-    without string-matching ``finish_reason`` itself. Non-``GenerationResult``
-    values pass through untouched.
+    without string-matching ``finish_reason`` itself, and ``tool_calls`` (empty
+    for an engine that reports none) so the key is present on every result —
+    including the local engines, which report tool calls as text rather than as
+    a structured list. Non-``GenerationResult`` values pass through untouched.
     """
     if isinstance(result, GenerationResult):
         meta = result.metadata
@@ -135,6 +137,7 @@ def _stamp_latency(result: Any, elapsed_s: float) -> Any:
         meta.setdefault("latency_ms", round(elapsed_s * 1000.0, 1))
         meta.setdefault("duration_s", round(elapsed_s, 4))
         meta.setdefault("truncated", result.finish_reason == "length")
+        meta.setdefault("tool_calls", [])
     return result
 
 
