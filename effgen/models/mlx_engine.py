@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from effgen.models._adapter_utils import (
+    chat_template_renders_tools,
     merge_call_overrides,
     not_loaded_error,
     provider_runtime_error,
@@ -101,6 +102,9 @@ class MLXEngine(BatchModel):
 
         self.model = None
         self.tokenizer = None
+        # Cached chat-template tool-rendering probe, paired with the tokenizer it
+        # was measured on so a reload re-measures instead of reusing a stale answer.
+        self._tool_template_probe: tuple[Any, bool] | None = None
 
     def load(self) -> None:
         """
@@ -569,30 +573,31 @@ class MLXEngine(BatchModel):
         return 1
 
     def supports_tool_calling(self) -> bool:
-        """Check if model supports native tool calling via chat template."""
+        """Check if model supports native tool calling via chat template.
+
+        True when the chat template actually **renders** tool definitions into
+        the prompt. A template that accepts a ``tools`` argument and discards it
+        reports False: the model never sees the tools, so the ReAct text
+        protocol is the only path that reaches one.
+        """
         if not self._is_loaded or self.tokenizer is None:
             return False
-        if not hasattr(self.tokenizer, "apply_chat_template"):
-            return False
-        try:
-            self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": "test"}],
-                tools=[
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "test",
-                            "description": "test",
-                            "parameters": {"type": "object", "properties": {}},
-                        },
-                    }
-                ],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            return True
-        except (TypeError, Exception):
-            return False
+        tokenizer = self.tokenizer
+        cached = self._tool_template_probe
+        if cached is not None and cached[0] is tokenizer:
+            return cached[1]
+        supported = chat_template_renders_tools(tokenizer)
+        self._tool_template_probe = (tokenizer, supported)
+        return supported
+
+    def tool_call_support(self) -> str:
+        """``"template"`` when the chat template renders tools, else ``"none"``.
+
+        A local chat template only writes the definitions into the prompt; there
+        is no provider-side tool-calling layer, so nothing obliges the model to
+        answer with a call.
+        """
+        return "template" if self.supports_tool_calling() else "none"
 
     def unload(self) -> None:
         """Unload the model and free memory."""
@@ -604,6 +609,10 @@ class MLXEngine(BatchModel):
         if self.tokenizer is not None:
             del self.tokenizer
             self.tokenizer = None
+
+        # Drop the cached capability probe with the tokenizer it measured, so
+        # unload releases it and a later load re-measures.
+        self._tool_template_probe = None
 
         gc.collect()
 

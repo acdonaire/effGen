@@ -20,6 +20,7 @@ import torch
 
 from effgen.models._adapter_utils import (
     attach_error_context,
+    chat_template_renders_tools,
     merge_call_overrides,
     not_loaded_error,
     provider_runtime_error,
@@ -133,6 +134,9 @@ class VLLMEngine(BatchModel):
         self.llm = None
         self.tokenizer = None
         self._hf_tokenizer = None  # Separate HuggingFace tokenizer for chat template
+        # Cached chat-template tool-rendering probe, paired with the tokenizer it
+        # was measured on so a reload re-measures instead of reusing a stale answer.
+        self._tool_template_probe: tuple[Any, bool] | None = None
 
     def load(self) -> None:
         """
@@ -666,31 +670,29 @@ class VLLMEngine(BatchModel):
     def supports_tool_calling(self) -> bool:
         """Check if the model supports native tool calling.
 
-        For vLLM, checks whether the HuggingFace tokenizer's chat template
-        accepts a ``tools`` parameter.
+        True when the HuggingFace tokenizer's chat template actually **renders**
+        tool definitions into the prompt. A template that accepts a ``tools``
+        argument and discards it reports False: the model never sees the tools,
+        so the ReAct text protocol is the only path that reaches one.
         """
         tokenizer = self._hf_tokenizer or self.tokenizer
         if not self._is_loaded or tokenizer is None:
             return False
-        if not hasattr(tokenizer, 'apply_chat_template'):
-            return False
-        try:
-            tokenizer.apply_chat_template(
-                [{"role": "user", "content": "test"}],
-                tools=[{
-                    "type": "function",
-                    "function": {
-                        "name": "test",
-                        "description": "test",
-                        "parameters": {"type": "object", "properties": {}},
-                    }
-                }],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            return True
-        except (TypeError, Exception):
-            return False
+        cached = self._tool_template_probe
+        if cached is not None and cached[0] is tokenizer:
+            return cached[1]
+        supported = chat_template_renders_tools(tokenizer)
+        self._tool_template_probe = (tokenizer, supported)
+        return supported
+
+    def tool_call_support(self) -> str:
+        """``"template"`` when the chat template renders tools, else ``"none"``.
+
+        A local chat template only writes the definitions into the prompt; there
+        is no provider-side tool-calling layer, so nothing obliges the model to
+        answer with a call.
+        """
+        return "template" if self.supports_tool_calling() else "none"
 
     def unload(self) -> None:
         """
@@ -711,6 +713,10 @@ class VLLMEngine(BatchModel):
         if self._hf_tokenizer is not None:
             del self._hf_tokenizer
             self._hf_tokenizer = None
+
+        # Drop the cached capability probe with the tokenizer it measured, so
+        # unload releases it and a later load re-measures.
+        self._tool_template_probe = None
 
         # Force garbage collection
         import gc
