@@ -1362,11 +1362,16 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
 
     @staticmethod
     def _parse_native_tool_calls(native_tool_calls: list[dict[str, Any]]) -> ToolCallResult:
-        """Convert provider-native tool_calls (OpenAI/Cerebras format) into ToolCallResult.
+        """Convert an adapter's reported tool_calls into a ToolCallResult.
 
-        Providers return:
+        Adapters report::
+
             [{"id": "...", "type": "function",
-              "function": {"name": "...", "arguments": {...} | "json-string"}}]
+              "function": {"name": "...", "arguments": "json-string"}}]
+
+        Flat keys and an already-parsed ``arguments`` are still accepted, so a
+        list that reached here from somewhere other than an adapter — a hosted
+        model's own output passed through verbatim, say — is read the same way.
         """
         result = ToolCallResult(raw_text="")
         if not native_tool_calls:
@@ -1493,7 +1498,14 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
 
         # Handle any function tool calls that came back (local effGen tools)
         native_results = result.metadata.get("native_tool_results", [])
-        local_calls = [r for r in native_results if r.get("type") == "function_call"]
+        # "function_call" is what the Responses API names a call to a local
+        # tool; "function" is the name every other adapter reports. Built-in
+        # server-side tools (web search, file search) use their own types and
+        # are not dispatched here.
+        local_calls = [
+            r for r in native_results
+            if r.get("type") in ("function_call", "function")
+        ]
 
         tool_calls_made = len(native_results)
 
@@ -1502,8 +1514,9 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         if local_calls and function_specs:
             observations: list[str] = []
             for call in local_calls:
-                fn_name = call.get("name", "")
-                fn_args_raw = call.get("arguments", "{}")
+                fn = call.get("function", call)
+                fn_name = call.get("name") or fn.get("name", "")
+                fn_args_raw = call.get("arguments", fn.get("arguments", "{}"))
                 try:
                     fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
                 except (json.JSONDecodeError, TypeError):
@@ -1695,34 +1708,56 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         observations: list[str] = []
         executed_tools: set[str] = set()
         for tc in local_tc:
-            fn_name = tc.get("name", "")
-            fn_args = tc.get("arguments", {})
+            # Adapters report a call as {"function": {"name", "arguments"}};
+            # an adapter that also carries top-level keys is read the same way.
+            fn = tc.get("function", tc)
+            fn_name = tc.get("name") or fn.get("name", "")
+            fn_args = tc.get("arguments", fn.get("arguments", {}))
+            if isinstance(fn_args, str):
+                try:
+                    fn_args = json.loads(fn_args)
+                except (json.JSONDecodeError, TypeError):
+                    fn_args = {"__raw_input__": fn_args}
             if fn_name in self.tools and not isinstance(self.tools[fn_name], GeminiNativeTool):
                 obs = self._execute_tool(fn_name, json.dumps(fn_args) if isinstance(fn_args, dict) else fn_args)
                 executed_tools.add(fn_name)
                 observations.append(f"[{fn_name}({fn_args})] → {obs}")
 
-        if observations and not result.text.strip():
+        # The adapter also encodes each call as a <tool_call> block in the
+        # generated text, so a turn that did nothing but call tools is not
+        # empty — it is empty once those blocks are stripped. Testing the raw
+        # text would skip the follow-up and report the answer as missing while
+        # the tool results sit unused.
+        answer = sanitize_final_answer(result.text) or ""
+
+        if observations and not answer.strip():
             obs_text = "\n".join(observations)
             followup = f"Tool results:\n{obs_text}\n\nBased on these results, answer: {task}"
             try:
                 followup_result = self.model.generate(followup, config=gen_config)
-                return AgentResponse(
-                    output=sanitize_final_answer(followup_result.text) or followup_result.text,
-                    success=True,
-                    mode=AgentMode.SINGLE,
-                    iterations=2,
-                    tool_calls=tool_calls_made,
-                    tokens_used=result.tokens_used + followup_result.tokens_used,
-                    metadata=result.metadata,
+                followup_answer = (
+                    sanitize_final_answer(followup_result.text) or followup_result.text
                 )
+                # A follow-up that came back empty answers nothing; fall through
+                # rather than report an empty output as a successful turn.
+                if followup_answer and followup_answer.strip():
+                    followup_meta = dict(result.metadata or {})
+                    followup_meta.setdefault("tool_calling_strategy", "gemini_native")
+                    return AgentResponse(
+                        output=followup_answer,
+                        success=True,
+                        mode=AgentMode.SINGLE,
+                        iterations=2,
+                        tool_calls=tool_calls_made,
+                        tokens_used=result.tokens_used + followup_result.tokens_used,
+                        metadata=followup_meta,
+                    )
             except Exception:
                 logger.debug("Native tool follow-up assembly failed; using prior result", exc_info=True)
 
         if not result.text and (result.metadata or {}).get("reasoning_only"):
             return self._reasoning_only_native_response(result, tool_calls_made)
 
-        answer = sanitize_final_answer(result.text) or ""
         # Sanitizing a tagged call can leave its arguments behind as a bare JSON
         # fragment, so the text as the model wrote it is scanned as well.
         written = None
@@ -1745,7 +1780,10 @@ class AgentReActMixin(AgentToolExecutionMixin, AgentCitationsMixin):
         meta.setdefault("tool_calling_strategy", "gemini_native")
         return AgentResponse(
             output=answer or "(no output from Gemini native tools call)",
-            success=bool(result.text),
+            # A turn whose whole text was a tool-call block leaves nothing to
+            # report once it is stripped; that is a failed turn, not a success
+            # carrying a placeholder.
+            success=bool(answer),
             mode=AgentMode.SINGLE,
             iterations=1,
             tool_calls=tool_calls_made,

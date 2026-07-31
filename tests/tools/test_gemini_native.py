@@ -7,6 +7,7 @@ All tests are mock-based (no live API calls).
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -185,7 +186,14 @@ class TestParallelToolCallParsing:
         result = adapter.generate("test prompt")
         assert "<tool_call>" in result.text
         assert '"name": "search"' in result.text
-        assert result.metadata["tool_calls"] == [{"name": "search", "arguments": {"query": "hello"}}]
+        call = result.metadata["tool_calls"][0]
+        # The shape every adapter reports...
+        assert call["function"]["name"] == "search"
+        assert json.loads(call["function"]["arguments"]) == {"query": "hello"}
+        # ...beside the flat keys a caller written against the earlier Gemini
+        # shape reads.
+        assert call["name"] == "search"
+        assert call["arguments"] == {"query": "hello"}
 
     @patch("effgen.models.gemini_adapter.GeminiAdapter._generate_with_retry")
     def test_parallel_two_tool_calls_both_encoded(self, mock_gen):
@@ -306,6 +314,103 @@ class TestToolIncompatibleError:
             tools=[GoogleSearchTool()],
         ))
         assert "google_search" in agent.tools
+
+
+# ---------------------------------------------------------------------------
+# A turn that only called tools still gets answered
+# ---------------------------------------------------------------------------
+
+class TestNativeToolFollowUp:
+    """A Gemini turn whose whole text is a tool-call block.
+
+    The adapter encodes every call it reports as a ``<tool_call>`` block in the
+    generated text as well, so such a turn has non-empty text but no answer in
+    it. The agent runs the local tool, then has to re-prompt with the result:
+    without that, the tool output is discarded and the run reports a
+    placeholder while claiming to have succeeded.
+
+    The payloads below are what ``gemini-3.1-flash-lite`` actually returns for
+    a function call.
+    """
+
+    def _agent_with_stubbed_turn(self, first_text, follow_up_text="The code is ZQ7."):
+        from effgen.core.agent import Agent, AgentConfig
+        from effgen.models.base import GenerationResult
+        from effgen.models.gemini_adapter import GeminiAdapter
+        from effgen.tools import tool
+
+        calls: list[str] = []
+
+        @tool(name="vault_lookup", description="Look up a vault code.")
+        def vault_lookup(slot: str) -> str:
+            calls.append(slot)
+            return "ZQ7"
+
+        model = MagicMock(spec=GeminiAdapter)
+        model.model_name = "gemini-3.1-flash-lite"
+        model.model_type = MagicMock()
+        model._context_length = 1_000_000
+        model.get_context_length.return_value = 1_000_000
+        model.supports_tool_calling.return_value = True
+        model.supports_function_calling.return_value = True
+        model._is_loaded = True
+
+        tool_call = {
+            "id": "8ysinXqc",
+            "type": "function",
+            "function": {"name": "vault_lookup",
+                         "arguments": '{"slot": "alpha"}'},
+            "name": "vault_lookup",
+            "arguments": {"slot": "alpha"},
+        }
+        model.generate.side_effect = [
+            GenerationResult(text=first_text, tokens_used=10, finish_reason="stop",
+                             model_name="gemini-3.1-flash-lite",
+                             metadata={"tool_calls": [tool_call]}),
+            GenerationResult(text=follow_up_text, tokens_used=8, finish_reason="stop",
+                             model_name="gemini-3.1-flash-lite",
+                             metadata={"tool_calls": []}),
+        ]
+
+        agent = Agent(AgentConfig(
+            name="test-agent", model=model,
+            tools=[GeminiCodeExecutionTool(), vault_lookup],
+            tool_calling_mode="native",
+        ))
+        return agent, calls
+
+    def test_a_tool_only_turn_is_answered_from_the_tool_result(self):
+        agent, calls = self._agent_with_stubbed_turn(
+            '<tool_call>{"name": "vault_lookup", "arguments": {"slot": "alpha"}}</tool_call>'
+        )
+
+        response = agent.run("Look up the vault code for slot alpha.")
+
+        assert calls == ["alpha"], "the local tool was never executed"
+        assert response.success is True
+        assert "ZQ7" in response.text
+        assert "no output" not in response.text
+        assert response.metadata["tool_calling_strategy"] == "gemini_native"
+
+    def test_a_turn_that_answers_directly_is_not_re_prompted(self):
+        agent, _calls = self._agent_with_stubbed_turn("The code is ZQ7 already.")
+
+        response = agent.run("Look up the vault code for slot alpha.")
+
+        assert response.success is True
+        assert response.text == "The code is ZQ7 already."
+
+    def test_an_unanswerable_tool_only_turn_is_not_reported_as_success(self):
+        """The follow-up produced nothing either — that is a failed turn."""
+        agent, _calls = self._agent_with_stubbed_turn(
+            '<tool_call>{"name": "vault_lookup", "arguments": {"slot": "alpha"}}</tool_call>',
+            follow_up_text="",
+        )
+
+        response = agent.run("Look up the vault code for slot alpha.")
+
+        assert response.success is False
+        assert "no output" in response.text
 
 
 # ---------------------------------------------------------------------------
