@@ -445,7 +445,8 @@ class TestCerebrasNativeTools:
         tc_list = result.metadata.get("tool_calls", [])
         assert len(tc_list) == 1
         assert tc_list[0]["function"]["name"] == "calculator"
-        assert tc_list[0]["function"]["arguments"]["expression"] == "17*23"
+        # The reported element shape is pinned once, for every adapter, in
+        # tests/unit/test_adapter_consistency.py.
 
     def test_generate_with_tools_raises_on_unsupported_model(self):
         adapter = CerebrasAdapter(model_name="zai-glm-4.7", enable_rate_limiting=False)

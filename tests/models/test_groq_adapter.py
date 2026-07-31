@@ -4,6 +4,7 @@ Unit tests for GroqAdapter (mocks OK for adapter plumbing).
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -279,7 +280,7 @@ class TestGroqAdapterGenerate:
         result = adapter.generate_with_tools("What is 2+2?", tools)
         tool_call = result.metadata["tool_calls"][0]
         assert tool_call["function"]["name"] == "calculator"
-        assert tool_call["function"]["arguments"] == {"expression": "2+2"}
+        assert json.loads(tool_call["function"]["arguments"]) == {"expression": "2+2"}
 
     def test_recovered_tool_call_logs_at_info_not_warning(self, caplog):
         """The tool_use_failed recovery is not actionable — it must log at
@@ -335,7 +336,7 @@ class TestGroqAdapterGenerate:
         result = adapter.generate_with_tools("What is (17 * 23) + sqrt(144)?", tools)
         tool_call = result.metadata["tool_calls"][0]
         assert tool_call["function"]["name"] == "calculator"
-        assert tool_call["function"]["arguments"] == {
+        assert json.loads(tool_call["function"]["arguments"]) == {
             "expression": "(17 * 23) + sqrt(144)"
         }
 
@@ -379,7 +380,7 @@ class TestGroqAdapterGenerate:
         result = adapter.generate_with_tools("Refund ORD-1001", tools)
         tool_call = result.metadata["tool_calls"][0]
         assert tool_call["function"]["name"] == "issue_refund"
-        assert tool_call["function"]["arguments"] == {"order_id": "ORD-1001"}
+        assert json.loads(tool_call["function"]["arguments"]) == {"order_id": "ORD-1001"}
         # Only the first call is recovered; a second concatenated call is not
         # silently executed too.
         assert len(result.metadata["tool_calls"]) == 1
@@ -406,7 +407,7 @@ class TestGroqAdapterGenerate:
         result = adapter.generate_with_tools("What is 2+2?", tools)
         tool_call = result.metadata["tool_calls"][0]
         assert tool_call["function"]["name"] == "calculator"
-        assert tool_call["function"]["arguments"] == {"expression": "2+2"}
+        assert json.loads(tool_call["function"]["arguments"]) == {"expression": "2+2"}
 
     def test_count_tokens_returns_positive(self):
         adapter = self._loaded_adapter()

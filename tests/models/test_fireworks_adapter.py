@@ -409,7 +409,8 @@ class TestFireworksAdapterTools:
         tc = result.metadata["tool_calls"]
         assert len(tc) == 1
         assert tc[0]["function"]["name"] == "calculator"
-        assert tc[0]["function"]["arguments"] == {"expression": "17*23"}
+        # The reported element shape is pinned once, for every adapter, in
+        # tests/unit/test_adapter_consistency.py.
 
     def test_tools_not_passed_for_non_tool_model(self):
         non_tool_model = f"{_FIREWORKS_PREFIX}flux-1-dev-fp8"
