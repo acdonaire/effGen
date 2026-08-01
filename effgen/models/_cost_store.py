@@ -20,7 +20,11 @@ Schema
 Concurrency
 -----------
 WAL journal mode + BEGIN IMMEDIATE give multi-reader / single-writer
-semantics safe for concurrent processes without external locking.
+semantics safe for concurrent processes without external locking, so a
+file-backed store hands each thread its own connection. A ``:memory:``
+database exists only inside the connection that opened it, so that store keeps
+one shared connection and serializes statements on it — otherwise every thread
+but the first would be writing to a database of its own.
 
 Usage::
 
@@ -43,6 +47,8 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -133,23 +139,60 @@ class SQLiteCostStore:
         if self._path != ":memory:":
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        # An in-memory database belongs to the connection that opened it, so a
+        # per-thread connection would give every thread its own empty database
+        # and every call recorded off the creating thread would be lost. One
+        # connection, shared, with a lock around each statement.
+        self._shared_lock = threading.Lock() if self._path == ":memory:" else None
+        self._shared_conn: sqlite3.Connection | None = None
         self._init_schema()
 
     # ------------------------------------------------------------------
     # Connection management
     # ------------------------------------------------------------------
 
+    def _open(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._path, check_same_thread=False, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        if self._path == ":memory:":
+            # An in-memory database is created empty along with its connection,
+            # so the schema belongs to opening one rather than to constructing
+            # the store: a store reopened after close() would otherwise have
+            # nothing to write to and drop every call recorded on it.
+            with conn:
+                conn.execute(_CREATE_TABLE)
+                conn.execute(_CREATE_INDEX)
+        return conn
+
     def _conn(self) -> sqlite3.Connection:
+        if self._shared_lock is not None:
+            with self._shared_lock:
+                if self._shared_conn is None:
+                    self._shared_conn = self._open()
+                return self._shared_conn
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            conn = sqlite3.connect(self._path, check_same_thread=False, timeout=10.0)
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
-            self._local.conn = conn
+            self._local.conn = self._open()
         return cast(sqlite3.Connection, self._local.conn)
 
-    def _init_schema(self) -> None:
+    @contextmanager
+    def _exclusive(self) -> Iterator[sqlite3.Connection]:
+        """Yield the connection, serialized when it is shared across threads.
+
+        A file-backed store gives each thread its own connection and SQLite's
+        own locking keeps writers apart, so there is nothing to serialize. The
+        single in-memory connection is shared, and two threads issuing
+        statements on one connection interleave, so that case takes a lock.
+        """
         conn = self._conn()
-        with conn:
+        if self._shared_lock is None:
+            yield conn
+            return
+        with self._shared_lock:
+            yield conn
+
+    def _init_schema(self) -> None:
+        with self._exclusive() as conn, conn:
             conn.execute(_CREATE_TABLE)
             conn.execute(_CREATE_INDEX)
 
@@ -168,19 +211,22 @@ class SQLiteCostStore:
     ) -> None:
         """Insert one cost event atomically."""
         ts = timestamp if timestamp is not None else time.time()
-        conn = self._conn()
-        conn.execute("BEGIN IMMEDIATE;")
-        try:
-            conn.execute(_INSERT, (provider, model, prompt_tokens, completion_tokens, cost_usd, ts))
-            conn.execute("COMMIT;")
-        except Exception:
-            conn.execute("ROLLBACK;")
-            raise
+        with self._exclusive() as conn:
+            conn.execute("BEGIN IMMEDIATE;")
+            try:
+                conn.execute(
+                    _INSERT,
+                    (provider, model, prompt_tokens, completion_tokens, cost_usd, ts),
+                )
+                conn.execute("COMMIT;")
+            except Exception:
+                conn.execute("ROLLBACK;")
+                raise
 
     def query_since(self, since: float) -> list[CostEvent]:
         """Return all events with timestamp >= *since*."""
-        conn = self._conn()
-        rows = conn.execute(_QUERY_SINCE, (since,)).fetchall()
+        with self._exclusive() as conn:
+            rows = conn.execute(_QUERY_SINCE, (since,)).fetchall()
         return [CostEvent(*row) for row in rows]
 
     def query_today(self) -> list[CostEvent]:
@@ -200,26 +246,32 @@ class SQLiteCostStore:
 
     def query_all(self) -> list[CostEvent]:
         """Return all stored events (lifetime)."""
-        conn = self._conn()
-        rows = conn.execute(_QUERY_ALL).fetchall()
+        with self._exclusive() as conn:
+            rows = conn.execute(_QUERY_ALL).fetchall()
         return [CostEvent(*row) for row in rows]
 
     def cleanup(self, max_age_seconds: float) -> int:
         """Delete events older than *max_age_seconds*.  Returns rows deleted."""
         cutoff = time.time() - max_age_seconds
-        conn = self._conn()
-        conn.execute("BEGIN IMMEDIATE;")
-        try:
-            cursor = conn.execute(_DELETE_OLD, (cutoff,))
-            count = cursor.rowcount
-            conn.execute("COMMIT;")
-            return count
-        except Exception:
-            conn.execute("ROLLBACK;")
-            raise
+        with self._exclusive() as conn:
+            conn.execute("BEGIN IMMEDIATE;")
+            try:
+                cursor = conn.execute(_DELETE_OLD, (cutoff,))
+                count = cursor.rowcount
+                conn.execute("COMMIT;")
+                return count
+            except Exception:
+                conn.execute("ROLLBACK;")
+                raise
 
     def close(self) -> None:
-        """Close the per-thread connection."""
+        """Close this thread's connection, or the shared in-memory one."""
+        if self._shared_lock is not None:
+            with self._shared_lock:
+                if self._shared_conn is not None:
+                    self._shared_conn.close()
+                    self._shared_conn = None
+            return
         conn = getattr(self._local, "conn", None)
         if conn is not None:
             conn.close()
