@@ -164,7 +164,9 @@ class FireworksAdapter(BaseModel):
             context_length=(info or {}).get("context", 131_072),
         )
         self._api_key = api_key
-        self.max_retries = max_retries
+        # The retry loop below runs ``max_retries`` attempts, so a caller
+        # asking for no retries at all must still get one request made.
+        self.max_retries = max(1, int(max_retries))
         self.timeout = timeout
         self._extra_kwargs = kwargs
         self._client: Any = None
@@ -427,7 +429,15 @@ class FireworksAdapter(BaseModel):
                 logger.error("Fireworks API call failed: %s", exc)
                 raise provider_runtime_error("fireworks", self.model_name, "generate", exc, message="Fireworks generation failed") from exc
         else:
-            assert _last_exc is not None
+            if _last_exc is None:
+                raise provider_runtime_error(
+                    "fireworks", self.model_name, "generate",
+                    RuntimeError("no request was made"),
+                    message=(
+                        f"Fireworks made no request for {self.model_name}: the "
+                        f"retry budget was {self.max_retries} attempts"
+                    ),
+                )
             raise provider_runtime_error(
                 "fireworks", self.model_name, "generate", _last_exc,
                 message=f"Fireworks generation failed after {self.max_retries} retries",

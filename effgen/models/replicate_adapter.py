@@ -90,6 +90,35 @@ logger = logging.getLogger(__name__)
 _REPLICATE_MODEL_TYPE_VALUE = "replicate"
 
 _TERMINAL_STATUSES = {"succeeded", "failed", "canceled"}
+
+
+def _deadline_transport(timeout_s: float) -> Any:
+    """An HTTP transport that applies *timeout_s* to a request sent without one.
+
+    The Replicate SDK creates a prediction with an explicit ``timeout=None``,
+    which overrides the client's own deadline, so an endpoint that accepts the
+    connection and never answers holds the call open with nothing to stop it.
+    Filling the missing deadline in at the transport keeps the SDK's own
+    choices intact wherever it does state one.
+    """
+    import httpx
+
+    class _DeadlineTransport(httpx.HTTPTransport):
+        def handle_request(self, request: Any) -> Any:
+            timeout = request.extensions.get("timeout") or {}
+            if not any(timeout.get(k) for k in ("connect", "read", "write", "pool")):
+                request.extensions = {
+                    **request.extensions,
+                    "timeout": {
+                        "connect": timeout_s, "read": timeout_s,
+                        "write": timeout_s, "pool": timeout_s,
+                    },
+                }
+            return super().handle_request(request)
+
+    return _DeadlineTransport()
+
+
 _POLL_INITIAL_DELAY = 1.0   # seconds
 _POLL_MAX_DELAY = 30.0      # seconds
 _POLL_BACKOFF_FACTOR = 1.5
@@ -210,7 +239,9 @@ class ReplicateAdapter(BaseModel):
         self._api_token = api_token or api_key
         self.timeout = timeout
         self._initial_poll_interval = poll_interval
-        self.max_retries = max_retries
+        # The retry loop below runs ``max_retries`` attempts, so a caller
+        # asking for no retries at all must still get one request made.
+        self.max_retries = max(1, int(max_retries))
         self._extra_kwargs = kwargs
         self._client: Any = None
         self._enable_cost_tracking = enable_cost_tracking
@@ -258,8 +289,17 @@ class ReplicateAdapter(BaseModel):
                 "environment variable or pass api_token= to ReplicateAdapter."
             )
 
+        # ``timeout`` is the deadline for the whole prediction, so no single
+        # HTTP request may outlast it. Without this the call has no deadline at
+        # all and an endpoint that accepts the connection and never answers
+        # holds ``predictions.create`` open indefinitely — the polling deadline
+        # below is never reached, because polling has not started.
+        import httpx
+
         self._client = _replicate.Client(
-            api_token=self._api_token or os.getenv("REPLICATE_API_TOKEN")
+            api_token=self._api_token or os.getenv("REPLICATE_API_TOKEN"),
+            timeout=httpx.Timeout(self.timeout),
+            transport=_deadline_transport(self.timeout),
         )
         self._is_loaded = True
 
@@ -535,6 +575,23 @@ class ReplicateAdapter(BaseModel):
                 raise provider_runtime_error(
                     "replicate", self.model_name, "generate", exc,
                     message=f"Replicate API error for model '{self.model_name}'",
+                ) from exc
+            except json.JSONDecodeError as exc:
+                # The peer answered with something that is not JSON — a proxy
+                # page, a captive portal, a gateway error served as HTML. That
+                # is a `ValueError` subclass, but it says nothing about the
+                # request: it is worth trying again, so it must not fall into
+                # the fail-fast branch below.
+                last_exc = exc
+                if attempt < self.max_retries:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise provider_runtime_error(
+                    "replicate", self.model_name, "generate", exc,
+                    message=(
+                        f"Replicate returned a response that is not JSON for "
+                        f"'{self.model_name}'"
+                    ),
                 ) from exc
             except (ValueError, TypeError) as exc:
                 # The SDK rejects the request before sending it (most often a
