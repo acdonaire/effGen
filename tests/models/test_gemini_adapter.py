@@ -209,7 +209,8 @@ def test_generate_with_retry_honors_retry_delay(monkeypatch):
     from google.api_core import exceptions as gax_exc
 
     adapter = GeminiAdapter.__new__(GeminiAdapter)
-    adapter.MAX_RATE_LIMIT_RETRIES = 3
+    # Two retries after the first request: three attempts in all.
+    adapter.max_retries = 2
     adapter.model_name = "gemini-3.1-flash-lite"
 
     sleeps: list[float] = []
@@ -240,7 +241,8 @@ def test_generate_with_retry_gives_up_after_max(monkeypatch):
     from google.api_core import exceptions as gax_exc
 
     adapter = GeminiAdapter.__new__(GeminiAdapter)
-    adapter.MAX_RATE_LIMIT_RETRIES = 2
+    # One retry after the first request: two attempts in all.
+    adapter.max_retries = 1
     adapter.model_name = "gemini-3.1-flash-lite"
     monkeypatch.setattr(time, "sleep", lambda s: None)
 

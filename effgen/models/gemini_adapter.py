@@ -21,6 +21,7 @@ from typing import Any
 
 from effgen.models._adapter_utils import (
     annotate_reasoning_only,
+    merge_call_overrides,
     model_not_found_error,
     normalize_finish_reason,
     not_loaded_error,
@@ -73,6 +74,11 @@ class GeminiAdapter(FunctionCallingModel):
         model_name: Gemini model ID (e.g. 'gemini-3.1-flash-lite')
         api_key: Google API key (reads GOOGLE_API_KEY from env if not given)
         safety_settings: Content safety filter settings
+        timeout: Per-request deadline in seconds (default 60)
+        max_retries: Retries after the first request on a rate limit or a
+            transient server error; 0 means one request and no retry. Left
+            unset it keeps the adapter's own default, which is high because
+            the free tier refuses requests often.
     """
 
     #: Provider label used for metrics/error reporting (see Agent._model_provider).
@@ -112,6 +118,8 @@ class GeminiAdapter(FunctionCallingModel):
         model_name: str = "gemini-2.0-flash",
         api_key: str | None = None,
         safety_settings: list[dict[str, Any]] | None = None,
+        timeout: float = 60.0,
+        max_retries: int | None = None,
         **kwargs: Any,
     ) -> None:
         import os
@@ -131,6 +139,11 @@ class GeminiAdapter(FunctionCallingModel):
                 "variable or pass api_key parameter."
             )
         self.safety_settings = safety_settings
+        self.timeout = float(timeout)
+        self.max_retries = (
+            self.MAX_RATE_LIMIT_RETRIES - 1 if max_retries is None
+            else max(0, int(max_retries))
+        )
         self.additional_kwargs = kwargs
         self.client: Any = None
         self.total_cost = 0.0
@@ -139,6 +152,26 @@ class GeminiAdapter(FunctionCallingModel):
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+
+    def _http_options(self) -> Any:
+        """Per-request HTTP options: the call deadline and the retry budget.
+
+        Without a deadline the SDK waits indefinitely for an endpoint that
+        never answers, regardless of what ``timeout`` was asked for; the value
+        is stated in milliseconds.
+
+        The SDK's own retry is switched off (``attempts=1``). This adapter
+        retries a 429 itself, honouring the delay Gemini states in the error,
+        and a second retry layer underneath multiplies the wait: five SDK
+        attempts inside each of the adapter's own turns into a call that can
+        sit for minutes on a rate limit.
+        """
+        from google.genai import types
+
+        return types.HttpOptions(
+            timeout=int(self.timeout * 1000),
+            retry_options=types.HttpRetryOptions(attempts=1),
+        )
 
     def load(self) -> None:
         """Initialize the google.genai client."""
@@ -152,7 +185,9 @@ class GeminiAdapter(FunctionCallingModel):
 
         try:
             logger.info("Initializing Gemini client for model '%s'…", self.model_name)
-            self.client = genai.Client(api_key=self.api_key)
+            self.client = genai.Client(
+                api_key=self.api_key, http_options=self._http_options()
+            )
             self._is_loaded = True
             self._metadata = {
                 "model_name": self.model_name,
@@ -449,7 +484,8 @@ class GeminiAdapter(FunctionCallingModel):
         last_exc: Exception | None = None
         _retry_start = time.monotonic()
         _MAX_RETRY_SECONDS = 45.0
-        for attempt in range(1, self.MAX_RATE_LIMIT_RETRIES + 1):
+        attempts = self.max_retries + 1
+        for attempt in range(1, attempts + 1):
             try:
                 if stream:
                     return self.client.models.generate_content_stream(
@@ -483,7 +519,7 @@ class GeminiAdapter(FunctionCallingModel):
                 )
                 if is_hard_quota:
                     raise
-                if attempt >= self.MAX_RATE_LIMIT_RETRIES:
+                if attempt >= attempts:
                     break
                 if time.monotonic() - _retry_start >= _MAX_RETRY_SECONDS:
                     logger.warning("Gemini retry budget exhausted after %.1fs", _MAX_RETRY_SECONDS)
@@ -500,10 +536,14 @@ class GeminiAdapter(FunctionCallingModel):
                     break
                 logger.warning(
                     "Gemini transient error on attempt %d/%d: %s — sleeping %.1fs",
-                    attempt, self.MAX_RATE_LIMIT_RETRIES, type(exc).__name__, delay,
+                    attempt, attempts, type(exc).__name__, delay,
                 )
                 time.sleep(delay)
-        assert last_exc is not None
+        if last_exc is None:
+            raise RuntimeError(
+                f"Gemini made no request for '{self.model_name}': the retry "
+                f"budget was {attempts} attempts."
+            )
         raise last_exc
 
     def _validate_media_support(self, prompt: Any) -> None:
@@ -688,7 +728,9 @@ class GeminiAdapter(FunctionCallingModel):
         if isinstance(prompt, str):
             self.validate_prompt(prompt)
 
-        gen_config = self._build_config(config)
+        gen_config = self._build_config(merge_call_overrides(
+            config if config is not None else GenerationConfig(), kwargs
+        ))
         self._validate_media_support(prompt)
         content = self._prepare_content(prompt)
 
@@ -930,7 +972,9 @@ class GeminiAdapter(FunctionCallingModel):
         if isinstance(prompt, str):
             self.validate_prompt(prompt)
 
-        gen_config = self._build_config(config)
+        gen_config = self._build_config(merge_call_overrides(
+            config if config is not None else GenerationConfig(), kwargs
+        ))
         self._validate_media_support(prompt)
         content = self._prepare_content(prompt)
 
