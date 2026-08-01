@@ -27,6 +27,9 @@ Nested in `AgentConfig.memory_config`:
 |-------|------|---------|-------------|
 | `short_term_max_tokens` | `int` | `4096` | Max tokens in short-term memory |
 | `short_term_max_messages` | `int` | `100` | Max messages to retain |
+| `summarization_threshold` | `float` | `0.8` | Share of `short_term_max_tokens` that triggers summarization |
+| `keep_recent_messages` | `int` | `4` | Recent messages never summarized |
+| `summary_budget_ratio` | `float` | `0.4` | Share of `short_term_max_tokens` the retained summaries may occupy; older summaries are folded together to stay inside it |
 | `long_term_backend` | `str` | `"sqlite"` | Storage backend |
 | `long_term_persist_path` | `str \| None` | `None` | Persistence directory |
 | `auto_summarize` | `bool` | `True` | Auto-summarize old context |
