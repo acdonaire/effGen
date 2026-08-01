@@ -166,6 +166,7 @@ class MLXVLMEngine(MLXEngine):
         prompt: str,
         system_prompt: str | None = None,
         num_images: int = 0,
+        tools: Any = None,
     ) -> str:
         """
         Format a prompt using the VLM-specific chat template.
@@ -178,12 +179,17 @@ class MLXVLMEngine(MLXEngine):
             prompt: The raw user prompt
             system_prompt: Optional system prompt override
             num_images: Number of images being passed (0 for text-only)
+            tools: Native tool schemas. Carried to the parent on the text-only
+                path; the image path renders through the VLM template, which
+                takes no tools, so they are not passed there.
 
         Returns:
             Formatted prompt string with appropriate image tokens
         """
         if num_images == 0:
-            return super()._format_prompt_with_chat_template(prompt, system_prompt)
+            return super()._format_prompt_with_chat_template(
+                prompt, system_prompt, tools=tools
+            )
 
         if not self.apply_chat_template:
             return prompt

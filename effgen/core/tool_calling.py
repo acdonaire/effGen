@@ -574,6 +574,16 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
         if not text or not isinstance(text, str):
             return result
 
+        # --- Try Gemma 4 channel format (asymmetric delimiters) ---
+        # Gemma 4 wraps reasoning in <|channel>...<channel|> and tool calls in
+        # <|tool_call>call:NAME{...}<tool_call|>. These markers are unknown to
+        # the other parsers below, so without this branch the whole reasoning
+        # trace leaks into the "final answer" and tool calls never fire.
+        if "<|channel>" in text or "<|tool_call>" in text or "<channel|>" in text:
+            gemma = self._parse_gemma_channels(text, tools)
+            if gemma is not None:
+                return gemma
+
         # --- Try Qwen format: <tool_call>...</tool_call> ---
         qwen_match = re.search(
             r'<tool_call>\s*(\{.*?\})\s*</tool_call>',
@@ -679,6 +689,7 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
         if text_stripped and not any(marker in text for marker in [
             "<tool_call>", "<|python_tag|>", "<function=", "[TOOL_CALLS]",
             "Thought:", "Action:", "Tool:",
+            "<|channel>", "<channel|>", "<|tool_call>",
         ]):
             # A bare "name"/"function" key is only evidence of a call the parse
             # above could not finish — a truncated one. When the JSON is
@@ -690,6 +701,99 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
             result.final_answer = text_stripped
             logger.debug("No tool call markers found, treating as final answer")
 
+        return result
+
+    # -- Gemma 4 channel/tool_call parsing ---------------------------------
+    # Delimiters are asymmetric: open <|x> / close <x|>. Confirmed against the
+    # gemma-4-*-it tokenizer special tokens (<|channel>/<channel|>,
+    # <|tool_call>/<tool_call|>).
+    _GEMMA_STRIP_RE = re.compile(
+        r"<\|?(?:channel|turn|think|tool|tool_call|tool_response|image|audio|video)\|?>"
+    )
+
+    @staticmethod
+    def _loose_json(s: str) -> dict[str, Any]:
+        """Parse Gemma's loose arg blob, e.g. {query: "x"} (unquoted keys)."""
+        s = (s or "").strip()
+        if not s:
+            return {}
+        try:
+            v = json.loads(s)
+            return v if isinstance(v, dict) else {"__raw_input__": s}
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # Quote bare identifier keys: {query: "x"} -> {"query": "x"}
+        fixed = re.sub(r'([{,]\s*)([A-Za-z_]\w*)(\s*:)', r'\1"\2"\3', s)
+        try:
+            v = json.loads(fixed)
+            return v if isinstance(v, dict) else {"__raw_input__": s}
+        except (json.JSONDecodeError, TypeError):
+            return {"__raw_input__": s}
+
+    @staticmethod
+    def _resolve_tool_name(name: str, tools: dict[str, Any] | None) -> str:
+        """Map a slightly-off name (e.g. search_arxiv) onto a real tool.
+
+        Gemma often invents a verb-prefixed name when it isn't handed the tool
+        schema. Fall back to the raw name when nothing plausible matches so the
+        caller still surfaces a clear "tool not found".
+        """
+        if not tools or name in tools:
+            return name
+        lowered = {t.lower(): t for t in tools}
+        if name.lower() in lowered:
+            return lowered[name.lower()]
+        for prefix in ("search_", "get_", "call_", "use_", "run_", "fetch_", "query_"):
+            if name.lower().startswith(prefix):
+                stem = name.lower()[len(prefix):]
+                if stem in lowered:
+                    return lowered[stem]
+        import difflib
+        close = difflib.get_close_matches(name.lower(), list(lowered), n=1, cutoff=0.7)
+        return lowered[close[0]] if close else name
+
+    def _parse_gemma_channels(
+        self, text: str, tools: dict[str, Any] | None
+    ) -> ToolCallResult | None:
+        """Parse Gemma 4 output: strip the reasoning channel, extract tool calls."""
+        result = ToolCallResult(raw_text=text)
+
+        # Reasoning lives in <|channel>[thought]...<channel|>; keep it as thought.
+        thought_match = re.search(
+            r"<\|channel>\s*(?:thought)?\s*(.*?)<channel\|>", text, re.DOTALL
+        )
+        if thought_match:
+            result.thought = thought_match.group(1).strip() or None
+
+        # Tool call: <|tool_call> call:NAME{...} <tool_call|> (close tag optional
+        # when generation is truncated).
+        call_match = re.search(
+            r"<\|tool_call>\s*(?:call:)?\s*([A-Za-z_]\w*)\s*(\{.*?\})"
+            r"\s*(?:<tool_call\|>|$)",
+            text,
+            re.DOTALL,
+        )
+        if call_match:
+            tool_name = self._resolve_tool_name(call_match.group(1).strip(), tools)
+            result.tool_name = tool_name
+            result.arguments = self._loose_json(call_match.group(2))
+            result.is_tool_call = True
+            logger.debug(f"Parsed Gemma-style tool call: {tool_name}")
+            return result
+
+        # No tool call — strip every channel block, leaving the clean answer.
+        cleaned = re.sub(r"<\|channel>.*?<channel\|>", "", text, flags=re.DOTALL)
+        # Drop any unclosed trailing channel (reasoning truncated at max_tokens)
+        # so half-finished thoughts never surface as the answer.
+        cleaned = re.sub(r"<\|channel>.*$", "", cleaned, flags=re.DOTALL)
+        cleaned = self._GEMMA_STRIP_RE.sub("", cleaned).strip()
+        if cleaned:
+            result.final_answer = cleaned
+            logger.debug("Gemma channel format: extracted final answer")
+            return result
+
+        # Only an unclosed/empty reasoning channel (e.g. truncated at max_tokens).
+        # Return an empty result so raw special tokens never leak as the answer.
         return result
 
     def format_tools_for_prompt(self, tools: list) -> list[dict[str, Any]]:

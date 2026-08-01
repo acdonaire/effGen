@@ -35,6 +35,55 @@ from effgen.models.base import (
 logger = logging.getLogger(__name__)
 
 
+def _build_mlx_gen_kwargs(config: GenerationConfig, greedy: bool) -> dict[str, Any]:
+    """Build sampling kwargs for mlx_lm ``generate``/``stream_generate``.
+
+    mlx-lm dropped the flat ``temp``/``top_p``/``repetition_penalty`` kwargs
+    (accepted by ``generate_step`` in <=0.19) in favour of a ``sampler`` callable
+    (``make_sampler``) plus ``logits_processors`` (``make_logits_processors``).
+    We build the modern form when those helpers are importable and fall back to
+    the legacy flat kwargs otherwise, so effGen works across mlx-lm versions.
+
+    ``seed`` is applied via ``mx.random.seed`` (stable across versions) rather
+    than passed through, since the newer API no longer accepts a ``seed`` kwarg.
+    """
+    temp = 0.0 if greedy else (config.temperature or 0.0)
+    top_p = 1.0 if greedy else (config.top_p if config.top_p is not None else 1.0)
+    rep_penalty = config.repetition_penalty
+
+    if config.seed is not None:
+        try:  # deterministic sampling; harmless if unsupported
+            import mlx.core as mx
+
+            mx.random.seed(config.seed)
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+    kwargs: dict[str, Any] = {"max_tokens": config.max_tokens or 512}
+
+    try:
+        from mlx_lm.sample_utils import make_sampler
+    except Exception:  # pragma: no cover - very old mlx-lm: legacy flat kwargs
+        kwargs.update({"temp": temp, "top_p": top_p})
+        if rep_penalty is not None:
+            kwargs["repetition_penalty"] = rep_penalty
+        if config.seed is not None:
+            kwargs["seed"] = config.seed
+        return kwargs
+
+    kwargs["sampler"] = make_sampler(temp=temp, top_p=top_p)
+    if rep_penalty is not None and rep_penalty != 1.0:
+        try:
+            from mlx_lm.sample_utils import make_logits_processors
+
+            kwargs["logits_processors"] = make_logits_processors(
+                repetition_penalty=rep_penalty
+            )
+        except Exception:  # pragma: no cover - processor helper unavailable
+            pass
+    return kwargs
+
+
 class MLXEngine(BatchModel):
     """
     MLX-based model engine for Apple Silicon inference.
@@ -218,6 +267,7 @@ class MLXEngine(BatchModel):
         self,
         prompt: str,
         system_prompt: str | None = None,
+        tools: Any = None,
     ) -> str:
         """
         Format a prompt using the model's chat template.
@@ -228,6 +278,9 @@ class MLXEngine(BatchModel):
         Args:
             prompt: The raw user prompt
             system_prompt: Optional system prompt override
+            tools: Native tool schemas to render into the template, for a
+                model whose chat template accepts them. A template that does
+                not is rendered without them rather than failing.
 
         Returns:
             Formatted prompt string
@@ -265,11 +318,32 @@ class MLXEngine(BatchModel):
                 messages.append({"role": "system", "content": effective_system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-            formatted = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+            template_kwargs: dict[str, Any] = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+            }
+            # Inject native tool schemas so instruct models (Qwen, Gemma, …) emit
+            # their trained tool-call tokens. Without this the model never learns
+            # the tools exist and just answers in prose — the reason a "calculator
+            # agent" would silently do (sometimes wrong) mental math instead.
+            if tools:
+                template_kwargs["tools"] = tools
+            try:
+                formatted = self.tokenizer.apply_chat_template(
+                    messages, **template_kwargs
+                )
+            except TypeError as e:
+                # Older/simple templates don't accept a tools= kwarg — fall back.
+                if tools:
+                    logger.debug(
+                        f"Chat template does not accept tools param: {e}; "
+                        "falling back to plain template"
+                    )
+                    formatted = self.tokenizer.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True,
+                    )
+                else:
+                    raise
             logger.debug(
                 f"Applied chat template (length: {len(prompt)} -> {len(formatted)})"
             )
@@ -315,10 +389,14 @@ class MLXEngine(BatchModel):
         # and is consumed here, so it is not also forwarded to mlx-lm.
         config = merge_call_overrides(config, kwargs)
 
+        # Native tool schemas are passed to the chat template, not to mlx-lm's
+        # generate(), so pull them out of kwargs before building sampling args.
+        tools = kwargs.get("tools")
+
         # Apply chat template
         if not skip_chat_template:
             formatted_prompt = self._format_prompt_with_chat_template(
-                prompt, system_prompt
+                prompt, system_prompt, tools=tools
             )
         else:
             formatted_prompt = prompt
@@ -329,14 +407,7 @@ class MLXEngine(BatchModel):
             # Build MLX generation kwargs. Normalize deterministic generation:
             # temperature<=0 means greedy (temp=0 in mlx-lm); clamp negatives.
             _greedy = config.temperature is None or config.temperature <= 0
-            gen_kwargs: dict[str, Any] = {
-                "max_tokens": config.max_tokens or 512,
-                "temp": 0.0 if _greedy else config.temperature,
-                "top_p": 1.0 if _greedy else config.top_p,
-                "repetition_penalty": config.repetition_penalty,
-            }
-            if config.seed is not None:
-                gen_kwargs["seed"] = config.seed
+            gen_kwargs = _build_mlx_gen_kwargs(config, _greedy)
 
             generated_text = mlx_generate(
                 self.model,
@@ -418,10 +489,13 @@ class MLXEngine(BatchModel):
         # and is consumed here, so it is not also forwarded to mlx-lm.
         config = merge_call_overrides(config, kwargs)
 
+        # Native tool schemas go to the chat template, not mlx-lm generate().
+        tools = kwargs.get("tools")
+
         # Apply chat template
         if not skip_chat_template:
             formatted_prompt = self._format_prompt_with_chat_template(
-                prompt, system_prompt
+                prompt, system_prompt, tools=tools
             )
         else:
             formatted_prompt = prompt
@@ -431,14 +505,7 @@ class MLXEngine(BatchModel):
         try:
             # Normalize deterministic generation: temperature<=0 means greedy.
             _greedy = config.temperature is None or config.temperature <= 0
-            gen_kwargs: dict[str, Any] = {
-                "max_tokens": config.max_tokens or 512,
-                "temp": 0.0 if _greedy else config.temperature,
-                "top_p": 1.0 if _greedy else config.top_p,
-                "repetition_penalty": config.repetition_penalty,
-            }
-            if config.seed is not None:
-                gen_kwargs["seed"] = config.seed
+            gen_kwargs = _build_mlx_gen_kwargs(config, _greedy)
 
             for response in stream_generate(
                 self.model,

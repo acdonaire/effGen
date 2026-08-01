@@ -169,6 +169,38 @@ def test_leading_json_like_prose_not_corrupted(text):
     assert sanitize(text) == text
 
 
+
+# --- Gemma 4 channel format (asymmetric <|channel> / <channel|>) --------------
+
+@pytest.mark.parametrize(
+    "leaked, expected",
+    [
+        # The answer follows the closed reasoning channel — keep only the answer.
+        (
+            "<|channel>thought\nlong english planning...\n<channel|>Paris is the capital.",
+            "Paris is the capital.",
+        ),
+        # Japanese answer after the reasoning channel (captured from gemma-4-e4b).
+        (
+            "<|channel>thought\nreasoning\n<channel|>富士山の標高は3,776メートルです。",
+            "富士山の標高は3,776メートルです。",
+        ),
+        # A leaked Gemma tool call in an answer must be removed whole.
+        ('answer <|tool_call>call:arxiv{query: "x"}<tool_call|>', "answer"),
+        # Truncated mid-reasoning (no close tag) must not surface as the answer.
+        ("<|channel>thought\ncut off before finishing", ""),
+    ],
+)
+def test_strips_gemma_channel_format(leaked, expected):
+    assert sanitize(leaked) == expected
+
+
+def test_gemma_sanitize_is_idempotent():
+    raw = "<|channel>thought\nplan\n<channel|>富士山は約3,776mです。"
+    once = sanitize(raw)
+    assert sanitize(once) == once
+
+
 # --- Idempotency --------------------------------------------------------------
 
 @pytest.mark.parametrize(

@@ -328,3 +328,34 @@ class TestMLXEngineMisc:
         r = repr(engine)
         assert "MLXEngine" in r
         assert "mlx-community/test-model-4bit" in r
+
+
+class TestMLXEngineNativeTools:
+    """The chat template must receive tool schemas so instruct models emit
+    their native tool-call tokens instead of answering in prose."""
+
+    def test_tools_forwarded_to_chat_template(self, loaded_engine):
+        tools = [{"type": "function", "function": {"name": "calculator"}}]
+        loaded_engine._format_prompt_with_chat_template("What is 2+2?", tools=tools)
+
+        _, kwargs = loaded_engine.tokenizer.apply_chat_template.call_args
+        assert kwargs.get("tools") == tools
+
+    def test_no_tools_means_no_tools_kwarg(self, loaded_engine):
+        loaded_engine._format_prompt_with_chat_template("Hello")
+        _, kwargs = loaded_engine.tokenizer.apply_chat_template.call_args
+        assert "tools" not in kwargs
+
+    def test_template_without_tools_support_falls_back(self, loaded_engine):
+        # A template that rejects the tools= kwarg must not crash — it retries
+        # without tools rather than dropping to the raw prompt.
+        def _fake_template(messages, **kwargs):
+            if "tools" in kwargs:
+                raise TypeError("apply_chat_template() got unexpected kwarg 'tools'")
+            return "<|im_start|>user\nHi<|im_end|>"
+
+        loaded_engine.tokenizer.apply_chat_template.side_effect = _fake_template
+        out = loaded_engine._format_prompt_with_chat_template(
+            "Hi", tools=[{"type": "function", "function": {"name": "x"}}]
+        )
+        assert out == "<|im_start|>user\nHi<|im_end|>"

@@ -385,6 +385,16 @@ def written_call_only(text: str | None, tool_names: Any) -> bool:
     left = re.sub(r"</?[^<>\n]{0,80}>", " ", left)
     return not re.search(r"[A-Za-z]{3,}", left)
 
+# Gemma 4 emits reasoning inside <|channel>...<channel|> (asymmetric delimiters,
+# unlike the <|...|> tags above) and puts the user-facing answer *after* the
+# closing tag. These strip the reasoning so it never surfaces as the answer.
+_GEMMA_CHANNEL_CLOSE_RE = re.compile(r"<channel\|>")
+_GEMMA_DANGLING_CHANNEL_RE = re.compile(r"<\|channel>.*$", re.DOTALL)
+_GEMMA_TOOLCALL_RE = re.compile(r"<\|tool_call>.*?(?:<tool_call\|>|$)", re.DOTALL)
+_GEMMA_STRAY_TOKEN_RE = re.compile(
+    r"<\|?(?:channel|turn|think|tool|tool_call|tool_response|image|audio|video)\|?>"
+)
+
 
 def sanitize_final_answer(text: str | None) -> str | None:
     """Strip internal ReAct/tool scaffolding from a user-facing answer.
@@ -415,6 +425,18 @@ def sanitize_final_answer(text: str | None) -> str | None:
     s = _TOOLCALL_TAG_RE.sub("", s)
     # 2c. Remove a leading bare "tool_name {json}" echo with no wrapping tag.
     s = _LEADING_TOOLCALL_ECHO_RE.sub("", s)
+
+    # 2d. Gemma 4 channel format: reasoning is wrapped in <|channel>...<channel|>
+    #     with the answer after the close tag. Keep only the tail after the last
+    #     close, drop any unclosed (truncated) trailing channel, then clear stray
+    #     channel/tool special tokens. Only fires when the markers are present.
+    if "<|channel>" in s or "<channel|>" in s or "<|tool_call>" in s:
+        closes = list(_GEMMA_CHANNEL_CLOSE_RE.finditer(s))
+        if closes:
+            s = s[closes[-1].end():]
+        s = _GEMMA_DANGLING_CHANNEL_RE.sub("", s)
+        s = _GEMMA_TOOLCALL_RE.sub("", s)
+        s = _GEMMA_STRAY_TOKEN_RE.sub("", s)
     # 3. Drop trailing Observation/Thought/Question/Action bleed.
     s = _TRAILING_BLEED_RE.sub("", s)
     # 4. If a line-anchored answer label is present, the real answer is what
