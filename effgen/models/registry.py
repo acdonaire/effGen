@@ -24,6 +24,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 from effgen.models.errors import AmbiguousModelError
@@ -52,12 +53,37 @@ _BUILTIN_ADAPTER_MODULES = (
 
 
 class ProviderRegistry:
-    """Singleton registry mapping providers → adapters + models."""
+    """Singleton registry mapping providers → adapters + models.
+
+    The registry is process-global and every agent reads it, so all of its
+    methods are safe to call from several threads at once. Reads take a shared
+    re-entrant lock; the operations that replace the whole registration set
+    (:meth:`reset`, :meth:`restore`) build the replacement first and publish it
+    while holding that lock, so a lookup running alongside one of them sees the
+    state before the swap or the state after it, never the empty registry in
+    between.
+    """
 
     # {provider_name: {"adapter_cls": cls, "models": dict, "env_keys": list[str], "capabilities": set}}
     _providers: dict[str, dict[str, Any]] = {}
     # {model_id: [provider_name, ...]}  — tracks which providers expose a model id
     _model_index: dict[str, list[str]] = {}
+    # Guards both mappings. Re-entrant: reset() holds it across register()
+    # calls, which take it again on the same thread.
+    _lock: "threading.RLock" = threading.RLock()
+    # Set while a thread is building a replacement registration set. register()
+    # writes there instead of into the live mappings, so the work a swap does
+    # is invisible until it is published.
+    _staging = threading.local()
+
+    @classmethod
+    def _active(cls) -> tuple[dict[str, dict[str, Any]], dict[str, list[str]]]:
+        """The mappings this thread's registrations should be written to.
+
+        The live pair, unless this thread is staging a replacement.
+        """
+        target = getattr(cls._staging, "target", None)
+        return target if target is not None else (cls._providers, cls._model_index)
 
     @classmethod
     def register(
@@ -92,40 +118,44 @@ class ProviderRegistry:
                            Per-model pricing in ``models[id]["pricing_per_1m_input"]``
                            takes precedence over these provider defaults when available.
         """
-        if provider_name in cls._providers:
-            # Remove old model-index entries for this provider
-            for mid in cls._providers[provider_name].get("models", {}):
-                if mid in cls._model_index:
-                    cls._model_index[mid] = [
-                        p for p in cls._model_index[mid] if p != provider_name
-                    ]
-                    if not cls._model_index[mid]:
-                        del cls._model_index[mid]
+        with cls._lock:
+            providers, model_index = cls._active()
 
-        cls._providers[provider_name] = {
-            "adapter_cls": adapter_cls,
-            "models": models,
-            "env_keys": list(env_keys or []),
-            "capabilities": set(capabilities) if capabilities else set(),
-            "pricing": dict(pricing) if pricing else {
-                "input_per_1m": 0.0,
-                "output_per_1m": 0.0,
-                "free_tier": False,
-            },
-        }
+            if provider_name in providers:
+                # Remove old model-index entries for this provider
+                for mid in providers[provider_name].get("models", {}):
+                    if mid in model_index:
+                        model_index[mid] = [
+                            p for p in model_index[mid] if p != provider_name
+                        ]
+                        if not model_index[mid]:
+                            del model_index[mid]
 
-        # Rebuild model index for this provider
-        for model_id in models:
-            cls._model_index.setdefault(model_id, [])
-            if provider_name not in cls._model_index[model_id]:
-                cls._model_index[model_id].append(provider_name)
+            providers[provider_name] = {
+                "adapter_cls": adapter_cls,
+                "models": models,
+                "env_keys": list(env_keys or []),
+                "capabilities": set(capabilities) if capabilities else set(),
+                "pricing": dict(pricing) if pricing else {
+                    "input_per_1m": 0.0,
+                    "output_per_1m": 0.0,
+                    "free_tier": False,
+                },
+            }
+
+            # Rebuild model index for this provider
+            for model_id in models:
+                model_index.setdefault(model_id, [])
+                if provider_name not in model_index[model_id]:
+                    model_index[model_id].append(provider_name)
 
         logger.debug("ProviderRegistry: registered provider %r (%d models)", provider_name, len(models))
 
     @classmethod
     def list_providers(cls) -> list[str]:
         """Return sorted list of all registered provider names."""
-        return sorted(cls._providers)
+        with cls._lock:
+            return sorted(cls._providers)
 
     @classmethod
     def list_models(cls, provider: str) -> list[dict[str, Any]]:
@@ -137,18 +167,20 @@ class ProviderRegistry:
         Raises:
             KeyError: If *provider* is not registered.
         """
-        if provider not in cls._providers:
-            raise KeyError(f"Provider {provider!r} is not registered. "
-                           f"Available: {cls.list_providers()}")
-        models = cls._providers[provider]["models"]
+        with cls._lock:
+            if provider not in cls._providers:
+                raise KeyError(f"Provider {provider!r} is not registered. "
+                               f"Available: {cls.list_providers()}")
+            models = dict(cls._providers[provider]["models"])
         return [{"model_id": mid, **info} for mid, info in models.items()]
 
     @classmethod
     def get_provider_info(cls, provider: str) -> dict[str, Any]:
         """Return the full registration record for *provider*."""
-        if provider not in cls._providers:
-            raise KeyError(f"Provider {provider!r} is not registered.")
-        return cls._providers[provider]
+        with cls._lock:
+            if provider not in cls._providers:
+                raise KeyError(f"Provider {provider!r} is not registered.")
+            return cls._providers[provider]
 
     @classmethod
     def lookup(
@@ -172,52 +204,55 @@ class ProviderRegistry:
                                  no provider is specified.
             KeyError: If *model_id* is not found in any registered provider.
         """
-        # Parse "provider:model_id" prefix
-        if provider is None and ":" in model_id:
-            parts = model_id.split(":", 1)
-            # Heuristic: if the prefix part is a known provider, use it
-            if parts[0] in cls._providers:
-                provider = parts[0]
-                model_id = parts[1]
+        with cls._lock:
+            # Parse "provider:model_id" prefix
+            if provider is None and ":" in model_id:
+                parts = model_id.split(":", 1)
+                # Heuristic: if the prefix part is a known provider, use it
+                if parts[0] in cls._providers:
+                    provider = parts[0]
+                    model_id = parts[1]
 
-        if provider is not None:
-            if provider not in cls._providers:
-                raise KeyError(f"Provider {provider!r} is not registered.")
-            rec = cls._providers[provider]
-            if model_id not in rec["models"]:
+            if provider is not None:
+                if provider not in cls._providers:
+                    raise KeyError(f"Provider {provider!r} is not registered.")
+                rec = cls._providers[provider]
+                if model_id not in rec["models"]:
+                    raise KeyError(
+                        f"Model {model_id!r} not found in provider {provider!r}. "
+                        f"Call list_models({provider!r}) to see available models."
+                    )
+                return provider, rec["adapter_cls"], rec["models"][model_id]
+
+            # No provider specified — look in index
+            providers_for_model = cls._model_index.get(model_id, [])
+
+            if not providers_for_model:
                 raise KeyError(
-                    f"Model {model_id!r} not found in provider {provider!r}. "
-                    f"Call list_models({provider!r}) to see available models."
+                    f"Model {model_id!r} not found in any registered provider. "
+                    f"Use 'provider:model_id' syntax or call list_models() to browse."
                 )
-            return provider, rec["adapter_cls"], rec["models"][model_id]
 
-        # No provider specified — look in index
-        providers_for_model = cls._model_index.get(model_id, [])
+            if len(providers_for_model) > 1:
+                raise AmbiguousModelError(model_id, list(providers_for_model))
 
-        if not providers_for_model:
-            raise KeyError(
-                f"Model {model_id!r} not found in any registered provider. "
-                f"Use 'provider:model_id' syntax or call list_models() to browse."
-            )
-
-        if len(providers_for_model) > 1:
-            raise AmbiguousModelError(model_id, providers_for_model)
-
-        prov = providers_for_model[0]
-        rec = cls._providers[prov]
-        return prov, rec["adapter_cls"], rec["models"][model_id]
+            prov = providers_for_model[0]
+            rec = cls._providers[prov]
+            return prov, rec["adapter_cls"], rec["models"][model_id]
 
     @classmethod
     def is_available(cls, provider: str) -> bool:
         """Return True if *provider* has at least one configured API key."""
         import os
-        rec = cls._providers.get(provider, {})
-        return any(os.environ.get(k) for k in rec.get("env_keys", []))
+        with cls._lock:
+            env_keys = list(cls._providers.get(provider, {}).get("env_keys", []))
+        return any(os.environ.get(k) for k in env_keys)
 
     @classmethod
     def get_capabilities(cls, provider: str) -> "set[Capability]":
         """Return the capability set registered for *provider*."""
-        return set(cls._providers.get(provider, {}).get("capabilities", set()))
+        with cls._lock:
+            return set(cls._providers.get(provider, {}).get("capabilities", set()))
 
     @classmethod
     def get_pricing(cls, provider: str) -> "dict[str, float | bool]":
@@ -226,11 +261,12 @@ class ProviderRegistry:
         Returns a dict with keys ``input_per_1m``, ``output_per_1m``,
         ``free_tier``.  Falls back to zeros/False if not registered.
         """
-        return dict(cls._providers.get(provider, {}).get("pricing", {
-            "input_per_1m": 0.0,
-            "output_per_1m": 0.0,
-            "free_tier": False,
-        }))
+        with cls._lock:
+            return dict(cls._providers.get(provider, {}).get("pricing", {
+                "input_per_1m": 0.0,
+                "output_per_1m": 0.0,
+                "free_tier": False,
+            }))
 
     @classmethod
     def register_builtins(cls) -> list[str]:
@@ -250,6 +286,7 @@ class ProviderRegistry:
         import importlib
 
         registered: list[str] = []
+        providers, _index = cls._active()
         for module_name in _BUILTIN_ADAPTER_MODULES:
             try:
                 module = importlib.import_module(module_name)
@@ -262,16 +299,27 @@ class ProviderRegistry:
             # register() replaces the provider's record, so a changed (or new)
             # record identifies which provider this module owns — including
             # when it was already registered and nothing was added.
-            before = dict(cls._providers)
+            before = dict(providers)
             try:
                 register()
             except Exception:
                 logger.debug("Provider module %r failed to register", module_name, exc_info=True)
                 continue
             registered.extend(
-                name for name, rec in cls._providers.items() if before.get(name) is not rec
+                name for name, rec in providers.items() if before.get(name) is not rec
             )
         return sorted(set(registered))
+
+    @classmethod
+    def _stage(cls) -> "_Staged":
+        """Build a replacement registration set without touching the live one.
+
+        Used as a context manager. Inside the block, :meth:`register` writes to
+        the staged mappings; on exit the staged content replaces the live
+        mappings in one step, under the registry lock. A reader therefore never
+        observes the registry part-way through a swap.
+        """
+        return _Staged(cls)
 
     @classmethod
     def clear(cls) -> None:
@@ -280,8 +328,10 @@ class ProviderRegistry:
         Model lookups raise until something registers again; :meth:`reset`
         returns the registry to the state effGen starts in.
         """
-        cls._providers.clear()
-        cls._model_index.clear()
+        with cls._lock:
+            providers, model_index = cls._active()
+            providers.clear()
+            model_index.clear()
 
     @classmethod
     def reset(cls) -> None:
@@ -291,9 +341,29 @@ class ProviderRegistry:
         held per provider — then registers the built-in provider adapters
         again, so model lookups keep working afterwards. Use :meth:`clear` when
         an empty registry is what you want.
+
+        The built-in set is assembled first and installed in one step, so a
+        lookup on another thread resolves against the old registrations or the
+        new ones rather than failing against the empty registry in between.
         """
-        cls.clear()
-        cls.register_builtins()
+        # Import the adapter modules before taking the registry lock: importing
+        # one runs its registration hook, and holding the registry lock across
+        # an import would have this thread waiting on the import machinery while
+        # the importing thread waits on the registry.
+        cls._import_builtin_modules()
+        with cls._stage():
+            cls.register_builtins()
+
+    @staticmethod
+    def _import_builtin_modules() -> None:
+        """Import each built-in adapter module; a missing optional one is skipped."""
+        import importlib
+
+        for module_name in _BUILTIN_ADAPTER_MODULES:
+            try:
+                importlib.import_module(module_name)
+            except Exception:
+                logger.debug("Provider module %r unavailable", module_name, exc_info=True)
 
     @classmethod
     def snapshot(cls) -> dict[str, dict[str, Any]]:
@@ -305,9 +375,10 @@ class ProviderRegistry:
         circuit breaker. Adapter classes are shared with the live registry;
         model metadata is copied one level deep.
         """
-        return {
-            name: {
-                "adapter_cls": rec.get("adapter_cls"),
+        with cls._lock:
+            return {
+                name: {
+                    "adapter_cls": rec.get("adapter_cls"),
                 # The catalog object itself, so restore() can put the entries
                 # back where the adapter module reads them, and a copy of what
                 # it held.
@@ -336,7 +407,7 @@ class ProviderRegistry:
             return {mid: dict(info) for mid, info in saved.items()}
 
         for model_id in [mid for mid in catalog if mid not in saved]:
-            del catalog[model_id]
+            catalog.pop(model_id, None)
         for model_id, info in saved.items():
             current = catalog.get(model_id)
             if isinstance(current, dict):
@@ -353,17 +424,23 @@ class ProviderRegistry:
         Args:
             snapshot: A mapping returned by :meth:`snapshot`. Its contents are
                       copied, so the same snapshot can be restored repeatedly.
+
+        The registrations are assembled first and installed in one step, and the
+        provider catalogs the snapshot points at are rewritten under the same
+        lock, so a concurrent restore of the same snapshot cannot interleave
+        with this one and a concurrent lookup never sees a half-restored
+        registry.
         """
-        cls.clear()
-        for name, rec in snapshot.items():
-            cls.register(
-                name,
-                rec.get("adapter_cls"),
-                cls._restore_models(rec),
-                env_keys=list(rec.get("env_keys") or []),
-                capabilities=set(rec.get("capabilities") or set()),
-                pricing=dict(rec.get("pricing") or {}) or None,
-            )
+        with cls._stage():
+            for name, rec in snapshot.items():
+                cls.register(
+                    name,
+                    rec.get("adapter_cls"),
+                    cls._restore_models(rec),
+                    env_keys=list(rec.get("env_keys") or []),
+                    capabilities=set(rec.get("capabilities") or set()),
+                    pricing=dict(rec.get("pricing") or {}) or None,
+                )
 
     # ------------------------------------------------------------------
     # Reliability middleware — circuit breakers + bulkheads per provider
@@ -397,17 +474,18 @@ class ProviderRegistry:
         """
         from effgen.reliability.circuit import CircuitBreaker as _CB
 
-        if provider not in cls._providers:
-            raise KeyError(f"Provider {provider!r} is not registered.")
-        rec = cls._providers[provider]
-        if "_circuit_breaker" not in rec:
-            rec["_circuit_breaker"] = _CB(
-                name=provider,
-                failure_threshold=failure_threshold,
-                recovery_timeout=recovery_timeout,
-                half_open_probes=half_open_probes,
-            )
-        return rec["_circuit_breaker"]
+        with cls._lock:
+            if provider not in cls._providers:
+                raise KeyError(f"Provider {provider!r} is not registered.")
+            rec = cls._providers[provider]
+            if "_circuit_breaker" not in rec:
+                rec["_circuit_breaker"] = _CB(
+                    name=provider,
+                    failure_threshold=failure_threshold,
+                    recovery_timeout=recovery_timeout,
+                    half_open_probes=half_open_probes,
+                )
+            return rec["_circuit_breaker"]
 
     @classmethod
     def get_bulkhead(
@@ -434,17 +512,18 @@ class ProviderRegistry:
         """
         from effgen.reliability.bulkhead import Bulkhead as _BH
 
-        if provider not in cls._providers:
-            raise KeyError(f"Provider {provider!r} is not registered.")
-        rec = cls._providers[provider]
-        if "_bulkhead" not in rec:
-            rec["_bulkhead"] = _BH(
-                name=provider,
-                max_concurrency=max_concurrency,
-                queue_size=queue_size,
-                queue_timeout=queue_timeout,
-            )
-        return rec["_bulkhead"]
+        with cls._lock:
+            if provider not in cls._providers:
+                raise KeyError(f"Provider {provider!r} is not registered.")
+            rec = cls._providers[provider]
+            if "_bulkhead" not in rec:
+                rec["_bulkhead"] = _BH(
+                    name=provider,
+                    max_concurrency=max_concurrency,
+                    queue_size=queue_size,
+                    queue_timeout=queue_timeout,
+                )
+            return rec["_bulkhead"]
 
     @classmethod
     def reliability_stats(cls) -> dict[str, Any]:
@@ -454,7 +533,9 @@ class ProviderRegistry:
         and ``bulkhead`` sub-dicts (or ``None`` if not yet created).
         """
         result: dict[str, Any] = {}
-        for name, rec in cls._providers.items():
+        with cls._lock:
+            records = list(cls._providers.items())
+        for name, rec in records:
             cb = rec.get("_circuit_breaker")
             bh = rec.get("_bulkhead")
             result[name] = {
@@ -485,6 +566,39 @@ class ProviderRegistry:
             A :class:`ChaosMiddlewareRegistry` that intercepts provider calls.
         """
         return ChaosMiddlewareRegistry(chaos=chaos)
+
+
+class _Staged:
+    """Assemble a replacement registration set, then install it in one step.
+
+    Entering takes the registry lock and points this thread's registrations at
+    fresh mappings; leaving copies them over the live ones and releases the
+    lock. A reader blocked on the lock therefore wakes to a registry that is
+    either exactly what it was or exactly what the block built — never the
+    empty state a clear-then-repopulate passes through. An exception inside the
+    block leaves the live registrations untouched.
+    """
+
+    def __init__(self, registry: "type[ProviderRegistry]") -> None:
+        self._registry = registry
+        self._providers: dict[str, dict[str, Any]] = {}
+        self._model_index: dict[str, list[str]] = {}
+
+    def __enter__(self) -> "_Staged":
+        self._registry._lock.acquire()
+        self._registry._staging.target = (self._providers, self._model_index)
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        try:
+            self._registry._staging.target = None
+            if exc_type is None:
+                self._registry._providers.clear()
+                self._registry._providers.update(self._providers)
+                self._registry._model_index.clear()
+                self._registry._model_index.update(self._model_index)
+        finally:
+            self._registry._lock.release()
 
 
 class ChaosMiddlewareRegistry:
