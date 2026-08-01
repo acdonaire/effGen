@@ -20,6 +20,7 @@ import gc
 import os
 import subprocess
 import threading
+import time
 
 import pytest
 
@@ -203,3 +204,79 @@ class TestReplDroppedWithoutCleanup:
         assert result.success is True
         assert result.output["result"] == 4
         await repl.cleanup()
+
+
+class TestPerCallTimeoutIsDeclared:
+    """``timeout`` is a real per-call parameter, so it is declared as one.
+
+    The tool honours a per-call ``timeout``, but it was missing from the
+    declared parameter list — so every caller that passed one was told its
+    parameter was being ignored (it was not), and a model reading the schema
+    could not set one at all.
+    """
+
+    def test_timeout_is_in_the_declared_parameters(self):
+        names = [p.name for p in PythonREPL().metadata.parameters]
+        assert "timeout" in names, f"declared parameters: {names}"
+
+    def test_timeout_is_not_offered_to_the_model(self):
+        """The value raises the cap as well as lowers it, so the model never
+        sees it: a model that could set its own would be able to lift the
+        limit that stops a runaway program."""
+        meta = PythonREPL().metadata
+        model_names = [p.name for p in meta.model_facing_parameters]
+        assert "timeout" not in model_names, model_names
+        assert "timeout" not in meta.to_json_schema()["parameters"]["properties"]
+
+    def test_passing_a_timeout_logs_no_unknown_parameter_warning(self, caplog):
+        repl = PythonREPL()
+        with caplog.at_level("WARNING"):
+            valid, error = repl.validate_parameters(
+                code="1 + 1", session_id="default", timeout=15
+            )
+        assert valid is True, error
+        unknown = [r for r in caplog.records if "unknown parameter" in r.getMessage()]
+        assert not unknown, [r.getMessage() for r in unknown]
+
+    async def test_a_per_call_timeout_still_bounds_the_run(self):
+        """The declared parameter is the one the implementation acts on."""
+        repl = PythonREPL()
+        try:
+            started = time.monotonic()
+            result = await repl.execute(
+                code="n = 0\nwhile True:\n    n += 1", session_id="spin", timeout=3
+            )
+            elapsed = time.monotonic() - started
+            assert result.success is False
+            assert "timed out" in (result.error or "").lower(), result.error
+            assert elapsed < 15, f"per-call timeout ignored: ran {elapsed:.1f}s"
+        finally:
+            await repl.cleanup()
+
+    async def test_a_fractional_timeout_is_accepted(self):
+        """``execute`` takes ``float | int``, so the declaration must too.
+
+        Declaring a narrower type turns a call that used to work into a
+        parameter-validation failure.
+        """
+        repl = PythonREPL()
+        try:
+            valid, error = repl.validate_parameters(code="1 + 1", timeout=2.5)
+            assert valid is True, error
+            started = time.monotonic()
+            result = await repl.execute(
+                code="n = 0\nwhile True:\n    n += 1", session_id="frac", timeout=2.5
+            )
+            elapsed = time.monotonic() - started
+            assert result.success is False
+            assert "timed out" in (result.error or "").lower(), result.error
+            assert elapsed < 15, f"fractional timeout ignored: ran {elapsed:.1f}s"
+        finally:
+            await repl.cleanup()
+
+    def test_the_declared_timeout_matches_the_one_the_tool_was_built_with(self):
+        """A tool built with a different cap advertises that cap, not the default."""
+        repl = PythonREPL(timeout=7)
+        assert repl.metadata.timeout_seconds == 7
+        declared = next(p for p in repl.metadata.parameters if p.name == "timeout")
+        assert "7s" in declared.description, declared.description

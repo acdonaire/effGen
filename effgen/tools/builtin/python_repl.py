@@ -321,6 +321,25 @@ class PythonREPL(BaseTool):
                         default=False,
                     ),
                     ParameterSpec(
+                        # Fractional seconds are accepted, so the declared type
+                        # is the one the implementation takes rather than a
+                        # narrower one that would reject a working call.
+                        name="timeout",
+                        type=ParameterType.FLOAT,
+                        description=(
+                            "Wall-clock seconds this call may run before the "
+                            f"worker is killed; a value that is not positive "
+                            f"uses this tool's default ({int(timeout)}s)"
+                        ),
+                        required=False,
+                        default=None,
+                        # Caller-controlled bound, like restricted_mode: the
+                        # value raises as well as lowers the wall-clock cap, so
+                        # a model choosing its own would be able to lift the
+                        # limit that stops a runaway program.
+                        model_facing=False,
+                    ),
+                    ParameterSpec(
                         name="restricted_mode",
                         type=ParameterType.BOOLEAN,
                         description="Whether to use restricted builtins (safer but limited)",
@@ -343,7 +362,7 @@ class PythonREPL(BaseTool):
                         "variables": {"type": "object"},
                     },
                 },
-                timeout_seconds=30,
+                timeout_seconds=int(timeout),
                 tags=["python", "repl", "code", "execution"],
                 examples=[
                     {
