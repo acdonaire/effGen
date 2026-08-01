@@ -420,13 +420,46 @@ def _preflight_budget_check(model: "BaseModel") -> None:
     CostTracker.get().check_preflight(provider, model_name)
 
 
+def _redact_credentials(exc: BaseException) -> None:
+    """Strip secret material from *exc* and everything it chains to.
+
+    Applied at the boundary every engine call leaves through, so a provider
+    SDK's 401 body — which commonly quotes the key that was submitted — cannot
+    reach a traceback, a log record or a crash dump. The typed error the caller
+    reads is already redacted; this covers the ``__cause__`` under it.
+    """
+    try:
+        from effgen.models.errors import scrub_exception
+
+        scrub_exception(exc)
+    except Exception:  # noqa: BLE001 - redaction must not replace the error
+        pass
+
+
+def _redacted_call(func):
+    """Wrap a method so any error it raises leaves with its secrets stripped."""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except BaseException as exc:
+            _redact_credentials(exc)
+            raise
+    wrapper.__effgen_timed__ = True
+    return wrapper
+
+
 def _timed_generate(func):
     """Wrap a ``generate`` method with a pre-call budget check and call latency."""
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         _preflight_budget_check(self)
         start = time.perf_counter()
-        result = func(self, *args, **kwargs)
+        try:
+            result = func(self, *args, **kwargs)
+        except BaseException as exc:
+            _redact_credentials(exc)
+            raise
         result = _stamp_latency(result, time.perf_counter() - start)
         _stamp_cost(self, result)
         _warn_if_silently_empty(self, result)
@@ -447,7 +480,11 @@ def _timed_generate_batch(func):
     def wrapper(self, *args, **kwargs):
         _preflight_budget_check(self)
         start = time.perf_counter()
-        results = func(self, *args, **kwargs)
+        try:
+            results = func(self, *args, **kwargs)
+        except BaseException as exc:
+            _redact_credentials(exc)
+            raise
         elapsed = time.perf_counter() - start
         if isinstance(results, list):
             for r in results:
@@ -459,17 +496,36 @@ def _timed_generate_batch(func):
     return wrapper
 
 
+def _redacting_iter(iterator):
+    """Yield from *iterator*, redacting any error it raises mid-stream."""
+    while True:
+        try:
+            yield next(iterator)
+        except StopIteration:
+            return
+        except BaseException as exc:
+            _redact_credentials(exc)
+            raise
+
+
 def _budget_gated_stream(func):
     """Wrap a ``generate_stream`` method with a pre-call budget check.
 
     The check runs synchronously when the caller invokes ``generate_stream``
     (not on first ``next()``), so a refusal happens before any token request
-    reaches the provider.
+    reaches the provider. A stream that fails part-way through — the provider
+    dropping the connection, a 401 arriving on the first frame — has its error
+    redacted the same way a non-streaming call's does.
     """
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         _preflight_budget_check(self)
-        return func(self, *args, **kwargs)
+        try:
+            iterator = iter(func(self, *args, **kwargs))
+        except BaseException as exc:
+            _redact_credentials(exc)
+            raise
+        return _redacting_iter(iterator)
     wrapper.__effgen_timed__ = True
     return wrapper
 
@@ -499,11 +555,17 @@ class BaseModel(ABC):
         ``duration_s`` (see ``_stamp_latency``) — without each engine repeating
         the bookkeeping. Abstract or already-wrapped methods are left alone, so
         this is safe across the engine hierarchy.
+
+        ``load`` and ``generate_with_tools`` are wrapped too, with redaction
+        only: a credential rejected at load time reaches a traceback the same
+        way one rejected mid-call does.
         """
         super().__init_subclass__(**kwargs)
         for name, wrapper in (("generate", _timed_generate),
                               ("generate_batch", _timed_generate_batch),
-                              ("generate_stream", _budget_gated_stream)):
+                              ("generate_stream", _budget_gated_stream),
+                              ("load", _redacted_call),
+                              ("generate_with_tools", _redacted_call)):
             func = cls.__dict__.get(name)
             if (
                 func is not None

@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Structured error context (shared by typed errors below and by adapters via
@@ -113,6 +114,173 @@ def scrub_provider_message(message: str) -> str:
         return get_redactor().scrub(message)
     except Exception:  # noqa: BLE001 - redaction must not replace the error
         return message
+
+
+# Attributes provider SDKs keep a copy of the error text in when the value is
+# not in the instance dictionary (a property, or a slot). Instance attributes
+# are found by inspection, so this list only has to cover what inspection
+# cannot reach.
+_SCRUBBED_ATTRIBUTES = ("message", "body", "detail", "text", "reason", "error")
+
+# How far down a ``__cause__``/``__context__`` chain to scrub. Deep enough for
+# any real SDK wrapping depth, bounded so a pathological chain cannot stall.
+_MAX_CHAIN_DEPTH = 20
+
+# How deep to descend into a structured attribute (a parsed JSON error body).
+_MAX_VALUE_DEPTH = 6
+
+
+def _scrub_value(value: Any, depth: int = 0) -> Any:
+    """Return *value* with every string inside it redacted.
+
+    Handles the shapes an SDK stores a parsed error body in — a string, a dict,
+    a list or a tuple — and leaves anything else untouched.
+    """
+    if depth > _MAX_VALUE_DEPTH:
+        return value
+    if isinstance(value, str):
+        return scrub_provider_message(value)
+    if isinstance(value, dict):
+        return {k: _scrub_value(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_value(v, depth + 1) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub_value(v, depth + 1) for v in value)
+    return value
+
+
+def scrub_exception(exc: BaseException) -> BaseException:
+    """Redact secret material from *exc* and every exception it chains to.
+
+    A typed effGen error routes its own ``message`` through
+    :func:`scrub_provider_message`, but ``raise ... from exc`` keeps the
+    provider SDK's exception as ``__cause__`` — and providers echo the
+    submitted credential in a 401 body. Printing the traceback, logging with
+    ``exc_info``, or letting the process die then shows the key even though the
+    message the caller reads was redacted.
+
+    Each exception in the chain has its ``args`` and every text-bearing
+    attribute it carries rewritten in place — the SDKs keep the parsed error
+    body under a different name in each library (``body``, ``details``,
+    ``server_message``), so the attributes are found by inspection rather than
+    from a list that would go stale on the next SDK release. Values that hold
+    no text are left alone, and an exception that refuses the assignment is
+    skipped rather than replacing the failure with a new one.
+
+    Returns *exc* so it can be used inline in a ``raise`` statement.
+    """
+    seen: set[int] = set()
+    node: BaseException | None = exc
+    depth = 0
+    while node is not None and depth < _MAX_CHAIN_DEPTH and id(node) not in seen:
+        seen.add(id(node))
+        depth += 1
+        try:
+            args = node.args
+            if any(isinstance(a, str) for a in args):
+                node.args = tuple(
+                    scrub_provider_message(a) if isinstance(a, str) else a
+                    for a in args
+                )
+        except Exception:  # noqa: BLE001 - redaction must not replace the error
+            pass
+        try:
+            names = set(vars(node)) | set(_SCRUBBED_ATTRIBUTES)
+        except TypeError:  # no instance dictionary
+            names = set(_SCRUBBED_ATTRIBUTES)
+        for name in names:
+            if name.startswith("__"):
+                continue
+            value = getattr(node, name, None)
+            if isinstance(value, str | dict | list | tuple) and value:
+                try:
+                    setattr(node, name, _scrub_value(value))
+                except Exception:  # noqa: BLE001 - read-only attribute; skip it
+                    pass
+        node = node.__cause__ or node.__context__
+    return exc
+
+
+# How a provider states the delay it wants before the next attempt. The header
+# is authoritative when present; the text forms are what the body carries when
+# the SDK has already discarded the response.
+_RETRY_DELAY_PATTERNS = (
+    # Gemini: "details": [{"@type": ".../RetryInfo", "retryDelay": "16s"}]
+    re.compile(r"retry[_\s]?delay\W{0,4}(\d+(?:\.\d+)?)\s*s\b", re.IGNORECASE),
+    # Groq / OpenAI-compatible: "Please try again in 17.3s" / "in 1m12s"
+    re.compile(
+        r"(?:try|retry)\s+again\s+in\s+(?:(\d+)m)?(\d+(?:\.\d+)?)s",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:try|retry)\s+again\s+in\s+(\d+(?:\.\d+)?)\s*(?:seconds?|secs?)\b",
+        re.IGNORECASE,
+    ),
+)
+
+#: Longest delay a provider hint is believed. A larger stated value is clamped,
+#: so a malformed or hostile body cannot park a caller for hours.
+MAX_RETRY_AFTER_SECONDS = 300.0
+
+
+def _retry_after_from_text(text: str) -> float | None:
+    """Parse the delay a provider stated in prose, in seconds."""
+    for pattern in _RETRY_DELAY_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        groups = match.groups()
+        try:
+            if len(groups) == 2:
+                minutes = float(groups[0]) if groups[0] else 0.0
+                return minutes * 60.0 + float(groups[1])
+            return float(groups[0])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def retry_after_seconds(exc: BaseException) -> float | None:
+    """How long the provider asked the caller to wait, in seconds.
+
+    Reads, in order of authority, the ``retry_after`` attribute an adapter may
+    have set, the ``Retry-After`` response header, and the delay stated in the
+    error text — Gemini reports it as a ``retryDelay`` field and the
+    OpenAI-compatible providers as "please try again in 17.3s". The whole
+    ``__cause__``/``__context__`` chain is walked, because by the time a caller
+    sees the error the response that carried the header is usually two wrappers
+    down.
+
+    Returns ``None`` when the provider said nothing, so a caller can fall back
+    to its own backoff rather than inventing a delay. A stated delay above
+    :data:`MAX_RETRY_AFTER_SECONDS` is clamped to it.
+    """
+    seen: set[int] = set()
+    node: BaseException | None = exc
+    depth = 0
+    while node is not None and depth < _MAX_CHAIN_DEPTH and id(node) not in seen:
+        seen.add(id(node))
+        depth += 1
+        value = getattr(node, "retry_after", None)
+        if isinstance(value, int | float) and value > 0:
+            return min(float(value), MAX_RETRY_AFTER_SECONDS)
+        response = getattr(node, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            try:
+                raw = headers.get("retry-after") or headers.get("Retry-After")
+            except Exception:  # noqa: BLE001 - a header map that will not read
+                raw = None
+            if raw:
+                try:
+                    return min(float(str(raw).strip()), MAX_RETRY_AFTER_SECONDS)
+                except ValueError:
+                    pass
+        stated = _retry_after_from_text(str(node))
+        if stated is not None and stated > 0:
+            return min(stated, MAX_RETRY_AFTER_SECONDS)
+        node = node.__cause__ or node.__context__
+    return None
 
 
 def error_context_dict(
@@ -696,9 +864,21 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         return _RESOURCE_EXHAUSTED
     if any(k in msg for k in ("rate limit", "rate-limit", "too many requests", "quota exceeded", "429")):
         return _RATE_LIMITED
+    # A credential that is missing or rejected. Providers call it a key or a
+    # token depending on the house style — Hugging Face and Replicate say
+    # "API token not found" where OpenAI says "API key not found" — and both
+    # mean the caller has to set a credential, not that a model id is wrong.
+    # A credential of the wrong shape is still a credential problem. Hugging
+    # Face answers 400 "cannot select auto-router when using non-Hugging Face
+    # API key" when the token is not one of its own — the mistake someone
+    # makes pasting another provider's key into HF_TOKEN. Retrying it can
+    # never succeed, so it must not read as transient.
+    if "non-hugging face api key" in msg or "not a hugging face" in msg:
+        return _AUTH
     if any(k in msg for k in (
         "invalid api key", "incorrect api key", "invalid_api_key", "no api key",
         "authentication", "unauthorized", "permission denied", "api key not",
+        "api token not", "access token not", "api_token", "no api token",
     )):
         return _AUTH
     if "unknown provider" in msg:
