@@ -38,31 +38,41 @@ from effgen.tools.registry import ToolRegistry
 PRICE = 0.001
 
 
-def _run_together(workers: int, fn):
-    """Run ``fn(i)`` on *workers* threads that start at the same instant."""
-    barrier = threading.Barrier(workers, timeout=60.0)
+def _run_together(workers: int, fn, *, interleaved: bool = False, timeout: float = 300.0):
+    """Run ``fn(i)`` on *workers* threads that start at the same instant.
+
+    Args:
+        workers: Number of threads.
+        fn: Called once per worker with the worker's index.
+        interleaved: Shorten the interpreter's thread switch interval for the
+            duration of the run. A read-modify-write that is not atomic still
+            gives the right answer most of the time at the default 5 ms
+            interval, because a worker usually finishes its loop body inside
+            one slice; shortening it makes the interleaving a loaded machine
+            produces anyway happen reliably here. It is switched on only once
+            every thread has been started — at 1 us the interpreter switches
+            often enough that starting the pool's threads is itself slow, and
+            on a small runner they stop reaching the barrier in time.
+        timeout: Seconds a worker waits at the barrier for the others.
+
+    Returns:
+        One result per worker, in worker order.
+    """
+    barrier = threading.Barrier(workers, timeout=timeout)
+    previous = sys.getswitchinterval()
 
     def run(index: int):
         barrier.wait()
         return fn(index)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(run, range(workers)))
-
-
-class _Interleaved:
-    """Shortens the thread switch interval so interleaving actually happens."""
-
-    def __init__(self, interval: float = 1e-6) -> None:
-        self._interval = interval
-        self._previous = sys.getswitchinterval()
-
-    def __enter__(self) -> "_Interleaved":
-        sys.setswitchinterval(self._interval)
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        sys.setswitchinterval(self._previous)
+        futures = [pool.submit(run, index) for index in range(workers)]
+        if interleaved:
+            sys.setswitchinterval(1e-6)
+        try:
+            return [future.result() for future in futures]
+        finally:
+            sys.setswitchinterval(previous)
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +362,7 @@ def test_lookups_hold_while_the_registry_is_replaced(provider_registry_restored)
 
     def swap(_i: int) -> None:
         try:
-            for _ in range(40):
+            for _ in range(90):
                 ProviderRegistry.reset()
                 ProviderRegistry.restore(snapshot)
         finally:
@@ -360,7 +370,12 @@ def test_lookups_hold_while_the_registry_is_replaced(provider_registry_restored)
 
     def read(_i: int) -> None:
         local: list[str] = []
-        while not stop.is_set():
+        # Bounded as well as stop-driven: a reader that spins only on the event
+        # would run until the suite's timeout if the swapper ever died, and the
+        # count is high enough that the swapper finishes first on any machine.
+        for _ in range(2_000_000):
+            if stop.is_set():
+                break
             try:
                 ProviderRegistry.lookup(target)
             except Exception as exc:  # noqa: BLE001 - collected, not raised
@@ -370,8 +385,7 @@ def test_lookups_hold_while_the_registry_is_replaced(provider_registry_restored)
     # Interleaved: at the default switch interval a reader often runs a whole
     # burst inside one slice and misses the window a swap is visible in, so a
     # registry that empties itself first still passes about half the time.
-    with _Interleaved():
-        _run_together(4, lambda i: swap(i) if i == 0 else read(i))
+    _run_together(4, lambda i: swap(i) if i == 0 else read(i), interleaved=True)
     assert not failures, f"{len(failures)} lookups failed during the swap: {failures[:2]}"
 
 
@@ -382,7 +396,7 @@ def test_concurrent_restores_leave_the_catalog_whole(provider_registry_restored)
 
     def restore(_i: int) -> object:
         try:
-            for _ in range(60):
+            for _ in range(140):
                 ProviderRegistry.restore(snapshot)
         except Exception as exc:  # noqa: BLE001 - collected, not raised
             return exc
@@ -391,8 +405,10 @@ def test_concurrent_restores_leave_the_catalog_whole(provider_registry_restored)
     # Interleaved, and enough rounds that the threads are still overlapping
     # after the barrier: a catalog rewritten with an unguarded ``del`` raises in
     # every worker but the one that got there first, and this has to see that.
-    with _Interleaved():
-        errors = [r for r in _run_together(6, restore) if isinstance(r, BaseException)]
+    errors = [
+        r for r in _run_together(6, restore, interleaved=True)
+        if isinstance(r, BaseException)
+    ]
     assert not errors, f"restore raised under contention: {errors[:2]}"
     after = ProviderRegistry.snapshot()
     assert sum(len(rec["models"]) for rec in after.values()) == expected_models
@@ -438,8 +454,7 @@ def test_a_shared_adapter_counts_every_call_it_priced() -> None:
                 metadata={"cost_usd": PRICE},
             ))
 
-    with _Interleaved():
-        _run_together(workers, work)
+    _run_together(workers, work, interleaved=True)
     assert round(adapter.total_cost, 6) == round(workers * calls * PRICE, 6)
 
 
@@ -454,8 +469,7 @@ def test_a_shared_adapter_counts_every_streamed_call() -> None:
                 adapter, PRICE, tokens=15, prompt_tokens=10, completion_tokens=5,
             )
 
-    with _Interleaved():
-        _run_together(8, work)
+    _run_together(8, work, interleaved=True)
     assert round(adapter.total_cost, 6) == round(8 * calls * PRICE, 6)
     assert adapter.total_tokens == 8 * calls * 15
 
@@ -472,8 +486,7 @@ def test_the_cost_tracker_counts_every_recorded_call(monkeypatch, tmp_path) -> N
         for _ in range(calls):
             tracker.record("openai", "gpt-5-nano", 10, 5, cost_usd=PRICE)
 
-    with _Interleaved():
-        _run_together(8, work)
+    _run_together(8, work, interleaved=True)
     stats = tracker._data[("openai", "gpt-5-nano")]
     assert stats.requests == 8 * calls
     assert stats.prompt_tokens == 8 * calls * 10
