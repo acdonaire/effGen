@@ -17,6 +17,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+from effgen.utils.atomic_file import atomic_write_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -141,13 +143,12 @@ class Session:
         os.makedirs(sessions_dir, exist_ok=True)
         path = os.path.join(sessions_dir, f"{self.session_id}.json")
         self.updated_at = datetime.now().isoformat()
-        # Write atomically so a crash mid-write can't leave a truncated file
-        # that later fails to load.
-        tmp = f"{path}.tmp"
-        with open(tmp, "w") as f:
-            json.dump(self.to_dict(), f, indent=2, default=str)
-        os.replace(tmp, path)
-        return path
+        # Write through a temporary file of this writer's own and rename it into
+        # place, so a crash mid-write cannot leave a truncated file and two
+        # writers of the same session cannot publish a mix of both.
+        return atomic_write_text(
+            path, json.dumps(self.to_dict(), indent=2, default=str)
+        )
 
     @classmethod
     def load(

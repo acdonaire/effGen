@@ -35,6 +35,9 @@ Example:
 # Async/sync bridging
 from effgen.utils.async_bridge import run_coroutine_sync
 
+# Filesystem helpers
+from effgen.utils.atomic_file import atomic_write_text
+
 # Logging utilities
 from effgen.utils.logging import (
     ColoredFormatter,
@@ -117,6 +120,7 @@ from effgen.utils.validators import (
 
 __all__ = [
     # Async/sync bridging
+    'atomic_write_text',
     'run_coroutine_sync',
 
     # Logging

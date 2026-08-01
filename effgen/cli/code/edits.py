@@ -23,6 +23,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from effgen.utils.atomic_file import atomic_write_text
+
 from .diffs import Hunk, apply_hunks, diff_stat, split_hunks, unified_diff_text
 
 # Most edits a single undo would ever walk back. The journal keeps this many
@@ -181,9 +183,7 @@ class EditJournal:
             "workspace": str(self.workspace),
             "entries": [e.to_dict() for e in trimmed],
         }
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, path)
+        atomic_write_text(path, json.dumps(payload, ensure_ascii=False))
 
     # -- recording ----------------------------------------------------------
 
