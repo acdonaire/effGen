@@ -337,6 +337,7 @@ class TestReplicateFailureClassification:
         )
 
     def test_the_http_client_carries_the_stated_deadline(self):
+        pytest.importorskip("replicate")
         from effgen.models.replicate_adapter import ReplicateAdapter
 
         adapter = ReplicateAdapter(

@@ -500,6 +500,11 @@ class ProviderSpec:
             the call it raises on is the credential-absent cell.
         missing_credential_hint: Text the credential-absent error has to carry
             so the caller is told what to set.
+        sdk_module: The provider SDK the adapter imports. Most providers are an
+            optional extra, so on an install without that extra every cell for
+            the provider is recorded not applicable with that as the reason
+            rather than failing — the matrix covers what is installed, and says
+            what it did not cover.
         streaming: Whether ``generate_stream`` is exercised for this provider.
         skips: ``{failure name: reason}`` for cells this provider cannot
             express, printed in the report so nothing is dropped silently.
@@ -511,8 +516,20 @@ class ProviderSpec:
     build: Callable[[str], Any]
     build_without_credential: Callable[[], Any]
     missing_credential_hint: str
+    sdk_module: str
     streaming: bool = True
     skips: dict[str, str] = field(default_factory=dict)
+
+    def sdk_missing(self) -> str:
+        """The reason to record when this provider's SDK is absent, else ``""``."""
+        import importlib.util
+
+        try:
+            if importlib.util.find_spec(self.sdk_module) is not None:
+                return ""
+        except (ImportError, ValueError):
+            pass
+        return f"the {self.sdk_module} SDK is not installed in this environment"
 
 
 def _openai_provider(url: str) -> Any:
@@ -647,58 +664,58 @@ PROVIDERS: list[ProviderSpec] = [
         "openai", "openai", ("OPENAI_API_KEY",), _openai_provider,
         _plain("effgen.models.openai_adapter.OpenAIAdapter",
                model_name="gpt-5-nano", timeout=int(CLIENT_TIMEOUT_S), max_retries=0),
-        "OPENAI_API_KEY",
+        "OPENAI_API_KEY", "openai",
     ),
     ProviderSpec(
         "groq", "openai", ("GROQ_API_KEY",), _groq_provider,
         _plain("effgen.models.groq_adapter.GroqAdapter",
                model_name="llama-3.1-8b-instant", enable_rate_limiting=False),
-        "GROQ_API_KEY",
+        "GROQ_API_KEY", "groq",
     ),
     ProviderSpec(
         "together", "openai", ("TOGETHER_API_KEY",), _together_provider,
         _plain("effgen.models.together_adapter.TogetherAdapter",
                model_name="Qwen/Qwen3.5-9B", enable_rate_limiting=False),
-        "TOGETHER_API_KEY",
+        "TOGETHER_API_KEY", "together",
     ),
     ProviderSpec(
         "cerebras", "openai", ("CEREBRAS_API_KEY",), _cerebras_provider,
         _plain("effgen.models.cerebras_adapter.CerebrasAdapter",
                model_name="gpt-oss-120b", enable_rate_limiting=False),
-        "CEREBRAS_API_KEY",
+        "CEREBRAS_API_KEY", "cerebras",
     ),
     ProviderSpec(
         "fireworks", "openai", ("FIREWORKS_API_KEY",), _fireworks_provider,
         _plain("effgen.models.fireworks_adapter.FireworksAdapter",
                model_name="accounts/fireworks/models/gpt-oss-120b",
                enable_rate_limiting=False, warn_unknown_model=False),
-        "FIREWORKS_API_KEY",
+        "FIREWORKS_API_KEY", "fireworks",
     ),
     ProviderSpec(
         "hf", "openai", ("HF_TOKEN", "HUGGINGFACE_API_KEY"), _hf_provider,
         _plain("effgen.models.hf_inference_adapter.HFInferenceAdapter",
                model_name="Qwen/Qwen2.5-7B-Instruct", enable_rate_limiting=False,
                warn_unknown_model=False),
-        "HF_TOKEN",
+        "HF_TOKEN", "huggingface_hub",
     ),
     ProviderSpec(
         "anthropic", "anthropic", ("ANTHROPIC_API_KEY",), _anthropic_provider,
         _plain("effgen.models.anthropic_adapter.AnthropicAdapter",
                model_name="claude-opus-4-7", timeout=int(CLIENT_TIMEOUT_S), max_retries=0),
-        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEY", "anthropic",
     ),
     ProviderSpec(
         "gemini", "gemini", ("GOOGLE_API_KEY", "GEMINI_API_KEY"), _gemini_provider,
         _plain("effgen.models.gemini_adapter.GeminiAdapter",
                model_name="gemini-3.1-flash-lite"),
-        "GOOGLE_API_KEY",
+        "GOOGLE_API_KEY", "google.genai",
     ),
     ProviderSpec(
         "replicate", "replicate", ("REPLICATE_API_TOKEN",), _replicate_provider,
         _plain("effgen.models.replicate_adapter.ReplicateAdapter",
                model_name="meta/meta-llama-3-8b-instruct",
                enable_rate_limiting=False, warn_unknown_model=False),
-        "REPLICATE_API_TOKEN",
+        "REPLICATE_API_TOKEN", "replicate",
         streaming=False,
         skips={
             "truncation": (
@@ -904,6 +921,10 @@ def run_cell(spec: ProviderSpec, failure: FailureSpec) -> CellOutcome:
     outcome = CellOutcome(spec.name, failure.name)
     if failure.name in spec.skips:
         outcome.skipped = spec.skips[failure.name]
+        return outcome
+    absent = spec.sdk_missing()
+    if absent:
+        outcome.skipped = absent
         return outcome
 
     server: FaultServer | None = None

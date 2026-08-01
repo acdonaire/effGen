@@ -76,6 +76,13 @@ def test_the_matrix_covers_every_adapter_and_class() -> None:
     for dialect in {p.dialect for p in PROVIDERS}:
         assert dialect in DIALECTS, f"no wire dialect named {dialect!r}"
 
+    for provider in PROVIDERS:
+        assert provider.sdk_module, (
+            f"{provider.name} names no SDK module, so on an install without "
+            f"that provider's extra its cells fail on the import instead of "
+            f"recording that they were not covered"
+        )
+
 
 def test_the_sentinel_credential_is_recognisable_to_the_redactor() -> None:
     """The whole matrix's credential check rests on this being redactable.
