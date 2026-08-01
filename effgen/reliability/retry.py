@@ -126,24 +126,20 @@ def is_transient_error(exc: BaseException) -> bool:
 
 
 def _get_retry_after(exc: BaseException) -> float | None:
-    """Extract Retry-After seconds from a 429 exception, if available."""
-    # Check for explicit retry_after attribute (our adapters set this)
-    retry_after = getattr(exc, "retry_after", None)
-    if isinstance(retry_after, int | float) and retry_after > 0:
-        return float(retry_after)
+    """Seconds the provider asked for before the next attempt, if it said.
 
-    # Try to parse from response headers
-    response = getattr(exc, "response", None)
-    if response is not None:
-        headers = getattr(response, "headers", {}) or {}
-        raw = headers.get("retry-after") or headers.get("Retry-After")
-        if raw:
-            try:
-                return float(raw)
-            except (ValueError, TypeError):
-                pass
+    Delegates to the shared reader so a wrapped provider error — the shape a
+    caller actually receives, with the response two ``__cause__`` links down —
+    is read the same way here as it is on the HTTP surface, including the delay
+    Gemini and the OpenAI-compatible providers state in the body rather than in
+    a header.
+    """
+    try:
+        from effgen.models.errors import retry_after_seconds
 
-    return None
+        return retry_after_seconds(exc)
+    except ImportError:
+        return None
 
 
 # ---------------------------------------------------------------------------

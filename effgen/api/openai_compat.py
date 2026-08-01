@@ -235,9 +235,23 @@ def create_openai_router(
                 "'groq:llama-3.1-8b-instant'), a valid local model id, or "
                 "'effgen-default'."
             )
+        headers: dict[str, str] = {}
+        # A 429 the upstream provider produced carries whatever delay that
+        # provider stated. The draft `RateLimit-*` headers describe *this*
+        # server's window, so reporting the upstream's under those names would
+        # mislead; `Retry-After` states a delay and nothing more, so it is the
+        # one to pass on. Without it the client has nothing to pace against and
+        # either retries immediately or invents a number.
+        if status == 429:
+            from effgen.models.errors import retry_after_seconds
+
+            delay = retry_after_seconds(exc)
+            if delay is not None:
+                headers["Retry-After"] = str(max(1, int(round(delay))))
         return JSONResponse(
             status_code=status,
             content=_error_payload(message, err_type, code),
+            headers=headers or None,
         )
 
     router = APIRouter(prefix="/v1", tags=["openai-compat"])
