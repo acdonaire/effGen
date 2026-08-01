@@ -1324,14 +1324,34 @@ class TransformersEngine(BatchModel):
         try:
             self._ensure_device_map_viable_before_sampling()
 
-            # Tokenize all inputs
-            inputs = self.tokenizer(
-                prompts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=self._context_length
-            )
+            # Apply the chat template to each prompt, the way generate() does.
+            # An instruct model that never sees its role tags continues the text
+            # instead of answering it.
+            tools_for_template = kwargs.pop("tools", None)
+            formatted_prompts = [
+                self._apply_chat_template(prompt, tools_for_template)
+                for prompt in prompts
+            ]
+
+            # Tokenize all inputs. Decoder-only batching pads on the LEFT:
+            # generation continues from the last position of each row, and the
+            # decode below slices every row at the shared padded width. Padding
+            # on the right would have the model continue from pad tokens and cut
+            # the slice in the wrong place.
+            previous_padding_side = getattr(self.tokenizer, "padding_side", None)
+            if previous_padding_side is not None:
+                self.tokenizer.padding_side = "left"
+            try:
+                inputs = self.tokenizer(
+                    formatted_prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=self._context_length
+                )
+            finally:
+                if previous_padding_side is not None:
+                    self.tokenizer.padding_side = previous_padding_side
 
             # Fold per-call generation kwargs into the config (Transformers 5.x
             # deprecates passing them alongside a generation_config); forward only
@@ -1364,8 +1384,15 @@ class TransformersEngine(BatchModel):
             results = []
             for i, output in enumerate(outputs):
                 # Get only the generated part (exclude input)
-                prompt_length = inputs["input_ids"][i].shape[0]
-                generated_ids = output[prompt_length:]
+                # Rows share a padded width, which is where the generated
+                # tokens begin; the prompt's own length is what it actually
+                # tokenized to, so padding is not reported as prompt tokens.
+                padded_width = inputs["input_ids"][i].shape[0]
+                mask = inputs.get("attention_mask")
+                prompt_length = (
+                    int(mask[i].sum()) if mask is not None else padded_width
+                )
+                generated_ids = output[padded_width:]
 
                 generated_text = self.tokenizer.decode(
                     generated_ids,
