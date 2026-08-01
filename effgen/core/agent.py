@@ -454,6 +454,7 @@ Question: {task}
             max_messages=stm_max_messages,
             summarization_threshold=mem_cfg.get("summarization_threshold", 0.8),
             keep_recent_messages=mem_cfg.get("keep_recent_messages", 4),
+            summary_budget_ratio=mem_cfg.get("summary_budget_ratio", 0.4),
             model=self.model,
         )
 

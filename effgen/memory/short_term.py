@@ -130,6 +130,7 @@ class ShortTermMemory:
                  summarization_threshold: float = 0.8,
                  summary_length_ratio: float = 0.3,
                  keep_recent_messages: int = 10,
+                 summary_budget_ratio: float = 0.4,
                  model: Any = None) -> None:
         """
         Initialize short-term memory.
@@ -140,6 +141,10 @@ class ShortTermMemory:
             summarization_threshold: Threshold (0-1) of max_tokens to trigger summarization
             summary_length_ratio: Target ratio of summary length to original (0-1)
             keep_recent_messages: Number of recent messages to always keep unsummarized
+            summary_budget_ratio: Share (0-1) of ``max_tokens`` that retained
+                summaries may occupy. Summarizing turns older messages into
+                summaries, so without a bound on the summaries themselves the
+                stored total grows for as long as the conversation runs.
             model: Optional model instance for accurate token counting
         """
         self.max_tokens = max_tokens
@@ -147,6 +152,7 @@ class ShortTermMemory:
         self.summarization_threshold = summarization_threshold
         self.summary_length_ratio = summary_length_ratio
         self.keep_recent_messages = keep_recent_messages
+        self.summary_budget_ratio = summary_budget_ratio
         self._model = model
 
         # Storage
@@ -398,6 +404,7 @@ class ShortTermMemory:
 
         # Store summary
         self.summaries.append(summary)
+        self._compact_summaries()
 
         # Remove summarized messages
         for _ in range(num_to_summarize):
@@ -406,6 +413,71 @@ class ShortTermMemory:
         # Update statistics
         self.total_summarizations += 1
         self._validate_token_count()
+
+    def _summary_budget(self) -> int:
+        """Tokens the retained summaries are allowed to occupy."""
+        return max(1, int(self.max_tokens * self.summary_budget_ratio))
+
+    def summary_token_count(self) -> int:
+        """Tokens currently held by the retained summaries."""
+        return sum(self._count_tokens(s.summary) for s in self.summaries)
+
+    def _truncate_to_tokens(self, text: str, limit: int) -> str:
+        """Shorten *text* until it counts at most *limit* tokens.
+
+        Slicing on a fixed characters-per-token estimate holds for Latin prose
+        and undershoots for scripts that tokenize closer to one token per
+        character, so the cut is measured, applied and re-measured instead of
+        taken once.
+        """
+        if limit <= 0:
+            return ""
+        text = text.rstrip()
+        for _ in range(24):
+            counted = self._count_tokens(text)
+            if counted <= limit:
+                return text
+            keep = min(int(len(text) * limit / counted), len(text) - 1)
+            if keep <= 0:
+                return ""
+            text = text[:keep].rstrip()
+        return ""
+
+    def _compact_summaries(self) -> None:
+        """Fold the oldest summaries together until they fit the budget.
+
+        Every summarization adds a summary, and each one is replayed into the
+        prompt, so an unbounded list makes the prompt grow for as long as the
+        session runs — until it passes the model's context window and every
+        further call is refused. Merging the two oldest entries keeps the
+        oldest context present in condensed form rather than dropping it, and
+        the merged entry records how many summaries it now stands for.
+        """
+        budget = self._summary_budget()
+        while len(self.summaries) > 1 and self.summary_token_count() > budget:
+            oldest, second = self.summaries[0], self.summaries[1]
+            merged_text = f"{oldest.summary} {second.summary}".strip()
+            # Keep the merged entry roughly the size of a single summary, so
+            # repeated merges converge instead of growing one long entry.
+            merged_text = self._truncate_to_tokens(merged_text, max(1, budget // 2))
+            folded = (
+                oldest.metadata.get("folded_summaries", 1)
+                + second.metadata.get("folded_summaries", 1)
+            )
+            self.summaries[:2] = [
+                ConversationSummary(
+                    summary=merged_text,
+                    message_count=oldest.message_count + second.message_count,
+                    token_count=oldest.token_count + second.token_count,
+                    timestamp=oldest.timestamp,
+                    metadata={**oldest.metadata, "folded_summaries": folded},
+                )
+            ]
+        # A single summary that alone exceeds the budget is truncated; nothing
+        # is left to merge it with.
+        if self.summaries and self.summary_token_count() > budget:
+            only = self.summaries[0]
+            only.summary = self._truncate_to_tokens(only.summary, budget)
 
     def _generate_summary(self, messages: list[Message]) -> str:
         """
@@ -512,6 +584,7 @@ class ShortTermMemory:
                 "summarization_threshold": self.summarization_threshold,
                 "summary_length_ratio": self.summary_length_ratio,
                 "keep_recent_messages": self.keep_recent_messages,
+                "summary_budget_ratio": self.summary_budget_ratio,
             },
             "messages": [msg.to_dict() for msg in self.messages],
             "summaries": [summary.to_dict() for summary in self.summaries],
