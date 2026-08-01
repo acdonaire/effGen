@@ -116,10 +116,29 @@ def test_sandbox_off_is_the_one_blocking_backend(tmp_path, monkeypatch):
 
 
 def test_subprocess_backend_is_usable_but_reports_its_limit(tmp_path, monkeypatch):
+    """The backend runs, and the line names the isolation this host gives it.
+
+    Which isolation that is depends on the host — a runner without unprivileged
+    user namespaces gets none — so the expected wording is taken from the same
+    probe the check reads rather than assumed. What holds everywhere is that the
+    backend is usable, is reported as limited, and points at Docker.
+    """
+    from effgen.cli.code import readiness as readiness_mod
+
     monkeypatch.setenv("EFFGEN_SANDBOX_BACKEND", "subprocess")
+    network_isolated, writes_confined = readiness_mod._subprocess_isolation()
+
     check = _named(code_readiness(str(tmp_path)), "sandbox")
     assert check.ok and check.status == "limited"
-    assert "network isolated" in check.detail and "Docker" in check.fix
+    assert "Docker" in check.fix
+    if writes_confined:
+        assert "network isolated, writes confined to the workspace" in check.detail
+    elif network_isolated:
+        assert "network isolated" in check.detail
+        assert "cannot confine writes" in check.detail
+    else:
+        assert "no user namespaces" in check.detail
+        assert "network isolated" not in check.detail
 
 
 def test_sandbox_check_does_not_claim_confinement_the_host_cannot_deliver(
