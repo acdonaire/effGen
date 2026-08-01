@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
@@ -141,6 +142,43 @@ def _stamp_latency(result: Any, elapsed_s: float) -> Any:
     return result
 
 
+#: Serializes every read-modify-write of an adapter's cumulative ``total_cost``
+#: and ``total_tokens``. One adapter commonly serves many agents at once — the
+#: server hands the same instance to every request, and a thread pool of agents
+#: shares one — and ``total = total + cost`` spread over a load, an add and a
+#: store loses one call's money whenever two threads interleave across it. The
+#: work under the lock is a few arithmetic operations, so a single process-wide
+#: lock costs less than one per instance would.
+_TOTALS_LOCK = threading.Lock()
+
+
+def fold_call_totals(
+    model: "BaseModel",
+    cost: float | None = None,
+    tokens: int | None = None,
+) -> float:
+    """Add one call's cost and tokens to *model*'s session totals.
+
+    Args:
+        model: The adapter the call was made on.
+        cost: This call's USD cost, or ``None`` when the model publishes no
+            price — an unpriced call leaves the total where it was rather than
+            adding a zero.
+        tokens: This call's total prompt+completion tokens, if known.
+
+    Returns:
+        The cumulative cost after this call, read under the same lock that
+        wrote it, so the value reported alongside a call is the total that
+        included it rather than one a concurrent call has since moved.
+    """
+    with _TOTALS_LOCK:
+        if cost is not None:
+            model.total_cost = getattr(model, "total_cost", 0.0) + cost
+        if tokens:
+            model.total_tokens = getattr(model, "total_tokens", 0) + tokens
+        return getattr(model, "total_cost", 0.0)
+
+
 def _stamp_cost(model: "BaseModel", result: Any) -> None:
     """Accumulate this call's cost onto the model instance's running total.
 
@@ -159,8 +197,7 @@ def _stamp_cost(model: "BaseModel", result: Any) -> None:
     cost = meta.get("cost_usd")
     if cost is None:
         return
-    model.total_cost = getattr(model, "total_cost", 0.0) + cost
-    meta["total_cost"] = model.total_cost
+    meta["total_cost"] = fold_call_totals(model, cost)
 
 
 def clear_stream_usage(model: "BaseModel") -> None:
@@ -329,10 +366,7 @@ def accumulate_stream_cost(
     usage (see :func:`record_stream_usage`) so the caller can read the split and
     the cost for the turn it just streamed, not only the running totals.
     """
-    if cost is not None:
-        model.total_cost = getattr(model, "total_cost", 0.0) + cost
-    if tokens:
-        model.total_tokens = getattr(model, "total_tokens", 0) + tokens
+    fold_call_totals(model, cost, tokens)
     if prompt_tokens is not None or completion_tokens is not None:
         record_stream_usage(model, prompt_tokens, completion_tokens, cost)
 

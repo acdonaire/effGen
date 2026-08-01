@@ -53,6 +53,7 @@ from effgen.models.base import (
     GenerationResult,
     ModelType,
     TokenCount,
+    fold_call_totals,
     record_stream_usage,
 )
 from effgen.models.errors import (
@@ -602,9 +603,7 @@ class OpenAIAdapter(FunctionCallingModel):
         across every call made on this adapter instance so far, not an alias.
         """
         cost = self._calculate_cost(prompt_tokens, completion_tokens, cached_tokens)
-        if cost is not None:
-            self.total_cost += cost
-        self.total_tokens += total_tokens
+        fold_call_totals(self, cost, total_tokens)
 
         # Always print token/cost breakdown so users can see what they're spending
         _USAGE_LOG.info(

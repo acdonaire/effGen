@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -200,6 +201,10 @@ class RateLimitCoordinator:
         # Lazy-initialized so construction doesn't require a running event loop
         # (Python 3.9 binds asyncio.Lock to the event loop at creation time)
         self._lock: asyncio.Lock | None = None
+        # One adapter — and so one coordinator — commonly serves several agents
+        # at once. This guards the windows and the lifetime counters, which are
+        # updated from whichever thread the completed call returned on.
+        self._record_lock = threading.Lock()
 
         # Total counters (lifetime, not windowed) for observability
         self.total_requests: int = 0
@@ -255,13 +260,14 @@ class RateLimitCoordinator:
         Args:
             actual_tokens: Actual tokens used (from ``usage`` in the response).
         """
-        if self._storage is not None:
-            self._record_sqlite(actual_tokens)
-        else:
-            self._record_memory(actual_tokens)
+        with self._record_lock:
+            if self._storage is not None:
+                self._record_sqlite(actual_tokens)
+            else:
+                self._record_memory(actual_tokens)
 
-        self.total_requests += 1
-        self.total_tokens += actual_tokens
+            self.total_requests += 1
+            self.total_tokens += actual_tokens
 
         logger.debug(
             "RLC record %s/%s: req=%d tokens=%d",

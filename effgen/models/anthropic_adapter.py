@@ -40,6 +40,7 @@ from effgen.models.base import (
     GenerationResult,
     ModelType,
     TokenCount,
+    fold_call_totals,
 )
 from effgen.models.errors import ModelAuthError, ModelNotFoundError
 from effgen.models.latency_tracker import timed_call
@@ -457,9 +458,7 @@ class AnthropicAdapter(FunctionCallingModel):
         adapter instance so far, not an alias.
         """
         cost = self._calculate_cost(prompt_tokens, completion_tokens)
-        if cost is not None:
-            self.total_cost += cost
-        self.total_tokens += prompt_tokens + completion_tokens
+        fold_call_totals(self, cost, prompt_tokens + completion_tokens)
         # Persist to the process-global tracker so `effgen cost` includes
         # Anthropic spend (the dashboard previously never saw it).
         try:

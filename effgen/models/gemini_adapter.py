@@ -39,6 +39,7 @@ from effgen.models.base import (
     GenerationResult,
     ModelType,
     TokenCount,
+    fold_call_totals,
     record_stream_usage,
 )
 from effgen.models.errors import InvalidRequestError, ModelAuthError, ModelNotFoundError
@@ -243,9 +244,7 @@ class GeminiAdapter(FunctionCallingModel):
         cost = self._record_to_cost_tracker(prompt_tokens, completion_tokens)
         if cost is None and not unpriced:
             cost = self._calculate_cost(prompt_tokens, completion_tokens)
-        if cost is not None:
-            self.total_cost += cost
-        self.total_tokens += total_tokens
+        fold_call_totals(self, cost, total_tokens)
         return cost
 
     def _build_config(self, config: GenerationConfig | None) -> Any:
