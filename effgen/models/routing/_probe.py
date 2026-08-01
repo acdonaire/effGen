@@ -20,6 +20,7 @@ Usage::
 from __future__ import annotations
 
 import concurrent.futures
+import inspect
 import logging
 import os
 import time
@@ -58,9 +59,19 @@ def _probe_one(
             return
 
         try:
-            adapter = adapter_cls(model_name=model_id)
-            if hasattr(adapter, "MAX_RATE_LIMIT_RETRIES"):
-                adapter.MAX_RATE_LIMIT_RETRIES = 1
+            # A probe measures latency, so it is one request and no more: a
+            # provider that refuses must not turn a probe into a retry loop
+            # that outlives the wall-clock budget below. The budget is asked
+            # for at construction, because that is where each adapter applies
+            # its own floor and where the ones that hand the budget to their
+            # SDK client can still act on it.
+            kwargs: dict[str, object] = {"model_name": model_id}
+            params = inspect.signature(adapter_cls.__init__).parameters
+            if "max_retries" in params:
+                kwargs["max_retries"] = 0
+            if "timeout" in params:
+                kwargs["timeout"] = _PROBE_TIMEOUT_S
+            adapter = adapter_cls(**kwargs)
             adapter.load()
             from effgen.models.base import GenerationConfig
 
