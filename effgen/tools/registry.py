@@ -13,6 +13,8 @@ import importlib
 import inspect
 import logging
 import os
+import threading
+import weakref
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
@@ -86,13 +88,55 @@ class ToolRegistry:
         self._categories: dict[ToolCategory, set[str]] = defaultdict(set)
         self._plugins: dict[str, Path] = {}
         self._initialized_tools: set[str] = set()
-        self._lock = asyncio.Lock()
+        # Serializes the async loader. One lock per event loop: agents commonly
+        # run on a thread each, ``get_tool_sync`` drives the loader on the
+        # calling thread's own loop, and an ``asyncio.Lock`` awaited from two
+        # loops raises rather than waiting. Keyed on the loop itself and held
+        # weakly, so an entry lasts exactly as long as the loop it belongs to —
+        # ``get_tool_sync`` runs each call on a loop of its own, and a map keyed
+        # on the loop's id would both grow without bound and hand a new loop the
+        # lock of a dead one that happened to be allocated at the same address.
+        self._loop_locks: "weakref.WeakKeyDictionary[Any, asyncio.Lock]" = (
+            weakref.WeakKeyDictionary()
+        )
+        # The loader lock for callers with no running loop at all, which have no
+        # loop object to key on.
+        self._loopless_lock = asyncio.Lock()
+        # Tools whose ``initialize()`` is running right now, and the event each
+        # waiter blocks on. Initialization must happen once however many threads
+        # ask at once: a tool that opens a connection or starts a worker on
+        # ``initialize()`` would otherwise start one per caller.
+        self._initializing: dict[str, threading.Event] = {}
+        # Guards every shared mapping below against concurrent mutation from
+        # threads. Re-entrant because discovery registers tools, which takes it
+        # again on the same thread.
+        self._mutex = threading.RLock()
         # Whether the built-in catalog has been auto-discovered yet. Discovery is
         # deferred until first access so importing the package stays cheap, but a
         # programmatic caller never sees a surprisingly empty registry.
         self._builtins_discovered = False
         # Whether installed entry-point plugins have been auto-discovered yet.
         self._plugins_discovered = False
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        """The loader lock for the event loop currently running.
+
+        Kept per loop so a registry shared by agents on several threads is
+        serialized within each loop without an ``asyncio.Lock`` ever being
+        awaited from a loop other than the one that first waited on it. Threads
+        contending across loops are serialized by :attr:`_mutex` instead.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return self._loopless_lock
+        with self._mutex:
+            lock = self._loop_locks.get(loop)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._loop_locks[loop] = lock
+            return lock
 
     def _ensure_builtins(self) -> None:
         """Lazily discover built-in tools (and installed plugins) on first access.
@@ -104,14 +148,20 @@ class ToolRegistry:
         Installed ``effgen.plugins`` entry-point packages are folded in at the
         same time so a published plugin's tools show up everywhere built-in
         tools do (``effgen tools list``, ``effgen run -t <tool>``, the API).
+
+        Held under the registry mutex so a thread arriving while another is
+        mid-discovery waits for the catalog rather than being handed the empty
+        registry discovery has not filled yet.
         """
-        if self._builtins_discovered:
+        with self._mutex:
+            if self._builtins_discovered:
+                self._ensure_plugins()
+                return
+            # Mark first to avoid re-entry if discovery itself queries the
+            # registry; the mutex is re-entrant, so that path does not deadlock.
+            self._builtins_discovered = True
+            self.discover_builtin_tools()
             self._ensure_plugins()
-            return
-        # Mark first to avoid re-entry if discovery itself queries the registry.
-        self._builtins_discovered = True
-        self.discover_builtin_tools()
-        self._ensure_plugins()
 
     def _ensure_plugins(self) -> None:
         """Lazily load installed entry-point (and user-dir) plugins once.
@@ -123,11 +173,16 @@ class ToolRegistry:
         Discovery is best-effort: a broken plugin is logged and skipped, never
         fatal.
         """
-        if self._plugins_discovered:
-            return
-        self._plugins_discovered = True
-        if os.environ.get("EFFGEN_DISABLE_PLUGINS"):
-            return
+        with self._mutex:
+            if self._plugins_discovered:
+                return
+            self._plugins_discovered = True
+            if os.environ.get("EFFGEN_DISABLE_PLUGINS"):
+                return
+            self._discover_plugins()
+
+    def _discover_plugins(self) -> None:
+        """Load every installed plugin package; a broken one is skipped."""
         try:
             # Local import: plugin.py imports from this module, so importing it
             # at module load time would create a circular import.
@@ -188,20 +243,21 @@ class ToolRegistry:
                 "register_tool(effgen.tool(fn)) or register_tool(Tool.from_function(fn))."
             )
 
-        # Check for name collision
-        if name in self._tools and not override:
-            # Silently skip re-registration instead of throwing error/warning
-            logger.debug(f"Tool '{name}' already registered, skipping")
-            return
+        with self._mutex:
+            # Check for name collision
+            if name in self._tools and not override:
+                # Silently skip re-registration instead of throwing error/warning
+                logger.debug(f"Tool '{name}' already registered, skipping")
+                return
 
-        # Register the tool
-        self._tools[name] = constructor
-        self._metadata_cache[name] = metadata
-        self._categories[metadata.category].add(name)
+            # Register the tool
+            self._tools[name] = constructor
+            self._metadata_cache[name] = metadata
+            self._categories[metadata.category].add(name)
 
-        # Store dependencies
-        if dependencies:
-            self._dependencies[name] = set(dependencies)
+            # Store dependencies
+            if dependencies:
+                self._dependencies[name] = set(dependencies)
 
         logger.debug(f"Registered tool: {name} (v{metadata.version})")
 
@@ -215,28 +271,31 @@ class ToolRegistry:
         Raises:
             KeyError: If tool is not registered
         """
-        if name not in self._tools:
-            raise KeyError(f"Tool '{name}' is not registered")
+        with self._mutex:
+            if name not in self._tools:
+                raise KeyError(f"Tool '{name}' is not registered")
+            instance = self._instances.pop(name, None)
 
         # Clean up instance if exists. Run cleanup to completion regardless of
         # whether an event loop is already running — never leave the coroutine
         # un-awaited (the old asyncio.create_task path raised "no running event
-        # loop" when called from synchronous code).
-        if name in self._instances:
+        # loop" when called from synchronous code). Awaited outside the registry
+        # mutex so a slow teardown does not hold every other thread's lookups.
+        if instance is not None:
             try:
-                run_coroutine_sync(self._instances[name].cleanup())
+                run_coroutine_sync(instance.cleanup())
             except Exception:
                 logger.debug("Cleanup for tool '%s' failed during unregister", name, exc_info=True)
-            del self._instances[name]
 
-        # Remove from all tracking structures
-        metadata = self._metadata_cache[name]
-        self._categories[metadata.category].discard(name)
-        del self._tools[name]
-        del self._metadata_cache[name]
-        if name in self._dependencies:
-            del self._dependencies[name]
-        self._initialized_tools.discard(name)
+        with self._mutex:
+            # Remove from all tracking structures
+            metadata = self._metadata_cache.get(name)
+            if metadata is not None:
+                self._categories[metadata.category].discard(name)
+            self._tools.pop(name, None)
+            self._metadata_cache.pop(name, None)
+            self._dependencies.pop(name, None)
+            self._initialized_tools.discard(name)
 
         logger.debug(f"Unregistered tool: {name}")
 
@@ -258,34 +317,72 @@ class ToolRegistry:
             ToolDependencyError: If tool dependencies cannot be satisfied
         """
         self._ensure_builtins()
-        if name not in self._tools:
-            raise KeyError(f"Tool '{name}' is not registered")
+        with self._mutex:
+            if name not in self._tools:
+                raise KeyError(f"Tool '{name}' is not registered")
+            existing = self._instances.get(name)
+            ready = name in self._initialized_tools
+            has_dependencies = name in self._dependencies
+
+        if existing is not None and (ready or not initialize):
+            return existing
+
+        # Dependencies are loaded through this same method, so they are resolved
+        # before the loader lock is taken rather than under it — the lock is not
+        # re-entrant, and a tool declaring a dependency would otherwise wait on
+        # itself forever.
+        if has_dependencies and existing is None:
+            await self._resolve_dependencies(name)
 
         async with self._lock:
-            # Return existing instance if available
-            if name in self._instances:
-                tool = self._instances[name]
-                if initialize and name not in self._initialized_tools:
-                    await tool.initialize()
-                    self._initialized_tools.add(name)
-                return tool
+            with self._mutex:
+                tool = self._instances.get(name)
+                if tool is None:
+                    tool = self._tools[name]()
+                    self._instances[name] = tool
+                    logger.debug(f"Loaded tool: {name}")
+                ready = name in self._initialized_tools
 
-            # Check and resolve dependencies
-            if name in self._dependencies:
-                await self._resolve_dependencies(name)
-
-            # Create new instance
-            tool_class = self._tools[name]
-            tool = tool_class()
-            self._instances[name] = tool
-
-            # Initialize if requested
-            if initialize:
-                await tool.initialize()
-                self._initialized_tools.add(name)
-
-            logger.debug(f"Loaded tool: {name}")
+            if initialize and not ready:
+                await self._initialize_once(name, tool)
             return tool
+
+    async def _initialize_once(self, name: str, tool: BaseTool) -> None:
+        """Run ``tool.initialize()`` exactly once, however many callers arrive.
+
+        The loader lock is per event loop, so two threads driving their own
+        loops both reach this point. Whichever gets there first claims the tool
+        and initializes it; the others wait for that to finish and return. A
+        tool that opens a connection, starts a worker process or registers a
+        handler on ``initialize()`` therefore does so once per registry rather
+        than once per caller.
+        """
+        while True:
+            with self._mutex:
+                if name in self._initialized_tools:
+                    return
+                pending = self._initializing.get(name)
+                if pending is None:
+                    pending = threading.Event()
+                    self._initializing[name] = pending
+                    mine = True
+                else:
+                    mine = False
+            if mine:
+                try:
+                    await tool.initialize()
+                    with self._mutex:
+                        self._initialized_tools.add(name)
+                finally:
+                    with self._mutex:
+                        self._initializing.pop(name, None)
+                    pending.set()
+                return
+            # Someone else is initializing this tool. Wait for them without
+            # blocking this event loop, then re-check: their attempt may have
+            # failed, in which case this caller takes its own turn.
+            while not pending.is_set():
+                await asyncio.sleep(0.001)
 
     def get_tool_sync(self, name: str, initialize: bool = True) -> BaseTool:
         """Synchronous accessor for a tool instance.
@@ -315,12 +412,18 @@ class ToolRegistry:
         Raises:
             ToolDependencyError: If dependencies cannot be satisfied
         """
-        dependencies = self._dependencies.get(tool_name, set())
-        if not dependencies:
-            return
+        # Read the graph once, under the mutex, so the checks below run against
+        # one consistent view rather than one another thread is editing.
+        with self._mutex:
+            dependencies = set(self._dependencies.get(tool_name, set()))
+            if not dependencies:
+                return
+            registered = set(self._tools)
+            graph = {name: set(deps) for name, deps in self._dependencies.items()}
+            loaded = set(self._instances)
 
         # Check all dependencies are registered
-        missing = dependencies - set(self._tools.keys())
+        missing = dependencies - registered
         if missing:
             raise ToolDependencyError(
                 f"Tool '{tool_name}' has missing dependencies: {missing}"
@@ -340,7 +443,7 @@ class ToolRegistry:
             path.append(name)
             visited.add(name)
 
-            for dep in self._dependencies.get(name, []):
+            for dep in graph.get(name, ()):
                 check_circular(dep)
 
             path.pop()
@@ -349,7 +452,7 @@ class ToolRegistry:
 
         # Load dependencies
         for dep_name in dependencies:
-            if dep_name not in self._instances:
+            if dep_name not in loaded:
                 await self.get_tool(dep_name, initialize=True)
 
     def list_tools(
@@ -370,18 +473,21 @@ class ToolRegistry:
             List[str]: List of tool names matching the filters
         """
         self._ensure_builtins()
-        tools = set(self._tools.keys())
+        with self._mutex:
+            tools = set(self._tools)
+            by_category = set(self._categories.get(category, set())) if category else None
+            metadata_by_name = dict(self._metadata_cache) if tags else {}
 
         # Filter by category
-        if category:
-            tools &= self._categories.get(category, set())
+        if by_category is not None:
+            tools &= by_category
 
         # Filter by tags
         if tags:
             matching = set()
             for name in tools:
-                metadata = self._metadata_cache[name]
-                if any(tag in metadata.tags for tag in tags):
+                metadata = metadata_by_name.get(name)
+                if metadata is not None and any(tag in metadata.tags for tag in tags):
                     matching.add(name)
             tools = matching
 
@@ -406,9 +512,11 @@ class ToolRegistry:
             KeyError: If tool is not registered
         """
         self._ensure_builtins()
-        if name not in self._metadata_cache:
+        with self._mutex:
+            metadata = self._metadata_cache.get(name)
+        if metadata is None:
             raise KeyError(f"Tool '{name}' is not registered")
-        return self._metadata_cache[name]
+        return metadata
 
     def get_all_metadata(self) -> dict[str, ToolMetadata]:
         """
@@ -418,7 +526,8 @@ class ToolRegistry:
             Dict[str, ToolMetadata]: Mapping of tool names to metadata
         """
         self._ensure_builtins()
-        return self._metadata_cache.copy()
+        with self._mutex:
+            return self._metadata_cache.copy()
 
     def get_tools_by_category(self, category: ToolCategory) -> list[str]:
         """
@@ -431,7 +540,8 @@ class ToolRegistry:
             List[str]: List of tool names in the category
         """
         self._ensure_builtins()
-        return sorted(self._categories.get(category, set()))
+        with self._mutex:
+            return sorted(self._categories.get(category, set()))
 
     def is_registered(self, name: str) -> bool:
         """
@@ -444,7 +554,8 @@ class ToolRegistry:
             bool: True if registered, False otherwise
         """
         self._ensure_builtins()
-        return name in self._tools
+        with self._mutex:
+            return name in self._tools
 
     def get_dependency_graph(self) -> dict[str, list[str]]:
         """
@@ -453,26 +564,30 @@ class ToolRegistry:
         Returns:
             Dict[str, List[str]]: Mapping of tool names to their dependencies
         """
-        return {name: sorted(deps) for name, deps in self._dependencies.items()}
+        with self._mutex:
+            return {name: sorted(deps) for name, deps in self._dependencies.items()}
 
     async def initialize_all(self) -> None:
         """Initialize all registered tools."""
-        for name in self._tools.keys():
-            if name not in self._initialized_tools:
-                await self.get_tool(name, initialize=True)
+        with self._mutex:
+            names = list(self._tools)
+            pending = [n for n in names if n not in self._initialized_tools]
+        for name in pending:
+            await self.get_tool(name, initialize=True)
 
     async def cleanup_all(self) -> None:
         """Clean up all initialized tools."""
-        cleanup_tasks = []
-        for name, tool in self._instances.items():
-            if name in self._initialized_tools:
-                cleanup_tasks.append(tool.cleanup())
+        with self._mutex:
+            cleanup_tasks = [
+                tool.cleanup()
+                for name, tool in self._instances.items()
+                if name in self._initialized_tools
+            ]
+            self._instances.clear()
+            self._initialized_tools.clear()
 
         if cleanup_tasks:
             await asyncio.gather(*cleanup_tasks, return_exceptions=True)
-
-        self._instances.clear()
-        self._initialized_tools.clear()
 
     def register_plugin(self, plugin_path: Path) -> None:
         """
@@ -563,7 +678,9 @@ class ToolRegistry:
         self._ensure_builtins()
         schemas = {}
 
-        for name, metadata in self._metadata_cache.items():
+        with self._mutex:
+            cached = list(self._metadata_cache.items())
+        for name, metadata in cached:
             if format == "openai":
                 schemas[name] = metadata.to_json_schema()
             else:
@@ -574,12 +691,14 @@ class ToolRegistry:
     def __len__(self) -> int:
         """Return number of registered tools."""
         self._ensure_builtins()
-        return len(self._tools)
+        with self._mutex:
+            return len(self._tools)
 
     def __contains__(self, name: str) -> bool:
         """Check if tool is registered."""
         self._ensure_builtins()
-        return name in self._tools
+        with self._mutex:
+            return name in self._tools
 
     def __repr__(self) -> str:
         return f"<ToolRegistry(tools={len(self._tools)}, initialized={len(self._initialized_tools)})>"
