@@ -680,6 +680,28 @@ class _EffgenArgumentParser(argparse.ArgumentParser):
     handler fires for both the top-level command and every sub-command.
     """
 
+    def _print_message(self, message: str, file=None):  # noqa: D401 - argparse hook
+        """Write argparse's own output, folded to ASCII when the stream needs it.
+
+        Usage banners, ``--help`` and parser errors are written by argparse
+        straight to the stream, so the em-dashes and arrows in the command
+        descriptions reach a ``PYTHONIOENCODING=ascii`` terminal unfolded and the
+        write raises. Folding here is a no-op on a UTF-8 stream, so the bytes a
+        normal terminal receives are unchanged; anything the glyph table does not
+        cover is replaced rather than allowed to raise.
+        """
+        if not message:
+            return
+        stream = file or sys.stderr
+        from effgen.ui.render import ascii_fold
+
+        text = ascii_fold(message, stream)
+        try:
+            stream.write(text)
+        except UnicodeEncodeError:
+            encoding = getattr(stream, "encoding", None) or "ascii"
+            stream.write(text.encode(encoding, "replace").decode(encoding))
+
     def error(self, message: str):  # noqa: D401 - argparse hook
         if "invalid choice:" in message:
             import re
