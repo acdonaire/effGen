@@ -71,15 +71,36 @@ class AgentState:
 
     @classmethod
     def load(cls, filepath: str, format: str = "json") -> "AgentState":
-        """Load state from file."""
+        """Load state from file.
+
+        Raises:
+            CorruptStateError: The file is not parseable JSON, or holds something
+                other than a JSON object of state fields.
+        """
         if format == "json":
+            from ..errors import CorruptStateError
+
             with open(filepath) as f:
-                data = json.load(f)
-            # Convert ISO strings back to datetime
-            if isinstance(data.get("created_at"), str):
-                data["created_at"] = datetime.fromisoformat(data["created_at"])
-            if isinstance(data.get("updated_at"), str):
-                data["updated_at"] = datetime.fromisoformat(data["updated_at"])
+                try:
+                    data = json.load(f)
+                except (json.JSONDecodeError, ValueError) as exc:
+                    raise CorruptStateError("state", filepath, str(exc)) from exc
+            if not isinstance(data, dict):
+                raise CorruptStateError(
+                    "state",
+                    filepath,
+                    f"expected a JSON object of fields, got {type(data).__name__}",
+                )
+            # Convert ISO strings back to datetime. A value that is not a
+            # readable timestamp is dropped so the field takes its default,
+            # rather than reaching a caller that will subtract dates with it.
+            for key in ("created_at", "updated_at"):
+                if key not in data or isinstance(data[key], datetime):
+                    continue
+                try:
+                    data[key] = datetime.fromisoformat(data[key])
+                except (TypeError, ValueError):
+                    data.pop(key)
             # Load forgivingly: state files saved by a different effGen build may carry
             # since-removed fields; drop them (with one warning) rather than crashing.
             from ._compat import load_from_dict

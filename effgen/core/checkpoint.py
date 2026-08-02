@@ -25,13 +25,31 @@ logger = logging.getLogger(__name__)
 
 def _read_checkpoint_json(path: str) -> dict:
     """Read+parse a checkpoint JSON file, raising a clear error if corrupt."""
+    from ..errors import CorruptStateError
+
     with open(path) as f:
         raw = f.read()
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
     except (json.JSONDecodeError, ValueError) as e:
-        from ..errors import CorruptStateError
         raise CorruptStateError("checkpoint", path, str(e)) from e
+    if not isinstance(data, dict):
+        raise CorruptStateError(
+            "checkpoint",
+            path,
+            f"expected a JSON object of fields, got {type(data).__name__}",
+        )
+    return data
+
+
+def _load_checkpoint(source: str, data: Any) -> "Checkpoint":
+    """Build a Checkpoint from parsed data, naming *source* when it cannot."""
+    from ..errors import CorruptStateError
+
+    try:
+        return Checkpoint.from_dict(data)
+    except ValueError as e:
+        raise CorruptStateError("checkpoint", source, str(e)) from e
 
 
 @dataclass
@@ -148,7 +166,7 @@ class CheckpointManager:
         if os.path.sep in checkpoint_id or checkpoint_id.endswith(".json"):
             if not os.path.exists(checkpoint_id):
                 raise FileNotFoundError(f"Checkpoint not found: {checkpoint_id}")
-            return Checkpoint.from_dict(_read_checkpoint_json(checkpoint_id))
+            return _load_checkpoint(checkpoint_id, _read_checkpoint_json(checkpoint_id))
 
         if self.backend == "sqlite":
             with sqlite3.connect(self.db_path) as conn:
@@ -163,12 +181,12 @@ class CheckpointManager:
                 except (json.JSONDecodeError, ValueError) as e:
                     from ..errors import CorruptStateError
                     raise CorruptStateError("checkpoint", self.db_path, str(e)) from e
-                return Checkpoint.from_dict(data)
+                return _load_checkpoint(self.db_path, data)
 
         path = os.path.join(self.checkpoint_dir, f"{checkpoint_id}.json")
         if not os.path.exists(path):
             raise FileNotFoundError(f"Checkpoint not found: {path}")
-        return Checkpoint.from_dict(_read_checkpoint_json(path))
+        return _load_checkpoint(path, _read_checkpoint_json(path))
 
     def load_latest(self) -> Checkpoint:
         """Return the most recently created checkpoint."""
@@ -184,11 +202,11 @@ class CheckpointManager:
                 except (json.JSONDecodeError, ValueError) as e:
                     from ..errors import CorruptStateError
                     raise CorruptStateError("checkpoint", self.db_path, str(e)) from e
-                return Checkpoint.from_dict(data)
+                return _load_checkpoint(self.db_path, data)
 
         latest = os.path.join(self.checkpoint_dir, "latest.json")
         if os.path.exists(latest):
-            return Checkpoint.from_dict(_read_checkpoint_json(latest))
+            return _load_checkpoint(latest, _read_checkpoint_json(latest))
 
         files = sorted(
             (f for f in os.listdir(self.checkpoint_dir) if f.endswith(".json")),
@@ -226,17 +244,23 @@ class CheckpointManager:
             try:
                 with open(os.path.join(self.checkpoint_dir, fname)) as f:
                     data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError(
+                        f"expected a JSON object of fields, got {type(data).__name__}"
+                    )
                 results.append({
-                    "checkpoint_id": data.get("checkpoint_id", fname[:-5]),
+                    "checkpoint_id": str(data.get("checkpoint_id") or fname[:-5]),
                     "agent_name": data.get("agent_name"),
                     "task": data.get("task"),
                     "iteration": data.get("iteration"),
                     "created_at": data.get("created_at"),
                 })
-            except (OSError, json.JSONDecodeError) as e:
+            except (OSError, json.JSONDecodeError, ValueError) as e:
                 logger.debug("Skipping unreadable checkpoint file %s: %s", fname, e)
                 continue
-        results.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+        # Sort on the timestamp as text: a file may carry any JSON value there,
+        # and comparing a string against a number would fail the whole listing.
+        results.sort(key=lambda d: str(d.get("created_at") or ""), reverse=True)
         return results
 
     def delete(self, checkpoint_id: str) -> bool:

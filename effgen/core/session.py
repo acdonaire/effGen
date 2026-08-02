@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -44,38 +45,62 @@ def _default_session_dir() -> str:
 DEFAULT_SESSION_DIR = _default_session_dir()
 
 
-def _last_message_field(messages: list[Any], key: str) -> Any:
+def _message_list(value: Any) -> list[Any]:
+    """Return *value* as a list of messages, or empty when it is not one.
+
+    A session file is JSON a previous build (or a hand edit) wrote, so
+    ``messages`` may be any type. Every reader below counts, sums or renders it,
+    and none of them should crash on a file whose shape drifted.
+    """
+    return value if isinstance(value, list) else []
+
+
+def _message_metadata(message: Any) -> dict[str, Any]:
+    """Return a message's metadata mapping, or empty when it is not a mapping."""
+    if not isinstance(message, dict):
+        return {}
+    meta = message.get("metadata")
+    return meta if isinstance(meta, dict) else {}
+
+
+def _last_message_field(messages: Any, key: str) -> Any:
     """Return *key* from the most recent message metadata that carries it."""
-    for m in reversed(messages):
-        if isinstance(m, dict):
-            value = (m.get("metadata") or {}).get(key)
-            if value:
-                return value
+    for m in reversed(_message_list(messages)):
+        value = _message_metadata(m).get(key)
+        if value:
+            return value
     return None
 
 
-def _sum_message_costs(messages: list[Any]) -> float | None:
+def _sum_message_costs(messages: Any) -> float | None:
     """Total recorded cost across a session's turns, or ``None`` if unpriced.
 
     A turn stamps the same per-run cost on both the user and the assistant
     message, so the reply side of each turn is what gets counted, and costs
-    sharing a ``run_id`` are counted once.
+    sharing a ``run_id`` are counted once. A cost that is not a finite number is
+    not a cost: it is skipped rather than summed into a total that would then be
+    reported as real spend.
     """
     total = 0.0
     seen_runs: set[str] = set()
     priced = False
-    for m in messages:
+    for m in _message_list(messages):
         if not isinstance(m, dict) or m.get("role") == "user":
             continue
-        meta = m.get("metadata") or {}
+        meta = _message_metadata(m)
         cost = meta.get("cost_usd")
-        if not isinstance(cost, int | float):
+        if isinstance(cost, bool) or not isinstance(cost, int | float):
+            continue
+        if not math.isfinite(cost):
             continue
         run_id = meta.get("run_id")
         if run_id:
-            if run_id in seen_runs:
+            # A run id read off disk may be any JSON value, including an
+            # unhashable one; key the de-duplication on its text.
+            key = str(run_id)
+            if key in seen_runs:
                 continue
-            seen_runs.add(str(run_id))
+            seen_runs.add(key)
         total += float(cost)
         priced = True
     return round(total, 6) if priced else None
@@ -163,12 +188,18 @@ class Session:
             raise FileNotFoundError(f"Session not found: {session_id}")
         with open(path) as f:
             raw = f.read()
+        from ..errors import CorruptStateError
+
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, ValueError) as e:
-            from ..errors import CorruptStateError
             raise CorruptStateError("session", path, str(e)) from e
-        return cls.from_dict(data)
+        try:
+            return cls.from_dict(data)
+        except ValueError as e:
+            # Valid JSON that is not a session document (an array, a scalar, a
+            # file missing a required field) — name the file, not the parser.
+            raise CorruptStateError("session", path, str(e)) from e
 
     @classmethod
     def load_or_create(
@@ -216,10 +247,11 @@ class SessionManager:
                     data = json.load(f)
                 if not isinstance(data, dict):
                     raise ValueError("session file is not a JSON object")
-                messages = data.get("messages") or []
-                meta = data.get("metadata") or {}
+                messages = _message_list(data.get("messages"))
+                meta = data.get("metadata")
+                meta = meta if isinstance(meta, dict) else {}
                 out.append({
-                    "session_id": data.get("session_id", fname[:-5]),
+                    "session_id": str(data.get("session_id") or fname[:-5]),
                     "agent_name": data.get("agent_name", ""),
                     "messages": len(messages),
                     "created_at": data.get("created_at"),
@@ -229,7 +261,9 @@ class SessionManager:
                 })
             except (OSError, json.JSONDecodeError, ValueError) as e:
                 unreadable.append({"file": fname, "reason": str(e)})
-        out.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
+        # Sort on the timestamp as text: a file may carry any JSON value there,
+        # and comparing a string against a number would fail the whole listing.
+        out.sort(key=lambda d: str(d.get("updated_at") or ""), reverse=True)
         return out, unreadable
 
     def list_sessions(self) -> list[dict[str, Any]]:
@@ -264,8 +298,11 @@ class SessionManager:
             return json.dumps(session.to_dict(), indent=2, default=str)
         if format == "text":
             lines = [f"Session: {session.session_id}", f"Agent: {session.agent_name}", ""]
-            for m in session.messages:
-                lines.append(f"[{m.get('role')}] {m.get('content')}")
+            for m in _message_list(session.messages):
+                if isinstance(m, dict):
+                    lines.append(f"[{m.get('role')}] {m.get('content')}")
+                else:
+                    lines.append(f"[?] {m}")
             return "\n".join(lines)
         raise ValueError(f"Unsupported export format: {format}")
 
@@ -275,7 +312,9 @@ class SessionManager:
         removed = 0
         for entry in self.list_sessions():
             updated = entry.get("updated_at")
-            if not updated:
+            if not isinstance(updated, str) or not updated:
+                # A timestamp of another type is not a timestamp; leave the
+                # session alone rather than deleting it on a guess.
                 continue
             try:
                 ts = datetime.fromisoformat(updated)
