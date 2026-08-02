@@ -42,7 +42,7 @@ from effgen.models.base import (
     TokenCount,
     fold_call_totals,
 )
-from effgen.models.errors import ModelAuthError, ModelNotFoundError
+from effgen.models.errors import ModelAuthError, ModelNotFoundError, error_has_status
 from effgen.models.latency_tracker import timed_call
 from effgen.observability.spans import ModelAttrs
 from effgen.observability.tracing import set_span_attribute as _set_span_attr
@@ -587,9 +587,9 @@ class AnthropicAdapter(FunctionCallingModel):
         except Exception as e:
             logger.error(f"Anthropic API call failed: {e}")
             msg = str(e)
-            if "401" in msg or "authentication_error" in msg.lower() or "invalid x-api-key" in msg.lower():
+            if error_has_status(e, 401) or "authentication_error" in msg.lower() or "invalid x-api-key" in msg.lower():
                 raise ModelAuthError("anthropic", self.model_name, msg) from e
-            if "404" in msg or "not_found_error" in msg.lower():
+            if error_has_status(e, 404) or "not_found_error" in msg.lower():
                 raise ModelNotFoundError("anthropic", self.model_name, msg) from e
             raise provider_runtime_error("anthropic", self.model_name, "generate", e, message="Anthropic generation failed") from e
 

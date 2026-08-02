@@ -59,6 +59,7 @@ from effgen.models.base import (
 from effgen.models.errors import (
     ModelAuthError,
     ModelRefusalError,
+    error_has_status,
 )
 from effgen.models.latency_tracker import timed_call
 from effgen.models.openai_models import (
@@ -669,9 +670,9 @@ class OpenAIAdapter(FunctionCallingModel):
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
             msg = str(e)
-            if "401" in msg or "invalid_api_key" in msg.lower() or "incorrect api key" in msg.lower():
+            if error_has_status(e, 401) or "invalid_api_key" in msg.lower() or "incorrect api key" in msg.lower():
                 raise ModelAuthError("openai", self.model_name, msg) from e
-            if "404" in msg or "model_not_found" in msg.lower():
+            if error_has_status(e, 404) or "model_not_found" in msg.lower():
                 raise model_not_found_error("openai", self.model_name, msg) from e
             raise provider_runtime_error("openai", self.model_name, "generate", e, message="OpenAI generation failed") from e
 

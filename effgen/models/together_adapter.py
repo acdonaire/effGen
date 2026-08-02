@@ -41,7 +41,12 @@ from effgen.models.base import (
     TokenCount,
     accumulate_stream_cost,
 )
-from effgen.models.errors import InvalidRequestError, ModelAuthError, ModelNotFoundError
+from effgen.models.errors import (
+    InvalidRequestError,
+    ModelAuthError,
+    ModelNotFoundError,
+    error_has_status,
+)
 from effgen.models.latency_tracker import timed_call
 from effgen.models.together_models import (
     TOGETHER_DEFAULT_MODEL,
@@ -426,8 +431,8 @@ class TogetherAdapter(BaseModel):
                 msg_lower = msg.lower()
 
                 is_auth = (
-                    "401" in msg
-                    or "403" in msg
+                    error_has_status(exc, 401)
+                    or error_has_status(exc, 403)
                     or "invalid_api_key" in msg_lower
                     or "invalid api key" in msg_lower
                     or "unauthorized" in msg_lower
@@ -463,7 +468,7 @@ class TogetherAdapter(BaseModel):
                         ),
                     ) from exc
 
-                is_rate = "429" in msg or "rate_limit" in msg_lower or "rate limit" in msg_lower
+                is_rate = error_has_status(exc, 429) or "rate_limit" in msg_lower or "rate limit" in msg_lower
                 is_server = "500" in msg or "503" in msg or "internal" in msg_lower
                 is_timeout = "timeout" in msg_lower
 
@@ -760,8 +765,8 @@ class TogetherAdapter(BaseModel):
             msg = str(exc)
             msg_lower = msg.lower()
             if (
-                "401" in msg
-                or "403" in msg
+                error_has_status(exc, 401)
+                or error_has_status(exc, 403)
                 or "invalid_api_key" in msg_lower
                 or "invalid api key" in msg_lower
                 or "unauthorized" in msg_lower
@@ -790,7 +795,7 @@ class TogetherAdapter(BaseModel):
                         f"serverless model: {serverless_models()}"
                     ),
                 ) from exc
-            if "429" in msg or "rate_limit" in msg_lower or "rate limit" in msg_lower:
+            if error_has_status(exc, 429) or "rate_limit" in msg_lower or "rate limit" in msg_lower:
                 from effgen.models._rate_limit import RateLimitExceeded as _RLE
 
                 raise _RLE(f"Together rate limit hit for {self.model_name}: {msg}") from exc

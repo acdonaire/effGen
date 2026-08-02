@@ -42,7 +42,7 @@ from effgen.models.cerebras_models import (
     free_tier_models,
     model_info,
 )
-from effgen.models.errors import ModelAuthError, ModelNotFoundError
+from effgen.models.errors import ModelAuthError, ModelNotFoundError, error_has_status
 from effgen.models.latency_tracker import timed_call
 from effgen.observability import get_logger as _get_obs_logger
 from effgen.observability.spans import ModelAttrs
@@ -356,7 +356,7 @@ class CerebrasAdapter(BaseModel):
                 _last_exc = exc
                 msg = str(exc)
                 msg_lower = msg.lower()
-                if "401" in msg or "wrong_api_key" in msg_lower or "wrong api key" in msg_lower:
+                if error_has_status(exc, 401) or "wrong_api_key" in msg_lower or "wrong api key" in msg_lower:
                     raise ModelAuthError("cerebras", self.model_name, str(exc)) from exc
                 if "404" in msg and "model_not_found" in msg:
                     from effgen.models._catalog import suggest_for_missing
@@ -364,7 +364,7 @@ class CerebrasAdapter(BaseModel):
                     hint = suggest_for_missing("cerebras", self.model_name)
                     logger.error("Cerebras API 404 for model '%s': %s", self.model_name, exc)
                     raise ModelNotFoundError("cerebras", self.model_name, str(exc) + hint) from exc
-                is_rate = "429" in msg or "rate_limit" in msg_lower
+                is_rate = error_has_status(exc, 429) or "rate_limit" in msg_lower
                 # Cerebras "queue_exceeded" / "high traffic" — transient backpressure that needs
                 # longer waits than per-minute rate-limits. Treat as retryable but with a longer cap.
                 is_queue = "queue_exceeded" in msg_lower or "high traffic" in msg_lower
@@ -655,7 +655,7 @@ class CerebrasAdapter(BaseModel):
                     f"streaming failed (model not found): {exc}"
                     + suggest_for_missing("cerebras", self.model_name),
                 ) from exc
-            if "429" in msg or "rate_limit" in msg_lower:
+            if error_has_status(exc, 429) or "rate_limit" in msg_lower:
                 from effgen.models._rate_limit import RateLimitExceeded as _RLE
                 raise _RLE(f"Cerebras rate limit hit for {self.model_name}: {msg}") from exc
             if "500" in msg or "503" in msg or "internal server" in msg_lower:

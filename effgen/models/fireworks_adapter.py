@@ -38,7 +38,7 @@ from effgen.models.base import (
     TokenCount,
     accumulate_stream_cost,
 )
-from effgen.models.errors import ModelAuthError, ModelNotFoundError
+from effgen.models.errors import ModelAuthError, ModelNotFoundError, error_has_status
 from effgen.models.fireworks_models import (
     FIREWORKS_DEFAULT_MODEL,
     FIREWORKS_MODELS,
@@ -370,8 +370,8 @@ class FireworksAdapter(BaseModel):
                 msg_lower = msg.lower()
 
                 is_auth = (
-                    "401" in msg
-                    or "403" in msg
+                    error_has_status(exc, 401)
+                    or error_has_status(exc, 403)
                     or "invalid_api_key" in msg_lower
                     or "invalid api key" in msg_lower
                     or "unauthorized" in msg_lower
@@ -400,7 +400,7 @@ class FireworksAdapter(BaseModel):
                     ) from exc
 
                 is_rate = (
-                    "429" in msg
+                    error_has_status(exc, 429)
                     or "rate_limit" in msg_lower
                     or "rate limit" in msg_lower
                     or "exceeded your rate limit" in msg_lower
@@ -669,8 +669,8 @@ class FireworksAdapter(BaseModel):
             msg = str(exc)
             msg_lower = msg.lower()
             if (
-                "401" in msg
-                or "403" in msg
+                error_has_status(exc, 401)
+                or error_has_status(exc, 403)
                 or "invalid_api_key" in msg_lower
                 or "invalid api key" in msg_lower
                 or "unauthorized" in msg_lower

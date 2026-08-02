@@ -43,7 +43,12 @@ from effgen.models.base import (
     fold_call_totals,
     record_stream_usage,
 )
-from effgen.models.errors import InvalidRequestError, ModelAuthError, ModelNotFoundError
+from effgen.models.errors import (
+    InvalidRequestError,
+    ModelAuthError,
+    ModelNotFoundError,
+    error_has_status,
+)
 from effgen.models.gemini_files import FileRef
 from effgen.models.gemini_models import (
     GEMINI_MODEL_ALIASES,
@@ -502,7 +507,7 @@ class GeminiAdapter(FunctionCallingModel):
                 last_exc = exc
                 exc_str = str(exc)
                 exc_cls = type(exc).__name__
-                is_quota = "429" in exc_str or "quota" in exc_str.lower() or "ResourceExhausted" in exc_cls
+                is_quota = error_has_status(exc, 429) or "quota" in exc_str.lower() or "ResourceExhausted" in exc_cls
                 is_transient = (
                     any(kw in exc_cls for kw in ("ServiceUnavailable", "DeadlineExceeded", "InternalServerError", "ServerError"))
                     or "503" in exc_str
@@ -936,11 +941,11 @@ class GeminiAdapter(FunctionCallingModel):
             logger.error("Gemini API call failed: %s", exc)
             msg = str(exc)
             lowered = msg.lower()
-            if "429" in msg or "resource_exhausted" in lowered or "quota" in lowered:
+            if error_has_status(exc, 429) or "resource_exhausted" in lowered or "quota" in lowered:
                 raise provider_runtime_error("gemini", self.model_name, "generate", exc, message="Gemini generation failed") from exc
             # Auth: 401, or a 400 INVALID_ARGUMENT specifically about the API key.
             if (
-                "401" in msg
+                error_has_status(exc, 401)
                 or "api_key_invalid" in lowered
                 or "api key not valid" in lowered
                 or "permission_denied" in lowered
