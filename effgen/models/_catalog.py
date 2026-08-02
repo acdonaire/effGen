@@ -35,7 +35,7 @@ import datetime
 import difflib
 import json
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -111,9 +111,25 @@ class ModelRecord:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ModelRecord":
-        """Rebuild a record from :meth:`to_dict` output, ignoring extra keys."""
+        """Rebuild a record from :meth:`to_dict` output, ignoring extra keys.
+
+        A snapshot file may have been written by a different build or edited by
+        hand, so an entry that is not a mapping, or that carries no ``id``/
+        ``provider``, raises :class:`ValueError` naming what is wrong rather than
+        a bare ``TypeError`` from the constructor.
+        """
+        if not isinstance(data, Mapping):
+            raise ValueError(
+                f"model record must be a JSON object, got {type(data).__name__}"
+            )
         known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        kwargs = {k: v for k, v in data.items() if k in known}
+        missing = [name for name in ("id", "provider") if not kwargs.get(name)]
+        if missing:
+            raise ValueError(
+                f"model record is missing required field(s) {missing}: {dict(data)!r:.120}"
+            )
+        return cls(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +420,14 @@ def save_snapshot(
 
 
 def load_snapshot(provider: str, *, path: Path | None = None) -> dict[str, Any] | None:
-    """Load the persisted snapshot for *provider*, or None if absent/invalid."""
+    """Load the persisted snapshot for *provider*, or None if absent/invalid.
+
+    A snapshot is a file on disk that a refresh, a package build or a hand edit
+    produced. Anything that is not a JSON object of snapshot fields is treated as
+    invalid: the reason is logged once and ``None`` is returned, so a stale or
+    damaged file degrades the catalog to its in-package source rather than
+    raising out of an unrelated call.
+    """
     src = path or snapshot_path(provider)
     if not src.exists():
         return None
@@ -414,15 +437,52 @@ def load_snapshot(provider: str, *, path: Path | None = None) -> dict[str, Any] 
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("Could not read model snapshot %s: %s", src, exc)
         return None
+    if not isinstance(data, dict):
+        logger.warning(
+            "Ignoring model snapshot %s: expected a JSON object, got %s.",
+            src,
+            type(data).__name__,
+        )
+        return None
     return data
 
 
 def load_snapshot_records(provider: str, *, path: Path | None = None) -> list[ModelRecord]:
-    """Load a snapshot and return it as :class:`ModelRecord` objects."""
+    """Load a snapshot and return it as :class:`ModelRecord` objects.
+
+    An entry that is not a usable model record is skipped and counted in a single
+    warning naming the file, so one damaged row does not cost the caller every
+    other model in the snapshot.
+    """
     data = load_snapshot(provider, path=path)
     if not data:
         return []
-    return [ModelRecord.from_dict(m) for m in data.get("models", [])]
+    src = path or snapshot_path(provider)
+    entries = data.get("models")
+    if not isinstance(entries, list):
+        if entries is not None:
+            logger.warning(
+                "Model snapshot %s: 'models' must be a list, got %s — ignoring it.",
+                src,
+                type(entries).__name__,
+            )
+        return []
+    records: list[ModelRecord] = []
+    skipped: list[str] = []
+    for position, entry in enumerate(entries, start=1):
+        try:
+            records.append(ModelRecord.from_dict(entry))
+        except (ValueError, TypeError) as exc:
+            skipped.append(f"entry {position}: {exc}")
+    if skipped:
+        logger.warning(
+            "Model snapshot %s: skipped %d unusable entr%s — %s",
+            src,
+            len(skipped),
+            "y" if len(skipped) == 1 else "ies",
+            "; ".join(skipped[:5]),
+        )
+    return records
 
 
 def snapshot_age_days(provider: str, *, path: Path | None = None) -> int | None:
