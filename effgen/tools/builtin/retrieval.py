@@ -82,15 +82,13 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
 
     def _load_model(self):
         if self._model is None:
+            from effgen.utils.embedding_backend import load_sentence_transformer
+
             try:
-                from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(self.model_name)
+                self._model = load_sentence_transformer(self.model_name)
                 logger.info(f"Loaded embedding model: {self.model_name}")
-            except ImportError:
-                raise RuntimeError(
-                    "sentence-transformers not installed. "
-                    "Install with: pip install sentence-transformers"
-                )
+            except ImportError as exc:
+                raise RuntimeError(str(exc)) from exc
         return self._model
 
     def embed(self, texts: list[str]) -> np.ndarray:

@@ -150,15 +150,9 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
         Args:
             model_name: Name of sentence-transformers model
         """
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers not installed. "
-                "Install with: pip install sentence-transformers"
-            )
+        from effgen.utils.embedding_backend import load_sentence_transformer
 
-        self.model = SentenceTransformer(model_name)
+        self.model = load_sentence_transformer(model_name)
         # `get_sentence_embedding_dimension()` was renamed to
         # `get_embedding_dimension()` in newer sentence-transformers; prefer the
         # new name and fall back for older installs.

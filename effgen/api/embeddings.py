@@ -205,10 +205,10 @@ class SentenceTransformerEmbedder:
     """Wrapper around ``sentence-transformers`` when installed."""
 
     def __init__(self, model_name: str) -> None:
-        from sentence_transformers import SentenceTransformer  # type: ignore
+        from effgen.utils.embedding_backend import load_sentence_transformer
 
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name)
+        self.model = load_sentence_transformer(model_name)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Return one normalized sentence-transformer vector per input text."""

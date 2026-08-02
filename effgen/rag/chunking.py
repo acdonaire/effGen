@@ -81,15 +81,13 @@ class SemanticChunker(ChunkingStrategy):
 
     def _get_model(self):
         if self._model is None:
-            try:
-                from sentence_transformers import SentenceTransformer  # type: ignore
+            from effgen.utils.embedding_backend import load_sentence_transformer
 
-                self._model = SentenceTransformer(self.model_name)
-            except ImportError:
+            try:
+                self._model = load_sentence_transformer(self.model_name)
+            except (ImportError, RuntimeError) as exc:
                 logger.warning(
-                    "sentence-transformers not installed; SemanticChunker "
-                    "falling back to SentenceChunker. "
-                    "Install with: pip install sentence-transformers"
+                    "SemanticChunker falling back to SentenceChunker: %s", exc
                 )
                 self._model = False
         return self._model

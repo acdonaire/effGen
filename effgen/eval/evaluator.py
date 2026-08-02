@@ -318,8 +318,8 @@ def _get_semantic_model(model_name: str = "all-MiniLM-L6-v2") -> Any:
     """Return a cached ``SentenceTransformer``, loading it once per process."""
     model = _SEMANTIC_MODEL_CACHE.get(model_name)
     if model is None:
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer(model_name)
+        from effgen.utils.embedding_backend import load_sentence_transformer
+        model = load_sentence_transformer(model_name)
         _SEMANTIC_MODEL_CACHE[model_name] = model
     return model
 
