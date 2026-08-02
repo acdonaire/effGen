@@ -322,11 +322,19 @@ class CLIInterface:
         )
 
     def print(self, *args: Any, **kwargs: Any) -> None:
-        """Print with rich formatting if available."""
+        """Print with rich formatting if available.
+
+        The plain branch flushes, because a rich console writes through on every
+        call and the built-in ``print`` does not. Without it, an install with no
+        rich left the output of a long-running command in the interpreter's
+        block buffer: ``effgen serve > server.log`` wrote nothing at all — the
+        API key it had just minted included — until the server was stopped.
+        """
         console = self._human()
         if console:
             console.print(*args, **kwargs)
         else:
+            kwargs.setdefault("flush", True)
             print(*args, file=sys.stderr if self._human_to_stderr else None, **kwargs)
 
     def print_data(self, text: str) -> None:
@@ -353,7 +361,7 @@ class CLIInterface:
         if console:
             console.print(text, highlight=False, markup=False, emoji=False, style=style)
         else:
-            print(text, file=sys.stderr if self._human_to_stderr else None)
+            print(text, file=sys.stderr if self._human_to_stderr else None, flush=True)
 
     def print_header(self, text: str) -> None:
         """Print a header."""
@@ -361,7 +369,8 @@ class CLIInterface:
         if console:
             console.print(f"\n[effgen.heading]{text}[/effgen.heading]")
         else:
-            print(f"\n=== {text} ===", file=sys.stderr if self._human_to_stderr else None)
+            print(f"\n=== {text} ===", file=sys.stderr if self._human_to_stderr else None,
+                  flush=True)
 
     def _human_stream(self):
         """The underlying text stream human output goes to (for glyph fallback)."""
@@ -374,7 +383,8 @@ class CLIInterface:
         if console:
             console.print(f"[green]{mark}[/green] {text}")
         else:
-            print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None)
+            print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None,
+                  flush=True)
 
     def print_error(self, text: str) -> None:
         """Print error message."""
@@ -383,7 +393,8 @@ class CLIInterface:
         if console:
             console.print(f"[red]{mark}[/red] {text}")
         else:
-            print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None)
+            print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None,
+                  flush=True)
 
     def print_warning(self, text: str) -> None:
         """Print warning message."""
@@ -392,7 +403,8 @@ class CLIInterface:
         if console:
             console.print(f"[effgen.warning]{mark}[/effgen.warning] {text}")
         else:
-            print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None)
+            print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None,
+                  flush=True)
 
     def print_error_panel(self, message: str, *, title: str = "Error") -> None:
         """Render a failure as a red-bordered panel, or a styled line without rich.
