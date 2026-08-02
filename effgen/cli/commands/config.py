@@ -26,24 +26,21 @@ def config_commands(cli: "CLIInterface", args: argparse.Namespace) -> int | None
     from effgen.cli.commands._shared import _print_group_help
 
     if args.config_command == 'show':
-        cli._config_show(args)
-    elif args.config_command == 'validate':
-        cli._config_validate(args)
-    elif args.config_command == 'init':
-        cli._config_init(args)
-    elif args.config_command == 'set':
-        cli._config_set(args)
-    elif args.config_command is None:
+        return cli._config_show(args) or 0
+    if args.config_command == 'validate':
+        return cli._config_validate(args) or 0
+    if args.config_command == 'init':
+        return cli._config_init(args) or 0
+    if args.config_command == 'set':
+        return cli._config_set(args) or 0
+    if args.config_command is None:
         return _print_group_help(args)
-    else:
-        cli.print_error(f"Unknown config command: {args.config_command}")
-        return 1
-
-    return 0
+    cli.print_error(f"Unknown config command: {args.config_command}")
+    return 1
 
 
-def config_set(cli: "CLIInterface", args: argparse.Namespace) -> None:
-    """Handle 'effgen config set <key> <value>'."""
+def config_set(cli: "CLIInterface", args: argparse.Namespace) -> int:
+    """Handle 'effgen config set <key> <value>'; non-zero when the key is refused."""
     key: str = args.key
     value_str: str = args.value
 
@@ -57,12 +54,12 @@ def config_set(cli: "CLIInterface", args: argparse.Namespace) -> None:
                 f"Unknown budget key: {key!r}. {hint + ' ' if hint else ''}"
                 f"Supported: {', '.join(_supported_keys)}."
             )
-            return
+            return 1
         try:
             value = float(value_str)
         except ValueError:
             cli.print_error(f"Budget value must be a number, got: {value_str!r}")
-            return
+            return 1
         from effgen.models._cost import _budget_config_path
         budget_path = _budget_config_path()
         budget_path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,16 +72,17 @@ def config_set(cli: "CLIInterface", args: argparse.Namespace) -> None:
         existing[budget_key] = value
         budget_path.write_text(json.dumps(existing, indent=2))
         cli.print_success(f"Set {key} = {value}")
-    else:
-        hint = _onboarding.did_you_mean(key, _supported_keys, n=1, cutoff=0.5)
-        cli.print_error(
-            f"Unknown config key: {key!r}. {hint + ' ' if hint else ''}"
-            f"Supported: {', '.join(_supported_keys)}."
-        )
+        return 0
+    hint = _onboarding.did_you_mean(key, _supported_keys, n=1, cutoff=0.5)
+    cli.print_error(
+        f"Unknown config key: {key!r}. {hint + ' ' if hint else ''}"
+        f"Supported: {', '.join(_supported_keys)}."
+    )
+    return 1
 
 
-def config_show(cli: "CLIInterface", args: argparse.Namespace) -> None:
-    """Show current configuration."""
+def config_show(cli: "CLIInterface", args: argparse.Namespace) -> int:
+    """Show current configuration; non-zero when the file cannot be read."""
     from rich.syntax import Syntax
 
     from effgen.ui.theme import CODE_THEME
@@ -108,32 +106,41 @@ def config_show(cli: "CLIInterface", args: argparse.Namespace) -> None:
 
         except Exception as e:
             cli.print_error(f"Error loading config: {e}")
-    else:
-        cli.print_warning("No configuration file specified")
-        cli.print("Use: effgen config show --file <path>")
+            return 1
+        return 0
+
+    cli.print_warning("No configuration file specified")
+    cli.print("Use: effgen config show --file <path>")
+    return 1
 
 
-def config_validate(cli: "CLIInterface", args: argparse.Namespace) -> None:
-    """Validate configuration file."""
+def config_validate(cli: "CLIInterface", args: argparse.Namespace) -> int:
+    """Validate a configuration file, returning non-zero when it is not valid.
+
+    The exit code is what a CI step gates on, so a file that is refused has to
+    make the command fail, not print a message and succeed.
+    """
     if not args.file:
         cli.print_error("Configuration file required")
-        return
+        return 1
 
     try:
         cli.config_loader.load_config(args.file, validate=True)
-        cli.print_success(f"Configuration is valid: {args.file}")
     except Exception as e:
         cli.print_error(f"Configuration validation failed: {e}")
+        return 1
+    cli.print_success(f"Configuration is valid: {args.file}")
+    return 0
 
 
-def config_init(cli: "CLIInterface", args: argparse.Namespace) -> None:
-    """Initialize a new configuration file."""
+def config_init(cli: "CLIInterface", args: argparse.Namespace) -> int:
+    """Initialize a new configuration file; non-zero when nothing was written."""
     output_path = Path(args.output or "config.yaml")
 
     if output_path.exists() and not args.force:
         cli.print_error(f"File already exists: {output_path}")
         cli.print("Use --force to overwrite")
-        return
+        return 1
 
     # Create default configuration
     default_config = {
@@ -157,3 +164,4 @@ def config_init(cli: "CLIInterface", args: argparse.Namespace) -> None:
         yaml.dump(default_config, f, default_flow_style=False)
 
     cli.print_success(f"Configuration initialized: {output_path}")
+    return 0
