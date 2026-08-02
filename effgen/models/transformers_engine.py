@@ -20,7 +20,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-import torch
+try:
+    import torch
+except ImportError as exc:  # pragma: no cover - only on an install without torch
+    from effgen.models._adapter_utils import missing_torch_error
+
+    raise missing_torch_error("transformers") from exc
+
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,

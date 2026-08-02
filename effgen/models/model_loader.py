@@ -46,6 +46,43 @@ _ReplicateAdapter = None
 _HFInferenceAdapter = None
 
 
+def _require_torch(engine: str):
+    """Return the ``torch`` module, or raise naming the engine and the install.
+
+    The local engines are the only part of effGen that needs PyTorch — the cloud
+    providers do not — so an install without it must say what is missing and how
+    to get it, rather than surfacing the import system's ``No module named
+    'torch'`` as the whole explanation.
+    """
+    try:
+        import torch
+    except ImportError as exc:
+        from effgen.models._adapter_utils import missing_torch_error
+
+        raise missing_torch_error(engine) from exc
+    return torch
+
+
+def _missing_module(exc: BaseException) -> str | None:
+    """Name the package whose absence caused *exc*, following the cause chain.
+
+    A lazy import layer (the one in ``transformers``) re-raises a missing
+    dependency as "Could not import module 'X'", which names the symbol it was
+    building rather than the package that is actually absent. The innermost
+    ``ModuleNotFoundError`` still carries it.
+    """
+    seen: set[int] = set()
+    found: str | None = None
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        name = getattr(current, "name", None)
+        if isinstance(current, ModuleNotFoundError) and name:
+            found = name
+        current = current.__cause__ or current.__context__
+    return found
+
+
 def _get_hf_inference_adapter():
     global _HFInferenceAdapter
     if _HFInferenceAdapter is None:
@@ -694,7 +731,10 @@ class ModelLoader:
         the opt-in ``engine="auto-fast"`` path to decide vLLM vs Transformers
         without ever raising.
         """
-        import torch
+        try:
+            import torch
+        except ImportError:
+            return False
 
         if not torch.cuda.is_available():
             return False
@@ -732,7 +772,7 @@ class ModelLoader:
         Raises:
             RuntimeError: If vLLM is unavailable or loading fails
         """
-        import torch
+        torch = _require_torch("vllm")
 
         from effgen.models.vllm_engine import VLLMEngine
 
@@ -844,9 +884,18 @@ class ModelLoader:
         Returns:
             TransformersEngine instance
         """
-        import torch
+        torch = _require_torch("transformers")
 
-        from effgen.models.transformers_engine import TransformersEngine
+        try:
+            from effgen.models.transformers_engine import TransformersEngine
+        except ImportError as exc:
+            missing = _missing_module(exc)
+            if missing:
+                raise ImportError(
+                    f"The local 'transformers' engine could not be imported: the package "
+                    f"'{missing}' is not installed. Install it with: pip install {missing}"
+                ) from exc
+            raise
 
         logger.info(f"Loading with Transformers: {model_name}")
 

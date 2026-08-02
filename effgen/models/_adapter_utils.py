@@ -24,6 +24,13 @@ uniform contract:
   keywords into the call's config and takes them out of the keyword dict, so a
   backend whose own entry point has no parameter of that name never receives one.
 
+* **an absent local backend** — the local engines need PyTorch and the cloud
+  providers do not, so an install without it reaches the user as
+  ``No module named 'torch'`` with nothing to act on.
+  :func:`missing_torch_error` names the engine, the package and the way to get
+  it, and is raised both when an engine module is imported and when a load is
+  requested.
+
 These are internal helpers (no public API surface change).
 """
 
@@ -41,6 +48,26 @@ from .errors import (
     context_overflow_hint,
     error_context_dict,
 )
+
+
+def missing_torch_error(engine: str) -> ImportError:
+    """Return the error raised when the local *engine* has no PyTorch to run on.
+
+    Args:
+        engine: Name of the local engine that needs it (``"transformers"``,
+            ``"vllm"``).
+
+    Returns:
+        An :class:`ImportError` naming the package, the install command and the
+        cloud alternative that needs no local engine.
+    """
+    return ImportError(
+        f"PyTorch is not installed, so the local '{engine}' engine cannot load a "
+        "model. Install it with: pip install torch (see docs/installation.md for "
+        "the build that matches your CUDA driver). A cloud model needs no local "
+        'engine — for example: effgen run "..." -m openai:gpt-5-nano.'
+    )
+
 
 # Probe used to decide whether a local chat template renders tool definitions.
 # The name is deliberately unusual so finding it in the rendered prompt means the

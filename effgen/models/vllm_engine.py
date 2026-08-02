@@ -16,7 +16,12 @@ import logging
 from collections.abc import Iterator
 from typing import Any
 
-import torch
+try:
+    import torch
+except ImportError as exc:  # pragma: no cover - only on an install without torch
+    from effgen.models._adapter_utils import missing_torch_error
+
+    raise missing_torch_error("vllm") from exc
 
 from effgen.models._adapter_utils import (
     attach_error_context,
