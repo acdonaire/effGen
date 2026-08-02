@@ -30,6 +30,35 @@ from ..observability.tracing import (
 logger = logging.getLogger(__name__)
 
 
+def _as_name_list(
+    value: Any, what: str, bad: Callable[[str], ValueError]
+) -> list[str]:
+    """Return a YAML list-of-names field as a list of strings.
+
+    An absent field is an empty list, and a single name written without list
+    syntax (``depends_on: search``) is that one name — the spelling a user
+    reaches for first. A mapping, or a list holding one, is not a list of names
+    and is refused naming the field.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, int | float | bool):
+        return [str(value)]
+    if isinstance(value, list):
+        names = []
+        for item in value:
+            if item is None or isinstance(item, list | dict):
+                raise bad(
+                    f"{what} must be a list of names; found "
+                    f"{'nothing' if item is None else type(item).__name__}."
+                )
+            names.append(str(item))
+        return names
+    raise bad(f"{what} must be a list of names, got {type(value).__name__}.")
+
+
 def _redact(text: str) -> str:
     """Scrub secrets from an error string before it is surfaced/logged.
 
@@ -653,14 +682,40 @@ class WorkflowDAG:
         An unrecognized top-level key is reported with a warning rather than
         dropped silently, so a mis-keyed file (e.g. ``edge:`` instead of
         ``edges:``) does not validate as a workflow with all its declared wiring.
+
+        A file that is not a workflow — empty, a bare list or scalar, a node with
+        no ``id``, a ``nodes:``/``edges:`` block that is not a list — raises
+        ``ValueError`` naming the file and the offending position.
+
+        Raises:
+            ValueError: The file is not a workflow document.
+            yaml.YAMLError: The file is not parseable YAML.
         """
         import yaml  # pyyaml is an existing dependency
 
         with open(path) as f:
             data = yaml.safe_load(f)
 
+        def bad(detail: str) -> ValueError:
+            return ValueError(f"{path}: {detail}")
+
+        if data is None:
+            raise bad("workflow file is empty.")
+        if not isinstance(data, dict):
+            raise bad(
+                f"expected a workflow mapping, got {type(data).__name__}. The file "
+                "should start with 'workflow:' or with a top-level 'nodes:' list."
+            )
         wf_data = data.get("workflow", data)
+        if not isinstance(wf_data, dict):
+            raise bad(
+                f"'workflow' must be a mapping, got {type(wf_data).__name__}."
+            )
+
         name = wf_data.get("name", "workflow")
+        if isinstance(name, list | dict):
+            raise bad(f"workflow 'name' must be text, got {type(name).__name__}.")
+        name = str(name)
 
         # Surface unknown top-level keys instead of dropping the wiring silently.
         _known_top = {"name", "nodes", "edges", "description", "metadata"}
@@ -675,35 +730,82 @@ class WorkflowDAG:
 
         dag = cls(name=name)
 
-        node_defs = wf_data.get("nodes", [])
-        for nd in node_defs:
+        node_defs = wf_data.get("nodes") or []
+        if not isinstance(node_defs, list):
+            raise bad(
+                f"'nodes' must be a list of node mappings, got "
+                f"{type(node_defs).__name__}."
+            )
+
+        node_ids: list[str] = []
+        for position, nd in enumerate(node_defs, start=1):
+            if not isinstance(nd, dict):
+                raise bad(
+                    f"node {position} must be a mapping with an 'id', got "
+                    f"{type(nd).__name__}."
+                )
+            node_id = cls._node_id(nd.get("id"), position, bad)
+            node_ids.append(node_id)
+
             agent = None
             if agent_factory:
                 agent = agent_factory(nd)
 
+            output_key = nd.get("output_key")
             node = WorkflowNode(
-                id=nd["id"],
+                id=node_id,
                 agent=agent,
-                tools=nd.get("tools", []),
-                input_keys=nd.get("input_keys", []),
-                output_key=nd.get("output_key", nd["id"]),
+                tools=_as_name_list(nd.get("tools"), f"node '{node_id}' tools", bad),
+                input_keys=_as_name_list(
+                    nd.get("input_keys"), f"node '{node_id}' input_keys", bad
+                ),
+                output_key=node_id if output_key is None else str(output_key),
                 metadata={k: v for k, v in nd.items()
                           if k not in ("id", "tools", "input_keys",
                                        "output_key", "depends_on", "agent")},
             )
-            dag.add_node(node)
+            try:
+                dag.add_node(node)
+            except ValueError as exc:
+                raise bad(f"node {position}: {exc}") from exc
 
         # Create edges from per-node depends_on ...
-        for nd in node_defs:
-            for dep in nd.get("depends_on", []):
-                dag.connect(dep, nd["id"])
+        for position, (nd, node_id) in enumerate(zip(node_defs, node_ids), start=1):
+            deps = _as_name_list(
+                nd.get("depends_on"), f"node '{node_id}' depends_on", bad
+            )
+            for dep in deps:
+                try:
+                    dag.connect(dep, node_id)
+                except ValueError as exc:
+                    raise bad(f"node {position} depends_on '{dep}': {exc}") from exc
 
         # ... and from a top-level edges list (same graph; both may be present).
-        for edge in wf_data.get("edges", []):
-            src, tgt, key = cls._parse_yaml_edge(edge)
-            dag.connect(src, tgt, key=key)
+        edge_defs = wf_data.get("edges") or []
+        if not isinstance(edge_defs, list):
+            raise bad(
+                f"'edges' must be a list of [source, target] pairs or mappings, "
+                f"got {type(edge_defs).__name__}."
+            )
+        for position, edge in enumerate(edge_defs, start=1):
+            try:
+                src, tgt, key = cls._parse_yaml_edge(edge)
+                dag.connect(src, tgt, key=key)
+            except ValueError as exc:
+                raise bad(f"edge {position}: {exc}") from exc
 
         return dag
+
+    @staticmethod
+    def _node_id(raw: Any, position: int, bad: Callable[[str], ValueError]) -> str:
+        """Return a node's id as text, or raise naming the node's position."""
+        if raw is None or isinstance(raw, list | dict) or str(raw).strip() == "":
+            found = "nothing" if raw is None else type(raw).__name__
+            raise bad(
+                f"node {position} needs a non-empty 'id' (got {found}). Every node "
+                "is addressed by its id in 'depends_on' and 'edges'."
+            )
+        return str(raw)
 
     @staticmethod
     def _parse_yaml_edge(edge: Any) -> tuple[str, str, str | None]:
