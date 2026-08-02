@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from effgen.models.transformers_engine import TransformersEngine
+import pytest
+
+pytest.importorskip("torch")
+
+from effgen.models.transformers_engine import TransformersEngine  # noqa: E402
 
 
 def _engine(declared, tokenizer_eos):

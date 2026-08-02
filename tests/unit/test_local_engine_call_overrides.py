@@ -189,6 +189,7 @@ class FakeLLM:
 @pytest.fixture
 def vllm_engine(monkeypatch):
     """A loaded ``VLLMEngine`` wired to the stand-in vLLM entry points."""
+    pytest.importorskip("torch")  # the engine module imports torch at import time
     monkeypatch.setitem(
         sys.modules,
         "vllm",

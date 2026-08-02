@@ -403,8 +403,17 @@ class _ExplodingLocalModel:
 
 
 def _local_engine_cases():
-    from effgen.models.transformers_engine import TransformersEngine
-    from effgen.models.vllm_engine import VLLMEngine
+    """The local engines, or no cases at all when their backend is absent.
+
+    The local engines import torch at module scope, so on an install without it
+    this collects nothing instead of failing the whole module — the rest of the
+    adapter contracts here do not need a local backend.
+    """
+    try:
+        from effgen.models.transformers_engine import TransformersEngine
+        from effgen.models.vllm_engine import VLLMEngine
+    except ImportError as exc:  # pragma: no cover - only on an install without torch
+        return [pytest.param(None, None, marks=pytest.mark.skip(reason=str(exc)))]
 
     return [
         ("transformers", TransformersEngine),

@@ -15,6 +15,8 @@ import importlib
 import inspect
 from pathlib import Path
 
+import pytest
+
 import effgen
 
 
@@ -28,6 +30,11 @@ def test_py_typed_marker_ships():
 
 def test_public_all_names_resolve():
     """Every advertised name imports — no broken lazy targets / dead stubs."""
+    # The public surface includes the local engines, which import torch at module
+    # scope; on an install without it those names resolve to a typed "optional
+    # component is not installed" error rather than an object.
+    pytest.importorskip("torch")
+
     missing: list[str] = []
     for name in effgen.__all__:
         try:
@@ -39,6 +46,11 @@ def test_public_all_names_resolve():
 
 def test_public_callables_have_introspectable_signatures():
     """Public functions/classes expose a signature (annotations load cleanly)."""
+    # The public surface includes the local engines, which import torch at module
+    # scope; on an install without it those names resolve to a typed "optional
+    # component is not installed" error rather than an object.
+    pytest.importorskip("torch")
+
     bad: list[str] = []
     for name in effgen.__all__:
         obj = getattr(effgen, name)

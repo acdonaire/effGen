@@ -482,6 +482,8 @@ def test_vllm_not_installed_vs_abi_error(monkeypatch):
     import importlib.util
     import sys
 
+    pytest.importorskip("torch")  # the engine module imports torch at import time
+
     from effgen.models.vllm_engine import VLLMEngine
 
     eng = VLLMEngine(model_name="x", tensor_parallel_size=0)

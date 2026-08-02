@@ -36,6 +36,11 @@ def test_toplevel_all_is_superset():
 def test_toplevel_names_importable():
     import effgen
 
+    # The public surface includes the local engines, which import torch at module
+    # scope; on an install without it those names resolve to a typed "optional
+    # component is not installed" error rather than an object.
+    pytest.importorskip("torch")
+
     broken = []
     for name in SNAPSHOT["toplevel_all"]:
         try:

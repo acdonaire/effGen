@@ -115,9 +115,18 @@ def _engine_with(cls, tokenizer, tokenizer_attr):
 
 
 def _engine_cases():
-    from effgen.models.mlx_engine import MLXEngine
-    from effgen.models.transformers_engine import TransformersEngine
-    from effgen.models.vllm_engine import VLLMEngine
+    """The local engines, or no cases at all when their backend is absent.
+
+    The local engines import torch at module scope, so on an install without it
+    this collects nothing instead of failing the whole module — the tool-call
+    contracts below that use a cloud adapter still run.
+    """
+    try:
+        from effgen.models.mlx_engine import MLXEngine
+        from effgen.models.transformers_engine import TransformersEngine
+        from effgen.models.vllm_engine import VLLMEngine
+    except ImportError as exc:  # pragma: no cover - only on an install without torch
+        return [pytest.param(None, None, marks=pytest.mark.skip(reason=str(exc)))]
 
     return [
         (TransformersEngine, "tokenizer"),

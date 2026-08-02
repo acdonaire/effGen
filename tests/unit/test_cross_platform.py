@@ -166,6 +166,8 @@ class TestModelsWildcardImport:
     """from effgen.models import * should work on any platform."""
 
     def test_wildcard_import_does_not_crash(self):
+        # The local engines are part of this surface and import torch.
+        pytest.importorskip("torch")
         import effgen.models as m
         for name in m.__all__:
             assert hasattr(m, name), f"{name} in __all__ but not accessible"
