@@ -6,10 +6,22 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import warnings
 from pathlib import Path
 
 import pytest
+
+# Ensure effgen and the test-support package are importable before anything below
+# reads them.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from tests._harness import hermetic, lane_timing  # noqa: E402
+
+# Remove the ambient state of this machine when the run asked for it. This happens
+# before the .env load and before the temporary cost/run directories below, so what
+# the suite sets for itself survives and what the machine happened to export does not.
+hermetic.activate()
 
 # Suppress ImportWarning from optional dependencies before importing effgen
 warnings.filterwarnings("ignore", category=ImportWarning)
@@ -54,19 +66,18 @@ def pytest_exception_interact(node, call, report):
         # both see the redacted version.
         report.longrepr = redacted
 
-# Ensure effgen package is importable
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 # Load test credentials without printing or inspecting values. Project-local
 # values are useful for live integration tests; user-level values remain a
-# fallback for developer machines.
-try:
-    from dotenv import load_dotenv
+# fallback for developer machines. A run with the ambient environment removed
+# loads neither, so the key-gated tests skip the way they do on a clean runner.
+if not hermetic.is_active():
+    try:
+        from dotenv import load_dotenv
 
-    load_dotenv(Path(__file__).parent.parent / ".env", override=False)
-    load_dotenv(Path.home() / ".effgen" / ".env", override=False)
-except ImportError:
-    pass
+        load_dotenv(Path(__file__).parent.parent / ".env", override=False)
+        load_dotenv(Path.home() / ".effgen" / ".env", override=False)
+    except ImportError:
+        pass
 
 # ---------------------------------------------------------------------------
 # Isolate the cost-tracker SQLite DB from the user's real ~/.effgen/costs.sqlite
@@ -92,11 +103,25 @@ if "EFFGEN_RUN_HISTORY_DIR" not in os.environ:
     os.environ["EFFGEN_RUN_HISTORY_DIR"] = str(Path(_TEST_COST_DB_DIR) / "runs")
 
 
+def pytest_configure(config):
+    """Record when the session started and register the opt-in timing plugin."""
+    config._effgen_session_start = time.time()
+    lane_timing.maybe_register(config)
+
+
+def pytest_report_header(config):
+    """Say so when the run is not seeing this machine's ambient state."""
+    _ = config
+    line = hermetic.report_line()
+    return [line] if line else []
+
+
 def pytest_sessionfinish(session, exitstatus):
-    """Remove the isolated cost DB created for this pytest session."""
+    """Remove the isolated cost DB and temporary home created for this session."""
     _ = (session, exitstatus)
     if _TEST_COST_DB_DIR:
         shutil.rmtree(_TEST_COST_DB_DIR, ignore_errors=True)
+    hermetic.cleanup()
 
 from effgen.core.agent import Agent, AgentConfig
 from effgen.tools.builtin import Calculator, DateTimeTool, JSONTool, TextProcessingTool
@@ -204,6 +229,25 @@ def _color_decision_comes_from_the_code(monkeypatch):
     """
     for var in ("FORCE_COLOR", "CLICOLOR_FORCE"):
         monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _keep_the_empty_home():
+    """Put the temporary home back after a test that reassigned it.
+
+    Only does anything when the run has the ambient environment removed. A test that
+    sets ``HOME`` through ``monkeypatch`` is restored by pytest; one that assigns
+    ``os.environ`` directly is restored here, so the test after it still cannot reach
+    the developer's real home.
+    """
+    if not hermetic.is_active():
+        yield
+        return
+    expected = str(hermetic.home())
+    yield
+    if os.environ.get("HOME") != expected:
+        os.environ["HOME"] = expected
+        os.environ["USERPROFILE"] = expected
 
 
 @pytest.fixture(autouse=True)
