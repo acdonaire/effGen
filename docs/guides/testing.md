@@ -121,10 +121,23 @@ pytest tests -p randomly --randomly-seed=12345 -m "not gpu and not api and not l
 EFFGEN_TEST_REVERSE_ORDER=1 pytest tests -m "not gpu and not api and not live and not docker and not expensive" -q
 ```
 
-The CI job runs four passes: fixed order, a fresh shuffle, a shuffle pinned to a
-fixed seed (so a failure is reproducible from the seed alone and keeps failing
-until it is fixed), and the reversed order. The other lanes opt out of shuffling
-with `-p no:randomly` so their order stays fixed and reproducible.
+The CI job runs the fixed order, a fresh shuffle, the reversed order, and a
+shuffle at each of several pinned seeds (so a failure is reproducible from the
+seed alone and keeps failing until it is fixed). The other lanes opt out of
+shuffling with `-p no:randomly` so their order stays fixed and reproducible.
+
+`scripts/run_order_matrix.py` drives all of those in one command and writes a
+table of what moved:
+
+```bash
+scripts/run_order_matrix.py --outdir /tmp/orders
+scripts/run_order_matrix.py --outdir /tmp/orders --orders shuffle --seeds 1 2 3
+scripts/run_order_matrix.py --outdir /tmp/orders --hermetic     # see below
+```
+
+Each run gets its own log and its own per-lane timing report; the driver writes
+`order-matrix.md` and `order-matrix.json` beside them and exits non-zero when any
+run had a failure that is not in the flake register.
 
 Global isolation is enforced in `tests/conftest.py`: an autouse fixture
 reinstalls the full provider catalog before every test via
@@ -152,6 +165,81 @@ A green `pytest -m "not live and not gpu"` run only proves the offline surface.
 It intentionally **skips** Docker, ffmpeg, Tesseract OCR, gitleaks, `pip-audit`,
 live-provider, and GPU tests. A release must additionally run the live, GPU,
 security, and deployment lanes — see the full CI image below.
+
+## Running without the ambient state of the machine
+
+A test that reads the developer's home directory, an environment variable nobody
+in the suite set, or a host on the network passes on the machine that has those
+things and fails on the machine that does not — usually in CI, weeks later, with
+nothing in the test body to explain it.
+
+`EFFGEN_TEST_HERMETIC=1` removes all three before collection starts:
+
+```bash
+EFFGEN_TEST_HERMETIC=1 pytest tests -m "not gpu and not api and not live and not docker and not expensive" -q
+```
+
+| removed | so that |
+| --- | --- |
+| `HOME`, `USERPROFILE` and the `XDG_*` directories point at an empty temporary directory | a read of `~/.effgen` finds nothing rather than the developer's own configuration, history and cost database |
+| the environment is reduced to a declared allowlist, and the repository `.env` is not loaded | no provider credential, CI variable, editor variable or terminal setting is visible; the key-gated tests skip the way they do on a clean runner |
+| a socket to anything other than loopback is refused with a typed error | a test that reaches the internet says so instead of depending on the runner's route |
+
+Kept deliberately: the interpreter's own search paths (`PATH`,
+`LD_LIBRARY_PATH`, the conda and virtualenv prefixes), so a subprocess test can
+still find the interpreter that started it; and the artifact caches (`HF_HOME`
+and friends), which are a content-addressed download store rather than a
+decision input. `EFFGEN_TEST_HERMETIC_CACHES=0` drops those too, which measures
+the suite against an empty model cache.
+
+`tests/unit/test_ambient_environment_gate.py` proves the removal works by
+planting the four dependencies it exists to catch — a test that reads the
+starting home directory, one that reads a variable nobody set, one that assumes
+the home directory already has content, and one that opens a connection to a
+host on the network — and running a real pytest session over them twice: all
+four pass with the machine's state present, all four fail with it removed.
+
+## Per-lane timing
+
+A full run of the suite is one number, and a lane that has quietly grown to a
+third of it is invisible in that number. Set `EFFGEN_LANE_TIMING` to a path and
+the run writes a per-lane breakdown there: wall time, outcome counts and the
+slowest tests, bucketed by the top-level directory under `tests/`.
+
+```bash
+EFFGEN_LANE_TIMING=/tmp/lanes.json EFFGEN_LANE_TIMING_TABLE=1 pytest tests -q
+```
+
+`EFFGEN_LANE_TIMING_TABLE=1` additionally prints the table in the terminal
+summary. Without `EFFGEN_LANE_TIMING` the plugin is not registered at all and the
+session's output is unchanged.
+
+## The flake register
+
+`tests/flake_register.toml` records every test that can fail for a reason this
+tree does not control — a third-party service refusing a call, a host resource
+that may be absent, a download the machine may not hold, a deadline on a loaded
+machine. Each entry carries the node id, the class of cause, what was actually
+observed, the path in this repository that would change if the cause were
+addressed, when it was first seen, and the date the entry stops being an answer.
+
+```toml
+[[flake]]
+id = "tests/integration/test_replicate_live.py"
+cause = "external-service"
+reason = "..."          # at least 40 characters; a label is not a reason
+owner = "effgen/models/replicate_adapter.py"
+first_seen = "2026-07-22"
+expires = "2026-12-31"
+```
+
+`scripts/run_order_matrix.py` reads it to separate a known cause from a new one.
+`tests/unit/test_flake_register.py` fails if an entry is missing a field, gives a
+reason too short to explain anything, names a cause outside the declared classes,
+names an owner that is not a path in this repository, names a test that no longer
+exists, or has sat past its expiry date. Adding an entry is the last resort: a
+test that fails because of something the tree *does* control is a defect and is
+fixed.
 
 ## Install-matrix scripts
 

@@ -143,8 +143,8 @@ jobs:
     # catch cross-directory test pollution (a test that only fails depending on
     # what ran before it — e.g. a teardown that empties a global registry, or an
     # import that mutates sys.path). This job runs the WHOLE offline suite in a
-    # single process four times — fixed order, a fresh shuffle, a shuffle pinned
-    # to a fixed seed, and reversed collection order — so such isolation
+    # single process once per collection order — fixed, reversed, a shuffle at
+    # each of four pinned seeds, and one fresh shuffle — so such isolation
     # regressions fail CI instead of flaking a future release run.
     name: Order-independence (single-process offline suite)
     runs-on: ubuntu-latest
@@ -167,43 +167,73 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,jupyter,api,lambda,translate,audio,prompts-data,youtube,tools-docs,rss,geo,server,tools,qr]"
 
-      - name: Full offline suite, single process (fixed order)
-        # No provider keys are set in CI, so the key-gated live tests skip.
+      - name: Full offline suite, single process (fixed, reversed, four pinned shuffles)
+        # No provider keys are set in CI, so the key-gated live tests skip. The
+        # driver runs each order in its own process, writes a per-lane timing
+        # report for each, and exits non-zero when a run had a failure that is
+        # not in tests/flake_register.toml. The pinned seeds keep a failing order
+        # reproducible from the seed alone; the reversed pass is the
+        # deterministic counterpart, where every module runs before the modules
+        # it normally follows (tests/e2e still runs last, since its CUDA state is
+        # not safe to run before the streaming tests).
         run: |
-          pytest tests \
-            -m "not gpu and not api and not live and not docker and not expensive" \
-            --tb=short --no-header -q
+          python scripts/run_order_matrix.py --outdir order-matrix
 
-      - name: Full offline suite, single process (randomized order)
-        # Drop the default `-p no:randomly` (see pyproject addopts) so the run
-        # shuffles; the printed seed reproduces any failing order exactly.
+      - name: Full offline suite, single process (fresh shuffle)
+        # A new order every run: good at finding coupling the pinned seeds miss.
+        # A failure here is a new order each time, so the seed printed in the
+        # header is what reproduces it.
         run: |
           pytest tests \
             -m "not gpu and not api and not live and not docker and not expensive" \
             -o "addopts=" -p randomly --tb=short -q
 
-      - name: Full offline suite, single process (pinned shuffle)
-        # A second shuffle, seeded the same way on every run. The step above
-        # samples a new order each time (good for finding coupling, but a
-        # failure there is a new order every run); this one is the same order
-        # for everybody, so a failure is reproducible from the seed alone and
-        # stays failing until it is fixed.
-        run: |
-          pytest tests \
-            -m "not gpu and not api and not live and not docker and not expensive" \
-            -o "addopts=" -p randomly --randomly-seed=20260720 --tb=short -q
+      - name: Upload the order matrix and per-lane timing
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: order-matrix
+          path: order-matrix/
+          retention-days: 14
 
-      - name: Full offline suite, single process (reversed order)
-        # Deterministic counterpart to the shuffles: every module now runs
-        # before the modules it normally follows, which is where teardown
-        # pollution shows up. tests/e2e still runs last (its CUDA state is not
-        # safe to run before the streaming tests).
+  test-ambient-independence:
+    # A test that reads the developer's home directory, an environment variable
+    # nobody in the suite set, or a host on the network passes on the machine
+    # that has those things and fails on the machine that does not. This job runs
+    # the whole offline suite with all three removed, so that failure lands here
+    # rather than on whoever runs the suite next.
+    name: Ambient-environment independence (scrubbed offline suite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,jupyter,api,lambda,translate,audio,prompts-data,youtube,tools-docs,rss,geo,server,tools,qr]"
+
+      - name: Full offline suite with the ambient environment removed
         env:
-          EFFGEN_TEST_REVERSE_ORDER: "1"
+          EFFGEN_TEST_HERMETIC: "1"
+          EFFGEN_LANE_TIMING: hermetic-lanes.json
+          EFFGEN_LANE_TIMING_TABLE: "1"
         run: |
           pytest tests \
             -m "not gpu and not api and not live and not docker and not expensive" \
-            --tb=short -q
+            --tb=short --no-header -q
+
+      - name: Upload the per-lane timing
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermetic-lane-timing
+          path: hermetic-lanes.json
+          retention-days: 14
 
   security:
     name: Security Scan
