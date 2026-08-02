@@ -367,9 +367,22 @@ class TestSubprocessSandbox:
     def test_confinement_is_not_claimed_when_the_probe_fails(self, monkeypatch):
         """A host that cannot lock the mounts gets the previous behavior and
         says so, rather than reporting a boundary that is not there."""
-        workspace = Path(tempfile.mkdtemp(dir=str(Path.home())))
-        target = workspace.parent / "degraded_probe_target.txt"
-        target.unlink(missing_ok=True)
+        # The degraded path still mounts a private tmpfs over /tmp, so a target
+        # under the system temp directory is invisible to the executed code. The
+        # home directory is the location outside the workspace that stays visible
+        # — unless it is itself under the temp directory, where no such location
+        # exists and the case has no premise.
+        home = Path.home().resolve()
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        if home == temp_root or temp_root in home.parents:
+            pytest.skip(
+                "the home directory is under the system temp directory, which the "
+                "degraded path replaces with a private tmpfs"
+            )
+        outside = Path(tempfile.mkdtemp(dir=str(home), prefix="effgen_sandbox_"))
+        workspace = outside / "workspace"
+        workspace.mkdir()
+        target = outside / "degraded_probe_target.txt"
         try:
             reset_sandbox_cache()
 
@@ -396,8 +409,7 @@ class TestSubprocessSandbox:
                 assert result.exit_code == 0, result.stderr
                 assert target.exists()
         finally:
-            target.unlink(missing_ok=True)
-            shutil.rmtree(workspace, ignore_errors=True)
+            shutil.rmtree(outside, ignore_errors=True)
             reset_sandbox_cache()
 
     def test_parse_mem_kb(self):

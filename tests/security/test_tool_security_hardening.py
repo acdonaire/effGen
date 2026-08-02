@@ -607,6 +607,31 @@ class TestChainConditionSafety:
 # --------------------------------------------------------------------------- #
 # shared SSRF guard used by every URL-taking tool                       #
 # --------------------------------------------------------------------------- #
+@pytest.fixture
+def name_resolves_to_a_public_address(monkeypatch):
+    """Answer every name lookup with one public address.
+
+    The guard resolves a hostname before it decides, so a case about what it
+    decides for a public host would otherwise also be a case about whether the
+    machine running it has a name server. Pinning the answer keeps the assertion
+    on the guard.
+    """
+    import socket as _socket
+
+    def _resolve(host, port=None, *args, **kwargs):
+        return [
+            (
+                _socket.AF_INET,
+                _socket.SOCK_STREAM,
+                _socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", port or 443),
+            )
+        ]
+
+    monkeypatch.setattr(_socket, "getaddrinfo", _resolve)
+
+
 class TestSharedSSRFGuard:
     INTERNAL = [
         "http://127.0.0.1/",
@@ -628,7 +653,7 @@ class TestSharedSSRFGuard:
         # opt-out lets it through the guard (no exception)
         _net.check_url_safe("http://127.0.0.1/", allow_private=True)
 
-    def test_host_pin_rejects_other_hosts(self):
+    def test_host_pin_rejects_other_hosts(self, name_resolves_to_a_public_address):
         from effgen.tools.builtin import _net
 
         with pytest.raises(_net.BlockedURLError):
@@ -693,7 +718,7 @@ class TestSharedSSRFGuard:
             URLFetchTool()._validate_url(url)
         assert f"scheme '{scheme}'" in str(exc.value)
 
-    def test_url_fetch_still_normalizes_a_bare_host(self):
+    def test_url_fetch_still_normalizes_a_bare_host(self, name_resolves_to_a_public_address):
         from effgen.tools.builtin.url_fetch import URLFetchTool
 
         tool = URLFetchTool()

@@ -644,15 +644,37 @@ class TestSamCliValidate:
 
     Prefers the AWS SAM CLI (`sam validate`); falls back to `cfn-lint` (which
     bundles aws-sam-translator and validates the ``AWS::Serverless`` transform).
-    Skips only when neither tool is installed — the structural YAML test in
+    Skips only when neither tool can run — the structural YAML test in
     :class:`TestSamTemplate` still covers the resource/parameter shape.
     """
 
-    def test_sam_validate(self):
+    @staticmethod
+    def _usable(command: str) -> bool:
+        """Whether *command* is on PATH and can actually start.
+
+        A launcher script can be on PATH while the package it imports is not
+        importable — a console entry point installed into a user site directory
+        that the current ``HOME`` does not point at, for one. That is the same
+        situation as the tool not being installed, so it reads as absent rather
+        than as a validation failure.
+        """
         import shutil
         import subprocess
 
-        if shutil.which("sam") is not None:
+        if shutil.which(command) is None:
+            return False
+        try:
+            probe = subprocess.run(
+                [command, "--version"], capture_output=True, text=True, timeout=60
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return probe.returncode == 0
+
+    def test_sam_validate(self):
+        import subprocess
+
+        if self._usable("sam"):
             result = subprocess.run(
                 ["sam", "validate", "--lint", "--template", str(SAM_TEMPLATE)],
                 capture_output=True,
@@ -664,7 +686,7 @@ class TestSamCliValidate:
             )
             return
 
-        if shutil.which("cfn-lint") is not None:
+        if self._usable("cfn-lint"):
             result = subprocess.run(
                 ["cfn-lint", str(SAM_TEMPLATE)],
                 capture_output=True,
@@ -676,6 +698,6 @@ class TestSamCliValidate:
             return
 
         pytest.skip(
-            "Neither SAM CLI nor cfn-lint installed — structural YAML test "
+            "Neither SAM CLI nor cfn-lint can run here — structural YAML test "
             "covers schema"
         )
