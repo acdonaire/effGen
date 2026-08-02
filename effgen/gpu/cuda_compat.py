@@ -321,6 +321,7 @@ class CudaStatus:
     driver_cuda: str | None
     mismatch: bool
     message: str | None
+    torch_installed: bool = True
 
     @property
     def is_mismatch(self) -> bool:
@@ -335,6 +336,7 @@ def get_cuda_status() -> CudaStatus:
     NVIDIA GPUs but torch cannot use them (almost always a torch-CUDA / driver
     version skew). A plain CPU-only machine is *not* a mismatch.
     """
+    torch_installed = _torch_module() is not None
     usable = cuda_usable()
     physical = physical_gpu_count()
     torch_cuda = torch_cuda_version()
@@ -343,15 +345,25 @@ def get_cuda_status() -> CudaStatus:
     mismatch = (not usable) and physical > 0
     message: str | None = None
     if mismatch:
-        built = f"CUDA {torch_cuda}" if torch_cuda else "no CUDA (CPU-only build)"
-        supports = f"CUDA {driver_cuda}" if driver_cuda else "an unknown CUDA version"
         gpu_word = "GPU" if physical == 1 else "GPUs"
-        message = (
-            f"{physical} NVIDIA {gpu_word} detected, but torch.cuda is unavailable, "
-            f"so models will run on CPU (much slower). The installed PyTorch is built "
-            f"for {built} while this host's driver supports up to {supports}. "
-            f"{_DOCS_HINT}"
-        )
+        if not torch_installed:
+            # No torch at all is a different problem from a torch built for the
+            # wrong CUDA line, and it has a different fix.
+            message = (
+                f"{physical} NVIDIA {gpu_word} detected, but PyTorch is not installed, "
+                f"so no local model can run here. Install it with: pip install torch "
+                f"(see docs/installation.md for the build matching your driver). "
+                f"Cloud models need no local engine."
+            )
+        else:
+            built = f"CUDA {torch_cuda}" if torch_cuda else "no CUDA (CPU-only build)"
+            supports = f"CUDA {driver_cuda}" if driver_cuda else "an unknown CUDA version"
+            message = (
+                f"{physical} NVIDIA {gpu_word} detected, but torch.cuda is unavailable, "
+                f"so models will run on CPU (much slower). The installed PyTorch is built "
+                f"for {built} while this host's driver supports up to {supports}. "
+                f"{_DOCS_HINT}"
+            )
     return CudaStatus(
         usable=usable,
         physical_gpus=physical,
@@ -359,6 +371,7 @@ def get_cuda_status() -> CudaStatus:
         driver_cuda=driver_cuda,
         mismatch=mismatch,
         message=message,
+        torch_installed=torch_installed,
     )
 
 

@@ -2251,10 +2251,15 @@ def _doctor_system_report(*, include_pip_check: bool = False) -> dict[str, Any]:
         status = cuda_compat.get_cuda_status()
         report["Physical GPUs (NVML)"] = status.physical_gpus
         report["Driver CUDA"] = status.driver_cuda or "n/a"
-        report["torch CUDA build"] = status.torch_cuda or "cpu-only"
+        report["torch CUDA build"] = (
+            (status.torch_cuda or "cpu-only") if status.torch_installed else "not installed"
+        )
         report["torch.cuda.is_available()"] = status.usable
         if status.mismatch:
-            report["CUDA mismatch"] = "YES — GPUs present but torch runs on CPU"
+            report["CUDA mismatch"] = (
+                "YES — GPUs present but torch runs on CPU" if status.torch_installed
+                else "n/a — GPUs present but PyTorch is not installed"
+            )
     except Exception as e:  # noqa: BLE001
         report["CUDA"] = f"unavailable ({e})"
 
@@ -2275,7 +2280,10 @@ def _doctor_system_report(*, include_pip_check: bool = False) -> dict[str, Any]:
                 import vllm  # noqa: F401
                 report["vLLM"] = f"importable ({getattr(vllm, '__version__', '?')})"
             except Exception as e:  # noqa: BLE001
-                report["vLLM"] = f"installed but import failed ({type(e).__name__})"
+                # Name what is actually missing or broken — "ModuleNotFoundError"
+                # alone does not tell the reader which package to install.
+                detail = str(e).strip() or type(e).__name__
+                report["vLLM"] = f"installed but import failed ({detail[:80]})"
     except Exception:
         report["vLLM"] = "unknown"
 
