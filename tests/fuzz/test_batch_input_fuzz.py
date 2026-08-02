@@ -250,3 +250,90 @@ def test_all_rows_unusable_fails_instead_of_running_empty_prompts(tmp_path) -> N
     path.write_text('{"note": "a"}\n{"note": "b"}\n', encoding="utf-8")
     with pytest.raises(ValueError, match="No queries found"):
         BatchRunner._read_queries(path, "query")
+
+
+# ---------------------------------------------------------------------------
+# Write → read round trip. A batch's own output is a batch's input when a job is
+# re-run, filtered, or chained, so every supported output format must read back.
+# ---------------------------------------------------------------------------
+
+_ROUNDTRIP_TEXT = st.text(
+    alphabet=st.characters(blacklist_categories=("Cs", "Cc"), blacklist_characters="\r"),
+    min_size=1,
+    max_size=60,
+).filter(lambda s: s.strip() != "")
+
+
+def _batch_result(queries: list[str]):
+    from effgen.core.agent import AgentResponse
+    from effgen.core.batch import BatchResult
+
+    responses = [
+        AgentResponse(
+            output=q,
+            success=True,
+            metadata={"cost_usd": 0.001, "total_tokens": 7},
+        )
+        for q in queries
+    ]
+    return BatchResult(
+        results=responses, total=len(queries), succeeded=len(queries),
+    )
+
+
+@pytest.mark.parametrize("suffix", [".jsonl", ".json", ".csv"])
+@settings(
+    max_examples=200,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
+@given(queries=st.lists(_ROUNDTRIP_TEXT, min_size=1, max_size=6))
+def test_every_output_format_reads_back_as_input(tmp_path, suffix, queries) -> None:
+    """What ``write_results`` writes, ``_read_queries`` reads back unchanged."""
+    out = tmp_path / f"results{suffix}"
+    BatchRunner.write_results(_batch_result(queries), out, query_list=queries)
+    assert BatchRunner._read_queries(out, "query") == queries
+
+
+@pytest.mark.parametrize("suffix", [".jsonl", ".json", ".csv"])
+@pytest.mark.parametrize(
+    "query",
+    [
+        'has "quotes" and, commas',
+        "has\nan embedded newline",
+        "café — ünïcödé 🙂",
+        "  leading and trailing  ",
+        "a" * 500,
+        "{\"looks\": \"like json\"}",
+        "starts,with,commas",
+    ],
+)
+def test_a_hostile_query_survives_the_round_trip(tmp_path, suffix, query) -> None:
+    out = tmp_path / f"results{suffix}"
+    BatchRunner.write_results(_batch_result([query]), out, query_list=[query])
+    read_back = BatchRunner._read_queries(out, "query")
+    # A CSV cell cannot carry a leading/trailing-space distinction through the
+    # line-oriented reader, so compare on the stripped text there.
+    if suffix == ".csv":
+        assert [q.strip() for q in read_back] == [query.strip()]
+    else:
+        assert read_back == [query]
+
+
+@pytest.mark.parametrize("suffix", [".jsonl", ".json", ".csv"])
+def test_the_round_trip_keeps_cost_and_token_columns(tmp_path, suffix) -> None:
+    """A re-read job still carries what the first run spent."""
+    out = tmp_path / f"results{suffix}"
+    BatchRunner.write_results(_batch_result(["a", "b"]), out, query_list=["a", "b"])
+    text = out.read_text(encoding="utf-8")
+    assert "cost_usd" in text
+    assert "total_tokens" in text
+
+
+def test_an_unsupported_output_format_names_the_ones_there_are(tmp_path) -> None:
+    from effgen.core.batch import SUPPORTED_OUTPUT_FORMATS
+
+    with pytest.raises(ValueError) as excinfo:
+        BatchRunner.write_results(_batch_result(["a"]), tmp_path / "results.xlsx")
+    for fmt in SUPPORTED_OUTPUT_FORMATS:
+        assert fmt in str(excinfo.value)
