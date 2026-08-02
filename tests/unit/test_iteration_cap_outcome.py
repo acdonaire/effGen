@@ -156,6 +156,10 @@ def test_reconstructed_error_carries_the_message(capped):
 def test_cli_frames_the_stop_and_the_progress_separately(capped):
     import io
 
+    # The assertions read what a Rich console wrote into a buffer; without Rich
+    # the same text goes to stdout and tests/cli covers that path.
+    pytest.importorskip("rich")
+
     from effgen.cli.commands.run import PARTIAL_PROGRESS_TITLE, present_response
     from effgen.ui.theme import get_console
 

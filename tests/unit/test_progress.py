@@ -40,6 +40,8 @@ def _clean_env(monkeypatch):
 
 
 def test_animation_enabled_on_interactive_tty():
+    # The live region is Rich's; without it there is no animation to enable.
+    pytest.importorskip("rich")
     assert P.animation_enabled(stream=_FakeTTY(True)) is True
 
 

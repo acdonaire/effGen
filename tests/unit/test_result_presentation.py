@@ -11,7 +11,11 @@ import io
 
 import pytest
 
-from effgen.core.agent import AgentResponse
+# Every case below asserts what Rich renders, so an install without it has
+# nothing here to check — the plain-text presentation is covered in tests/cli.
+pytest.importorskip("rich")
+
+from effgen.core.agent import AgentResponse  # noqa: E402
 from effgen.ui import get_console
 from effgen.ui.render import _markdown_to_html
 from effgen.ui.theme import EFFGEN_THEME, color_enabled

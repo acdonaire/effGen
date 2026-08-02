@@ -127,6 +127,7 @@ def test_mark_welcomed_is_idempotent(isolated_home):
 def test_first_run_welcome_branded_panel_keeps_content(isolated_home, monkeypatch):
     # With no explicit stream and rich available, the welcome renders inside a
     # branded panel — the welcome text and the doctor pointer must survive.
+    pytest.importorskip("rich")
     from rich.console import Console
 
     from effgen.ui.theme import get_theme
