@@ -75,6 +75,38 @@ class ValidationResult:
         self.warnings.append(warning)
 
 
+def _document(config: Any, label: str, result: ValidationResult) -> dict[str, Any]:
+    """Return *config* when it is a mapping, else record an error and return {}.
+
+    A config document is whatever a file on disk held, so a section may be any
+    type. Validation reports a wrong-typed document as a validation error — that
+    is what validation is for — rather than raising out of the check.
+    """
+    if isinstance(config, dict):
+        return config
+    result.add_error(
+        f"{label} must be a mapping of settings, got {type(config).__name__}"
+    )
+    return {}
+
+
+def _section(
+    config: dict[str, Any], key: str, result: ValidationResult
+) -> dict[str, Any]:
+    """Return the ``key`` section of *config* when it is a mapping, else {}."""
+    if key not in config:
+        return {}
+    return _document(config[key], f"'{key}'", result)
+
+
+def _entry(value: Any, label: str, result: ValidationResult) -> dict[str, Any]:
+    """Return one section entry when it is a mapping, else record an error."""
+    if isinstance(value, dict):
+        return value
+    result.add_error(f"{label} must be a mapping, got {type(value).__name__}")
+    return {}
+
+
 class ConfigValidator:
     """
     Configuration validator with JSON Schema support.
@@ -128,6 +160,7 @@ class ConfigValidator:
             Validation result
         """
         result = ValidationResult(valid=True)
+        models_config = _document(models_config, "models config", result)
 
         # JSON Schema validation
         if JSONSCHEMA_AVAILABLE and "model_config" in self._schemas:
@@ -139,8 +172,12 @@ class ConfigValidator:
                 result.add_error(f"Schema validation: {error}")
 
         # Semantic validation
-        if "models" in models_config:
-            for model_name, model_config in models_config["models"].items():
+        models = _section(models_config, "models", result)
+        if models:
+            for model_name, raw_config in models.items():
+                model_config = _entry(raw_config, f"Model '{model_name}'", result)
+                if not model_config:
+                    continue
                 # Validate model type
                 model_type = model_config.get("type")
                 if not model_type:
@@ -162,14 +199,24 @@ class ConfigValidator:
         # Validate default model exists
         if "default_model" in models_config:
             default = models_config["default_model"]
-            if "models" in models_config and default not in models_config["models"]:
+            if models and not isinstance(default, list | dict) and default not in models:
                 result.add_error(f"Default model '{default}' not found in models")
 
         # Validate fallback chain
         if "fallback_chain" in models_config:
-            for model_name in models_config["fallback_chain"]:
-                if "models" in models_config and model_name not in models_config["models"]:
-                    result.add_error(f"Fallback model '{model_name}' not found in models")
+            chain = models_config["fallback_chain"]
+            if not isinstance(chain, list):
+                result.add_error(
+                    f"'fallback_chain' must be a list of model names, got "
+                    f"{type(chain).__name__}"
+                )
+            else:
+                for model_name in chain:
+                    if models and not isinstance(model_name, list | dict) \
+                            and model_name not in models:
+                        result.add_error(
+                            f"Fallback model '{model_name}' not found in models"
+                        )
 
         return result
 
@@ -275,6 +322,7 @@ class ConfigValidator:
             Validation result
         """
         result = ValidationResult(valid=True)
+        tools_config = _document(tools_config, "tools config", result)
 
         # JSON Schema validation
         if JSONSCHEMA_AVAILABLE and "tool_config" in self._schemas:
@@ -286,39 +334,47 @@ class ConfigValidator:
                 result.add_error(f"Schema validation: {error}")
 
         # Validate built-in tools
-        if "tools" in tools_config:
-            for tool_name, tool_config in tools_config["tools"].items():
-                if not isinstance(tool_config, dict):
-                    result.add_error(f"Tool '{tool_name}' config must be a dictionary")
-                    continue
+        tools = _section(tools_config, "tools", result)
+        for tool_name, tool_config in tools.items():
+            if not isinstance(tool_config, dict):
+                result.add_error(f"Tool '{tool_name}' config must be a dictionary")
+                continue
 
-                # Check enabled flag
-                if "enabled" not in tool_config:
-                    result.add_warning(f"Tool '{tool_name}' missing 'enabled' field")
+            # Check enabled flag
+            if "enabled" not in tool_config:
+                result.add_warning(f"Tool '{tool_name}' missing 'enabled' field")
 
         # Validate MCP servers
-        if "mcp_servers" in tools_config:
-            for server_name, server_config in tools_config["mcp_servers"].items():
-                self._validate_mcp_server(server_name, server_config, result)
+        servers = _section(tools_config, "mcp_servers", result)
+        for server_name, server_config in servers.items():
+            entry = _entry(server_config, f"MCP server '{server_name}'", result)
+            if entry:
+                self._validate_mcp_server(server_name, entry, result)
 
         # Validate tool selection
-        if "tool_selection" in tools_config:
-            selection = tools_config["tool_selection"]
-
+        selection = _section(tools_config, "tool_selection", result)
+        if selection:
             # Validate mode
             mode = selection.get("mode")
             if mode and mode not in ["auto", "manual", "hybrid"]:
                 result.add_error(f"Invalid tool_selection mode: {mode}")
 
             # Validate recommendations reference existing tools
-            if "recommendations" in selection and "tools" in tools_config:
-                available_tools = set(tools_config["tools"].keys())
-                if "mcp_servers" in tools_config:
-                    available_tools.update(tools_config["mcp_servers"].keys())
+            recommendations = _section(selection, "recommendations", result)
+            if recommendations and tools:
+                available_tools = set(tools.keys())
+                available_tools.update(servers.keys())
 
-                for task_type, tools in selection["recommendations"].items():
-                    for tool_name in tools:
-                        if tool_name not in available_tools:
+                for task_type, names in recommendations.items():
+                    if not isinstance(names, list | tuple | set):
+                        result.add_error(
+                            f"Recommended tools for task '{task_type}' must be a "
+                            f"list, got {type(names).__name__}"
+                        )
+                        continue
+                    for tool_name in names:
+                        if isinstance(tool_name, list | dict) \
+                                or tool_name not in available_tools:
                             result.add_warning(
                                 f"Recommended tool '{tool_name}' for task '{task_type}' "
                                 f"not found in available tools"
@@ -360,35 +416,52 @@ class ConfigValidator:
             Validation result
         """
         result = ValidationResult(valid=True)
+        prompts_config = _document(prompts_config, "prompts config", result)
 
         # Validate system prompts
-        if "system_prompts" in prompts_config:
-            for prompt_name, prompt_config in prompts_config["system_prompts"].items():
-                if "template" not in prompt_config:
-                    result.add_error(
-                        f"System prompt '{prompt_name}' missing 'template' field"
-                    )
+        for prompt_name, prompt_config in _section(
+            prompts_config, "system_prompts", result
+        ).items():
+            entry = _entry(prompt_config, f"System prompt '{prompt_name}'", result)
+            if entry and "template" not in entry:
+                result.add_error(
+                    f"System prompt '{prompt_name}' missing 'template' field"
+                )
 
         # Validate prompt chains
-        if "chains" in prompts_config:
-            for chain_name, chain_config in prompts_config["chains"].items():
-                self._validate_chain(chain_name, chain_config, result)
+        for chain_name, chain_config in _section(
+            prompts_config, "chains", result
+        ).items():
+            entry = _entry(chain_config, f"Chain '{chain_name}'", result)
+            if entry:
+                self._validate_chain(chain_name, entry, result)
 
         # Validate few-shot examples
-        if "few_shot_examples" in prompts_config:
-            for example_type, example_config in prompts_config["few_shot_examples"].items():
-                if "examples" not in example_config:
-                    result.add_error(
-                        f"Few-shot example type '{example_type}' missing 'examples' field"
-                    )
+        for example_type, example_config in _section(
+            prompts_config, "few_shot_examples", result
+        ).items():
+            entry = _entry(
+                example_config, f"Few-shot example type '{example_type}'", result
+            )
+            if entry and "examples" not in entry:
+                result.add_error(
+                    f"Few-shot example type '{example_type}' missing 'examples' field"
+                )
 
         # Validate SLM optimization settings
-        if "slm_optimization" in prompts_config:
-            slm_opt = prompts_config["slm_optimization"]
-
+        slm_opt = _section(prompts_config, "slm_optimization", result)
+        if slm_opt:
             # Check reasonable values
             max_examples = slm_opt.get("max_few_shot_examples")
-            if max_examples and max_examples > 10:
+            if isinstance(max_examples, bool) or not isinstance(
+                max_examples, int | float
+            ):
+                if max_examples is not None:
+                    result.add_error(
+                        f"max_few_shot_examples must be a number, got "
+                        f"{type(max_examples).__name__}"
+                    )
+            elif max_examples > 10:
                 result.add_warning(
                     f"max_few_shot_examples ({max_examples}) is quite high. "
                     f"Consider reducing for SLMs."

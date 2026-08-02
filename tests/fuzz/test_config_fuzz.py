@@ -35,6 +35,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from effgen.config.loader import Config, ConfigLoader
+from effgen.config.validator import ConfigValidator
 
 pytestmark = pytest.mark.fuzz
 
@@ -199,3 +200,95 @@ def test_missing_attribute_raises() -> None:
     assert cfg.present == 1
     with pytest.raises(AttributeError):
         _ = cfg.absent
+
+
+# ---------------------------------------------------------------------------
+# A file that parses but is not a config document
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ext", [".yaml", ".json"])
+@pytest.mark.parametrize(
+    "content",
+    ["[]", "[1, 2, 3]", '"a bare string"', "12", "true", '[{"models": {}}]'],
+)
+def test_a_document_that_is_not_a_mapping_names_the_file(tmp_path, ext, content) -> None:
+    """A config is a mapping of settings; anything else is refused at its file.
+
+    Loading one used to succeed and then fail far away — on a merge, a lookup, or
+    a validation pass — with no mention of which file caused it.
+    """
+    path = tmp_path / f"config{ext}"
+    path.write_text(content, encoding="utf-8")
+    loader = ConfigLoader(config_dir=str(tmp_path))
+    with pytest.raises(ValueError, match="must contain a mapping"):
+        loader.load_config(path, validate=False)
+    with pytest.raises(ValueError) as excinfo:
+        loader.load_config(path, validate=False)
+    assert str(path) in str(excinfo.value)
+
+
+@pytest.mark.parametrize("ext", [".yaml", ".json"])
+def test_an_empty_config_file_loads_as_an_empty_config(tmp_path, ext) -> None:
+    path = tmp_path / f"config{ext}"
+    path.write_text("{}" if ext == ".json" else "", encoding="utf-8")
+    loader = ConfigLoader(config_dir=str(tmp_path))
+    assert loader.load_config(path, validate=False).to_dict() == {}
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"models": None},
+        {"models": "text"},
+        {"models": [1, 2]},
+        {"models": {"a": "not a mapping"}},
+        {"models": {"a": {"type": "openai"}}, "fallback_chain": "a"},
+        {"tools": 5},
+        {"tools": {"a": 1}},
+        {"tools": {"a": {"enabled": True}}, "tool_selection": {"recommendations": 5}},
+        {"mcp_servers": "text"},
+        {"system_prompts": ["x"]},
+        {"system_prompts": {"a": 5}},
+        {"chains": 5},
+        {"few_shot_examples": {"a": "text"}},
+        {"slm_optimization": {"max_few_shot_examples": "many"}},
+        {"slm_optimization": []},
+    ],
+)
+def test_a_wrong_typed_section_is_a_validation_error_not_a_crash(document) -> None:
+    """Validation reports a wrong-typed section; it does not raise out of a check."""
+    validator = ConfigValidator()
+    for check in (
+        validator.validate_models,
+        validator.validate_tools,
+        validator.validate_prompts,
+    ):
+        result = check(document)
+        assert isinstance(result.valid, bool)
+        assert isinstance(result.errors, list)
+
+
+@pytest.mark.parametrize("document", [None, [], "text", 5, True, [{"models": {}}]])
+def test_a_validator_given_a_non_mapping_reports_it(document) -> None:
+    validator = ConfigValidator()
+    for check in (
+        validator.validate_models,
+        validator.validate_tools,
+        validator.validate_prompts,
+    ):
+        result = check(document)
+        assert not result.valid
+        assert any("must be a mapping" in e for e in result.errors)
+
+
+@settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(_config_dicts)
+def test_validation_never_raises_on_an_arbitrary_document(data: dict) -> None:
+    validator = ConfigValidator()
+    for check in (
+        validator.validate_models,
+        validator.validate_tools,
+        validator.validate_prompts,
+    ):
+        assert isinstance(check(data).valid, bool)

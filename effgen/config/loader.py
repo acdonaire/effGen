@@ -358,6 +358,16 @@ class ConfigLoader:
         else:
             raise ValueError(f"Unsupported config file format: {path.suffix}")
 
+        # A config document is a mapping of settings. Anything else (a bare list,
+        # a scalar, a stray document separator) would load here and then fail
+        # somewhere far away — on a merge, a lookup, or a validation pass — so it
+        # is refused at the file that caused it.
+        if data is not None and not isinstance(data, dict):
+            raise ValueError(
+                f"Config file {path} must contain a mapping of settings at the top "
+                f"level, got {type(data).__name__}."
+            )
+
         config = Config(data=data or {}, _source_file=path)
 
         # Add to watched files
