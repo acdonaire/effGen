@@ -968,3 +968,26 @@ def simplify_embedded_provider_error(message: str) -> str:
     if not inner:
         return message
     return message[: match.start()] + inner + message[end:]
+
+
+def error_has_status(exc: Any, code: int) -> bool:
+    """Return whether *exc* reports the HTTP status *code*.
+
+    The status an SDK recorded on the exception is used when it carries one.
+    Otherwise the code is read out of the message as a standalone number, so a
+    port, a request id, a byte count or a documentation link that merely
+    contains those digits is not mistaken for the status — a 413 answered on
+    port 40312 is a 413, not a 403.
+    """
+    for attr in ("status_code", "http_status", "code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value == code
+        if isinstance(value, str) and value.isdigit():
+            return int(value) == code
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int):
+        return status == code
+    return re.search(rf"(?<![\d.:/]){code}(?!\d)", str(exc)) is not None
