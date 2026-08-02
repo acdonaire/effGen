@@ -131,8 +131,6 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     a per-provider summary with auth readiness and the snapshot's
     "verified on" date so users can tell when the data was last confirmed.
     """
-    from rich.table import Table
-
     from effgen.models import _catalog, _refresh
 
     provider_filter, prov_err = resolve_provider_name(getattr(args, "provider", None))
@@ -195,6 +193,7 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         if cli._rich_tables():
             title = (f"{provider_filter} — {len(recs)} models "
                      f"(auth: {auth}, verified: {verified})")
+            from rich.table import Table
             table = Table(title=title)
             table.add_column("Model ID", style="effgen.model", overflow="fold")
             table.add_column("Context", justify="right", no_wrap=True)
@@ -241,6 +240,7 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         if tools_only and free_only:
             label = "free + tool-capable"
         if cli._rich_tables():
+            from rich.table import Table
             table = Table(title=f"{label.capitalize()} models (all providers)")
             table.add_column("Model ID", style="effgen.model", overflow="fold")
             table.add_column("Provider", style="effgen.accent", no_wrap=True)
@@ -269,6 +269,7 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     # Default overview: one row per provider.
     stale = set(_catalog.stale_providers())
     if cli.console:
+        from rich.table import Table
         table = Table(title="Provider Registry (bundled catalog)")
         table.add_column("Provider", style="effgen.accent")
         table.add_column("Models", justify="right")
@@ -301,6 +302,7 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     if local:
         n_ready = sum(1 for m in local if m.get("complete", True))
         if cli.console:
+            from rich.table import Table
             ltable = Table(title=f"Local HuggingFace cache ({n_ready} ready)")
             ltable.add_column("Model", style="effgen.model", overflow="fold")
             ltable.add_column("Size", justify="right")
@@ -400,8 +402,6 @@ def models_browse(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     leaving the terminal. Price labeling is exact: an unpriced row reads
     ``unpriced``, a free tier reads ``free``.
     """
-    from rich.table import Table
-
     from effgen.models import _catalog
 
     provider_filter, prov_err = resolve_provider_name(getattr(args, "provider", None))
@@ -477,6 +477,7 @@ def models_browse(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         shown = f"showing {len(page)} of {total}"
         if offset:
             shown += f" (from #{offset + 1})"
+        from rich.table import Table
         table = Table(title=f"Models across providers — {shown}")
         table.add_column("Provider", style="effgen.accent", no_wrap=True)
         table.add_column("Model ID", style="effgen.model", overflow="fold")
@@ -609,8 +610,6 @@ def render_local_model_info(cli: "CLIInterface", payload: dict) -> None:
 
 def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Show detailed information for one model from the registry."""
-    from rich.table import Table
-
     if not args.name:
         cli.print_error("Model name required")
         return 1
@@ -744,6 +743,7 @@ def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         "Auth ready": "yes" if _refresh.has_credentials(rec.provider) else "no (set key)",
     }
     if cli.console:
+        from rich.table import Table
         table = Table(show_header=False)
         table.add_column("Field", style="effgen.label")
         table.add_column("Value", overflow="fold")
@@ -758,6 +758,7 @@ def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     # pick where to run it (pin the choice with a ``provider:id`` form).
     if others:
         if cli.console:
+            from rich.table import Table
             vtable = Table(title=f"Also served by ({len(others)} other provider(s))")
             vtable.add_column("Provider", style="effgen.accent", no_wrap=True)
             vtable.add_column("$/1M in/out", style="effgen.cost", no_wrap=True, overflow="fold")

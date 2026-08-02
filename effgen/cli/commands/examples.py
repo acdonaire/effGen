@@ -58,8 +58,6 @@ def find_examples_dir() -> "Path | None":
 
 def examples_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """List available examples."""
-    from rich.table import Table
-
     cli.print_header("Available Examples")
 
     examples_dir = cli._find_examples_dir()
@@ -83,6 +81,7 @@ def examples_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         examples.append(rel.as_posix())
 
     if cli.console:
+        from rich.table import Table
         table = Table(title=f"Example Scripts ({len(examples)})")
         table.add_column("Name", style="cyan")
         table.add_column("Command", style="magenta")

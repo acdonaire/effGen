@@ -57,8 +57,6 @@ def suggest_tool(cli: "CLIInterface", name: str) -> None:
 
 def tools_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """List available tools."""
-    from rich.table import Table
-
     # Get tools (the registry auto-discovers built-ins on first access)
     tools = cli.tool_registry.list_tools()
     category_filter = getattr(args, "category", None)
@@ -101,6 +99,7 @@ def tools_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         return 0
 
     if cli.console:
+        from rich.table import Table
         table = Table(title=f"Registered Tools ({len(tools)})")
         table.add_column("Name", style="cyan")
         table.add_column("Category", style="magenta")
@@ -160,13 +159,12 @@ def example_input(cli: "CLIInterface", metadata: Any, tool: Any = None) -> dict:
 
 def print_tool_usage(cli: "CLIInterface", metadata: Any, tool: Any = None) -> None:
     """Print a tool's input schema and a copy-paste runnable example."""
-    from rich.syntax import Syntax
-
-    from effgen.ui.theme import CODE_THEME
-
     cli.print("\n[bold]Input schema:[/bold]" if cli.console else "\nInput schema:")
     schema = metadata.to_json_schema()
     if cli.console:
+        from rich.syntax import Syntax
+
+        from effgen.ui.theme import CODE_THEME
         cli.console.print(Syntax(json.dumps(schema, indent=2), "json", theme=CODE_THEME))
     else:
         print(json.dumps(schema, indent=2))
@@ -180,10 +178,6 @@ def print_tool_usage(cli: "CLIInterface", metadata: Any, tool: Any = None) -> No
 
 def tools_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Show detailed tool information."""
-    from rich.syntax import Syntax
-
-    from effgen.ui.theme import CODE_THEME
-
     if not args.name:
         cli.print_error("Tool name required")
         return 1
@@ -222,6 +216,9 @@ def tools_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         cli.print("\n[bold]Parameters:[/bold]" if cli.console else "\nParameters:")
         schema = metadata.to_json_schema()
         if cli.console:
+            from rich.syntax import Syntax
+
+            from effgen.ui.theme import CODE_THEME
             cli.console.print(Syntax(json.dumps(schema, indent=2), "json", theme=CODE_THEME))
         else:
             print(json.dumps(schema, indent=2))
@@ -238,8 +235,6 @@ def tools_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
 
 def tools_test(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Test a tool with sample input."""
-    from rich.panel import Panel
-
     if not args.name:
         cli.print_error("Tool name required")
         return 1
@@ -290,6 +285,7 @@ def tools_test(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     cli.print("[bold]Result:[/bold]" if cli.console else "Result:")
     border = "green" if result.success else "red"
     if cli.console:
+        from rich.panel import Panel
         cli.console.print(Panel(str(result), border_style=border))
     else:
         print(result)

@@ -83,10 +83,6 @@ def config_set(cli: "CLIInterface", args: argparse.Namespace) -> int:
 
 def config_show(cli: "CLIInterface", args: argparse.Namespace) -> int:
     """Show current configuration; non-zero when the file cannot be read."""
-    from rich.syntax import Syntax
-
-    from effgen.ui.theme import CODE_THEME
-
     cli.print_header("Configuration")
 
     if args.file:
@@ -94,6 +90,9 @@ def config_show(cli: "CLIInterface", args: argparse.Namespace) -> int:
             config = cli.config_loader.load_config(args.file)
 
             if cli.console:
+                from rich.syntax import Syntax
+
+                from effgen.ui.theme import CODE_THEME
                 syntax = Syntax(
                     json.dumps(config.to_dict(), indent=2),
                     "json",
