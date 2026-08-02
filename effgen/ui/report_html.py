@@ -589,6 +589,17 @@ def _unpriced_label(model: str, provider: str) -> str:
     return "unpriced (no published rate)"
 
 
+def _number(value: Any) -> float:
+    """*value* as a float, treating anything that is not a number as zero.
+
+    A cost or a count read out of a saved document may be text; a total built
+    from it is a sum of the values that are numbers, not a failed render.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0.0
+    return float(value) if math.isfinite(value) else 0.0
+
+
 def _sequence(value: Any) -> list[Any]:
     """*value* as a list of items, treating a non-sequence as empty.
 
@@ -795,14 +806,17 @@ def _run_command(task: str, model: str) -> str:
 
 
 def _comparison_body(data: dict[str, Any]) -> tuple[str, str, str]:
-    scores = data.get("scores") or []
+    # A result document may have been written by a different build or edited by
+    # hand, so every collection is normalized before it is read: a row that is
+    # not a mapping renders as an empty row rather than crashing the report.
+    scores = [_mapping(s) for s in _sequence(data.get("scores"))]
     if not scores:
         raise ReportError("The comparison result carries no scores to render.")
     suites = sorted({str(s.get("suite", "")) for s in scores})
     models = sorted({str(s.get("model", "")) for s in scores})
     optimize = str(data.get("optimize", "accuracy"))
-    recommendations = data.get("recommendations") or {}
-    rationales = data.get("recommendation_rationale") or {}
+    recommendations = _mapping(data.get("recommendations"))
+    rationales = _mapping(data.get("recommendation_rationale"))
 
     parts: list[str] = []
 
@@ -973,7 +987,7 @@ def _eval_body(data: dict[str, Any]) -> tuple[str, str, str]:
             maximum=1.0,
         ))
 
-    results = data.get("results") or []
+    results = [_mapping(r) for r in _sequence(data.get("results"))]
     if results:
         parts.append("<h2>Cases</h2>")
         rows = []
@@ -1004,7 +1018,7 @@ def _eval_body(data: dict[str, Any]) -> tuple[str, str, str]:
 
 def _cost_body(data: dict[str, Any]) -> tuple[str, str, str]:
     period = str(data.get("period") or "Spend")
-    rows_in = data.get("rows") or []
+    rows_in = [_mapping(r) for r in _sequence(data.get("rows"))]
     total = data.get("total_cost_usd")
     budget = data.get("daily_budget_usd")
 
@@ -1033,7 +1047,7 @@ def _cost_body(data: dict[str, Any]) -> tuple[str, str, str]:
         note = "" if period_days == 1 else f"({_usd(budget, 2)}/day over {window})"
         parts.append(_meter(
             f"Budget for this period — {window}",
-            float(total or 0.0),
+            _number(total),
             scaled_budget,
             note=note,
         ))
@@ -1045,7 +1059,7 @@ def _cost_body(data: dict[str, Any]) -> tuple[str, str, str]:
             "window, so it is not measured against that limit.</p></section>"
         )
     else:
-        parts.append(_meter("Daily budget", float(total or 0.0), budget))
+        parts.append(_meter("Daily budget", _number(total), budget))
 
     if not rows_in:
         parts.append('<p class="empty">No spend recorded for this period.</p>')
@@ -1069,8 +1083,8 @@ def _cost_body(data: dict[str, Any]) -> tuple[str, str, str]:
 
     by_provider: dict[str, float] = {}
     for r in rows_in:
-        by_provider[str(r.get("provider"))] = by_provider.get(str(r.get("provider")), 0.0) + float(
-            r.get("cost_usd") or 0.0
+        by_provider[str(r.get("provider"))] = (
+            by_provider.get(str(r.get("provider")), 0.0) + _number(r.get("cost_usd"))
         )
     ranked = sorted(by_provider.items(), key=lambda kv: kv[1], reverse=True)
     parts.append("<h2>Charts</h2>")
@@ -1092,7 +1106,7 @@ def _cost_body(data: dict[str, Any]) -> tuple[str, str, str]:
 
 
 def _loadtest_body(data: dict[str, Any]) -> tuple[str, str, str]:
-    lat = data.get("latency") or {}
+    lat = _mapping(data.get("latency"))
     error_rate = data.get("error_rate")
     scenario = str(data.get("scenario") or "load test")
 
