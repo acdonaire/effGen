@@ -260,8 +260,9 @@ def _handle_eval_command(args, cli) -> int:
         return 1
     except Exception as e:
         cli.print(f"Evaluation failed: {e}")
-        import traceback
-        traceback.print_exc()
+        if getattr(args, 'verbose', False):
+            import traceback
+            traceback.print_exc()
         return 1
     finally:
         # Release agent resources so eval stops emitting the GC-without-close

@@ -464,8 +464,9 @@ def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
         return 2
     except Exception as e:
         cli.print_error(f"Error in interactive wizard: {e}")
-        import traceback
-        traceback.print_exc()
+        if getattr(args, 'verbose', False):
+            import traceback
+            traceback.print_exc()
         return 1
 
 
