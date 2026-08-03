@@ -389,14 +389,23 @@ def preset_tool_overhead(name: str) -> tuple[int, int]:
     caller can pick a preset that fits a small-context or rate-limited model.
     """
     cfg = get_preset(name)
-    # Instantiating optional tools without their keys logs skip warnings; this
-    # is an inspection helper, so keep it quiet.
+    # Building a tool without its key or its optional backend logs a heads-up —
+    # from this module for a tool that could not be constructed at all, and from
+    # the tool's own module for one that fell back to a simpler implementation.
+    # Both go to stderr, where they land in the middle of `effgen presets --json`
+    # for anything reading the command's output as one stream. This is an
+    # inspection helper and reports nothing to the caller but two numbers, so the
+    # whole package's logging is quiet for the duration.
+    package_logger = logging.getLogger(__name__.split(".")[0])
+    _prev_package = package_logger.level
     _prev = logger.level
+    package_logger.setLevel(logging.ERROR)
     logger.setLevel(logging.ERROR)
     try:
         tools = _instantiate_tools(cfg.tool_names)
     finally:
         logger.setLevel(_prev)
+        package_logger.setLevel(_prev_package)
     return len(tools), _approx_schema_tokens(tools)
 
 
