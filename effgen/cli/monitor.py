@@ -41,6 +41,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
+from effgen.ui.render import json_ensure_ascii
 from effgen.ui.tables import console_is_interactive, render_table
 from effgen.ui.theme import color_enabled, get_console
 
@@ -1068,7 +1069,7 @@ def run_monitor_command(args: Any) -> int:
         snapshot = collect_snapshot(
             url=url, port=port, api_key=api_key, limit=limit, interval=None
         )
-        print(json.dumps(snapshot, indent=2, ensure_ascii=False))
+        print(json.dumps(snapshot, indent=2, ensure_ascii=json_ensure_ascii()))
         return 0
 
     console = get_console(theme_name=getattr(args, "theme", None))

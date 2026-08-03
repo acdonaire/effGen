@@ -15,6 +15,7 @@ from pathlib import Path
 
 # Live status / progress presentation (TTY-aware; degrades to plain text).
 from effgen.cli import progress as _progress
+from effgen.ui.render import json_ensure_ascii
 
 
 def _batch_structured_kwargs(args) -> dict:
@@ -121,7 +122,7 @@ def _handle_batch_command(args, cli) -> int:
             print(json.dumps({
                 "success": False,
                 "error": {"type": type(exc).__name__, "message": str(exc)},
-            }, indent=2, ensure_ascii=False))
+            }, indent=2, ensure_ascii=json_ensure_ascii()))
         return 1
 
     if not input_path:
@@ -378,7 +379,7 @@ def _handle_batch_command(args, cli) -> int:
                 "total_prompt_tokens": total_prompt_tokens,
                 "total_completion_tokens": total_completion_tokens,
                 "rows": rows,
-            }, indent=2, ensure_ascii=False))
+            }, indent=2, ensure_ascii=json_ensure_ascii()))
 
         return 0 if failed == 0 else 1
 

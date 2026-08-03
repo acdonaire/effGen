@@ -11,6 +11,7 @@ import json
 from typing import TYPE_CHECKING
 
 from effgen.cli.commands._shared import _print_group_help
+from effgen.ui.render import json_ensure_ascii
 
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
@@ -54,7 +55,7 @@ def _handle_workflow_command(args, cli: "CLIInterface") -> int:
                     "nodes": len(dag.nodes),
                     "edges": len(dag.edges),
                     "execution_order": order,
-                }, indent=2, ensure_ascii=False))
+                }, indent=2, ensure_ascii=json_ensure_ascii()))
                 return 0
             cli.print(f"Workflow '{dag.name}' is valid.")
             cli.print(f"  Nodes: {len(dag.nodes)}")
@@ -66,7 +67,7 @@ def _handle_workflow_command(args, cli: "CLIInterface") -> int:
             return 0
         except Exception as e:
             if json_mode:
-                print(json.dumps({"valid": False, "error": str(e)}, indent=2, ensure_ascii=False))
+                print(json.dumps({"valid": False, "error": str(e)}, indent=2, ensure_ascii=json_ensure_ascii()))
                 return 1
             cli.print(f"Validation failed: {e}")
             return 1
@@ -153,7 +154,7 @@ def _handle_workflow_command(args, cli: "CLIInterface") -> int:
                             pass
 
             if json_mode:
-                print(json.dumps(result.to_dict(), indent=2, default=str, ensure_ascii=False))
+                print(json.dumps(result.to_dict(), indent=2, default=str, ensure_ascii=json_ensure_ascii()))
                 return 0 if result.success else 1
 
             if not quiet:
@@ -178,7 +179,7 @@ def _handle_workflow_command(args, cli: "CLIInterface") -> int:
 
         except Exception as e:
             if json_mode:
-                print(json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=False))
+                print(json.dumps({"success": False, "error": str(e)}, indent=2, ensure_ascii=json_ensure_ascii()))
                 return 1
             cli.print(f"Workflow execution failed: {e}")
             return 1

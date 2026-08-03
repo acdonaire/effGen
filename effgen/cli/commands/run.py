@@ -29,6 +29,7 @@ from effgen.cli.commands._shared import (
     resolve_provider_name,
 )
 from effgen.ui.render import ascii_fold as _ascii_fold
+from effgen.ui.render import json_ensure_ascii
 
 if TYPE_CHECKING:
     from effgen.cli._main import CLIInterface
@@ -899,7 +900,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             # -o file carries). Goes to real stdout regardless of the
             # stderr-routed human output above.
             if json_mode:
-                print(json.dumps(response.to_dict(), indent=2, ensure_ascii=False))
+                print(json.dumps(response.to_dict(), indent=2, ensure_ascii=json_ensure_ascii()))
 
         return exit_code
 
@@ -919,7 +920,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             print(json.dumps({
                 "success": False,
                 "error": {"type": type(e).__name__, "message": str(e)},
-            }, indent=2, ensure_ascii=False))
+            }, indent=2, ensure_ascii=json_ensure_ascii()))
         return 1
     finally:
         # Release the agent explicitly so the CLI never emits the

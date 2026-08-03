@@ -66,6 +66,7 @@ from effgen.cli.commands._shared import (
     _quickstart_suggest_model,
     resolve_provider_name,
 )
+from effgen.ui.render import json_ensure_ascii
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -333,7 +334,7 @@ def _run_undo(cli: "CLIInterface", args: argparse.Namespace) -> int:
                 ],
                 "remaining": remaining,
             },
-            indent=2, ensure_ascii=False,
+            indent=2, ensure_ascii=json_ensure_ascii(),
         ))
         return 0
 
@@ -554,7 +555,7 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
         if json_mode:
             print(json.dumps(
                 {"success": False, "error": {"type": type(exc).__name__, "message": str(exc)}},
-                indent=2, ensure_ascii=False,
+                indent=2, ensure_ascii=json_ensure_ascii(),
             ))
         return 1
     finally:
@@ -568,7 +569,7 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
         _offer_commit(cli, args, engine, result, quiet=quiet)
 
     if json_mode:
-        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=json_ensure_ascii()))
     elif interactive:
         _report(cli, result, quiet=quiet)
     else:

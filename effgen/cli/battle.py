@@ -18,6 +18,7 @@ import threading
 from typing import Any
 
 from effgen.eval.battle import BattleResult, Contender, fmt_cost, run_battle
+from effgen.ui.render import json_ensure_ascii
 from effgen.ui.tables import console_is_interactive
 from effgen.ui.theme import color_enabled, get_console
 
@@ -312,7 +313,7 @@ def run_battle_command(args: Any) -> int:
         return 2
 
     if json_mode:
-        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=json_ensure_ascii()))
     elif not live_capable:
         print(result.to_markdown())
 

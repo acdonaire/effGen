@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from effgen.cli.commands._shared import _invoked_command, _print_group_help
+from effgen.ui.render import json_ensure_ascii
 from effgen.ui.tables import render_table
 
 
@@ -171,7 +172,7 @@ def _handle_runs_command(args, cli) -> int:
                 "runs": runs,
                 "runs_dir": str(run_log.history_dir()),
                 "persisted": run_log.history_enabled(),
-            }, indent=2, default=str, ensure_ascii=False))
+            }, indent=2, default=str, ensure_ascii=json_ensure_ascii()))
             return 0
         if not runs:
             filtered = any((
@@ -232,7 +233,7 @@ def _handle_runs_command(args, cli) -> int:
             if not getattr(args, 'output_json', False):
                 cli.print(f"Summary card written to {written}")
         if getattr(args, 'output_json', False):
-            print(_json.dumps(record, indent=2, default=str, ensure_ascii=False))
+            print(_json.dumps(record, indent=2, default=str, ensure_ascii=json_ensure_ascii()))
             return 0
         cli.print_line(f"Run:      {record.get('run_id') or '—'}")
         cli.print_line(f"When:     {record.get('ts') or '—'}")
@@ -295,7 +296,7 @@ def _handle_sessions_command(args, cli) -> int:
                 "sessions": sessions,
                 "unreadable": unreadable,
                 "sessions_dir": str(mgr.sessions_dir),
-            }, indent=2, default=str, ensure_ascii=False))
+            }, indent=2, default=str, ensure_ascii=json_ensure_ascii()))
             return 0
         if not sessions and not unreadable:
             cli.print(
@@ -348,7 +349,7 @@ def _handle_sessions_command(args, cli) -> int:
             last = getattr(args, 'last', None)
             if last and last > 0:
                 data["messages"] = data["messages"][-last:]
-            print(_json.dumps(data, indent=2, default=str, ensure_ascii=False))
+            print(_json.dumps(data, indent=2, default=str, ensure_ascii=json_ensure_ascii()))
             return 0
         _render_session(session, cli, last=getattr(args, 'last', None))
         cli.print_line(f"Continue this conversation: effgen chat --session-id {session.session_id}")
