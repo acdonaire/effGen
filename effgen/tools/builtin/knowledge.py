@@ -42,6 +42,31 @@ def _user_agent() -> str:
     return f"effGen/{__version__}"
 
 
+def _api_error_detail(body: bytes) -> str:
+    """Return what an error body says, when it is one of the documented shapes.
+
+    The Stack Exchange API reports a rate limit as HTTP 400 with the reason in
+    the body (``throttle_violation`` and how long to wait); GitHub does the same
+    with a ``message``. Without the body the caller sees only "HTTP 400 Bad
+    Request" and cannot tell a throttle from a malformed query.
+    """
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    parts = [
+        str(payload[key])
+        for key in ("error_name", "error_message", "message")
+        if payload.get(key)
+    ]
+    backoff = payload.get("backoff")
+    if backoff:
+        parts.append(f"retry after {backoff}s")
+    return " - ".join(parts)
+
+
 def _fetch(url: str, timeout: int = 15, accept: str = "application/json") -> bytes:
     headers = {"User-Agent": _user_agent(), "Accept": accept}
     try:
@@ -50,7 +75,13 @@ def _fetch(url: str, timeout: int = 15, accept: str = "application/json") -> byt
         ) as resp:
             return resp.read()
     except HTTPError as e:
-        raise ConnectionError(f"HTTP {e.code} from {url}: {e.reason}")
+        detail = ""
+        try:
+            detail = _api_error_detail(e.read())
+        except Exception:  # noqa: BLE001 - the body is a courtesy; the status is the answer
+            detail = ""
+        suffix = f": {detail}" if detail else ""
+        raise ConnectionError(f"HTTP {e.code} from {url}: {e.reason}{suffix}")
     except URLError as e:
         raise ConnectionError(f"Network error fetching {url}: {e.reason}")
 
