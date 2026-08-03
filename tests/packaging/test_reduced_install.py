@@ -12,9 +12,10 @@ contract this module pins is:
 * the exit code of every command is the same as on a full install, so a script
   that checks ``$?`` behaves the same way;
 * a stream that cannot encode a character (``PYTHONIOENCODING=ascii``) never
-  produces a traceback either. Whether such a stream can *render* every glyph is
-  a presentation question and is asserted elsewhere; the exit code is therefore
-  compared only between install profiles.
+  produces a traceback either, and every command exits with the code it would
+  have on a UTF-8 console: what such a stream cannot carry is substituted, not
+  raised. Which ASCII stand-in each character gets is a presentation question
+  and is asserted in ``tests/cli/test_ascii_terminal``.
 
 Each cell drives the **whole command surface enumerated from the parser** — every
 command path plus a set of offline-safe invocations — inside one interpreter, so
@@ -66,9 +67,11 @@ REAL = [
     ["models", "status"], ["models", "info", "gpt-5-nano"], ["models", "browse", "--limit", "5"],
     ["tools", "list"], ["tools", "list", "--json"], ["tools", "info", "calculator"],
     ["tools", "test", "calculator", "--input", '{"expression": "2+2"}'],
-    ["presets"], ["config", "show"], ["examples", "list"], ["cost"], ["cost", "today"],
-    ["cost", "by-provider"], ["prompts", "list"], ["sessions", "list"], ["runs", "list"],
-    ["eval", "--suite", "list"],
+    ["presets"], ["presets", "--json"], ["config", "show"], ["examples", "list"],
+    ["cost"], ["cost", "today"], ["cost", "week"], ["cost", "by-provider"],
+    ["prompts", "list"], ["prompts", "list", "--json"],
+    ["sessions", "list"], ["runs", "list"], ["eval", "--suite", "list"],
+    ["top", "--once"], ["top", "--json"], ["monitor", "--once"],
 ]
 
 import argparse
@@ -108,6 +111,10 @@ for inv in [p + ["--help"] for p in walk(create_parser())] + REAL:
         # A command may legitimately *report* an import failure it diagnosed
         # (``effgen doctor`` does); what it may not do is fail because of one.
         "missing": rc != 0 and (("No module named" in text) or ("ModuleNotFoundError" in text)),
+        # A character the stream cannot encode must be substituted at the write
+        # boundary, never reported to the user as a failed command.
+        "encode_error": ("codec can't encode" in text)
+        or ("You may need to add PYTHONIOENCODING" in text),
         "tail": text.strip().splitlines()[-2:],
     })
 
@@ -138,6 +145,11 @@ def _run(tmp_path: Path, program: str, blocked: str, encoding: str = "utf-8") ->
     env["EFFGEN_NO_DOTENV"] = "1"
     env["COLUMNS"] = "120"
     env.pop("NO_COLOR", None)
+    # The cell binds the command's streams to one carrying *encoding*, but the
+    # interpreter's own stdout has to carry it too: a write that goes around
+    # ``sys.stdout`` reaches the real file, and on a hard-ascii console that is
+    # exactly the write that must not take the command down with it.
+    env["PYTHONIOENCODING"] = encoding
     return subprocess.run(
         [sys.executable, str(path), blocked, encoding, str(tmp_path / "result.json")],
         capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=600,
@@ -202,7 +214,14 @@ def test_no_command_prints_a_traceback(cells, cell_id):
     assert not offenders, f"{cell_id}: commands printed a traceback:\n{offenders}"
 
 
-@pytest.mark.parametrize("cell_id", ["no-rich", "no-torch", "no-rich-no-torch", "no-rich-no-color"])
+@pytest.mark.parametrize("cell_id", ["ascii", "no-rich-ascii"])
+def test_no_command_fails_on_a_character_the_stream_cannot_encode(cells, cell_id):
+    """A hard-ascii console prints a stand-in; it never turns a command into an error."""
+    offenders = _offenders(cells[cell_id], "encode_error")
+    assert not offenders, f"{cell_id}: commands reported an encoding failure:\n{offenders}"
+
+
+@pytest.mark.parametrize("cell_id", [cell for cell in ALL_CELLS if cell != "full"])
 def test_exit_codes_match_the_full_install(cells, cell_id):
     reference = {row["cmd"]: row["rc"] for row in cells["full"]}
     drifted = [
