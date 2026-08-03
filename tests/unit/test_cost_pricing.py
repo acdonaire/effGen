@@ -102,6 +102,13 @@ class TestBackCompatRates:
 class TestTokenCounting:
     def test_count_tokens_beats_len_over_4_for_repetition(self):
         # A real BPE tokenizer collapses repetition that len//4 over-counts.
+        # tiktoken downloads its BPE data on first use, so on a machine with an
+        # empty cache and no route to the data host there is no tokenizer to
+        # measure — the count is then the heuristic this case compares against.
+        from effgen.models._adapter_utils import get_bpe_encoding
+
+        if get_bpe_encoding() is None:
+            pytest.skip("the cl100k_base BPE data is not available on this machine")
         text = "x" * 200
         assert count_tokens(text) < len(text) // 4
 
