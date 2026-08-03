@@ -365,6 +365,36 @@ def test_raise_on_error_message_not_double_wrapped():
     assert cause in text
 
 
+def test_tool_failure_observation_is_not_double_prefixed():
+    """A tool that raises is reported once, not with a stacked prefix.
+
+    ``Tool.execute()`` catches the exception and already writes
+    ``"Tool execution failed: <cause>"`` into ``ToolResult.error``; the agent
+    must pass that through rather than prefixing it a second time, so the
+    observation the model reads names the cause once.
+    """
+    from effgen.tools import tool
+
+    @tool(name="exploding_tool", description="Reports the status of a structure.")
+    def exploding_tool(name: str) -> str:
+        """Report the status of the named structure."""
+        raise RuntimeError("detonator missing")
+
+    a = _agent(_FakeModel(), tools=[exploding_tool])
+    observation = a._execute_tool("exploding_tool", '{"name": "bridge"}')
+
+    assert observation.startswith("Error executing tool 'exploding_tool': ")
+    assert observation.count("Tool execution failed:") == 1
+    assert observation.endswith("detonator missing")
+
+
+def test_unknown_tool_observation_names_what_is_available():
+    a = _agent(_FakeModel())
+    observation = a._execute_tool("no_such_tool", "{}")
+    assert observation.startswith("Error executing tool 'no_such_tool': ")
+    assert "not available" in observation
+
+
 def test_error_message_is_redacted():
     leaked = "boom sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd failed"
     r = _agent(_FakeModel(exc=ProviderTransientError("openai", message=leaked))).run("hi")

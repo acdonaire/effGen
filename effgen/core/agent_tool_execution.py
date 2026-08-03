@@ -217,8 +217,14 @@ class AgentToolExecutionMixin:
             elif hasattr(result, 'output'):
                 # ToolResult object - extract output
                 if hasattr(result, 'success') and not result.success:
-                    error_msg = getattr(result, 'error', 'Unknown error')
-                    result_str = f"Tool execution failed: {error_msg}"
+                    error_msg = str(getattr(result, 'error', 'Unknown error'))
+                    # A tool that raised already carries this prefix on its
+                    # error; adding a second one repeats it in the observation.
+                    result_str = (
+                        error_msg
+                        if error_msg.startswith("Tool execution failed:")
+                        else f"Tool execution failed: {error_msg}"
+                    )
                 else:
                     output = result.output
                     if isinstance(output, dict):
