@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from effgen.models._adapter_utils import (
     annotate_reasoning_only,
+    estimate_tokens,
     extract_reasoning_text,
     extract_reasoning_tokens,
     normalize_finish_reason,
@@ -754,20 +755,13 @@ class CerebrasAdapter(BaseModel):
     }
 
     def count_tokens(self, text: str) -> TokenCount:
-        """Estimate token count via tiktoken with a per-family chat-template adjustment."""
-        try:
-            import tiktoken
-        except ImportError as exc:
-            raise RuntimeError(
-                "tiktoken is not installed. Install with: pip install tiktoken"
-            ) from exc
+        """Estimate token count via tiktoken with a per-family chat-template adjustment.
 
-        try:
-            enc = tiktoken.encoding_for_model("gpt-4")
-        except KeyError:
-            enc = tiktoken.get_encoding("cl100k_base")
-
-        raw = len(enc.encode(text))
+        The chat-template adjustment is applied to whichever base count is
+        available: the BPE count when tiktoken can load its data, a length-based
+        estimate when it cannot.
+        """
+        raw = estimate_tokens(text, model="gpt-4")
         family = CEREBRAS_MODELS.get(self.model_name, {}).get("family", "")
         mult, fixed = self._CHAT_TEMPLATE_MULTIPLIER.get(family, (1.3, 10))
         adjusted = int(raw * mult) + fixed

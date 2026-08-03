@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from effgen.models._adapter_utils import (
     DIRECT_CALL_REASONING_MAX_TOKENS,
     annotate_reasoning_only,
+    estimate_tokens,
     extract_reasoning_text,
     extract_reasoning_tokens,
     normalize_finish_reason,
@@ -825,13 +826,7 @@ class TogetherAdapter(BaseModel):
 
     def count_tokens(self, text: str) -> TokenCount:
         """Estimate token count via tiktoken (cl100k_base)."""
-        try:
-            import tiktoken
-            enc = tiktoken.get_encoding("cl100k_base")
-            count = len(enc.encode(text))
-        except Exception:
-            count = max(1, len(text) // 4)
-        return TokenCount(count=count, model_name=self.model_name)
+        return TokenCount(count=estimate_tokens(text), model_name=self.model_name)
 
     def get_context_length(self) -> int:
         """Return the context window size for the loaded model."""

@@ -36,6 +36,7 @@ These are internal helpers (no public API surface change).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -48,6 +49,99 @@ from .errors import (
     context_overflow_hint,
     error_context_dict,
 )
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Token counting
+# ---------------------------------------------------------------------------
+# tiktoken ships no BPE data: the first call for an encoding downloads it from
+# openaipublic.blob.core.windows.net into a cache under the temporary directory.
+# On a machine with no route to that host — an air-gapped deployment, a runner
+# behind a proxy that does not allow it, a container with an empty cache — the
+# download raises ``requests.ConnectionError``. That exception used to travel
+# out of ``count_tokens`` and, through the pre-flight prompt check, out of every
+# ``generate()`` call: a request that the provider would have answered failed
+# before it was sent, reporting a name-resolution failure for a host that has
+# nothing to do with the provider. A token count is an estimate, so an encoding
+# that cannot be loaded degrades to the character heuristic and says so once.
+
+#: Encodings already resolved, by encoding name. ``None`` records one that could
+#: not be loaded, so the download is attempted once rather than per call.
+_bpe_encodings: dict[str, Any] = {}
+
+#: Encoding names whose unavailability has been reported.
+_bpe_unavailable_warned: set[str] = set()
+
+#: Characters per token in the fallback estimate. English prose and code both sit
+#: near this ratio for the BPE vocabularies the cloud providers use.
+_CHARS_PER_TOKEN = 4
+
+
+def get_bpe_encoding(name: str = "cl100k_base", *, model: str | None = None) -> Any:
+    """Return the tiktoken encoding for *model* (or *name*), or ``None``.
+
+    ``None`` means the encoding is unavailable on this machine — tiktoken is not
+    installed, or its BPE data is neither cached nor reachable. The first time
+    that happens for an encoding it is reported at INFO with the reason; after
+    that the answer is remembered, so a long run neither repeats the message nor
+    retries the download on every call.
+    """
+    key = model or name
+    if key in _bpe_encodings:
+        return _bpe_encodings[key]
+
+    encoding = None
+    try:
+        import tiktoken
+
+        if model is not None:
+            try:
+                encoding = tiktoken.encoding_for_model(model)
+            except KeyError:
+                # A model newer than the installed tiktoken: its own vocabulary
+                # is unknown, and the current OpenAI-family default is the
+                # closest available estimate.
+                encoding = tiktoken.get_encoding(name)
+        else:
+            encoding = tiktoken.get_encoding(name)
+    except ImportError:
+        if key not in _bpe_unavailable_warned:
+            _bpe_unavailable_warned.add(key)
+            logger.info(
+                "tiktoken is not installed, so token counts are estimated from text "
+                "length. Install it for exact counts: pip install tiktoken"
+            )
+    except Exception as exc:  # noqa: BLE001 - any failure to obtain the data degrades the same way
+        if key not in _bpe_unavailable_warned:
+            _bpe_unavailable_warned.add(key)
+            logger.info(
+                "tiktoken could not load the '%s' encoding (%s), so token counts are "
+                "estimated from text length. Pre-populate the tiktoken cache to get "
+                "exact counts on a machine with no route to its data host.",
+                key, type(exc).__name__,
+            )
+
+    _bpe_encodings[key] = encoding
+    return encoding
+
+
+def estimate_tokens(text: str, *, name: str = "cl100k_base", model: str | None = None) -> int:
+    """Return a token count for *text*, exact when the BPE encoding is available.
+
+    Falls back to a character-length estimate when it is not, so a caller always
+    gets a number. Empty text is zero tokens; any non-empty text is at least one.
+    """
+    if not text:
+        return 0
+    encoding = get_bpe_encoding(name, model=model)
+    if encoding is not None:
+        try:
+            return max(1, len(encoding.encode(text)))
+        except Exception:  # noqa: BLE001 - a surrogate or control character the BPE rejects
+            pass
+    return max(1, len(text) // _CHARS_PER_TOKEN)
 
 
 def missing_torch_error(engine: str) -> ImportError:
@@ -747,6 +841,8 @@ def attach_error_context(
 
 __all__ = [
     "TOOL_PROBE_NAME",
+    "get_bpe_encoding",
+    "estimate_tokens",
     "chat_template_renders_tools",
     "CALL_OVERRIDE_ALIASES",
     "CALL_OVERRIDE_FIELDS",

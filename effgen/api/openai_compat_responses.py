@@ -24,43 +24,29 @@ def _cmpl_id() -> str:
     return f"cmpl-{uuid.uuid4().hex[:24]}"
 
 
-_TIKTOKEN_ENCODER: Any = None
-_TIKTOKEN_TRIED = False
-
-
 def _get_tiktoken_encoder() -> Any:
-    """Return a cached tiktoken encoder, or ``None`` if tiktoken is unavailable."""
-    global _TIKTOKEN_ENCODER, _TIKTOKEN_TRIED
-    if _TIKTOKEN_TRIED:
-        return _TIKTOKEN_ENCODER
-    _TIKTOKEN_TRIED = True
-    try:
-        import tiktoken
+    """Return the cached ``cl100k_base`` encoding, or ``None`` if it is unavailable.
 
-        _TIKTOKEN_ENCODER = tiktoken.get_encoding("cl100k_base")
-    except Exception:  # pragma: no cover - tiktoken optional
-        _TIKTOKEN_ENCODER = None
-    return _TIKTOKEN_ENCODER
+    Unavailable covers both tiktoken not being installed and its BPE data being
+    neither cached nor reachable; the adapters resolve it the same way.
+    """
+    from effgen.models._adapter_utils import get_bpe_encoding
+
+    return get_bpe_encoding("cl100k_base")
 
 
 def count_tokens(text: str) -> int:
     """Count tokens in *text* using a real tokenizer when available.
 
     Prefers a BPE tokenizer (tiktoken ``cl100k_base``) over the legacy
-    ``len(text) // 4`` heuristic so usage/cost numbers track real counts.
-    When tiktoken is not installed it falls back to a slightly
-    refined character heuristic.  The server runner should supply provider- or
-    model-reported usage when it has it; this is the estimate of last resort.
+    ``len(text) // 4`` heuristic so usage/cost numbers track real counts, and
+    falls back to that heuristic when the encoding cannot be loaded. The server
+    runner should supply provider- or model-reported usage when it has it; this
+    is the estimate of last resort.
     """
-    if not text:
-        return 0
-    enc = _get_tiktoken_encoder()
-    if enc is not None:
-        try:
-            return max(1, len(enc.encode(text)))
-        except Exception:  # pragma: no cover - encoding edge cases
-            pass
-    return max(1, len(text) // 4)
+    from effgen.models._adapter_utils import estimate_tokens
+
+    return estimate_tokens(text)
 
 
 def _approx_tokens(text: str) -> int:  # retained for back-compat

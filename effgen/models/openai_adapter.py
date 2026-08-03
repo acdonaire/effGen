@@ -25,6 +25,7 @@ from effgen.models._adapter_utils import (
     FINISH_CONTENT_FILTER,
     FINISH_LENGTH,
     annotate_reasoning_only,
+    estimate_tokens,
     extract_reasoning_text,
     extract_reasoning_tokens,
     model_not_found_error,
@@ -1436,18 +1437,16 @@ class OpenAIAdapter(FunctionCallingModel):
     # ------------------------------------------------------------------
 
     def count_tokens(self, text: str) -> TokenCount:
-        """Count tokens using tiktoken (falls back to cl100k_base for new models)."""
-        try:
-            import tiktoken
-        except ImportError as e:
-            raise RuntimeError("tiktoken is not installed: pip install tiktoken") from e
+        """Count tokens with the model's tiktoken encoding.
 
-        try:
-            encoding = tiktoken.encoding_for_model(self.model_name)
-        except KeyError:
-            encoding = tiktoken.get_encoding("cl100k_base")
-
-        return TokenCount(count=len(encoding.encode(text)), model_name=self.model_name)
+        A model tiktoken does not know is counted with ``cl100k_base``; an
+        encoding that cannot be loaded at all falls back to a length-based
+        estimate rather than failing the call that asked for the count.
+        """
+        return TokenCount(
+            count=estimate_tokens(text, model=self.model_name),
+            model_name=self.model_name,
+        )
 
     # ------------------------------------------------------------------
     # Context / cost helpers

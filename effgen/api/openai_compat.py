@@ -65,8 +65,6 @@ from effgen.api.openai_compat_models import (  # noqa: F401  re-exported for imp
 # Response builders
 # ---------------------------------------------------------------------------
 from effgen.api.openai_compat_responses import (  # noqa: E402,F401  re-exported for import/patch parity
-    _TIKTOKEN_ENCODER,
-    _TIKTOKEN_TRIED,
     _approx_tokens,
     _chat_id,
     _cmpl_id,
