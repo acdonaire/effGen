@@ -16,6 +16,7 @@ from effgen.cli import progress as _progress
 from effgen.cli.commands._shared import resolve_provider_name
 from effgen.cli.commands.report import _write_html_report_arg, _write_result_artifact
 from effgen.ui.palette import glyph
+from effgen.ui.render import json_ensure_ascii
 from effgen.ui.tables import console_is_interactive, render_table
 
 
@@ -95,7 +96,7 @@ def _handle_eval_command(args, cli) -> int:
             if json_mode:
                 print(json.dumps(
                     [{"name": n, "description": d} for n, d in suites.items()],
-                    indent=2, ensure_ascii=False,
+                    indent=2, ensure_ascii=json_ensure_ascii(),
                 ))
                 return 0
             cli.print_header("Available Evaluation Suites")
@@ -224,7 +225,7 @@ def _handle_eval_command(args, cli) -> int:
 
         # Emit the same results document to stdout for piping/CI gating.
         if json_mode:
-            print(results.to_json())
+            print(results.to_json(ensure_ascii=json_ensure_ascii()))
 
         # Exit-code gate. A detected blocking regression against a saved
         # baseline always fails the build; otherwise the gate is the suite

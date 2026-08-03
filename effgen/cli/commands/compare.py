@@ -12,6 +12,7 @@ from effgen.cli.commands._shared import resolve_provider_name
 from effgen.cli.commands.eval import _resolve_eval_suite
 from effgen.cli.commands.report import _write_html_report_arg, _write_result_artifact
 from effgen.ui.palette import glyph
+from effgen.ui.render import json_ensure_ascii
 from effgen.ui.tables import console_is_interactive, empty_state, render_table
 
 
@@ -225,7 +226,7 @@ def _handle_compare_command(args, cli) -> int:
 
         # Emit the comparison matrix as JSON to stdout for piping/CI gating.
         if json_mode:
-            print(matrix.to_json())
+            print(matrix.to_json(ensure_ascii=json_ensure_ascii()))
 
         return 0
 

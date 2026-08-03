@@ -225,9 +225,14 @@ class ComparisonMatrix:
             "self_judged": self.self_judged,
         }
 
-    def to_json(self, indent: int = 2) -> str:
-        """Return the JSON rendering of :meth:`to_dict`."""
-        return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
+    def to_json(self, indent: int = 2, *, ensure_ascii: bool = False) -> str:
+        """Return the JSON rendering of :meth:`to_dict`.
+
+        The rendering carries raw UTF-8 by default. Pass ``ensure_ascii=True``
+        for a destination that cannot accept it, which escapes non-ASCII
+        characters as ``\\uXXXX`` rather than losing them.
+        """
+        return json.dumps(self.to_dict(), indent=indent, ensure_ascii=ensure_ascii)
 
 
 class ModelComparison:
