@@ -219,7 +219,8 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             cli.console.print(
                 f"\n[dim]Pricing source: catalog snapshot. "
                 f"Run [cyan]effgen models refresh --provider {provider_filter}[/cyan] "
-                f"to update from the live API.[/dim]"
+                f"to update from the live API.[/dim]",
+                highlight=False,
             )
         else:
             id_w = min(max((len(r.id) for r in recs), default=8), 60)
@@ -289,7 +290,8 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         cli.console.print(
             "\n[dim]Detail: [cyan]effgen models list --provider <name>[/cyan]  ·  "
             "Filter: [cyan]--free[/cyan] / [cyan]--tools[/cyan]  ·  "
-            "Update: [cyan]effgen models refresh[/cyan][/dim]"
+            "Update: [cyan]effgen models refresh[/cyan][/dim]",
+            highlight=False,
         )
     else:
         for prov in providers:
@@ -505,12 +507,14 @@ def models_browse(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         if limit and offset + limit < total:
             cli.console.print(
                 f"\n[dim]More: [cyan]--offset {offset + limit}[/cyan] "
-                f"for the next page.[/dim]"
+                f"for the next page.[/dim]",
+                highlight=False,
             )
         cli.console.print(
             "\n[dim]Pricing source: catalog snapshot. "
             "Update: [cyan]effgen models refresh[/cyan]  ·  "
-            "Detail: [cyan]effgen models info <id>[/cyan][/dim]"
+            "Detail: [cyan]effgen models info <id>[/cyan][/dim]",
+            highlight=False,
         )
     else:
         # Complete, aligned plain text for piped/redirected output — every
@@ -538,7 +542,7 @@ def models_browse(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     if include_local and local:
         if cli.console:
             cli.console.print(f"\n[dim]Local cache: {len(local)} model(s) "
-                              f"— [cyan]effgen models list[/cyan] for detail.[/dim]")
+                              f"— [cyan]effgen models list[/cyan] for detail.[/dim]", highlight=False)
         else:
             print("\nLocal cache:")
             for m in local:
@@ -600,7 +604,7 @@ def render_local_model_info(cli: "CLIInterface", payload: dict) -> None:
         cli.console.print(table)
         cli.console.print(f"\n[dim]Run locally: [cyan]{run_hint}[/cyan]"
                           f"  ·  or [cyan]load_model(\"{payload['id']}\", "
-                          f"engine=\"transformers\")[/cyan][/dim]")
+                          f"engine=\"transformers\")[/cyan][/dim]", highlight=False)
     else:
         print("\nLocal cache:")
         for k, v in rows.items():
@@ -777,7 +781,8 @@ def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             cli.console.print(vtable)
             cli.console.print(
                 f"\n[dim]Pin a provider: "
-                f"[cyan]effgen run --provider <name> -m {rec.id}[/cyan][/dim]"
+                f"[cyan]effgen run --provider <name> -m {rec.id}[/cyan][/dim]",
+                highlight=False,
             )
         else:
             names = ", ".join(v.provider for v in others)
@@ -791,11 +796,11 @@ def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     if local_entry is not None:
         cli._render_local_model_info(cli._local_model_payload(local_entry))
         if cli.console:
-            cli.console.print(f"\n[dim]Cloud alternative: [cyan]{cloud_hint}[/cyan][/dim]")
+            cli.console.print(f"\n[dim]Cloud alternative: [cyan]{cloud_hint}[/cyan][/dim]", highlight=False)
         else:
             print(f"\n  Cloud alternative: {cloud_hint}")
     elif cli.console:
-        cli.console.print(f"\n[dim]Use: [cyan]{cloud_hint}[/cyan][/dim]")
+        cli.console.print(f"\n[dim]Use: [cyan]{cloud_hint}[/cyan][/dim]", highlight=False)
     return 0
 
 

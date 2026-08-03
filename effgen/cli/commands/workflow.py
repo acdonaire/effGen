@@ -40,7 +40,7 @@ def _handle_workflow_command(args, cli: "CLIInterface") -> int:
         )
         for style, text in lines:
             if cli.console and style:
-                cli.console.print(f"[{style}]{text}[/{style}]")
+                cli.console.print(f"[{style}]{text}[/{style}]", highlight=False)
             else:
                 cli.print(text)
 

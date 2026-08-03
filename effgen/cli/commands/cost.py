@@ -236,7 +236,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
 
         cli.console.print(table)
         cli.console.print(f"\n[effgen.label]Total:[/effgen.label] {total_requests} requests  "
-                          f"[effgen.cost]${total_cost:.6f} USD[/effgen.cost]")
+                          f"[effgen.cost]${total_cost:.6f} USD[/effgen.cost]", highlight=False)
         if daily_budget is not None and cost_cmd in (None, 'today'):
             ratio = total_cost / daily_budget if daily_budget > 0 else 0
             filled = min(20, max(0, int(ratio * 20)))
@@ -245,7 +245,8 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
                     else "effgen.warning" if ratio >= 0.8 else "effgen.success")
             cli.console.print(
                 f"[effgen.label]Daily budget:[/effgen.label] [{role}]{bar}[/{role}] "
-                f"{format_usd(total_cost)} / {format_usd(daily_budget)} ({ratio*100:.0f}%)"
+                f"{format_usd(total_cost)} / {format_usd(daily_budget)} ({ratio*100:.0f}%)",
+                highlight=False,
             )
     else:
         print(f"\neffGen Cost Summary — {period_label}")

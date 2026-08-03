@@ -197,7 +197,8 @@ def run_debug_cli(
             console.print(
                 "[red]Could not create agent config.[/red] Provide -m/--model "
                 "(e.g. `-m gpt-5-nano`) or --preset. Run `effgen models list` "
-                "for options or `effgen doctor` to check usable providers."
+                "for options or `effgen doctor` to check usable providers.",
+                highlight=False,
             )
             return 2
 
@@ -211,8 +212,8 @@ def run_debug_cli(
     trace: DebugTrace | None = result.metadata.get("debug_trace")
 
     if trace is None:
-        console.print("[yellow]No debug trace captured.[/yellow]")
-        console.print(f"Output: {result.output}")
+        console.print("[yellow]No debug trace captured.[/yellow]", highlight=False)
+        console.print(f"Output: {result.output}", highlight=False)
         return 0 if getattr(result, "success", False) else 1
 
     # Display each iteration

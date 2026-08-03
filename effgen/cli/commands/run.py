@@ -316,8 +316,8 @@ def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
         cli.print_header("Step 5: Enter Task")
 
         if cli.console:
-            cli.console.print("[italic]Enter your task or question for the agent.[/italic]")
-            cli.console.print("[dim]For multi-line input, end with an empty line.[/dim]\n")
+            cli.console.print("[italic]Enter your task or question for the agent.[/italic]", highlight=False)
+            cli.console.print("[dim]For multi-line input, end with an empty line.[/dim]\n", highlight=False)
         else:
             print("Enter your task or question for the agent.")
             print("For multi-line input, end with an empty line.\n")
@@ -391,7 +391,7 @@ def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
 
         if enable_streaming:
             if cli.console:
-                cli.console.print("\n[effgen.success]Agent:[/effgen.success] ", end="")
+                cli.console.print("\n[effgen.success]Agent:[/effgen.success] ", end="", highlight=False)
             else:
                 print("\nAgent: ", end="", flush=True)
 
@@ -811,7 +811,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                     for _style, _text in _tl:
                         _text = _ascii_fold(_text, cli._human_stream())
                         if cli.console:
-                            cli.console.print(f"[{_style}]{_text}[/{_style}]")
+                            cli.console.print(f"[{_style}]{_text}[/{_style}]", highlight=False)
                         else:
                             print(_text)
 
@@ -826,7 +826,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                     for _style, _text in _lines:
                         _text = _ascii_fold(_text, cli._human_stream())
                         if cli.console:
-                            cli.console.print(f"[{_style}]{_text}[/{_style}]")
+                            cli.console.print(f"[{_style}]{_text}[/{_style}]", highlight=False)
                         else:
                             print(_text)
 
@@ -839,7 +839,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                         cli._human_stream(),
                     )
                     if cli.console:
-                        cli.console.print(f"[effgen.muted]{_hint}[/effgen.muted]")
+                        cli.console.print(f"[effgen.muted]{_hint}[/effgen.muted]", highlight=False)
                     else:
                         print(_hint)
 
@@ -956,6 +956,6 @@ def handle_interrupt(cli: "CLIInterface", agent: Any) -> None:
     except Exception:  # noqa: BLE001 - never let cleanup add noise
         pass
     if cli.console:
-        cli.console.print("[yellow]Stopped.[/yellow]")
+        cli.console.print("[yellow]Stopped.[/yellow]", highlight=False)
     else:
         print("Stopped.")
