@@ -106,9 +106,16 @@ run the whole offline suite in a **single process**:
 pytest tests -m "not gpu and not api and not live and not docker and not expensive" -q
 ```
 
-This lane runs in CI as the `test-order-independence` job. Install
-`pytest-randomly` (in the `dev` extra) to also shuffle the run order and surface
-ordering coupling that a fixed order would hide:
+This lane runs in CI as the `test-order-independence` job. Seven passes over the
+whole tree take about three hours, so it does not run on every push. It runs on
+every fifth push, on any manual run of the CI workflow (the
+`run_order_independence` input, on by default), and on a pull request labelled
+`order-independence` — the label to add for a change that touches shared
+fixtures, global state or test setup and teardown. Run it locally before a
+release, or whenever you change any of those, with the driver below.
+
+Install `pytest-randomly` (in the `dev` extra) to also shuffle the run order and
+surface ordering coupling that a fixed order would hide:
 
 ```bash
 pip install -e ".[dev]"

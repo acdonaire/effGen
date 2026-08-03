@@ -5,6 +5,12 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_order_independence:
+        description: "Run the order-independence lane on this run"
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -138,6 +144,38 @@ jobs:
             --ignore=tests/e2e \
             --tb=short --no-header
 
+  order-independence-schedule:
+    # Whether the lane below runs on this CI run. "Every fifth run" is a
+    # remainder, and the workflow expression language has no arithmetic
+    # operators, so the decision is made here in a job that takes a few seconds
+    # and runs on every event.
+    name: Order-independence (due this run?)
+    runs-on: ubuntu-latest
+    outputs:
+      due: ${{ steps.decide.outputs.due }}
+    steps:
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_ASKED: >-
+            ${{ github.event_name == 'workflow_dispatch'
+                && inputs.run_order_independence }}
+          PR_LABELLED: >-
+            ${{ github.event_name == 'pull_request'
+                && contains(github.event.pull_request.labels.*.name, 'order-independence') }}
+          RUN_NUMBER: ${{ github.run_number }}
+          EVERY_NTH_RUN: "5"
+        run: |
+          due=false
+          if [ "${DISPATCH_ASKED}" = "true" ] || [ "${PR_LABELLED}" = "true" ]; then
+            due=true
+          elif [ "${EVENT_NAME}" = "push" ] \
+               && [ "$(( RUN_NUMBER % EVERY_NTH_RUN ))" -eq 0 ]; then
+            due=true
+          fi
+          echo "due=${due}" >> "$GITHUB_OUTPUT"
+          echo "event=${EVENT_NAME} run=${RUN_NUMBER} -> order-independence due: ${due}"
+
   test-order-independence:
     # The per-directory jobs above each run in their own process, which cannot
     # catch cross-directory test pollution (a test that only fails depending on
@@ -146,8 +184,23 @@ jobs:
     # single process once per collection order — fixed, reversed, a shuffle at
     # each of four pinned seeds, and one fresh shuffle — so such isolation
     # regressions fail CI instead of flaking a future release run.
+    #
+    # Seven passes over the whole tree take about three hours, which is too long
+    # to sit in front of every push. It runs instead on:
+    #   * every fifth push, counted by `github.run_number`, which increments
+    #     once per run of this workflow across the repository — often enough
+    #     that a pollution regression is caught within a day's work;
+    #   * any manual run of this workflow, so it can be demanded before a
+    #     release or after a change to test setup or teardown;
+    #   * a pull request labelled `order-independence`, for a change that
+    #     touches shared fixtures or global state.
+    # The cheaper lanes above still run on every push, and every failure this
+    # lane reports is reproducible locally from the seed it prints:
+    #   python scripts/run_order_matrix.py --outdir order-matrix
     name: Order-independence (single-process offline suite)
     runs-on: ubuntu-latest
+    needs: order-independence-schedule
+    if: needs.order-independence-schedule.outputs.due == 'true'
     steps:
       - uses: actions/checkout@v4
 
