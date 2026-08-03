@@ -265,9 +265,9 @@ def test_no_retry_storm_on_auth():
 
 
 def test_retries_only_retryable(monkeypatch):
-    import effgen.core.agent as agent_mod
+    import time
 
-    monkeypatch.setattr(agent_mod.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(time, "sleep", lambda *_: None)
     m = _FakeModel(exc=ProviderTransientError("groq", status_code=503))
     r = _agent(m).run("hi")
     assert r.success is False
