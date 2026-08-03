@@ -51,7 +51,7 @@ except ImportError:
 
 def _print(msg: str) -> None:
     if _RICH and _console:
-        _console.print(msg)
+        _console.print(msg, highlight=False)
     else:
         print(msg)
 
@@ -93,21 +93,21 @@ def _print_output(text: str, model: str) -> None:
 
 def _print_err(msg: str) -> None:
     if _RICH and _console:
-        _console.print(f"[red]Error:[/red] {_plain(msg)}")
+        _console.print(f"[red]Error:[/red] {_plain(msg)}", highlight=False)
     else:
         print(f"Error: {msg}", file=sys.stderr)
 
 
 def _print_warn(msg: str) -> None:
     if _RICH and _console:
-        _console.print(f"[yellow]Warning:[/yellow] {_plain(msg)}")
+        _console.print(f"[yellow]Warning:[/yellow] {_plain(msg)}", highlight=False)
     else:
         print(f"Warning: {msg}")
 
 
 def _print_ok(msg: str) -> None:
     if _RICH and _console:
-        _console.print(f"[green]{_plain(msg)}[/green]")
+        _console.print(f"[green]{_plain(msg)}[/green]", highlight=False)
     else:
         print(msg)
 
@@ -255,7 +255,7 @@ def _print_run_footer(result: "RunOutput") -> None:
         return
     line = "  ·  ".join(parts)
     if _RICH and _console:
-        _console.print(f"[dim]{line}[/dim]")
+        _console.print(f"[dim]{line}[/dim]", highlight=False)
     else:
         print(line)
 

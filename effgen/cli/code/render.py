@@ -138,7 +138,7 @@ def print_summary(cli: "CLIInterface", result: "CodeRunResult") -> None:
     plain, markup = summary_line(result, stream=stream)
     console = cli._human()
     if console is not None and color_enabled():
-        console.print(ascii_fold(markup, stream))
+        console.print(ascii_fold(markup, stream), highlight=False)
     else:
         print(ascii_fold(plain, stream), file=stream)
     path = getattr(result, "tool_calling", "")

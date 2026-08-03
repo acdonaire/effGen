@@ -589,7 +589,7 @@ def print_summary(cli: Any, response: Any) -> None:
     plain, markup = summary_line(response, stream=stream)
     console = getattr(cli, "console", None)
     if console is not None:
-        console.print(ascii_fold(markup, stream))
+        console.print(ascii_fold(markup, stream), highlight=False)
     else:
         print(ascii_fold(plain, stream))
 

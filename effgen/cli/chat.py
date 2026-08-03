@@ -598,7 +598,7 @@ class ChatREPL:
             interrupted = True
             self.cli.print("")
             if self._color and self.console:
-                self.console.print("[yellow]Stopped.[/yellow]")
+                self.console.print("[yellow]Stopped.[/yellow]", highlight=False)
             else:
                 self.cli.print("Stopped.")
         except Exception as e:  # noqa: BLE001
@@ -1166,7 +1166,7 @@ class ChatREPL:
         for style, text in lines:
             text = ascii_fold(text, self.cli._human_stream())
             if self.console and self._color:
-                self.console.print(f"[{style}]{text}[/{style}]")
+                self.console.print(f"[{style}]{text}[/{style}]", highlight=False)
             else:
                 self.cli.print(text)
 

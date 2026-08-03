@@ -540,7 +540,7 @@ def render_snapshot(snapshot: dict[str, Any], *, console: Any = None) -> None:
 
 def _emit(console: Any, text: str) -> None:
     if console_is_interactive(console):
-        console.print(text)
+        console.print(text, highlight=False)
     else:
         print(text)
 
