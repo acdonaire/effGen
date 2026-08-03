@@ -499,7 +499,7 @@ def response_show(response: Any, console: Any = None) -> None:
     if tool_names:
         footer_bits.append("[effgen.muted]·[/effgen.muted]")
         footer_bits.append("[effgen.tool]" + ", ".join(tool_names) + "[/effgen.tool]")
-    console.print(ascii_fold(" ".join(footer_bits)))
+    console.print(ascii_fold(" ".join(footer_bits)), highlight=False)
 
 
 def response_trace(response: Any, console: Any = None) -> None:
@@ -525,7 +525,7 @@ def response_trace(response: Any, console: Any = None) -> None:
 
     console = console or get_console()
     if not events:
-        console.print("[effgen.muted]No step-by-step trace was recorded for this run.[/effgen.muted]")
+        console.print("[effgen.muted]No step-by-step trace was recorded for this run.[/effgen.muted]", highlight=False)
         # Still show the answer so trace() is never empty-handed.
         console.print(answer_renderable(getattr(response, "output", "") or ""))
         return

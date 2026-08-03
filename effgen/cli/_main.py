@@ -327,6 +327,14 @@ class CLIInterface:
     def print(self, *args: Any, **kwargs: Any) -> None:
         """Print with rich formatting if available.
 
+        A line written here is a message to a person, so it renders in the one
+        style its markup asks for: value highlighting is off unless the caller
+        turns it on. With it on, the console recolours numbers, brackets, paths
+        and quoted words inside the line, and a version, a duration or a
+        parenthesised count comes out split across several colours. Passing a
+        table, panel or other renderable is unaffected — highlighting applies to
+        strings.
+
         The plain branch flushes, because a rich console writes through on every
         call and the built-in ``print`` does not. Without it, an install with no
         rich left the output of a long-running command in the interpreter's
@@ -335,8 +343,10 @@ class CLIInterface:
         """
         console = self._human()
         if console:
+            kwargs.setdefault("highlight", False)
             console.print(*args, **kwargs)
         else:
+            kwargs.pop("highlight", None)
             kwargs.setdefault("flush", True)
             print(*args, file=sys.stderr if self._human_to_stderr else None, **kwargs)
 
@@ -370,7 +380,7 @@ class CLIInterface:
         """Print a header."""
         console = self._human()
         if console:
-            console.print(f"\n[effgen.heading]{text}[/effgen.heading]")
+            console.print(f"\n[effgen.heading]{text}[/effgen.heading]", highlight=False)
         else:
             print(f"\n=== {text} ===", file=sys.stderr if self._human_to_stderr else None,
                   flush=True)
@@ -384,7 +394,7 @@ class CLIInterface:
         console = self._human()
         mark = _glyph("success", self._human_stream())
         if console:
-            console.print(f"[green]{mark}[/green] {text}")
+            console.print(f"[green]{mark}[/green] {text}", highlight=False)
         else:
             print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None,
                   flush=True)
@@ -394,7 +404,7 @@ class CLIInterface:
         console = self._human()
         mark = _glyph("error", self._human_stream())
         if console:
-            console.print(f"[red]{mark}[/red] {text}")
+            console.print(f"[red]{mark}[/red] {text}", highlight=False)
         else:
             print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None,
                   flush=True)
@@ -404,7 +414,7 @@ class CLIInterface:
         console = self._human()
         mark = _glyph("warning", self._human_stream())
         if console:
-            console.print(f"[effgen.warning]{mark}[/effgen.warning] {text}")
+            console.print(f"[effgen.warning]{mark}[/effgen.warning] {text}", highlight=False)
         else:
             print(f"{mark} {text}", file=sys.stderr if self._human_to_stderr else None,
                   flush=True)
@@ -2073,14 +2083,14 @@ def _handle_doctor_command(args) -> int:
 
         if live:
             console.print("\n[bold]Live probe[/bold] — a tiny call confirms the default "
-                          "model is callable (not just that a key is set).")
+                          "model is callable (not just that a key is set).", highlight=False)
             for prov in sorted(live_results):
                 lr = live_results[prov]
                 if not lr.get("ok") and lr.get("detail"):
-                    console.print(f"  [yellow]{prov}[/yellow]: {lr['detail']}")
+                    console.print(f"  [yellow]{prov}[/yellow]: {lr['detail']}", highlight=False)
 
         # System section
-        console.print("\n[bold cyan]System[/bold cyan]")
+        console.print("\n[bold cyan]System[/bold cyan]", highlight=False)
         sys_table = Table(show_header=False)
         sys_table.add_column("Check", style="cyan")
         sys_table.add_column("Value", style="white", overflow="fold")
@@ -2091,7 +2101,7 @@ def _handle_doctor_command(args) -> int:
         # Reliability section — only shown once a provider has actually been
         # routed through circuit-breaker/bulkhead middleware this process.
         if reliability_report:
-            console.print("\n[bold cyan]Reliability[/bold cyan]")
+            console.print("\n[bold cyan]Reliability[/bold cyan]", highlight=False)
             rel_table = Table(show_header=True)
             rel_table.add_column("Provider", style="cyan", no_wrap=True)
             rel_table.add_column("Circuit", style="white")
@@ -2115,9 +2125,9 @@ def _handle_doctor_command(args) -> int:
             console.print(rel_table)
 
         # Coding section — what `effgen code` needs from this machine.
-        console.print("\n[bold cyan]Coding (effgen code)[/bold cyan]")
+        console.print("\n[bold cyan]Coding (effgen code)[/bold cyan]", highlight=False)
         if code_report.get("error"):
-            console.print(f"  [red]The coding checks could not run: {code_report['error']}[/red]")
+            console.print(f"  [red]The coding checks could not run: {code_report['error']}[/red]", highlight=False)
         code_table = Table(show_header=True)
         code_table.add_column("Check", style="cyan", no_wrap=True)
         code_table.add_column("Status", style="white", no_wrap=True)
@@ -2135,18 +2145,18 @@ def _handle_doctor_command(args) -> int:
         console.print(code_table)
         for check in code_report.get("checks", []):
             if check.get("fix"):
-                console.print(f"  [yellow]{check.get('name')}[/yellow]: {check['fix']}")
+                console.print(f"  [yellow]{check.get('name')}[/yellow]: {check['fix']}", highlight=False)
         if code_report.get("ready"):
-            console.print("  Try it: [bold]effgen code \"write fib.py and run it\"[/bold]")
+            console.print("  Try it: [bold]effgen code \"write fib.py and run it\"[/bold]", highlight=False)
 
         # Print hints for missing keys
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
-            console.print("\n[yellow]Missing keys — set in ~/.effgen/.env or export:[/yellow]")
+            console.print("\n[yellow]Missing keys — set in ~/.effgen/.env or export:[/yellow]", highlight=False)
             for prov in missing:
                 keys = results[prov].get("env_keys_checked", [])
                 key_str = " or ".join(keys) if keys else f"{prov.upper()}_API_KEY"
-                console.print(f"  export {key_str}=<your-key>")
+                console.print(f"  export {key_str}=<your-key>", highlight=False)
     else:
         print("effgen doctor — Provider Status")
         print("-" * 50)
@@ -2771,7 +2781,7 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
         if _trace_lines:
             for _style, _text in _trace_lines:
                 if cli.console:
-                    cli.console.print(f"  [{_style}]{_text}[/{_style}]")
+                    cli.console.print(f"  [{_style}]{_text}[/{_style}]", highlight=False)
                 else:
                     cli.print(f"  {_text}")
         else:

@@ -53,10 +53,10 @@ def empty_state(
     from .palette import glyph
 
     arrow = glyph("arrow", stream) or "->"
-    console.print(f"[effgen.heading]{title}[/effgen.heading]")
-    console.print(f"[effgen.muted]{message}[/effgen.muted]")
+    console.print(f"[effgen.heading]{title}[/effgen.heading]", highlight=False)
+    console.print(f"[effgen.muted]{message}[/effgen.muted]", highlight=False)
     for hint in hints:
-        console.print(f"  [effgen.accent]{arrow}[/effgen.accent] {hint}")
+        console.print(f"  [effgen.accent]{arrow}[/effgen.accent] {hint}", highlight=False)
 
 
 def render_table(
