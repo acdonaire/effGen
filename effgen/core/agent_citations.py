@@ -16,6 +16,13 @@ if TYPE_CHECKING:
 class AgentCitationsMixin:
     """Source-mining and citation-assembly methods for :class:`Agent`."""
 
+    # Tool tags / categories whose results carry retrievable evidence we can
+    # turn into AgentResponse sources + inline citations.
+    _RETRIEVAL_TOOL_TAGS = frozenset({
+        "retrieval", "rag", "knowledge-base", "search", "web-search",
+        "wikipedia", "documents", "semantic",
+    })
+
     def _is_retrieval_tool(self, tool: Any, tool_name: str) -> bool:
         """True if a tool's results should be mined for sources/citations."""
         meta = getattr(tool, "metadata", None)
