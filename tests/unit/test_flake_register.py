@@ -1,4 +1,4 @@
-"""The register of tests known to fail for a reason outside the tree stays honest.
+"""The register of tests known to fail for a reason outside the tree stays accurate.
 
 ``tests/flake_register.toml`` is the alternative to re-running a suite until it goes
 green. It only works if an entry cannot be added without saying what happened and who
