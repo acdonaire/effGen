@@ -199,6 +199,9 @@ from effgen.cli.commands.workflow import (  # noqa: F401 - re-export
 )
 from effgen.ui.palette import glyph as _glyph
 
+# JSON written to a stream that cannot encode it is escaped, not transliterated.
+from effgen.ui.render import json_ensure_ascii
+
 # Shared Rich theme + console factory (one palette across the whole CLI).
 # ``console_is_interactive``/``render_table`` are re-exported so callers and
 # tests keep reaching them as ``effgen.cli._main`` attributes.
@@ -2840,7 +2843,7 @@ def _handle_prompts_command(args, cli: "CLIInterface") -> int:
                 }
                 for p in prompts
             ]
-            print(_json.dumps(rows, indent=2, ensure_ascii=False))
+            print(_json.dumps(rows, indent=2, ensure_ascii=json_ensure_ascii()))
             return 0
 
         if fmt == 'markdown':
@@ -3104,7 +3107,7 @@ def _dispatch(args: argparse.Namespace, cli: "CLIInterface", parser: argparse.Ar
                     "tool_count": n_tools,
                     "approx_tokens_per_call": approx,
                 })
-            print(json.dumps(rows, indent=2, ensure_ascii=False))
+            print(json.dumps(rows, indent=2, ensure_ascii=json_ensure_ascii()))
             exit_code = 0
         else:
             cli.print_header("Available Agent Presets")
@@ -3210,8 +3213,42 @@ def _silence_broken_pipe() -> None:
         pass
 
 
+def _fold_output_streams():
+    """Route ``stdout``/``stderr`` through an ASCII fold when they need one.
+
+    A console forced to a non-UTF-8 encoding cannot write the em-dashes, table
+    rules and glyphs the listing and summary commands print, and the failed
+    write turns a command that did its work into one that exits non-zero. This
+    substitutes ASCII stand-ins at the single point where text becomes bytes,
+    so every command -- including one added later -- reports its real status.
+
+    A stream that can already encode those characters is left exactly as it is,
+    so a normal terminal receives the same bytes as before. Returns a callable
+    that puts the original streams back.
+    """
+    from effgen.ui.render import ascii_folding_stream
+
+    original_stdout, original_stderr = sys.stdout, sys.stderr
+    sys.stdout = ascii_folding_stream(sys.stdout)
+    sys.stderr = ascii_folding_stream(sys.stderr)
+
+    def restore() -> None:
+        sys.stdout, sys.stderr = original_stdout, original_stderr
+
+    return restore
+
+
 def main() -> None:
     """Main entry point for CLI."""
+    restore_streams = _fold_output_streams()
+    try:
+        _run_cli()
+    finally:
+        restore_streams()
+
+
+def _run_cli() -> None:
+    """Parse the command line and dispatch to the selected command."""
     # Load .env early so all subcommands see API keys (see load_env_files).
     load_env_files()
 

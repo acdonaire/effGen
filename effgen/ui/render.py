@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import html as _html
 import re
+import unicodedata
 from typing import Any
 
-from .palette import glyph, supports_unicode
+from .palette import GLYPHS, GLYPHS_ASCII, glyph, supports_unicode
 from .theme import CODE_THEME, color_enabled, get_console, rich_available
 
 # Typographic characters the CLI prints in its own chrome (metric separators,
@@ -43,6 +44,154 @@ def ascii_fold(text: str, stream: Any = None) -> str:
     if not text or supports_unicode(stream):
         return text
     return "".join(_TYPO_ASCII.get(ch, ch) for ch in text)
+
+
+# Every semantic glyph paired with the ASCII stand-in already chosen for it, so
+# a stream-level fold substitutes exactly what ``palette.glyph`` would have.
+_GLYPH_ASCII: dict[str, str] = {GLYPHS[name]: GLYPHS_ASCII.get(name, "") for name in GLYPHS}
+
+# Characters that reach the stream from prose rather than from the CLI's own
+# chrome: mathematical relations in a prompt template's constraint text, an en
+# dash in a description, units in a metrics line.
+_PROSE_ASCII: dict[str, str] = {
+    "–": "-",
+    "≤": "<=",
+    "≥": ">=",
+    "≈": "~",
+    "±": "+/-",
+    "×": "x",
+    "°": "",
+    "§": "S",
+    "∈": " in ",
+    "↑": "^",
+    "↓": "v",
+    "↔": "<->",
+    "▶": ">",
+    "️": "",  # variation selector: carries no width of its own
+}
+
+# What :func:`fold_for_encoding` substitutes before falling back to a rule:
+# the CLI's typography, its glyph table, and the prose characters above.
+_STREAM_ASCII: dict[str, str] = {**_GLYPH_ASCII, **_PROSE_ASCII, **_TYPO_ASCII}
+
+
+def _ascii_stand_in(ch: str) -> str:
+    """An ASCII substitute for a character with no entry in the table.
+
+    Box drawing and block elements are the shapes a table or a bar is made of,
+    so they keep their orientation (``-``, ``|``, ``+``, ``#``). A pictograph
+    carries decoration rather than content and is dropped. Anything else is
+    decomposed if that yields ASCII (``é`` -> ``e``) and otherwise replaced.
+    """
+    if "─" <= ch <= "╿":  # box drawing
+        name = unicodedata.name(ch, "")
+        vertical, horizontal = "VERTICAL" in name, "HORIZONTAL" in name
+        if vertical and not horizontal:
+            return "|"
+        if horizontal and not vertical:
+            return "-"
+        return "+"
+    if "▀" <= ch <= "▟":  # block elements (bars, the logo banner)
+        return "#"
+    if "⠀" <= ch <= "⣿":  # braille cells (spinner frames)
+        return "*"
+    if unicodedata.category(ch) == "So":  # pictographs and emoji
+        return ""
+    decomposed = unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode()
+    return decomposed or "?"
+
+
+def fold_for_encoding(text: str, encoding: str) -> str:
+    """Return *text* rewritten so *encoding* can encode every character.
+
+    Known typography and glyphs become their ASCII stand-ins; anything left that
+    the codec still cannot represent is substituted rather than allowed to
+    raise. ASCII text is returned unchanged.
+    """
+    if text.isascii():
+        return text
+    folded = "".join(_STREAM_ASCII.get(ch, ch) for ch in text)
+    try:
+        folded.encode(encoding)
+    except UnicodeEncodeError:
+        folded = "".join(
+            ch if _encodable(ch, encoding) else _ascii_stand_in(ch) for ch in folded
+        )
+    except LookupError:
+        return folded.encode("ascii", "replace").decode("ascii")
+    return folded
+
+
+def _encodable(ch: str, encoding: str) -> bool:
+    try:
+        ch.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
+class _AsciiFoldingStream:
+    """Text-stream proxy that folds what the wrapped stream cannot encode.
+
+    A terminal forced to a hard-ascii encoding (``PYTHONIOENCODING=ascii``)
+    raises ``UnicodeEncodeError`` on the first em-dash or box character, which
+    turns a listing command into a failed one. Wrapping the stream moves the
+    substitution to the single point where text becomes bytes, so a command --
+    including one added later, and including output produced by a library the
+    CLI does not control -- prints a readable ASCII form and still exits with
+    its real status. Every other stream operation is the wrapped stream's.
+    """
+
+    __slots__ = ("_stream",)
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+
+    @property
+    def wrapped(self) -> Any:
+        """The stream this proxy writes through."""
+        return self._stream
+
+    def write(self, text: Any) -> Any:
+        if not isinstance(text, str) or not text:
+            return self._stream.write(text)
+        encoding = getattr(self._stream, "encoding", None) or "ascii"
+        return self._stream.write(fold_for_encoding(text, encoding))
+
+    def writelines(self, lines: Any) -> None:
+        for line in lines:
+            self.write(line)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+    def __iter__(self) -> Any:
+        return iter(self._stream)
+
+
+def ascii_folding_stream(stream: Any) -> Any:
+    """Return *stream* itself when it can encode the CLI's glyphs, else a proxy.
+
+    On a UTF-8 terminal the caller keeps the identical stream object, so the
+    bytes a normal terminal receives are unchanged.
+    """
+    if stream is None or isinstance(stream, _AsciiFoldingStream):
+        return stream
+    if supports_unicode(stream):
+        return stream
+    return _AsciiFoldingStream(stream)
+
+
+def json_ensure_ascii(stream: Any = None) -> bool:
+    """Whether JSON written to *stream* has to escape its non-ASCII characters.
+
+    ``--json`` output stays raw UTF-8 wherever the stream can carry it. When it
+    cannot, the payload is emitted with ``\\uXXXX`` escapes: still valid JSON
+    decoding to the same value, rather than a transliterated or dropped
+    character on a machine-readable path.
+    """
+    return not supports_unicode(stream)
+
 
 # ---------------------------------------------------------------------------
 # Small shared helpers
