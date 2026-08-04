@@ -161,6 +161,19 @@ Three tiers:
 
 - `client.py`: `EffGenClient` — sync/async with retries, streaming, typed exceptions
 
+### CLI (`effgen/cli/`)
+
+- `_main.py`: argument parsing, the `_dispatch` routing table, the `effgen` /
+  `effgen-agent` / `effgen-web` entry points, and `CLIInterface`. It re-exports
+  every command's handler, so `effgen.cli._main` stays the one import path
+- `commands/`: one module per command — the body of `run`, `chat`, `serve`,
+  `doctor`, `quickstart`, `prompts`, `batch`, `eval`, `compare` and the rest
+- `parsers/`: each command's `add_argument` declarations, grouped by family
+  (`agent`, `catalog`, `history`, `jobs`, `ops`) and assembled by `create_parser`
+- `_console.py`: `CLIConsoleMixin` — the print/render methods `CLIInterface` uses
+- `_logging.py`: `--verbose`/`--quiet`/`--log-file` level policy
+- `code/`: the `effgen code` session — REPL, engine, permissions, rendering
+
 ### Prompts (`effgen/prompts/`)
 
 - `TemplateManager`: Prompt template management
