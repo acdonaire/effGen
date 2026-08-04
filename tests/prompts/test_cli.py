@@ -90,9 +90,9 @@ class TestPromptsShowCLI:
         # default ellipsis truncation.
         import inspect
 
-        from effgen.cli import _main
+        from effgen.cli.commands import prompts as prompts_command
 
-        src = inspect.getsource(_main)
+        src = inspect.getsource(prompts_command)
         assert 'add_column("Name", style="effgen.model", overflow="fold")' in src
 
 
