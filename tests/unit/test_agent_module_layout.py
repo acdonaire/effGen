@@ -25,6 +25,25 @@ import effgen.core.agent_result as agent_result
 import effgen.core.agent_runtime as agent_runtime
 from effgen.core.agent import Agent
 
+
+class _EmptyClassBody:
+    """A class body that declares nothing, used to read what the interpreter adds."""
+
+
+#: Attributes the interpreter itself puts on every class body, which therefore
+#: appear on every class in a MRO and are not definitions anyone wrote. Read off
+#: an empty class rather than listed, so an interpreter that stamps a new one —
+#: 3.13 added ``__firstlineno__`` and ``__static_attributes__`` — does not read
+#: as a name defined twice. The explicit names cover slots a class only carries
+#: when it does not inherit them.
+INTERPRETER_CLASS_ATTRIBUTES = frozenset(vars(_EmptyClassBody)) | {
+    "__module__",
+    "__doc__",
+    "__dict__",
+    "__weakref__",
+    "__qualname__",
+}
+
 # Members that moved out of the agent module, and the module that owns each.
 OWNERS = {
     # run entry points and everything wrapped around a single run
@@ -135,13 +154,12 @@ def test_every_agent_attribute_is_defined_once_across_the_mro() -> None:
     order, so a split that duplicates one is rejected here rather than in a
     behaviour test that happens to notice.
     """
-    plumbing = {"__module__", "__doc__", "__dict__", "__weakref__", "__qualname__"}
     seen: dict[str, list[str]] = {}
     for cls in Agent.__mro__:
         if cls is object:
             continue
         for name in vars(cls):
-            if name in plumbing:
+            if name in INTERPRETER_CLASS_ATTRIBUTES:
                 continue
             seen.setdefault(name, []).append(f"{cls.__module__}.{cls.__name__}")
     duplicates = {n: where for n, where in seen.items() if len(where) > 1}
