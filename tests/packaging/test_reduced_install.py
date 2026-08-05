@@ -319,6 +319,57 @@ for label, get in (
 
 
 @pytest.mark.parametrize(
+    "module",
+    [
+        "effgen.models.transformers_engine_loading",
+        "effgen.models.transformers_engine_placement",
+        "effgen.models.transformers_engine_sampling",
+        "effgen.models.transformers_engine_generation",
+    ],
+)
+def test_importing_an_engine_submodule_without_torch_names_the_fix(tmp_path, module):
+    """A submodule imported on its own reports the missing package the same way.
+
+    The engine spans several modules. Someone who opens the one holding the code
+    they care about and imports it directly must get the message naming what to
+    install, not ``No module named 'torch'`` raised from deeper down.
+    """
+    out = _probe(tmp_path, "torch", f'''
+try:
+    __import__({module!r}, fromlist=["x"])
+    print("OK")
+except Exception as exc:
+    print(type(exc).__name__, "|", str(exc).replace("\\n", " "))
+''')
+    assert "ImportError" in out
+    assert "No module named" not in out
+    assert "local 'transformers' engine" in out
+    assert "pip install torch" in out
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "effgen.models.transformers_engine_support",
+        "effgen.models.transformers_engine_streaming",
+    ],
+)
+def test_engine_submodules_that_need_no_torch_import_without_it(tmp_path, module):
+    """Neither module touches torch or transformers at module scope, so both load.
+
+    Guarding them would report a missing package they never reach for.
+    """
+    out = _probe(tmp_path, "torch", f'''
+try:
+    __import__({module!r}, fromlist=["x"])
+    print("OK")
+except Exception as exc:
+    print(type(exc).__name__, "|", str(exc).replace("\\n", " "))
+''')
+    assert out.strip().splitlines()[-1] == "OK", out
+
+
+@pytest.mark.parametrize(
     "helper",
     ["print", "print_line", "print_header", "print_success", "print_warning", "print_error"],
 )
