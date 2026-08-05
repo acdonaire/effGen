@@ -15,7 +15,6 @@
 
 <!-- ── Community ────────────────────────────────────────── -->
 <a href="https://pepy.tech/project/effgen"><img src="https://img.shields.io/pepy/dt/effgen?style=for-the-badge&logo=pypi&logoColor=white&color=brightgreen&label=Downloads" alt="Total Downloads"/></a>
-<a href="https://pypi.org/project/effgen/"><img src="https://img.shields.io/pypi/dm/effgen.svg?style=for-the-badge&logo=pypi&logoColor=white&color=orange&label=Monthly" alt="Monthly Downloads"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/stargazers"><img src="https://img.shields.io/github/stars/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=yellow" alt="Stars"/></a>
 <a href="https://github.com/ctrl-gaurav/effGen/fork"><img src="https://img.shields.io/github/forks/ctrl-gaurav/effGen?style=for-the-badge&logo=github&color=blue" alt="Forks"/></a>
 
