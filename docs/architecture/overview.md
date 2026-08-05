@@ -55,7 +55,7 @@ Abstraction over multiple LLM backends:
 
 | Backend | File | Use Case |
 |---------|------|----------|
-| `TransformersEngine` | `transformers_engine.py` | Local GPU inference (default) |
+| `TransformersEngine` | `transformers_engine.py` (+ siblings) | Local GPU inference (default) |
 | `VLLMEngine` | `vllm_engine.py` | High-throughput serving |
 | `OpenAIAdapter` | `openai_adapter.py` | OpenAI API models |
 | `AnthropicAdapter` | `anthropic_adapter.py` | Claude models |
@@ -81,6 +81,23 @@ Additional model infrastructure:
 - `pool.py`: `ModelPool` — LRU eviction, GPU memory management, hot-swap
 - `lazy.py`: `LazyModel` — deferred loading until first use
 - `batching.py`: `ContinuousBatcher` — coalesces concurrent requests
+
+The two largest of these are each composed from siblings, so
+`effgen.models.transformers_engine` and `effgen.models.model_loader` stay the one
+import path for everything they publish:
+
+- `transformers_engine.py` holds the engine class, its constructor and its
+  capability reports, and composes it from `transformers_engine_support` (cache
+  and offline detection, special-token stripping), `_placement` (device maps and
+  CUDA-fault recovery), `_sampling` (generation config and chat templates),
+  `_loading` (weights, quantization, teardown), `_generation` (`generate` and
+  `generate_batch`) and `_streaming` (`generate_stream`)
+- `model_loader.py` holds `ModelLoader`, its model tables and the `load_model()`
+  function, and composes the class from `model_loader_routing` (model-id and
+  prefix resolution), `_cloud` (provider adapters), `_local` (local engines) and
+  `_capacity` (VRAM, quantization and tensor-parallel choices). Every adapter and
+  engine import stays inside the function that constructs it, which is what keeps
+  `from effgen import Agent` free of torch
 
 ### Tools (`effgen/tools/`)
 
