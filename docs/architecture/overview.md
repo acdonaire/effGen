@@ -172,7 +172,10 @@ Three tiers:
   (`agent`, `catalog`, `history`, `jobs`, `ops`) and assembled by `create_parser`
 - `_console.py`: `CLIConsoleMixin` — the print/render methods `CLIInterface` uses
 - `_logging.py`: `--verbose`/`--quiet`/`--log-file` level policy
-- `code/`: the `effgen code` session — REPL, engine, permissions, rendering
+- `code/`: the `effgen code` session — REPL, engine, permissions, rendering.
+  `code/repl.py` holds the session and composes `CodeREPL` from four siblings —
+  `repl_commands` (the slash-command table and dispatcher), `repl_session`,
+  `repl_turn` and `repl_view` — so `effgen.cli.code.repl` stays the one import path
 
 ### Prompts (`effgen/prompts/`)
 

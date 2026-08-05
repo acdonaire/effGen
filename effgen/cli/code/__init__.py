@@ -28,7 +28,17 @@ The pieces:
 - :mod:`~effgen.cli.code.render` — the terminal rendering both surfaces share:
   a diff, a decided action, a run footer, and the verbatim line printer.
 - :mod:`~effgen.cli.code.repl` — the interactive session (:class:`CodeREPL`) a
-  terminal with no task opens, with its slash commands.
+  terminal with no task opens, with its slash commands. The session is composed
+  from four sibling modules, and stays the import path for every name they
+  define:
+
+  - :mod:`~effgen.cli.code.repl_commands` — the slash-command table, the
+    dispatcher, and the commands that change the working set.
+  - :mod:`~effgen.cli.code.repl_session` — the commands that retune, inspect or
+    persist the session.
+  - :mod:`~effgen.cli.code.repl_turn` — one turn, from the composed task to the
+    notes printed after it.
+  - :mod:`~effgen.cli.code.repl_view` — what the session prints around a turn.
 
 The command handler lives in :mod:`effgen.cli.commands.code`.
 """
