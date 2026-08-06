@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="effGen - Build powerful AI agents with Small Language Models. Production-ready framework with vLLM support, multi-agent orchestration, and more." />
+    <meta name="keywords" content="AI agents, Small Language Models, SLM, vLLM, LLM framework, multi-agent, Python" />
+    <meta name="author" content="effGen" />
+    <meta property="og:title" content="effGen Documentation" />
+    <meta property="og:description" content="Build powerful AI agents with Small Language Models" />
+    <meta property="og:type" content="website" />
+    <title>effGen Documentation</title>
+    <script>
+      // Set dark theme immediately to prevent flash
+      if (!localStorage.getItem('effgen-docs-theme')) {
+        localStorage.setItem('effgen-docs-theme', 'dark');
+      }
+      document.documentElement.setAttribute('data-theme', localStorage.getItem('effgen-docs-theme') || 'dark');
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
