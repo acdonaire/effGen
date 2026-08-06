@@ -1,0 +1,118 @@
+name: Website
+
+# Builds the marketing site and the documentation SPA and publishes both to
+# GitHub Pages:
+#
+#   https://ctrl-gaurav.github.io/effGen/        the landing site (Next.js)
+#   https://ctrl-gaurav.github.io/effGen/docs/   the documentation (Vite + React)
+#
+# The docs bundle is built first, into the landing site's public/docs directory,
+# so a single static export carries both.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# A project page is served under /<repo>, so both bundles are built with that
+# prefix. Change these together if the repository is ever renamed.
+env:
+  BASE_PATH: /effGen
+  DOCS_BASE_PATH: /effGen/docs/
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a queued run supersedes a waiting one but never
+# cancels a publish already in flight.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site + docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            website/package-lock.json
+            website/effgen-docs/package-lock.json
+
+      - name: Install landing-site dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Install documentation dependencies
+        working-directory: website/effgen-docs
+        run: npm ci
+
+      - name: Build the documentation into the landing site's public/docs
+        working-directory: website/effgen-docs
+        env:
+          DOCS_BASE_PATH: ${{ env.DOCS_BASE_PATH }}
+        run: npm run build
+
+      - name: Build the landing site
+        working-directory: website
+        env:
+          NEXT_STATIC_EXPORT: "1"
+          NEXT_PUBLIC_BASE_PATH: ${{ env.BASE_PATH }}
+        run: npx next build
+
+      - name: Give every documentation route a file to be served from
+        working-directory: website
+        run: |
+          # The docs are a single-page app: the browser routes /docs/agents
+          # client-side, but a static host has to answer that URL with something
+          # first. The routes are read from the app itself, so a page added
+          # there is picked up here without this list going stale.
+          routes=$(grep -oE '<Route path="[^"]+"' effgen-docs/src/App.tsx \
+                   | sed 's/.*path="//; s/"//' | grep -vE '^/?$' | sort -u)
+          count=0
+          for route in $routes; do
+            mkdir -p "out/docs/$route"
+            cp out/docs/index.html "out/docs/$route/index.html"
+            count=$((count + 1))
+          done
+          echo "materialised $count documentation routes"
+          test "$count" -gt 0 || { echo "no routes found — the app's shape changed"; exit 1; }
+
+      - name: Check both entry points made it into the export
+        working-directory: website
+        run: |
+          test -f out/index.html || { echo "landing page missing from the export"; exit 1; }
+          test -f out/docs/index.html || { echo "documentation missing from the export"; exit 1; }
+          test -f out/docs/introduction/index.html || { echo "documentation routes missing"; exit 1; }
+          # Pages serves this tree as-is: Jekyll must not reprocess it, or every
+          # asset directory Next names with a leading underscore is dropped.
+          touch out/.nojekyll
+          echo "landing:" && ls out | head -20
+          echo "docs:" && ls out/docs | head -10
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/out
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
