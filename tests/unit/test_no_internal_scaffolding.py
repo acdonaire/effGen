@@ -107,7 +107,11 @@ _SOURCE_NAME_PREFIXES = ("Dockerfile.",)
 # gitignored and never shipped. Bundled datasets need no directory rule — their
 # payload files are ``.txt``/``.json``/``.jsonl``, already out of scope by
 # suffix, while the scripts that fetch them are ordinary authored source.
-_SKIP_DIR_PREFIXES = ("build_plan/",)
+# ``website/`` holds the marketing site and its documentation app, kept as a
+# mirror of the site they are published from so an update there is a straight
+# copy. They are page copy rather than shipped library text, and rewording them
+# to satisfy this gate would put the repository and the live site out of step.
+_SKIP_DIR_PREFIXES = ("build_plan/", "website/")
 
 # This gate embeds every forbidden pattern as a literal, so it cannot scan
 # itself without self-tripping.

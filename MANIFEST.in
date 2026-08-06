@@ -22,6 +22,9 @@ prune build_plan
 prune node_modules
 prune tools
 prune .github
+# The marketing site and its documentation app are published to GitHub Pages
+# from this repository; they are not part of the Python source distribution.
+prune website
 
 # Never ship build/test/cache artifacts or local secrets.
 global-exclude *.py[cod]
