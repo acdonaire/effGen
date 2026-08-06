@@ -156,6 +156,28 @@ Three tiers:
 - `session.py`: `Session`, `SessionManager` — persistent conversations
 - `human_loop.py`: `HumanApproval`, `HumanInput`, `HumanChoice`
 - `batch.py`: `BatchRunner` — concurrent batch execution
+- `execution_tracker.py`: `ExecutionTracker` — the run's event stream, the
+  execution tree built from it, and the trace behind `run --explain` and chat's
+  `/trace`. It holds the class, its constructor and its `__repr__`, and composes
+  it from `execution_tracker_state` (event intake, parent links, the tree, live
+  status), `_metrics` (summary, performance metrics, bottlenecks, critical path)
+  and `_render` (display formatting and JSON/CSV/HTML export); the event types
+  and the three dataclasses live in `execution_tracker_events`
+
+### Observability (`effgen/observability/`)
+
+- `tracing.py`: the OTel span layer — the `start_*` context managers every hot
+  path opens, and the in-memory span stream the dashboard reads. It stays the one
+  import path for all of it and composes the implementation from `tracing_otel`
+  (the single optional-SDK import), `tracing_samplers` (the five samplers),
+  `tracing_provider` (the `TracerProvider` lifecycle and the no-op tracer),
+  `tracing_buffer` (the span ring buffer and the run/execution context vars) and
+  `tracing_spans` (span construction and the outcome helpers). Not to be confused
+  with `spans.py`, which declares the span- and attribute-name constants
+- `metrics.py`, `logs.py`, `slo.py`, `alerts.py`: Prometheus series, structured
+  logging with secret redaction, SLO tracking and alert delivery
+- `topology.py`, `run_log.py`: the live multi-agent graph and the run history the
+  dashboard reads, both built from the span stream
 
 ### Hardware (`effgen/hardware/`)
 
