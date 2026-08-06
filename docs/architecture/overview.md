@@ -215,6 +215,22 @@ Three tiers:
   `code/repl.py` holds the session and composes `CodeREPL` from four siblings —
   `repl_commands` (the slash-command table and dispatcher), `repl_session`,
   `repl_turn` and `repl_view` — so `effgen.cli.code.repl` stays the one import path
+- `chat.py`: the `effgen chat` session. It holds what the session is — the
+  constructor, the agent it builds and rebuilds, readline and the loop — and
+  composes `ChatREPL` from four siblings: `chat_commands` (the slash-command
+  table, the dispatcher, and the commands that report or reset state),
+  `chat_session` (`/model`, `/save`, `/load`, `/session`, and the history
+  directory `effgen code` shares), `chat_turn` (the streamed and tool-bearing
+  answer paths) and `chat_view` (banner, prompt, answer surface, footer), so
+  `effgen.cli.chat` stays the one import path. Not to be confused with
+  `commands/chat.py`, which validates `--provider` and launches this
+- `monitor.py`: `effgen top` / `effgen monitor`. It holds the command body and the
+  interval bounds it validates, and composes the rest from `monitor_collect` (the
+  five sources, read into one snapshot document), `monitor_format` (the scope
+  labels and the value formatters both rendering paths share), `monitor_panels`
+  (the static labelled tables a pipe or `--once` gets) and `monitor_live` (the
+  full-screen layout and the refresh loop), so `effgen.cli.monitor` stays the one
+  import path
 
 ### Prompts (`effgen/prompts/`)
 

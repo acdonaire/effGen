@@ -57,15 +57,13 @@ class CrossEncoderReranker(Reranker):
             return None
         if self._model is None:
             try:
-                from sentence_transformers import CrossEncoder  # type: ignore
+                from effgen.utils.embedding_backend import import_sentence_transformers
 
-                self._model = CrossEncoder(self.model_name)
+                (cross_encoder,) = import_sentence_transformers("CrossEncoder")
+                self._model = cross_encoder(self.model_name)
                 self._available = True
-            except ImportError:
-                logger.warning(
-                    "sentence-transformers not installed; CrossEncoderReranker "
-                    "is a pass-through. Install with: pip install sentence-transformers"
-                )
+            except ImportError as exc:
+                logger.warning("%s CrossEncoderReranker is a pass-through.", exc)
                 self._available = False
                 return None
         return self._model

@@ -333,18 +333,17 @@ def _score_semantic_similarity(expected: str, actual: str) -> tuple[float, bool]
     """Score via sentence-transformers cosine similarity (optional dep).
 
     Returns ``(score, used_fallback)``. ``used_fallback`` is True when
-    sentence-transformers is not installed and the score was computed with
+    sentence-transformers is unavailable and the score was computed with
     the ``contains`` heuristic instead — the caller records this so a result
     scored this way is distinguishable from a real similarity score.
     """
     try:
-        from sentence_transformers import util as st_util
+        from effgen.utils.embedding_backend import import_sentence_transformers
 
+        (st_util,) = import_sentence_transformers("util")
         model = _get_semantic_model()
-    except ImportError:
-        logger.warning(
-            "sentence-transformers not installed — falling back to contains scoring"
-        )
+    except ImportError as exc:
+        logger.warning("%s Falling back to contains scoring.", exc)
         return _score_contains(expected, actual), True
     emb = model.encode([expected, actual], convert_to_tensor=True)
     sim = float(st_util.cos_sim(emb[0], emb[1])[0][0])
