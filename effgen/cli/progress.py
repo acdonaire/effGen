@@ -490,6 +490,16 @@ def stream_answer(
 
     The returned text is the concatenation of the streamed tokens (unstripped),
     so the caller can persist the turn or stamp a summary.
+
+    Args:
+        console: The console the answer is drawn on.
+        token_iter: The tokens to render as they arrive.
+        animate: Use the live-rendering presentation.
+        interactive: Whether the surface is an interactive terminal.
+        quiet: Write raw tokens with no decoration.
+        label: A label printed on its own line before the answer.
+        render_plain: Collect the tokens and render once at the end.
+        trailing_newline: Write a newline after the raw-token path.
     """
     it = iter(token_iter)
     collected: list[str] = []
@@ -606,6 +616,14 @@ def format_tool_call(name: str, tool_input: Any, limit: int = 72) -> str:
     is shown as compact ``key="value"`` pairs. Anything else is shown as a
     single truncated argument. The parentheses always close — a call trimmed to
     fit ends in ``…)`` rather than a dangling ``,`` or an unbalanced brace.
+
+    Args:
+        name: The tool that was called.
+        tool_input: The call arguments, as a dict or a JSON string.
+        limit: Most characters the rendered line may take.
+
+    Returns:
+        The one-line rendering, always with balanced parentheses.
     """
     args: Any = tool_input
     if isinstance(args, str):

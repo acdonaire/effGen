@@ -368,6 +368,14 @@ def collect_snapshot(
     describing the window and process it measures, and an ``available`` flag
     with an ``unavailable_reason`` when its source could not be read. Pass a
     previously collected *gpu* panel to reuse it instead of re-sampling.
+
+    Args:
+        url: Base URL of the server to read, when one is running.
+        port: Port on localhost to read, used when *url* is absent.
+        api_key: Credential for the server's authenticated routes.
+        limit: Most activity rows to collect.
+        interval: The refresh interval reported in each panel's scope.
+        gpu: A previously collected GPU panel to reuse instead of re-sampling.
     """
     server_url = resolve_server_url(url, port)
     key = resolve_api_key(api_key)

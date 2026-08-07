@@ -32,6 +32,11 @@ def filter_incompatible_tools(
     Returns ``(kept_tools, skipped)`` where *skipped* is a list of
     ``(tool_name, reason)``. If *warn* is callable it is invoked once per
     skipped tool with a friendly one-line note.
+
+    Args:
+        tools: The tools the command wants to attach.
+        model_id: The model the tools would run against.
+        warn: Called once per dropped tool with a one-line note.
     """
     model_id = model_id or ""
     is_anthropic_model = model_id.startswith("claude") or "anthropic" in model_id.lower()

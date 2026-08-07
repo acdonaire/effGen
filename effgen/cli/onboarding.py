@@ -151,6 +151,11 @@ def maybe_print_tip(*, quiet: bool = False, force: bool = False, stream: Any = N
     terminal (not ``--quiet``/CI/piped), honors ``EFFGEN_TIPS=0``, rotates
     through :data:`TIPS` without repeating, and only fires on roughly every
     third eligible invocation (use *force* to bypass the throttle in tests).
+
+    Args:
+        quiet: Suppress the tip, for a command run with ``--quiet``.
+        force: Print regardless of the throttle, used in tests.
+        stream: The stream the tip is written to.
     """
     if not tips_enabled(quiet=quiet):
         return False
@@ -282,7 +287,14 @@ def maybe_show_first_run_welcome(*, quiet: bool = False, stream: Any = None) -> 
 # ---------------------------------------------------------------------------
 
 def suggest(name: str, candidates: Iterable[str], *, n: int = 1, cutoff: float = 0.6) -> list[str]:
-    """Return up to *n* candidates closest to *name* (case-insensitive)."""
+    """Return up to *n* candidates closest to *name* (case-insensitive).
+
+    Args:
+        name: The name that was not recognized.
+        candidates: The names it could have been.
+        n: Most suggestions to return.
+        cutoff: Least similarity a candidate must reach.
+    """
     if not name or not candidates:
         return []
     pool = list(candidates)
@@ -309,7 +321,17 @@ def suggest(name: str, candidates: Iterable[str], *, n: int = 1, cutoff: float =
 
 
 def did_you_mean(name: str, candidates: Iterable[str], *, n: int = 1, cutoff: float = 0.6) -> str:
-    """Format a "Did you mean 'x'?" clause, or ``""`` if nothing is close."""
+    """Format a "Did you mean 'x'?" clause, or ``""`` if nothing is close.
+
+    Args:
+        name: The name that was not recognized.
+        candidates: The names it could have been.
+        n: Most suggestions to name in the clause.
+        cutoff: Least similarity a candidate must reach.
+
+    Returns:
+        The clause to append to an error, or ``""`` when nothing is close.
+    """
     matches = suggest(name, candidates, n=n, cutoff=cutoff)
     if not matches:
         return ""
@@ -332,6 +354,14 @@ def teach(cause: str, fix: str | None = None, doc: str | None = None) -> str:
         <cause>
           Fix: <fix>
           Docs: <doc>
+
+    Args:
+        cause: What went wrong, in one line.
+        fix: The next step that resolves it.
+        doc: A documentation pointer for the reader who wants more.
+
+    Returns:
+        The formatted block, ready to print.
     """
     lines = [cause.rstrip()]
     if fix:

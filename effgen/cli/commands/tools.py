@@ -124,7 +124,16 @@ def tools_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
 
 
 def example_input(cli: "CLIInterface", metadata: Any, tool: Any = None) -> dict:
-    """Build a runnable example input for a tool from its metadata."""
+    """Build a runnable example input for a tool from its metadata.
+
+    Args:
+        cli: The interface used to resolve display settings.
+        metadata: The tool's metadata, whose schema the example is built from.
+        tool: The tool instance, when one is available for better defaults.
+
+    Returns:
+        Example arguments the tool would accept.
+    """
     # Prefer a curated example (drop the illustrative 'output' field).
     for ex in metadata.examples or []:
         if isinstance(ex, dict):
@@ -158,7 +167,13 @@ def example_input(cli: "CLIInterface", metadata: Any, tool: Any = None) -> dict:
 
 
 def print_tool_usage(cli: "CLIInterface", metadata: Any, tool: Any = None) -> None:
-    """Print a tool's input schema and a copy-paste runnable example."""
+    """Print a tool's input schema and a copy-paste runnable example.
+
+    Args:
+        cli: The interface the lines are written through.
+        metadata: The tool's metadata, whose schema is printed.
+        tool: The tool instance, when one is available for better defaults.
+    """
     cli.print("\n[bold]Input schema:[/bold]" if cli.console else "\nInput schema:")
     schema = metadata.to_json_schema()
     if cli.console:

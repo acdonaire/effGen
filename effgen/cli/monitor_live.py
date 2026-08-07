@@ -362,7 +362,20 @@ def run_live(
     interval: float,
     count: int | None = None,
 ) -> int:
-    """Refresh the full-screen view in place until a quit key, Ctrl-C, or *count* refreshes."""
+    """Refresh the full-screen view in place until a quit key, Ctrl-C, or *count* refreshes.
+
+    Args:
+        console: The console the view is drawn on.
+        url: Base URL of the server to read, when one is running.
+        port: Port on localhost to read, used when *url* is absent.
+        api_key: Credential for the server's authenticated routes.
+        limit: Most activity rows to show.
+        interval: Seconds between refreshes.
+        count: Stop after this many refreshes instead of running until quit.
+
+    Returns:
+        The process exit code.
+    """
     from rich.live import Live
 
     gpu_panel: dict[str, Any] | None = None

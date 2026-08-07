@@ -142,6 +142,12 @@ def run(
     *dispatch* is :func:`effgen.cli._main._dispatch`; the landing calls it so a
     quick action reaches the exact handler the typed command would. Returns the
     dispatched command's exit code (or 0 for help/exit).
+
+    Args:
+        cli: The CLI interface the landing draws on.
+        parser: The argument parser a chosen action is re-parsed with.
+        args: The parsed arguments of the bare invocation.
+        dispatch: The command dispatcher a chosen action is routed to.
     """
     console = cli.console
 

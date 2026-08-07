@@ -407,6 +407,13 @@ def cmd_run(
     Returns non-zero when the model produces no usable text (an empty answer or
     a budget-exhausted/truncated reasoning result), so a scripted caller can
     tell an empty billed result from a good one.
+
+    Args:
+        name: The library prompt to render.
+        inputs: Values for the prompt's declared inputs.
+        model: The model id to call.
+        max_tokens: Output cap for the call.
+        temperature: Sampling temperature for the call.
     """
     try:
         p, _resolved_name = _resolve_prompt(name)
