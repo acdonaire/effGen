@@ -76,6 +76,49 @@ flake8 effgen/
 mypy effgen/ --ignore-missing-imports
 ```
 
+### Type hints and the static-check ratchet
+
+effGen ships `effgen/py.typed`, so every user's type checker checks their code
+against our annotations. Two rules follow from that:
+
+1. **Every public signature is fully annotated.** A non-underscore `def` in a
+   public module — dunders included, since the language calls them — annotates
+   each parameter and its return type. An unannotated one silently becomes
+   `Any` in a user's type check. `tests/unit/test_public_signature_hints.py`
+   enforces it at zero tolerance, which is what stops a new module arriving
+   with an untyped public surface: mypy is configured with
+   `disallow_untyped_defs = false`, so it reports nothing at all for one.
+
+2. **The recorded mypy result may improve, never regress.** This is the second,
+   separate gate: it holds the errors mypy *does* report, so annotations that
+   disagree with the code cannot accumulate. The configuration is permissive and
+   the package does not type-check clean, so instead of a gate that would have
+   to be switched off, the *recorded* result is gated:
+
+   ```bash
+   python scripts/mypy_ratchet.py            # gate: exit 1 if it got worse
+   python scripts/mypy_ratchet.py --update   # re-record after an improvement
+   ```
+
+   `scripts/mypy_baseline.json` holds every error's identity — its file, error
+   code and message, with the line and column dropped so moving code around does
+   not read as a new problem — together with how often each occurs. A new
+   identity, a recorded one occurring more often, or a higher total fails the
+   build. Because a different mypy reports a different set, `requirements-dev.txt`
+   pins the version exactly and the ratchet refuses to compare across versions;
+   bumping the pin means re-recording the baseline in the same change.
+
+### The linter's target version tracks the supported Python floor
+
+`[tool.ruff] target-version` in `pyproject.toml` equals the `requires-python`
+floor, currently 3.10. Several pyupgrade rules are gated behind the target and
+rewrite code that the floor cannot run — `UP017` (`datetime.UTC`), `UP041` (the
+bare `TimeoutError` alias) and `UP042` (`enum.StrEnum`) need 3.11, and `UP047`
+(PEP 695 type parameters) needs 3.12. They are therefore off because of the
+target, not because they were added to the `ignore` list; both facts are gated by
+`tests/unit/test_static_check_ratchet.py`. When the floor moves, raise the
+target, then apply those rules as their own change.
+
 ## Pull Request Process
 
 1. **Fork** the repository and create a feature branch from `main`

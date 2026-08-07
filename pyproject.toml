@@ -744,6 +744,16 @@ skips = ["B101", "B601"]  # Skip assert_used and paramiko_calls
 # Ruff - Fast Python Linter (alternative to flake8)
 [tool.ruff]
 line-length = 100
+# Must equal the `requires-python` floor above. Several pyupgrade rules are
+# version-gated and fire only at a higher target, and their rewrites do not run
+# on 3.10:
+#   UP017  datetime.timezone.utc -> datetime.UTC     (3.11+, 57 sites)
+#   UP041  asyncio.TimeoutError  -> TimeoutError     (3.11+, 13 sites)
+#   UP042  class C(str, Enum)    -> enum.StrEnum     (3.11+, 4 sites)
+#   UP047  TypeVar function      -> PEP 695 `def f[T]` (3.12+, 2 sites)
+# Raising the target would make ruff demand syntax the declared floor cannot
+# run, so the target stays at the floor and moves only when the floor does.
+# tests/unit/test_static_check_ratchet.py keeps the two values in step.
 target-version = "py310"
 
 [tool.ruff.lint]
