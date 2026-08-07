@@ -79,6 +79,17 @@ def smart_truncate(
     user message) and the last ``keep_tail`` items (most recent context),
     then fill in middle items from newest-to-oldest until the budget is hit.
     Anything dropped is replaced by a single summary marker.
+
+    Args:
+        items: The turns to fit, oldest first.
+        max_tokens: The budget the result must fit in.
+        count_tokens: Counts the tokens in one item.
+        keep_head: Items kept from the start whatever the budget.
+        keep_tail: Items kept from the end whatever the budget.
+        summary_marker: The single item that stands in for what was dropped.
+
+    Returns:
+        The kept items, in their original order.
     """
     if max_tokens <= 0 or not items:
         return []
@@ -117,7 +128,16 @@ def fit_to_budget(
     budget: TokenBudget,
     count_tokens: Callable[[str], int],
 ) -> dict[str, list[str]]:
-    """Apply per-section truncation according to *budget*."""
+    """Apply per-section truncation according to *budget*.
+
+    Args:
+        sections: The items to fit, keyed by section name.
+        budget: The per-section token allowances.
+        count_tokens: Counts the tokens in one item.
+
+    Returns:
+        The kept items per section, in their original order.
+    """
     out: dict[str, list[str]] = {}
     for name, items in sections.items():
         cap = budget.allocate(name)

@@ -160,7 +160,19 @@ class StorageBackend(ABC):
                        tags: list[str] | None = None,
                        min_importance: ImportanceLevel | None = None,
                        limit: int | None = None) -> list[MemoryEntry]:
-        """Search memories with filters."""
+        """Search memories with filters.
+
+        Args:
+            query: Text to match against stored content.
+            memory_type: Keep only memories of this type.
+            session_id: Keep only memories from this session.
+            tags: Keep only memories carrying all of these tags.
+            min_importance: Keep only memories at or above this importance.
+            limit: Most memories to return.
+
+        Returns:
+            The matching memories.
+        """
         pass
 
     @abstractmethod
@@ -250,7 +262,19 @@ class JSONStorageBackend(StorageBackend):
                        tags: list[str] | None = None,
                        min_importance: ImportanceLevel | None = None,
                        limit: int | None = None) -> list[MemoryEntry]:
-        """Search memories with filters."""
+        """Search memories with filters.
+
+        Args:
+            query: Text to match against stored content.
+            memory_type: Keep only memories of this type.
+            session_id: Keep only memories from this session.
+            tags: Keep only memories carrying all of these tags.
+            min_importance: Keep only memories at or above this importance.
+            limit: Most memories to return.
+
+        Returns:
+            The matching memories.
+        """
         results = []
 
         for mem_data in self.data["memories"].values():
@@ -431,7 +455,19 @@ class SQLiteStorageBackend(StorageBackend):
                        tags: list[str] | None = None,
                        min_importance: ImportanceLevel | None = None,
                        limit: int | None = None) -> list[MemoryEntry]:
-        """Search memories with filters."""
+        """Search memories with filters.
+
+        Args:
+            query: Text to match against stored content.
+            memory_type: Keep only memories of this type.
+            session_id: Keep only memories from this session.
+            tags: Keep only memories carrying all of these tags.
+            min_importance: Keep only memories at or above this importance.
+            limit: Most memories to return.
+
+        Returns:
+            The matching memories.
+        """
         conn = self._get_connection()
         cursor = conn.cursor()
 

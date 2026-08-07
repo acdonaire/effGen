@@ -228,7 +228,16 @@ class RegressionTracker:
         results: SuiteResults,
         version: str = "",
     ) -> Path:
-        """Persist a baseline for the given suite."""
+        """Persist a baseline for the given suite.
+
+        Args:
+            suite: The suite the baseline belongs to.
+            results: The results to record as the baseline.
+            version: A label stored with the baseline, such as a release.
+
+        Returns:
+            The path the baseline was written to.
+        """
         path = self._baseline_path(suite)
         data = {
             "version": version,
@@ -261,7 +270,16 @@ class RegressionTracker:
         current: SuiteResults,
         version: str = "",
     ) -> ComparisonReport:
-        """Compare *current* results against the stored baseline."""
+        """Compare *current* results against the stored baseline.
+
+        Args:
+            suite: The suite whose baseline is compared against.
+            current: The results from this run.
+            version: A label stored with the comparison, such as a release.
+
+        Returns:
+            The comparison, naming every metric that moved.
+        """
         baseline_data = self.load_baseline(suite)
         if baseline_data is None:
             logger.warning("No baseline for suite %r — saving current as baseline", suite)

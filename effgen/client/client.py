@@ -235,6 +235,12 @@ class EffGenClient:
         ``tools`` accepts registered tool names (``["calculator"]``) or full
         OpenAI tool specs; names are expanded to the server's tool-spec shape.
         The server runs the tool and returns the final answer.
+
+        Args:
+            message: The user message to send.
+            tools: Registered tool names or full OpenAI tool specs.
+            model: The model id to use, defaulting to the server's.
+            **kwargs: Extra fields forwarded in the request body.
         """
         body: dict = {
             "model": model or "effgen-default",
@@ -304,7 +310,14 @@ class EffGenClient:
         model: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        """Asynchronous ``chat()``: send one user message and return the response."""
+        """Asynchronous ``chat()``: send one user message and return the response.
+
+        Args:
+            message: The user message to send.
+            tools: Registered tool names or full OpenAI tool specs.
+            model: The model id to use, defaulting to the server's.
+            **kwargs: Extra fields forwarded in the request body.
+        """
         body: dict = {
             "model": model or "effgen-default",
             "messages": [{"role": "user", "content": message}],

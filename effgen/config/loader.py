@@ -49,8 +49,8 @@ class Config:
     Configuration container with dict-like access.
 
     Supports both attribute and dictionary-style access:
-    - config.models.phi3_mini
-    - config["models"]["phi3_mini"]
+    - config.models.qwen25_1_5b
+    - config["models"]["qwen25_1_5b"]
     """
 
     data: dict[str, Any] = field(default_factory=dict)
@@ -172,8 +172,8 @@ class ConfigLoader:
 
     Example:
         >>> loader = ConfigLoader()
-        >>> loader.load_config("configs/models.yaml")
-        >>> model = loader.config.models.phi3_mini
+        >>> _ = loader.load_config("configs/models.yaml")
+        >>> model = loader.config.models.qwen25_1_5b
     """
 
     # Regex for environment variable substitution
@@ -321,6 +321,14 @@ class ConfigLoader:
 
         Provided because ``load`` is the more obvious method name; it forwards
         directly to :meth:`load_config`.
+
+        Args:
+            config_path: One path, or several to merge in order.
+            merge: Merge the files instead of letting the last one win outright.
+            validate: Check the merged result against the schema.
+
+        Returns:
+            The loaded configuration.
         """
         return self.load_config(config_path, merge=merge, validate=validate)
 
@@ -575,7 +583,9 @@ class ConfigLoader:
         Get configuration value using dot notation.
 
         Example:
-            >>> loader.get("models.phi3_mini.temperature")
+            >>> loader = ConfigLoader()
+            >>> _ = loader.load_config("configs/models.yaml")
+            >>> loader.get("models.qwen25_1_5b.temperature")
             0.7
 
         Args:
@@ -601,7 +611,9 @@ class ConfigLoader:
         Set configuration value using dot notation.
 
         Example:
-            >>> loader.set("models.phi3_mini.temperature", 0.8)
+            >>> loader = ConfigLoader()
+            >>> _ = loader.load_config("configs/models.yaml")
+            >>> loader.set("models.qwen25_1_5b.temperature", 0.8)
 
         Args:
             key_path: Dot-separated path to value

@@ -325,6 +325,11 @@ def judge_battle(judge_model: str, prompt: str, contenders: list[Contender]) -> 
     default — a contender grading its own answer is the bias a head-to-head
     exists to avoid. The returned dict always names the judge so a reader can
     weigh the pick, and it is reported separately from the measured numbers.
+
+    Args:
+        judge_model: The model asked to pick a winner.
+        prompt: The prompt the contenders answered.
+        contenders: The answers to compare.
     """
     from effgen.core.agent import Agent, AgentConfig
 

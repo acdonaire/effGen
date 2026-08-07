@@ -331,7 +331,16 @@ class SystemPromptLeakGuardrail(Guardrail):
     def check(
         self, content: str, system_prompt: str | None = None, **kwargs: Any
     ) -> GuardrailResult:
-        """Fail when the output echoes a distinctive system-prompt token verbatim."""
+        """Fail when the output echoes a distinctive system-prompt token verbatim.
+
+        Args:
+            content: The model output to inspect.
+            system_prompt: The system prompt whose tokens must not appear.
+            **kwargs: Extra context passed by the guardrail chain.
+
+        Returns:
+            The guardrail result, failed when a distinctive token was echoed.
+        """
         if not system_prompt or not content:
             return GuardrailResult(passed=True)
         tokens = self._distinctive_tokens(system_prompt)
