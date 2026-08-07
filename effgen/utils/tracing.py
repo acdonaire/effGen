@@ -232,10 +232,14 @@ def shutdown_tracing() -> None:
 # ---------------------------------------------------------------------------
 
 def trace_agent_run(agent_name: str, task: str, run_id: str | None = None) -> Any:
-    """
-    Create a span for an agent run.
+    """Create a span for an agent run.
 
     Returns a context-manager span.
+
+    Args:
+        agent_name: The agent the span is opened for.
+        task: The task the run is working on.
+        run_id: Id correlating the span with the run, generated when absent.
     """
     tracer = get_tracer()
     attrs: dict[str, Any] = {

@@ -95,6 +95,9 @@ def LogRunContext(
         workflow_id: Shared ID across multi-agent workflow
         agent_name: Name of the agent
         session_id: Session identifier
+
+    Returns:
+        A context manager that carries the identifiers for its scope.
     """
     prev_run = getattr(_run_context, "run_id", None)
     prev_wf = getattr(_run_context, "workflow_id", None)
@@ -230,7 +233,14 @@ class StructuredLogger:
         level: int = logging.INFO,
         **data: Any,
     ) -> None:
-        """Log an agent-level event (task_start, task_complete, error, etc.)."""
+        """Log an agent-level event (task_start, task_complete, error, etc.).
+
+        Args:
+            agent_name: The agent the event belongs to.
+            event: What happened, such as ``task_start`` or ``error``.
+            level: Level the line is logged at.
+            **data: Extra fields recorded with the entry.
+        """
         self._log(
             level,
             f"[{agent_name}] {event}",
@@ -248,7 +258,14 @@ class StructuredLogger:
         level: int = logging.DEBUG,
         **data: Any,
     ) -> None:
-        """Log a tool-level event (call, result, error)."""
+        """Log a tool-level event (call, result, error).
+
+        Args:
+            tool_name: The tool the event belongs to.
+            event: What happened, such as ``call``, ``result`` or ``error``.
+            level: Level the line is logged at.
+            **data: Extra fields recorded with the entry.
+        """
         self._log(
             level,
             f"[tool:{tool_name}] {event}",
@@ -266,7 +283,14 @@ class StructuredLogger:
         level: int = logging.DEBUG,
         **data: Any,
     ) -> None:
-        """Log a model-level event (generate, stream, error)."""
+        """Log a model-level event (generate, stream, error).
+
+        Args:
+            model_name: The model the event belongs to.
+            event: What happened, such as ``generate``, ``stream`` or ``error``.
+            level: Level the line is logged at.
+            **data: Extra fields recorded with the entry.
+        """
         self._log(
             level,
             f"[model:{model_name}] {event}",
@@ -284,7 +308,14 @@ class StructuredLogger:
         level: int = logging.DEBUG,
         **data: Any,
     ) -> None:
-        """Log a ReAct iteration event."""
+        """Log a ReAct iteration event.
+
+        Args:
+            iteration: The reasoning iteration the event belongs to.
+            event: What happened in that iteration.
+            level: Level the line is logged at.
+            **data: Extra fields recorded with the entry.
+        """
         self._log(
             level,
             f"[iter:{iteration}] {event}",

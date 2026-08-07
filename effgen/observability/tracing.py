@@ -203,7 +203,13 @@ def __dir__() -> list[str]:
 
 
 def trace_agent_run(agent_name: str, task: str, run_id: str | None = None) -> Any:
-    """Legacy shim → ``start_agent_run``.  Returns a context manager."""
+    """Legacy shim → ``start_agent_run``.  Returns a context manager.
+
+    Args:
+        agent_name: The agent the span is opened for.
+        task: The task the run is working on.
+        run_id: Id correlating the span with the run, generated when absent.
+    """
     return start_agent_run(preset=agent_name, task=task, run_id=run_id)
 
 

@@ -770,7 +770,7 @@ def get_global_metrics() -> MetricsCollector:
     Example:
         >>> metrics = get_global_metrics()
         >>> with metrics.track_execution("task"):
-        ...     do_work()
+        ...     sum(range(1000))
     """
     global _global_metrics
     if _global_metrics is None:

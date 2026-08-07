@@ -294,6 +294,16 @@ def read_runs(
     ISO-8601 prefix and are compared against the record timestamp. ``search``
     matches the task, output, model, run id, session id, or error text.
     ``execution_id`` narrows to the runs of one team or workflow execution.
+
+    Args:
+        limit: Most records to return.
+        status: Keep only runs that ended with this status.
+        model: Keep only runs against this model id.
+        search: Keep only runs whose text matches this term.
+        since: Keep only runs at or after this date or ISO-8601 prefix.
+        until: Keep only runs at or before this date or ISO-8601 prefix.
+        session_id: Keep only runs from this session.
+        execution_id: Keep only runs from one team or workflow execution.
     """
     with _lock:
         merged = list(_runs)

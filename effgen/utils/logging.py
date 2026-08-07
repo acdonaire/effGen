@@ -489,6 +489,7 @@ def LogContext(**kwargs: Any) -> Iterator[None]:
         **kwargs: Key-value pairs to add to the logging context
 
     Example:
+        >>> logger = get_logger(__name__)
         >>> with LogContext(agent_id="agent-001", task_id="task-123"):
         ...     logger.info("Processing task")
         ...     # Logs will include agent_id and task_id
@@ -528,8 +529,9 @@ def log_exception(
         **extra_fields: Additional fields to include in the log
 
     Example:
+        >>> logger = get_logger(__name__)
         >>> try:
-        ...     risky_operation()
+        ...     raise ValueError("no such record")
         ... except Exception as e:
         ...     log_exception(logger, e, "Operation failed", task_id="123")
     """
@@ -569,6 +571,8 @@ class PerformanceLogger:
         Decorator usage.
 
         Example:
+            >>> import time
+            >>> logger = get_logger(__name__)
             >>> @PerformanceLogger(logger)
             ... def slow_function():
             ...     time.sleep(1)
@@ -593,6 +597,8 @@ class PerformanceLogger:
         Context manager entry.
 
         Example:
+            >>> import time
+            >>> logger = get_logger(__name__)
             >>> with PerformanceLogger(logger) as perf:
             ...     time.sleep(1)
         """
@@ -619,7 +625,13 @@ class PerformanceLogger:
 
 # Convenience functions for common logging patterns
 def log_agent_start(logger: logging.Logger, agent_id: str, **metadata: Any) -> None:
-    """Log agent startup with metadata."""
+    """Log agent startup with metadata.
+
+    Args:
+        logger: Where the line is written.
+        agent_id: The agent that started.
+        **metadata: Extra fields recorded with the entry.
+    """
     logger.info(
         f"Agent started: {agent_id}",
         extra={'event': 'agent_start', 'agent_id': agent_id, **metadata}
@@ -627,7 +639,13 @@ def log_agent_start(logger: logging.Logger, agent_id: str, **metadata: Any) -> N
 
 
 def log_agent_stop(logger: logging.Logger, agent_id: str, **metadata: Any) -> None:
-    """Log agent shutdown with metadata."""
+    """Log agent shutdown with metadata.
+
+    Args:
+        logger: Where the line is written.
+        agent_id: The agent that stopped.
+        **metadata: Extra fields recorded with the entry.
+    """
     logger.info(
         f"Agent stopped: {agent_id}",
         extra={'event': 'agent_stop', 'agent_id': agent_id, **metadata}
@@ -635,7 +653,13 @@ def log_agent_stop(logger: logging.Logger, agent_id: str, **metadata: Any) -> No
 
 
 def log_task_start(logger: logging.Logger, task_id: str, **metadata: Any) -> None:
-    """Log task start with metadata."""
+    """Log task start with metadata.
+
+    Args:
+        logger: Where the line is written.
+        task_id: The task that started.
+        **metadata: Extra fields recorded with the entry.
+    """
     logger.info(
         f"Task started: {task_id}",
         extra={'event': 'task_start', 'task_id': task_id, **metadata}
@@ -643,7 +667,13 @@ def log_task_start(logger: logging.Logger, task_id: str, **metadata: Any) -> Non
 
 
 def log_task_complete(logger: logging.Logger, task_id: str, **metadata: Any) -> None:
-    """Log task completion with metadata."""
+    """Log task completion with metadata.
+
+    Args:
+        logger: Where the line is written.
+        task_id: The task that finished.
+        **metadata: Extra fields recorded with the entry.
+    """
     logger.info(
         f"Task completed: {task_id}",
         extra={'event': 'task_complete', 'task_id': task_id, **metadata}
@@ -651,7 +681,14 @@ def log_task_complete(logger: logging.Logger, task_id: str, **metadata: Any) -> 
 
 
 def log_task_error(logger: logging.Logger, task_id: str, error: Exception, **metadata: Any) -> None:
-    """Log task error with metadata."""
+    """Log task error with metadata.
+
+    Args:
+        logger: Where the line is written.
+        task_id: The task that failed.
+        error: The exception that ended it.
+        **metadata: Extra fields recorded with the entry.
+    """
     log_exception(
         logger,
         error,
@@ -663,7 +700,13 @@ def log_task_error(logger: logging.Logger, task_id: str, error: Exception, **met
 
 
 def log_tool_call(logger: logging.Logger, tool_name: str, **metadata: Any) -> None:
-    """Log tool invocation with metadata."""
+    """Log tool invocation with metadata.
+
+    Args:
+        logger: Where the line is written.
+        tool_name: The tool that was called.
+        **metadata: Extra fields recorded with the entry.
+    """
     logger.debug(
         f"Tool called: {tool_name}",
         extra={'event': 'tool_call', 'tool_name': tool_name, **metadata}
@@ -671,7 +714,13 @@ def log_tool_call(logger: logging.Logger, tool_name: str, **metadata: Any) -> No
 
 
 def log_model_inference(logger: logging.Logger, model_name: str, **metadata: Any) -> None:
-    """Log model inference with metadata."""
+    """Log model inference with metadata.
+
+    Args:
+        logger: Where the line is written.
+        model_name: The model that was called.
+        **metadata: Extra fields recorded with the entry.
+    """
     logger.debug(
         f"Model inference: {model_name}",
         extra={'event': 'model_inference', 'model_name': model_name, **metadata}

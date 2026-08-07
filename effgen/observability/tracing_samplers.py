@@ -59,7 +59,20 @@ if _OTEL_AVAILABLE:
             links: Any = None,
             trace_state: Any = None,
         ) -> SamplingResult:
-            """Record and sample every span."""
+            """Record and sample every span.
+
+            Args:
+                parent_context: Context of the parent span, when there is one.
+                trace_id: Id of the trace the span belongs to.
+                name: The span's name.
+                kind: The span kind OpenTelemetry reported.
+                attributes: Attributes the span was started with.
+                links: Links to other spans.
+                trace_state: Vendor state carried on the trace.
+
+            Returns:
+                The sampling decision, with the attributes and trace state to keep.
+            """
             return SamplingResult(
                 decision=Decision.RECORD_AND_SAMPLE,
                 attributes=attributes,
@@ -83,7 +96,20 @@ if _OTEL_AVAILABLE:
             links: Any = None,
             trace_state: Any = None,
         ) -> SamplingResult:
-            """Drop every span."""
+            """Drop every span.
+
+            Args:
+                parent_context: Context of the parent span, when there is one.
+                trace_id: Id of the trace the span belongs to.
+                name: The span's name.
+                kind: The span kind OpenTelemetry reported.
+                attributes: Attributes the span was started with.
+                links: Links to other spans.
+                trace_state: Vendor state carried on the trace.
+
+            Returns:
+                The sampling decision, with the attributes and trace state to keep.
+            """
             return SamplingResult(
                 decision=Decision.DROP,
                 attributes=attributes,
@@ -126,7 +152,21 @@ if _OTEL_AVAILABLE:
             links: Any = None,
             trace_state: Any = None,
         ) -> SamplingResult:
-            """Sample when the trace ID falls under the ratio threshold."""
+            """Sample when the trace ID falls under the ratio threshold.
+
+            Args:
+                parent_context: Context of the parent span, when there is one.
+                trace_id: Id of the trace the span belongs to, which the ratio is
+                    applied to.
+                name: The span's name.
+                kind: The span kind OpenTelemetry reported.
+                attributes: Attributes the span was started with.
+                links: Links to other spans.
+                trace_state: Vendor state carried on the trace.
+
+            Returns:
+                The sampling decision, with the attributes and trace state to keep.
+            """
             decision = (
                 Decision.RECORD_AND_SAMPLE
                 if trace_id < self._threshold
@@ -187,7 +227,20 @@ if _OTEL_AVAILABLE:
             links: Any = None,
             trace_state: Any = None,
         ) -> SamplingResult:
-            """Sample while a token is available; drop once the budget is spent."""
+            """Sample while a token is available; drop once the budget is spent.
+
+            Args:
+                parent_context: Context of the parent span, when there is one.
+                trace_id: Id of the trace the span belongs to.
+                name: The span's name.
+                kind: The span kind OpenTelemetry reported.
+                attributes: Attributes the span was started with.
+                links: Links to other spans.
+                trace_state: Vendor state carried on the trace.
+
+            Returns:
+                The sampling decision, with the attributes and trace state to keep.
+            """
             now = time.monotonic()
             with self._lock:
                 self._refill(now)
@@ -241,7 +294,20 @@ if _OTEL_AVAILABLE:
             links: Any = None,
             trace_state: Any = None,
         ) -> SamplingResult:
-            """Follow the parent span's decision (the root sampler for roots)."""
+            """Follow the parent span's decision (the root sampler for roots).
+
+            Args:
+                parent_context: Context of the parent span, whose decision is followed.
+                trace_id: Id of the trace the span belongs to.
+                name: The span's name.
+                kind: The span kind OpenTelemetry reported.
+                attributes: Attributes the span was started with.
+                links: Links to other spans.
+                trace_state: Vendor state carried on the trace.
+
+            Returns:
+                The sampling decision, with the attributes and trace state to keep.
+            """
             return self._sdk_parent_based.should_sample(
                 parent_context,
                 trace_id,

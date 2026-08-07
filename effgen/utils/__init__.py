@@ -24,12 +24,12 @@ Example:
     Track metrics:
         >>> metrics = MetricsCollector()
         >>> with metrics.track_execution("task"):
-        ...     perform_task()
+        ...     sum(range(1000))
         >>> print(metrics.get_summary())
 
     Validate inputs:
         >>> validate_model_name("microsoft/phi-2")
-        >>> validate_path("/path/to/file", must_exist=True)
+        >>> validate_path(".", must_exist=True)
 """
 
 # Async/sync bridging

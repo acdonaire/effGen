@@ -108,11 +108,17 @@ def set_run_context(
     session_id: str | None = None,
     iteration: int | None = None,
 ) -> None:
-    """
-    Set thread-local run-context fields.
+    """Set thread-local run-context fields.
 
     Called by :class:`~effgen.utils.structured_logging.LogRunContext` so that
     both the legacy and the new logging APIs share the same context.
+
+    Args:
+        run_id: Id of the run every later log line is stamped with.
+        workflow_id: Id shared across a multi-agent workflow.
+        agent_name: Name of the agent producing the lines.
+        session_id: Session the run belongs to.
+        iteration: Reasoning iteration reached so far.
     """
     if run_id is not None:
         _run_ctx.run_id = run_id
@@ -386,7 +392,13 @@ class EffGenLogger:
         self._emit(logging.CRITICAL, msg, **attributes)
 
     def exception(self, msg: str, exc_info: bool = True, **attributes: Any) -> None:
-        """Log at ERROR level with exception traceback."""
+        """Log at ERROR level with exception traceback.
+
+        Args:
+            msg: The message to log.
+            exc_info: Attach the active exception's traceback.
+            **attributes: Extra fields recorded with the entry.
+        """
         record = self._logger.makeRecord(
             name=self._logger.name,
             level=logging.ERROR,
