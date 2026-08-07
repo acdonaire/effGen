@@ -48,7 +48,7 @@ class ValidationError(Exception):
         super().__init__(message)
         self.errors = errors or []
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Format error message with details."""
         if not self.errors:
             return super().__str__()

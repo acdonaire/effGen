@@ -14,8 +14,9 @@ in-module definitions.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from .agent_config import AgentMode
 
@@ -144,7 +145,7 @@ class AgentResponse:
         """
         return self.output if self.output is not None else ""
 
-    def __await__(self):
+    def __await__(self) -> Generator[Any, None, NoReturn]:
         """Fail clearly if someone ``await``s the result of the sync ``run()``.
 
         ``Agent.run()`` is synchronous and returns this object directly, so

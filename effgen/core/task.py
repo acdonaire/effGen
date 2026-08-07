@@ -44,7 +44,7 @@ class SubTask:
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate subtask after initialization."""
         if not self.id:
             self.id = f"st_{uuid.uuid4().hex[:8]}"

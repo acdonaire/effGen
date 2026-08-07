@@ -40,7 +40,7 @@ class TaskStructure:
     parallelizable: bool = False
     metadata: dict[str, Any] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize metadata if not provided."""
         if self.metadata is None:
             self.metadata = {}

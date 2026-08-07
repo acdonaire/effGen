@@ -740,7 +740,7 @@ class Agent(
         await self.aclose()
         return False
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Warn if agent was garbage-collected without close()."""
         if getattr(self, '_closed', True):
             return
