@@ -48,6 +48,13 @@ import pytest
 
 import effgen.observability.tracing as facade
 
+try:  # The SDK is optional; only the lifecycle check below needs it installed.
+    import opentelemetry.sdk.trace  # noqa: F401
+
+    _OTEL_SDK_INSTALLED = True
+except ImportError:  # pragma: no cover - depends on the installed extras
+    _OTEL_SDK_INSTALLED = False
+
 PACKAGE = "effgen.observability"
 FACADE = "tracing"
 
@@ -444,7 +451,17 @@ def test_the_rebound_globals_are_not_bound_on_the_facade(name):
     assert name in vars(module("tracing_provider"))
 
 
+@pytest.mark.skipif(
+    not _OTEL_SDK_INSTALLED, reason="opentelemetry-sdk not installed"
+)
 def test_the_facade_follows_the_provider_through_its_lifecycle():
+    """The rest of this module reads the split's shape and needs no SDK.
+
+    This one is the exception: it asserts a provider is actually built, which
+    only happens when the OpenTelemetry SDK is installed. Without the guard it
+    fails on a minimal install, where ``setup_tracing`` returns early by design
+    and leaves the provider unset.
+    """
     provider_module = module("tracing_provider")
     facade.reset_tracing()
     assert facade._provider is None
