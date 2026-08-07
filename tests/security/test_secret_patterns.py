@@ -228,6 +228,46 @@ class TestCleanFilesNotFlagged:
             )
 
     @skip_if_no_gitleaks
+    def test_setup_instruction_placeholders_not_flagged(self, tmp_path):
+        """``your-<provider>-<token>`` placeholders in setup docs must pass clean.
+
+        The generic rule only fires on a value of twenty characters or more, so
+        whether a placeholder tripped it used to depend on how long the provider's
+        name happened to be — the shorter ones passed and one longer one did not.
+        Every provider named here is written the same way, so they either all pass
+        or the allowlist has stopped covering the family.
+        """
+        doc = tmp_path / "installation.md"
+        doc.write_text(textwrap.dedent("""\
+                export OPENAI_API_KEY="your-openai-key"
+                export CEREBRAS_API_KEY="your-cerebras-key"
+                export GROQ_API_KEY="your-groq-key"
+                export TOGETHER_API_KEY="your-together-key"
+                export FIREWORKS_API_KEY="your-fireworks-key"
+                export REPLICATE_API_TOKEN="your-replicate-token"
+                export HF_TOKEN="your-hf-token"
+                export SOMEFUTUREPROVIDER_API_TOKEN="your-somefutureprovider-token"
+            """))
+        exit_code, findings = _run_gitleaks_detect(tmp_path)
+        assert exit_code == 0, (
+            f"documentation placeholders must not read as secrets; findings: {findings}"
+        )
+
+    @skip_if_no_gitleaks
+    def test_a_real_token_beside_a_placeholder_is_still_caught(self, tmp_path):
+        """The placeholder allowlist must not blunt detection of a real token."""
+        doc = tmp_path / "installation.md"
+        doc.write_text(textwrap.dedent("""\
+                export REPLICATE_API_TOKEN="your-replicate-token"
+                export REPLICATE_API_TOKEN="r8_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S"
+            """))
+        exit_code, findings = _run_gitleaks_detect(tmp_path)
+        assert exit_code != 0, "a real Replicate token must still be detected"
+        assert any("replicate" in str(f.get("RuleID", "")).lower() for f in findings), (
+            f"expected the Replicate rule to fire; findings: {findings}"
+        )
+
+    @skip_if_no_gitleaks
     def test_config_with_env_var_reference_not_flagged(self, tmp_path):
         """Config referencing env vars (not inline keys) must pass clean."""
         config_file = tmp_path / "config.yaml"

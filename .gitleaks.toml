@@ -148,6 +148,12 @@ regexes = [
     '''your[_\-]?api[_\-]?key[_\-]?here''',
     '''<YOUR_API_KEY>''',
     '''<api_key>''',
+    # "your-<provider>-<key|token>" placeholders in setup instructions. The
+    # generic rule needs 20 characters, so most of these are too short to reach
+    # it and only the longest provider names ever matched — which made the
+    # detection depend on how a provider is spelled. Matched as a family so a
+    # newly documented provider cannot reintroduce it.
+    '''your[_\-][a-z0-9]+[_\-](?:key|token|secret)''',
     # Standard test fixture patterns
     '''sk-ant-api03-FAKE''',
     '''AIzaFAKE''',
