@@ -26,9 +26,11 @@ and a wholly untyped new module would leave the recorded result untouched.
 Unannotated public signatures are gated separately, and at zero tolerance, by
 ``tests/unit/test_public_signature_hints.py``.
 
-The baseline is toolchain-specific: a different mypy version reports a different
-error set, so the recorded version is checked before anything is compared and a
-mismatch is a hard, actionable failure rather than a silent pass.
+The baseline is toolchain-specific: a different mypy version, or a different set
+of flags, reports a different error set. Both are recorded and checked before
+anything is compared, and a mismatch is a hard, actionable failure rather than a
+silent pass. What the baseline is deliberately *not* specific to is the
+environment — see ``MYPY_ARGS`` below.
 
 Usage::
 
@@ -54,11 +56,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BASELINE = REPO_ROOT / "scripts" / "mypy_baseline.json"
 DEFAULT_TARGET = "effgen"
 
-# `--ignore-missing-imports` keeps the result from depending on which optional
-# extras happen to be installed: an absent third-party package would otherwise
-# add import errors that say nothing about effGen's own annotations.
+# The result must not depend on which optional extras happen to be installed, or
+# a developer with `[all]` and CI with a base install would disagree about
+# whether the ratchet holds. `--ignore-missing-imports` alone does not achieve
+# that — it silences the import error for an *absent* package, but an installed
+# one still contributes its real types and the errors that come with them.
+# `--no-site-packages` is what equalizes the two: every third-party import
+# becomes Any either way, so the recorded set depends only on effGen's own
+# source and the pinned mypy. The trade is that effGen's *use* of third-party
+# APIs is not checked here; the public-surface lane above, which runs against
+# the installed packages, is where that shows up.
 MYPY_ARGS = [
     "--ignore-missing-imports",
+    "--no-site-packages",
     "--no-pretty",
     "--no-error-summary",
     "--show-error-codes",
@@ -209,13 +219,26 @@ def compare(counts: Counter[str], baseline: dict[str, Any]) -> tuple[int, list[s
 
 
 def check_toolchain(baseline: dict[str, Any]) -> None:
-    """Exit 2 when the running mypy is not the one the baseline was taken with."""
+    """Exit 2 when this run cannot be compared against how the baseline was taken."""
     recorded = baseline.get("toolchain", {}).get("mypy")
     running = mypy_version()
     if running == "absent":
         print(
             "ERROR: mypy is not installed; the ratchet cannot run.\n"
             "       pip install -r requirements-dev.txt",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    recorded_args = baseline.get("toolchain", {}).get("mypy_args")
+    if recorded_args is not None and list(recorded_args) != MYPY_ARGS:
+        print(
+            f"ERROR: baseline was recorded with {recorded_args}, this script "
+            f"now runs {MYPY_ARGS}.\n"
+            "       Different flags report a different error set — in "
+            "particular --no-site-packages is what makes the result the same "
+            "with and without the optional extras installed.\n"
+            "       Re-record the baseline with --update after reviewing the "
+            "diff.",
             file=sys.stderr,
         )
         raise SystemExit(2)

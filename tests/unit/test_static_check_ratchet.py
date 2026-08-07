@@ -228,6 +228,39 @@ def test_gating_a_saved_transcript_end_to_end(ratchet, baseline, tmp_path, capsy
     assert "RATCHET VIOLATED" in capsys.readouterr().out
 
 
+def test_the_recorded_result_does_not_depend_on_the_installed_extras(ratchet, baseline):
+    """A developer with `[all]` and CI with a base install must agree.
+
+    `--ignore-missing-imports` is not enough on its own: it silences the import
+    error for a package that is absent, but an installed one still contributes
+    its real types. `--no-site-packages` makes every third-party import Any
+    either way, which is what keeps the recorded set comparable.
+    """
+    assert "--no-site-packages" in ratchet.MYPY_ARGS, (
+        "Without --no-site-packages the recorded set changes with the "
+        "environment, and the gate fails in CI for reasons unrelated to the "
+        "change under review."
+    )
+    assert baseline["toolchain"]["mypy_args"] == ratchet.MYPY_ARGS, (
+        "scripts/mypy_baseline.json was recorded with "
+        f"{baseline['toolchain']['mypy_args']} but the script now runs "
+        f"{ratchet.MYPY_ARGS} — re-record the baseline in the same change."
+    )
+
+
+def test_a_baseline_recorded_with_other_flags_is_refused(ratchet, baseline, tmp_path, capsys):
+    """Changing the flags without re-recording is an actionable exit 2."""
+    skewed = dict(baseline)
+    skewed["toolchain"] = dict(baseline["toolchain"])
+    skewed["toolchain"]["mypy_args"] = ["--ignore-missing-imports"]
+    path = tmp_path / "skewed.json"
+    path.write_text(json.dumps(skewed), encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        ratchet.check_toolchain(skewed)
+    assert excinfo.value.code == 2
+    assert "--no-site-packages" in capsys.readouterr().err
+
+
 def test_the_ratchet_does_not_stand_in_for_the_signature_gate():
     """Untyped code is the other gate's job, and the config is why."""
     settings = _read_pyproject()["tool"]["mypy"]

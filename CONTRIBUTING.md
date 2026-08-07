@@ -108,6 +108,15 @@ against our annotations. Two rules follow from that:
    pins the version exactly and the ratchet refuses to compare across versions;
    bumping the pin means re-recording the baseline in the same change.
 
+   The run is deliberately environment-independent: it passes
+   `--no-site-packages`, so every third-party import is `Any` whether or not you
+   have the optional extras installed. Without it, an install with `[all]` and a
+   base install disagree about the error set and the gate fails for reasons that
+   have nothing to do with the change under review. The flags are recorded in the
+   baseline and checked too, so changing them means re-recording. effGen's use of
+   third-party APIs is checked by the public-surface lane instead, which runs
+   against the packages that are actually installed.
+
 ### The linter's target version tracks the supported Python floor
 
 `[tool.ruff] target-version` in `pyproject.toml` equals the `requires-python`
