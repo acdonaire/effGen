@@ -82,6 +82,11 @@ def check_url_safe(
     """Validate scheme, optional host pin, and SSRF rules for a single URL.
 
     Raises :class:`BlockedURLError` if the URL must not be fetched.
+
+    Args:
+        url: The URL to validate.
+        allow_private: Permit private, loopback and link-local addresses.
+        allowed_hosts: When given, the only hosts that may be reached.
     """
     # A malformed URL raises either here (an unclosed IPv6 literal) or only when
     # the authority is read below (a non-numeric port), so both are turned into
@@ -179,6 +184,17 @@ def safe_urlopen(
     Validates the target (and every redirect hop) before connecting and returns
     the final, still-open response object (usable as a context manager). On a
     blocked target raises :class:`BlockedURLError`.
+
+    Args:
+        url: The URL to fetch.
+        data: Request body, which makes the call a POST unless *method* says
+            otherwise.
+        headers: Extra request headers.
+        method: HTTP method to use.
+        timeout: Seconds to wait for the response.
+        allow_private: Permit private, loopback and link-local addresses.
+        allowed_hosts: When given, the only hosts that may be reached.
+        max_redirects: Redirect hops to follow, each re-validated.
     """
     from urllib.error import HTTPError
     from urllib.request import Request
@@ -228,6 +244,16 @@ def safe_requests_get(
 
     ``requests_module`` is the imported ``requests`` module (passed in so this
     helper never hard-depends on it). Returns the final ``requests.Response``.
+
+    Args:
+        requests_module: The imported ``requests`` module to call through.
+        url: The URL to fetch.
+        headers: Extra request headers.
+        timeout: Seconds to wait for the response.
+        allow_private: Permit private, loopback and link-local addresses.
+        allowed_hosts: When given, the only hosts that may be reached.
+        max_redirects: Redirect hops to follow, each re-validated.
+        **kwargs: Extra keyword arguments forwarded to ``requests.get``.
     """
     current = url
     with requests_module.Session() as session:

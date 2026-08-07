@@ -471,7 +471,13 @@ async def main_http(
     port: int = 8000,
     transport: str = "streamable-http"
 ) -> None:
-    """Main entry point for HTTP server."""
+    """Main entry point for HTTP server.
+
+    Args:
+        host: Address to bind.
+        port: Port to bind.
+        transport: The MCP HTTP transport to serve.
+    """
     server = create_server()
     await server.run_http(host, port, transport)
 

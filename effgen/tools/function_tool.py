@@ -381,6 +381,15 @@ def tool(
     ``requires_approval=True`` so it is gated when the agent runs with
     ``AgentConfig(approval_mode="dangerous_only", approval_callback=...)`` —
     see :func:`FunctionTool.from_function` for the full explanation.
+
+    Args:
+        func: The function being decorated, when used bare.
+        name: Tool name, defaulting to the function's name.
+        description: Tool description, defaulting to the function's docstring.
+        category: The catalog category the tool is listed under.
+        requires_approval: Gate the tool behind the agent's approval callback.
+        cost_estimate: A short note on what one call costs.
+        timeout_seconds: Seconds one call may run before it is stopped.
     """
 
     def wrap(f: Callable[..., Any]) -> FunctionTool:

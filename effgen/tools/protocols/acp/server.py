@@ -238,6 +238,10 @@ def capability(
         version: Capability version
         metadata: Additional metadata
 
+    Returns:
+        A decorator that registers the handler it wraps and returns it
+        unchanged, so the decorated function stays directly callable.
+
     Example:
         @capability(
             name="summarize_text",

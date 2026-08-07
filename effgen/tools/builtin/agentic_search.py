@@ -740,7 +740,17 @@ class AgenticSearch(BaseTool):
         content_field: str = "text",
         context_lines: int = 5,
     ) -> list[dict[str, Any]]:
-        """Search within a JSON/JSONL file's specific field."""
+        """Search within a JSON/JSONL file's specific field.
+
+        Args:
+            query: The text to look for.
+            json_path: Path to the JSON or JSONL file to search.
+            content_field: The field within each record that is searched.
+            context_lines: Lines of surrounding text kept with each match.
+
+        Returns:
+            One entry per match, with its location and surrounding text.
+        """
         results = []
         path = Path(json_path)
         if not path.exists():

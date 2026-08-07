@@ -320,6 +320,19 @@ def summary_line(
 
     The status glyphs resolve through :func:`palette.glyph` so a non-UTF-8
     stream falls back to an ASCII stand-in instead of raising.
+
+    Args:
+        response: The finished response a ``run`` footer reads its numbers from.
+        mode: ``run`` for a one-shot footer, ``chat`` for a per-turn one.
+        stream: The stream the glyphs are chosen for.
+        elapsed: Seconds the turn took, for ``chat`` mode.
+        tokens: Tokens the turn used, for ``chat`` mode.
+        cost: What the turn cost, for ``chat`` mode.
+        interrupted: Mark the turn as stopped before it finished.
+        session: Running ``(turns, tokens, cost)`` totals for the session.
+
+    Returns:
+        The ``(plain, markup)`` pair for the footer.
     """
     if mode == "chat":
         parts = [f"{elapsed:.1f}s"]
@@ -436,6 +449,15 @@ def answer_surface(
     The border/title role follows the outcome: ``effgen.success`` for a success,
     ``effgen.warning`` for a partial (iteration-cap) result, ``effgen.error``
     otherwise. Degrades to plain ``print`` when ``rich`` is unavailable.
+
+    Args:
+        text: The answer to render.
+        success: Whether the run succeeded, which picks the colour role.
+        framed: Draw a bordered panel instead of an inline block.
+        partial: Mark the answer as cut short by the iteration cap.
+        title: Panel title, for the framed form.
+        label: Inline label printed before the block, for the unframed form.
+        console: The console to write to, defaulting to the shared one.
     """
     text = text or ""
     if not rich_available():  # pragma: no cover - rich normally present

@@ -250,6 +250,12 @@ def write_html_report(
     """Render *data* and write it to *path*, creating parent directories.
 
     Returns the path written.
+
+    Args:
+        path: Where to write the report.
+        data: The report contents to render.
+        kind: Which report template to use, inferred from *data* when absent.
+        command: The command line recorded in the report header.
     """
     target = Path(path)
     if target.parent and not target.parent.exists():

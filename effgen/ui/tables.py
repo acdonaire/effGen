@@ -49,6 +49,13 @@ def empty_state(
     results command reports an empty result the same way. Callers gate this on
     an interactive console and keep their existing plain text for piped or
     redirected output, so the machine-readable bytes are unchanged.
+
+    Args:
+        console: The console to write to.
+        title: The heading above the message.
+        message: What is empty, in one line.
+        hints: Next steps, each printed on its own line.
+        stream: The stream the glyphs are chosen for.
     """
     from .palette import glyph
 
@@ -83,6 +90,17 @@ def render_table(
     ``file`` forces the plain-text path to a specific stream (e.g. ``stderr``);
     a caller routing human output away from stdout under ``--json`` passes it so
     the table never lands on the JSON stream.
+
+    Args:
+        columns: The column headers.
+        rows: The rows, each as many values as there are columns.
+        console: The console to write to, defaulting to the shared one.
+        title: A heading above the table.
+        justify: Per-column alignment.
+        styles: Per-column style, used only on the rich path.
+        footer: A trailing row of per-column values.
+        caption: A note printed under the table.
+        file: Force the plain-text path to this stream.
     """
     cell_rows = [["" if c is None else str(c) for c in row] for row in rows]
     if file is None and rich_available() and console_is_interactive(console):
