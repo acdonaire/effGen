@@ -62,6 +62,14 @@ def coerce_kwargs(
 
     Unrecognized keys are dropped and reported once via :class:`DeprecationWarning`.
     If ``target`` accepts ``**kwargs`` the dict is returned unchanged.
+
+    Args:
+        target: The callable whose signature decides what is kept.
+        data: The keyword arguments to filter.
+        label: Name used in the warning about dropped keys.
+
+    Returns:
+        The subset of *data* that *target* accepts.
     """
     label = label or getattr(target, "__name__", str(target))
     if not isinstance(data, Mapping):
@@ -162,6 +170,14 @@ def repair_field_types(
     from deep inside itself instead of the conversation it asked for. A value of
     the wrong shape is replaced by that field's empty value and named in one log
     line; ``target`` is left alone when it is not a dataclass.
+
+    Args:
+        target: The dataclass whose declared field types are the reference.
+        kwargs: The values to check and repair.
+        label: Name used in the log line about a replaced value.
+
+    Returns:
+        The same mapping with mistyped values replaced by their empty value.
     """
     if not dataclasses.is_dataclass(target):
         return kwargs
@@ -199,6 +215,17 @@ def load_from_dict(
     value whose type does not match the declared field, and turns a missing
     *required* field into a clear ``ValueError`` naming the field rather than a
     bare ``TypeError``.
+
+    Args:
+        target: The callable to construct.
+        data: The stored document to build from.
+        label: Name used in the warning about dropped keys.
+
+    Returns:
+        The constructed object.
+
+    Raises:
+        ValueError: A required field is missing from *data*.
     """
     label = label or getattr(target, "__name__", str(target))
     kwargs = repair_field_types(

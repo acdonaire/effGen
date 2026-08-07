@@ -84,7 +84,17 @@ class FeedbackCollector:
         query: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> FeedbackEntry:
-        """Record a thumbs up/down feedback."""
+        """Record a thumbs up/down feedback.
+
+        Args:
+            response_id: The response being rated.
+            thumbs_up: ``True`` for positive feedback, ``False`` for negative.
+            query: The query that produced the response.
+            metadata: Extra context to store with the entry.
+
+        Returns:
+            The stored entry.
+        """
         entry = FeedbackEntry(
             feedback_id=uuid.uuid4().hex[:12],
             response_id=response_id,
@@ -106,14 +116,16 @@ class FeedbackCollector:
         query: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> FeedbackEntry:
-        """
-        Record a 1-5 rating.
+        """Record a 1-5 rating.
 
         Args:
             response_id: ID of the response being rated.
             rating: Integer rating from 1 to 5.
             query: Original query (optional).
             metadata: Additional context.
+
+        Returns:
+            The stored entry.
 
         Raises:
             ValueError: If rating is not between 1 and 5.
@@ -141,7 +153,17 @@ class FeedbackCollector:
         query: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> FeedbackEntry:
-        """Record a free-text comment."""
+        """Record a free-text comment.
+
+        Args:
+            response_id: The response being commented on.
+            text: The comment.
+            query: The query that produced the response.
+            metadata: Extra context to store with the entry.
+
+        Returns:
+            The stored entry.
+        """
         entry = FeedbackEntry(
             feedback_id=uuid.uuid4().hex[:12],
             response_id=response_id,

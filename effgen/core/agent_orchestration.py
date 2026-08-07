@@ -540,8 +540,12 @@ class AgentOrchestrationMixin:
         return self.run(cp.task, **kwargs)
 
     def run_background(self, task: str, priority: int = 5, **run_kwargs: Any) -> str:
-        """
-        Submit a task to the background runner and return its id.
+        """Submit a task to the background runner and return its id.
+
+        Args:
+            task: The task text to run.
+            priority: Queue priority; a lower number runs sooner.
+            **run_kwargs: Extra keyword arguments forwarded to :meth:`run`.
         """
         if self._bg_runner is None:
             from .background import BackgroundTaskRunner
@@ -555,7 +559,13 @@ class AgentOrchestrationMixin:
         return self._bg_runner.get_status(task_id)
 
     def get_task_result(self, task_id: str, wait: bool = False, timeout: float | None = None) -> Any:
-        """Return the result of a background task (optionally blocking)."""
+        """Return the result of a background task (optionally blocking).
+
+        Args:
+            task_id: The id :meth:`run_background` returned.
+            wait: Block until the task finishes instead of returning at once.
+            timeout: Seconds to block for when *wait* is set.
+        """
         if self._bg_runner is None:
             raise RuntimeError("No background runner active")
         return self._bg_runner.get_result(task_id, wait=wait, timeout=timeout)

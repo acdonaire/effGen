@@ -97,7 +97,13 @@ class ToolResultCache:
             return value
 
     def put(self, tool_name: str, tool_input: str, result: Any) -> None:
-        """Store a tool result in the cache."""
+        """Store a tool result in the cache.
+
+        Args:
+            tool_name: The tool the result came from.
+            tool_input: The input the result was produced for.
+            result: The value to cache.
+        """
         k = self.key(tool_name, tool_input)
         with self._lock:
             if len(self._cache) >= self.max_size:

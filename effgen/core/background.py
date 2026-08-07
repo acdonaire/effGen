@@ -213,7 +213,14 @@ class BackgroundTaskRunner:
         progress_callback: Callable[[BackgroundTask], None] | None = None,
         **run_kwargs: Any,
     ) -> str:
-        """Enqueue a task and return its id. Lower priority value = higher priority."""
+        """Enqueue a task and return its id. Lower priority value = higher priority.
+
+        Args:
+            task_text: The task to run.
+            priority: Queue priority; a lower number runs sooner.
+            progress_callback: Called with the task each time its state changes.
+            **run_kwargs: Extra keyword arguments forwarded to the agent's run.
+        """
         s = self._state
         task_id = str(uuid.uuid4())
         task = BackgroundTask(
@@ -262,7 +269,13 @@ class BackgroundTaskRunner:
             return self._require_task(task_id)
 
     def get_result(self, task_id: str, wait: bool = False, timeout: float | None = None) -> Any:
-        """Return the task's result, optionally blocking until it finishes."""
+        """Return the task's result, optionally blocking until it finishes.
+
+        Args:
+            task_id: The id :meth:`submit` returned.
+            wait: Block until the task finishes instead of returning at once.
+            timeout: Seconds to block for when *wait* is set.
+        """
         s = self._state
         if wait:
             deadline = None if timeout is None else time.time() + timeout

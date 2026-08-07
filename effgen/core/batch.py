@@ -310,6 +310,9 @@ class BatchRunner:
                 that parses but carries no query text, so a caller can name the
                 fields it saw instead of the row disappearing into the log.
             **run_kwargs: Extra keyword arguments forwarded to agent.run().
+
+        Returns:
+            The batch result, carrying one entry per query in input order.
         """
         queries = self._read_queries(
             Path(path), query_field, strict=strict, on_skip=on_skip,
@@ -334,6 +337,9 @@ class BatchRunner:
                 (Arabic, CJK, Devanagari, ...) correctly on double-click
                 instead of misreading them as another encoding. The file
                 stays valid UTF-8 either way; this only affects the CSV path.
+            batch_result: The results to write.
+            path: Where to write; the extension picks the format.
+            query_list: The queries the results answer, written alongside them.
         """
         path = Path(path)
         suffix = path.suffix.lower()

@@ -296,11 +296,23 @@ class CheckpointManager:
         tokens_used: int = 0,
         metadata: dict[str, Any] | None = None,
     ) -> Checkpoint:
-        """
-        Build a Checkpoint by snapshotting an Agent's serializable state.
+        """Build a Checkpoint by snapshotting an Agent's serializable state.
 
         Tool *instances* are stored only by name + class (config, not
         instances), keeping the checkpoint JSON-safe.
+
+        Args:
+            agent: The agent whose state is captured.
+            task: The task the agent is working on.
+            iteration: The reasoning iteration reached so far.
+            scratchpad: The reasoning transcript accumulated so far.
+            partial_output: Any answer text produced before the snapshot.
+            tool_calls: How many tool calls the run has made.
+            tokens_used: Tokens the run has consumed.
+            metadata: Extra context to store with the checkpoint.
+
+        Returns:
+            The checkpoint, ready to persist.
         """
         memory_dict: dict[str, Any] = {}
         try:
