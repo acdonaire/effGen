@@ -132,6 +132,11 @@ def estimate_tokens(text: str, *, name: str = "cl100k_base", model: str | None =
 
     Falls back to a character-length estimate when it is not, so a caller always
     gets a number. Empty text is zero tokens; any non-empty text is at least one.
+
+    Args:
+        text: The text to count.
+        name: The BPE encoding to use when no *model* is given.
+        model: A model id whose own encoding is preferred over *name*.
     """
     if not text:
         return 0
@@ -382,6 +387,14 @@ def default_max_output_tokens(
     task is not charged for a budget it never needed. A direct
     ``model.generate()`` call has no such escalation and should ask for more —
     see ``DIRECT_CALL_REASONING_MAX_TOKENS``.
+
+    Args:
+        model: The model id or adapter the budget is chosen for.
+        base: The budget for an ordinary model.
+        reasoning: The budget for a reasoning family.
+
+    Returns:
+        The output-token budget to send with the first attempt.
     """
     return reasoning if needs_reasoning_headroom(model) else base
 
@@ -461,6 +474,17 @@ def reasoning_only_message(
     Names the model, the output cap in force and the reasoning budget spent, so
     the caller can tell this apart from a flaky empty response and knows which
     lever to pull.
+
+    Args:
+        model_name: The model that produced the turn.
+        finish_reason: The provider's finish reason for the turn.
+        reasoning_tokens: Output tokens the provider billed as reasoning.
+        reasoning_chars: Length of the reasoning chain, when the provider sent it.
+        max_tokens: The output cap in force, or ``None`` when none was set.
+        completion_tokens: Total completion tokens the provider reported.
+
+    Returns:
+        One line naming the model, the cap and the reasoning spend.
     """
     spent = reasoning_tokens or completion_tokens or 0
     budget = (
@@ -527,6 +551,22 @@ def annotate_reasoning_only(
 
     A native tool call is a complete turn even with empty text, so it is never
     reported as reasoning-only.
+
+    Args:
+        metadata: The result metadata to annotate in place.
+        text: The visible content of the turn.
+        reasoning_text: The reasoning chain, when the provider sent one.
+        reasoning_tokens: Output tokens the provider billed as reasoning.
+        model_name: The model that produced the turn.
+        finish_reason: The provider's finish reason for the turn.
+        max_tokens: The output cap in force, or ``None`` when none was set.
+        completion_tokens: Total completion tokens the provider reported.
+        tool_calls: Native tool calls the turn made, which rule it out as
+            reasoning-only.
+        logger: Logger used for the heads-up, when one is passed.
+
+    Returns:
+        ``True`` when the turn was reasoning-only.
     """
     if reasoning_tokens:
         metadata["reasoning_tokens"] = reasoning_tokens
@@ -582,6 +622,15 @@ def warn_reasoning_only_stream(
     A streamed turn has no metadata channel back to the caller, so the same
     message :func:`annotate_reasoning_only` records is logged instead — an empty
     iterator would otherwise look like a call that simply had nothing to say.
+
+    Args:
+        model_name: The model that produced the stream.
+        yielded_text: Whether any visible token reached the caller.
+        reasoning_text: The reasoning chain, when the provider sent one.
+        reasoning_tokens: Output tokens the provider billed as reasoning.
+        finish_reason: The provider's finish reason for the stream.
+        max_tokens: The output cap in force, or ``None`` when none was set.
+        logger: Logger the message is written to.
     """
     if yielded_text:
         return
@@ -731,6 +780,16 @@ def provider_runtime_error(
     The underlying SDK message is run through the process redactor so no API
     keys/secrets leak into logs or user-facing output. Callers should
     ``raise provider_runtime_error(...) from exc`` to preserve the traceback.
+
+    Args:
+        provider: The provider whose call failed.
+        model: The model id the call targeted.
+        request_type: What was attempted, such as ``generate`` or ``stream``.
+        exc: The SDK exception to classify and redact.
+        message: A message to use instead of the redacted cause.
+
+    Returns:
+        The error to raise, carrying ``.error_context``.
     """
     # Local import keeps the module import cost low and avoids a hard
     # dependency cycle at import time.
@@ -783,6 +842,14 @@ def model_not_found_error(provider: str, model: str, message: str) -> Exception:
     Appends the live "did you mean… / available now…" hint from the model
     catalog to *message* so a 404 surfaces real alternatives instead of a raw
     provider error.
+
+    Args:
+        provider: The provider that rejected the id.
+        model: The model id that was not found.
+        message: The provider's own message, which the hint is appended to.
+
+    Returns:
+        A :class:`ModelNotFoundError` ready to raise.
     """
     from ._catalog import suggest_for_missing
     from .errors import ModelNotFoundError
@@ -805,6 +872,14 @@ def not_loaded_error(
     change the outcome. Adapters raise this instead of a bare
     ``RuntimeError`` so the retry layer, the agent's error record, and the
     server envelope all see one classified shape.
+
+    Args:
+        provider: The provider the adapter speaks to.
+        model: The model id the call targeted.
+        request_type: What was attempted, such as ``generate`` or ``stream``.
+
+    Returns:
+        The error to raise, carrying ``.error_context``.
     """
     ctx = error_context_dict(provider, model, request_type, "not_loaded")
     where = ", ".join(p for p in (f"provider={provider}" if provider else "",
@@ -831,6 +906,16 @@ def attach_error_context(
     Used where an adapter raises a specific typed error (auth/not-found/etc.)
     but we still want the uniform machine-readable context on it. ``source``
     is the original exception used for classification (defaults to ``err``).
+
+    Args:
+        err: The typed error to annotate, which is returned unchanged otherwise.
+        provider: The provider whose call failed.
+        model: The model id the call targeted.
+        request_type: What was attempted, such as ``generate`` or ``stream``.
+        source: The original exception to classify from, defaulting to *err*.
+
+    Returns:
+        The same exception, now carrying ``.error_context``.
     """
     if not hasattr(err, "error_context"):
         err.error_context = build_error_context(  # type: ignore[attr-defined]

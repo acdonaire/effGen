@@ -219,6 +219,17 @@ def normalize_record(
     vs ``pricing_per_1m_input``), the providers that price by the second
     (Replicate) or not at all (Cerebras free tier), and the per-provider
     vision/audio/video flags.
+
+    Args:
+        provider: The provider the record came from.
+        model_id: The provider's id for the model.
+        raw: The provider-native dict to map.
+        verified_on: The ISO date the data was fetched, recorded on the record.
+        price_source: Where the price came from, such as the bundled table or a
+            live fetch.
+
+    Returns:
+        The normalized :class:`ModelRecord`.
     """
     raw = raw or {}
 
@@ -391,6 +402,13 @@ def save_snapshot(
     """Persist *records* for *provider* as ``{verified_on, count, models:[...]}``.
 
     Returns the path written.  ``verified_on`` defaults to today (UTC).
+
+    Args:
+        provider: The provider the snapshot belongs to.
+        records: The records to persist.
+        verified_on: The ISO date to stamp, defaulting to today in UTC.
+        source: Where the prices came from, recorded alongside the models.
+        path: Where to write, defaulting to the bundled snapshot location.
     """
     recs = list(records)
     # Privacy guard: a private/per-account fine-tune id must never reach a
@@ -695,6 +713,14 @@ def nearest_alternatives(
     same family, then the same provider, then fuzzy id similarity; deprecated
     models are pushed to the back.  When *provider* is given the search is
     scoped to that provider, otherwise it spans every known catalog.
+
+    Args:
+        model_id: The id that was not found.
+        provider: Limit the search to this provider when given.
+        n: Most suggestions to return.
+
+    Returns:
+        Up to *n* records, closest first.
     """
     pref_provider, bare = _split_prefix(model_id)
     provider = provider or pref_provider
@@ -743,6 +769,12 @@ def suggest_for_missing(
     it also fires :func:`warn_if_stale` once per process for *provider* (the
     catalog may simply be out of date).  Returns ``""`` if nothing useful can be
     suggested.
+
+    Args:
+        provider: The provider that rejected the id.
+        model_id: The id that was not found.
+        n: Most alternatives to name in the hint.
+        warn: Whether to also warn once when the snapshot is stale.
     """
     parts: list[str] = []
     try:
@@ -813,6 +845,11 @@ def warn_if_stale(
     Returns True if a warning was emitted on this call.  Non-spammy: subsequent
     calls for the same provider are silent for the life of the process.  Pass
     *warn_fn* to route the message somewhere other than the module logger.
+
+    Args:
+        provider: The provider whose snapshot age is checked.
+        max_age_days: Age at which the snapshot counts as stale.
+        warn_fn: Where to send the message instead of the module logger.
     """
     if provider in _WARNED:
         return False

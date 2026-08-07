@@ -430,6 +430,12 @@ def check_drift(
     Returns the :func:`~effgen.models._catalog.diff_records` report plus
     ``provider`` and ``checked_on``.  Falls back to the offline catalog-vs-snapshot
     check when no credentials are available.
+
+    Args:
+        provider: The provider to check.
+        api_key: Credential for the live listing, otherwise read from the
+            environment.
+        warn: Whether to emit the one-time refresh suggestion on drift.
     """
     today = datetime.date.today().isoformat()
     snapshot = load_snapshot_records(provider)

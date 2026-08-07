@@ -157,7 +157,15 @@ class SQLiteRateLimitStore:
         timestamp: float,
         tokens: int = 0,
     ) -> None:
-        """Record one rate-limit event atomically (BEGIN IMMEDIATE)."""
+        """Record one rate-limit event atomically (BEGIN IMMEDIATE).
+
+        Args:
+            provider: The provider the call went to.
+            model: The model id the call used.
+            kind: What is being counted, such as a request or a token spend.
+            timestamp: Unix time of the event.
+            tokens: Tokens the event consumed, for token-window accounting.
+        """
         conn = self._conn()
         # BEGIN IMMEDIATE: prevents concurrent writers from interleaving
         conn.execute("BEGIN IMMEDIATE;")
@@ -187,6 +195,22 @@ class SQLiteRateLimitStore:
         The coordinator needs the read and write to happen under one SQLite
         write transaction.  Otherwise two processes can both observe available
         capacity and then both write after the API call has already started.
+
+        Args:
+            provider: The provider the call will go to.
+            model: The model id the call will use.
+            timestamp: Unix time the reservation is made at.
+            rpm: Requests allowed per minute.
+            rph: Requests allowed per hour.
+            rpd: Requests allowed per day.
+            tpm: Tokens allowed per minute.
+            tph: Tokens allowed per hour.
+            tpd: Tokens allowed per day.
+            tokens_estimate: Tokens the call is expected to consume.
+
+        Returns:
+            The reservation result, saying whether the slot was granted and, when it
+            was not, which window is full and how long until it frees.
         """
         conn = self._conn()
         conn.execute("BEGIN IMMEDIATE;")
@@ -230,7 +254,14 @@ class SQLiteRateLimitStore:
         kind: str,
         since: float,
     ) -> Sequence[tuple[float, int]]:
-        """Return all (timestamp, tokens) events in [since, now] for this key."""
+        """Return all (timestamp, tokens) events in [since, now] for this key.
+
+        Args:
+            provider: The provider to count events for.
+            model: The model id to count events for.
+            kind: The event kind to count.
+            since: Unix time the window opens at.
+        """
         conn = self._conn()
         rows = conn.execute(_QUERY_WINDOW, (provider, model, kind, since)).fetchall()
         return rows  # list of (timestamp, tokens)

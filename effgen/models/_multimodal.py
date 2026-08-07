@@ -45,7 +45,16 @@ def require_vision_support(
     supports_vision: bool | Callable[[str], bool],
     hint: str = "",
 ) -> None:
-    """Raise CapabilityNotSupportedError if image input targets a non-vision model."""
+    """Raise CapabilityNotSupportedError if image input targets a non-vision model.
+
+    Args:
+        prompt: The prompt to inspect for image parts.
+        provider: The provider named in the error.
+        model_name: The model id named in the error.
+        supports_vision: Whether the model accepts images, or a predicate taking
+            the model id.
+        hint: An extra line appended to the error, such as a model to use instead.
+    """
     if not has_image_input(prompt):
         return
 
@@ -69,7 +78,16 @@ def require_audio_support(
     supports_audio: bool | Callable[[str], bool],
     hint: str = "",
 ) -> None:
-    """Raise CapabilityNotSupportedError if audio input targets a non-audio model."""
+    """Raise CapabilityNotSupportedError if audio input targets a non-audio model.
+
+    Args:
+        prompt: The prompt to inspect for audio parts.
+        provider: The provider named in the error.
+        model_name: The model id named in the error.
+        supports_audio: Whether the model accepts audio, or a predicate taking
+            the model id.
+        hint: An extra line appended to the error, such as a model to use instead.
+    """
     if not has_audio_input(prompt):
         return
 
@@ -98,6 +116,14 @@ def require_video_support(
     Note: most providers handle VideoPart via frame-sampling fallback (vision
     capability required).  Only call this when the provider truly cannot handle
     video in any form (e.g. no vision support at all).
+
+    Args:
+        prompt: The prompt to inspect for video parts.
+        provider: The provider named in the error.
+        model_name: The model id named in the error.
+        supports_video: Whether the model accepts video, or a predicate taking
+            the model id.
+        hint: An extra line appended to the error, such as a model to use instead.
     """
     if not has_video_input(prompt):
         return

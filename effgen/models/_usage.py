@@ -54,6 +54,19 @@ def usage_metadata(
     from a genuine free tier. ``total_cost`` is a different number, not an
     alias: the cumulative cost across every call made on the adapter instance
     so far (including this one).
+
+    Args:
+        prompt_tokens: Input tokens the provider reported.
+        completion_tokens: Output tokens the provider reported.
+        total_tokens: Prompt plus completion tokens.
+        cached_tokens: Prompt tokens served from the provider's cache.
+        cost: This call's cost in US dollars, or ``None`` when unpriced.
+        total_cost: Cumulative cost across the adapter instance, this call included.
+
+    Returns:
+        The per-call token and cost block, in the shape an adapter stamps onto
+        its result. Local engines report tokens without a cost and leave
+        ``cost_usd`` off entirely.
     """
     return {
         "prompt_tokens": prompt_tokens,
@@ -90,7 +103,17 @@ def tool_call_entry(
     call_id: Any = "",
     call_type: Any = "function",
 ) -> dict[str, Any]:
-    """Build one element of ``metadata["tool_calls"]`` in the documented shape."""
+    """Build one element of ``metadata["tool_calls"]`` in the documented shape.
+
+    Args:
+        name: The tool the model asked for.
+        arguments: The call arguments, as the provider sent them.
+        call_id: The provider's id for the call, used to match the result back.
+        call_type: The call kind the provider reported.
+
+    Returns:
+        One entry in the documented ``metadata["tool_calls"]`` shape.
+    """
     return {
         "id": str(call_id) if call_id else "",
         "type": str(call_type) if call_type else "function",
@@ -191,6 +214,13 @@ def record_tracker_cost(
     tracking is unavailable. :class:`BudgetExceededError` propagates so budget
     limits stop the run; any other tracker failure is confined to a debug log —
     accounting must never break a successful generation.
+
+    Args:
+        provider: The provider that served the call.
+        model: The model id the call used.
+        prompt_tokens: Input tokens the call consumed.
+        completion_tokens: Output tokens the call produced.
+        log: Logger a tracker failure is confined to.
     """
     try:
         from effgen.models._cost import CostTracker

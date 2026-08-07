@@ -209,7 +209,16 @@ class SQLiteCostStore:
         cost_usd: float,
         timestamp: float | None = None,
     ) -> None:
-        """Insert one cost event atomically."""
+        """Insert one cost event atomically.
+
+        Args:
+            provider: The provider that served the call.
+            model: The model id the call used.
+            prompt_tokens: Input tokens the call consumed.
+            completion_tokens: Output tokens the call produced.
+            cost_usd: What the call cost in US dollars.
+            timestamp: Unix time of the call, defaulting to now.
+        """
         ts = timestamp if timestamp is not None else time.time()
         with self._exclusive() as conn:
             conn.execute("BEGIN IMMEDIATE;")

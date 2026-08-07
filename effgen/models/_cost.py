@@ -331,6 +331,12 @@ def call_cost(
     :meth:`CostTracker.record`'s ``cost_usd`` argument.  ``None`` means the
     catalog publishes no price for this id, so no cost can be stated; callers
     render that as "unpriced" rather than a fabricated ``$0.000000``.
+
+    Args:
+        provider: The provider that served the call.
+        model: The model id the call used.
+        prompt_tokens: Input tokens the provider reported.
+        completion_tokens: Output tokens the provider reported.
     """
     if pricing_status(provider, model) == "unpriced":
         return None
