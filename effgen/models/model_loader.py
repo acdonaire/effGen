@@ -199,8 +199,7 @@ def load_model(
     provider: str | None = None,
     **kwargs: Any
 ) -> BaseModel:
-    """
-    Convenience function to quickly load a model.
+    """Convenience function to quickly load a model.
 
     Provider prefixes route to a remote API (``"openai:..."``, ``"gemini:..."``,
     ``"hf:..."`` etc.). In particular ``"hf:<repo>"`` is the **remote**
@@ -221,6 +220,8 @@ def load_model(
         apply_chat_template: Whether to automatically apply chat templates for
                             instruction-tuned models (default: True, vLLM only).
                             This ensures proper formatting for models like Qwen-Instruct.
+        provider: Route to this remote provider instead of a local engine; the
+            same choice a ``"provider:model"`` prefix makes.
         **kwargs: Additional parameters (e.g., quantization="4bit", trust_remote_code=True)
 
     Returns:

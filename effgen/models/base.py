@@ -238,6 +238,12 @@ def record_stream_usage(
     the real usage after the stream is exhausted records it here. The consumer
     reads it back with :func:`get_stream_usage`, which is what lets a streamed
     turn report its tokens and cost without a second billed call.
+
+    Args:
+        model: The adapter whose stream just ended.
+        prompt_tokens: Input tokens the provider reported, when it did.
+        completion_tokens: Output tokens the provider reported, when it did.
+        cost_usd: What the stream cost, when the provider prices it.
     """
     if prompt_tokens is None and completion_tokens is None and cost_usd is None:
         return
@@ -317,6 +323,15 @@ def estimate_stream_usage(
     The returned dict is shaped like :func:`get_stream_usage`'s and carries
     ``estimated: True`` so a caller can label the numbers as counted locally
     rather than reported by the provider.
+
+    Args:
+        model: The adapter the stream came from.
+        prompt_text: The prompt that was sent.
+        completion_text: The text the stream produced.
+
+    Returns:
+        The usage block, marked ``estimated`` so a reader knows the counts were
+        derived locally.
     """
     prompt_tokens: int | None = None
     completion_tokens: int | None = None

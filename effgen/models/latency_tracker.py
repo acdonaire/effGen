@@ -93,7 +93,13 @@ class LatencyTracker:
         )
 
     def record_ttft(self, provider: str, model: str, ttft_ms: float) -> None:
-        """Record only a TTFT observation without affecting total p50 latency."""
+        """Record only a TTFT observation without affecting total p50 latency.
+
+        Args:
+            provider: The provider that served the stream.
+            model: The model id the stream used.
+            ttft_ms: Milliseconds from request to first token.
+        """
         key = (provider, model)
         with self._rw_lock:
             if key not in self._ttfts:
@@ -214,6 +220,11 @@ def timed_call(
                 if first_chunk:
                     t.mark_first_token()
                 yield chunk
+
+    Args:
+        provider: The provider the call goes to.
+        model: The model id the call uses.
+        tracker: The tracker to record into, defaulting to the process-wide one.
     """
     if tracker is None:
         tracker = LatencyTracker.get()

@@ -81,7 +81,16 @@ class LazyModel(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Generate via the wrapped model, loading it on demand."""
+        """Generate via the wrapped model, loading it on demand.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the wrapped model.
+
+        Returns:
+            The wrapped model's result.
+        """
         self._maybe_evict()
         self._ensure_loaded()
         return self._inner.generate(prompt, config, **kwargs)
@@ -92,7 +101,16 @@ class LazyModel(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[str]:
-        """Stream via the wrapped model, loading it on demand."""
+        """Stream via the wrapped model, loading it on demand.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the wrapped model.
+
+        Returns:
+            The wrapped model's chunk iterator.
+        """
         self._maybe_evict()
         self._ensure_loaded()
         return self._inner.generate_stream(prompt, config, **kwargs)

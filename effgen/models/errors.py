@@ -293,6 +293,15 @@ def error_context_dict(
 
     The returned dict is always free of secret material (the fields are
     static/derived), so it is safe to attach to exceptions, log, and surface.
+
+    Args:
+        provider: The provider the call went to.
+        model: The model id the call used.
+        request_type: What was attempted, such as ``generate`` or ``stream``.
+        category: The classified failure kind.
+
+    Returns:
+        The context dict attached to the raised error.
     """
     return {
         "provider": provider or "",

@@ -68,7 +68,17 @@ class ContinuousBatcher:
         timeout: float | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Queue *prompt* and block until its result is ready (or *timeout*)."""
+        """Queue *prompt* and block until its result is ready (or *timeout*).
+
+        Args:
+            prompt: The prompt to queue.
+            config: Sampling and budget settings for the call.
+            timeout: Seconds to wait for the result before giving up.
+            **kwargs: Extra parameters forwarded to the wrapped model.
+
+        Returns:
+            The result for this prompt once its batch has run.
+        """
         if self._stop.is_set():
             raise RuntimeError("ContinuousBatcher has been shut down")
         req = _Request(prompt=prompt, config=config, kwargs=kwargs)

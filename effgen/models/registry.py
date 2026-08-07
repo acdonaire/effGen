@@ -621,6 +621,9 @@ class ChaosMiddlewareRegistry:
             fn:       The real adapter callable.
             *args:    Positional args forwarded to *fn*.
             **kwargs: Keyword args forwarded to *fn*.
+
+        Returns:
+            Whatever *fn* returns, when no fault was injected.
         """
         self._chaos.maybe_inject(provider)
         return fn(*args, **kwargs)
@@ -628,7 +631,17 @@ class ChaosMiddlewareRegistry:
     async def async_call(
         self, provider: str, fn: Any, *args: Any, **kwargs: Any
     ) -> Any:
-        """Async version of :meth:`call`."""
+        """Async version of :meth:`call`.
+
+        Args:
+            provider: Provider name, used for rule matching.
+            fn: The real adapter coroutine function.
+            *args: Positional arguments forwarded to *fn*.
+            **kwargs: Keyword arguments forwarded to *fn*.
+
+        Returns:
+            Whatever *fn* returns, when no fault was injected.
+        """
         await self._chaos.async_maybe_inject(provider)
         return await fn(*args, **kwargs)
 
