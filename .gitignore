@@ -231,6 +231,12 @@ effgen/security/installed_hashes.json
 /.effgen/
 # `effgen config init` writes ./config.yaml unless -o names another path.
 /config.yaml
+# The MetricsCollector examples export to bare filenames, so running them
+# leaves these in whatever directory they were run from.
+/metrics.json
+/metrics.csv
+# Run logs land here when no log directory is configured.
+/logs/
 
 # Secret-scan dir-scan report (gitleaks writes ./gitleaks-report.json on findings).
 gitleaks-report.json
