@@ -273,7 +273,16 @@ class Message:
 
     @classmethod
     def from_str(cls, role: Role | str, text: str, **kwargs: Any) -> "Message":
-        """Create a text-only message from a plain string."""
+        """Create a text-only message from a plain string.
+
+        Args:
+            role: Who the message is from.
+            text: The message text.
+            **kwargs: Extra message fields, such as a name or tool call id.
+
+        Returns:
+            The constructed message.
+        """
         if isinstance(role, str):
             role = Role(role)
         return cls(role=role, content=[TextPart(text=text)], **kwargs)

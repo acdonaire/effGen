@@ -39,7 +39,13 @@ class AgentState:
     updated_at: datetime = field(default_factory=datetime.now)
 
     def add_message(self, role: str, content: str, metadata: dict | None = None) -> None:
-        """Add a message to conversation history."""
+        """Add a message to conversation history.
+
+        Args:
+            role: Who the message is from.
+            content: The message text.
+            metadata: Extra context stored with the message.
+        """
         self.conversation_history.append({
             "role": role,
             "content": content,
@@ -49,7 +55,14 @@ class AgentState:
         self.updated_at = datetime.now()
 
     def add_tool_call(self, tool_name: str, args: dict, result: Any, error: str | None = None) -> None:
-        """Record a tool call."""
+        """Record a tool call.
+
+        Args:
+            tool_name: The tool that was called.
+            args: The arguments it was called with.
+            result: What it returned.
+            error: The failure message, when the call failed.
+        """
         self.tool_history.append({
             "tool": tool_name,
             "args": args,

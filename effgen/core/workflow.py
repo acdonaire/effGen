@@ -234,7 +234,18 @@ class WorkflowDAG:
     def connect(self, source: str, target: str,
                 key: str | None = None,
                 condition: Callable[[Any], bool] | None = None) -> WorkflowEdge:
-        """Convenience: create and add an edge between two node IDs."""
+        """Convenience: create and add an edge between two node IDs.
+
+        Args:
+            source: Id of the node the edge leaves.
+            target: Id of the node the edge enters.
+            key: Input name the source's output is bound to on the target.
+            condition: Predicate on the source's output deciding whether the edge is
+                followed.
+
+        Returns:
+            The edge that was added.
+        """
         edge = WorkflowEdge(source=source, target=target, key=key, condition=condition)
         self.add_edge(edge)
         return edge

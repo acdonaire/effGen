@@ -130,7 +130,13 @@ class Session:
 
     # ------------------------------------------------------------------ messages
     def add_message(self, role: str, content: str, **meta: Any) -> None:
-        """Append a message with a timestamp and refresh ``updated_at``."""
+        """Append a message with a timestamp and refresh ``updated_at``.
+
+        Args:
+            role: Who the message is from.
+            content: The message text.
+            **meta: Extra fields stored alongside the message.
+        """
         self.messages.append({
             "role": role,
             "content": content,
@@ -208,7 +214,16 @@ class Session:
         agent_name: str = "",
         sessions_dir: str | None = None,
     ) -> "Session":
-        """Load *session_id* when it exists, otherwise create a new session."""
+        """Load *session_id* when it exists, otherwise create a new session.
+
+        Args:
+            session_id: The session to load, or ``None`` to always create one.
+            agent_name: Agent recorded on a session that is created here.
+            sessions_dir: Where sessions live, defaulting to the state directory.
+
+        Returns:
+            The loaded or newly created session.
+        """
         if session_id:
             try:
                 return cls.load(session_id, sessions_dir)

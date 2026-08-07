@@ -81,7 +81,13 @@ class PromptCache:
 
     # ------------------------------------------------------------------ ops
     def put(self, key: str, payload: Any, ttl: float | None = None) -> None:
-        """Insert or refresh an entry."""
+        """Insert or refresh an entry.
+
+        Args:
+            key: The cache key to store under.
+            payload: The value to store.
+            ttl: Seconds the entry stays valid, defaulting to the cache's own.
+        """
         ttl = ttl if ttl is not None else self.default_ttl
         with self._lock:
             entry = PromptCacheEntry(key=key, payload=payload, ttl=ttl)

@@ -121,7 +121,15 @@ class ResultCache:
         tool: str | None = None,
         key: str | None = None,
     ) -> str:
-        """Cache a result for *query*. Returns the storage key."""
+        """Cache a result for *query*. Returns the storage key.
+
+        Args:
+            query: The query the result answers.
+            value: The result to cache.
+            ttl: Seconds the entry stays valid, defaulting to the cache's own.
+            tool: The tool the result came from, which scopes the entry.
+            key: The storage key to use instead of one derived from *query*.
+        """
         if ttl is None:
             if tool is not None and tool in self._tool_ttl:
                 ttl = self._tool_ttl[tool]
@@ -159,6 +167,11 @@ class ResultCache:
 
         First tries an exact hash match; if ``embed_fn`` is configured, falls
         back to semantic-similarity lookup.
+
+        Args:
+            query: The query to look up.
+            tool: The tool the result came from, which scopes the lookup.
+            key: The storage key to read instead of one derived from *query*.
         """
         cache_key = key or self.make_key(query, tool or "")
         with self._lock:
@@ -187,7 +200,17 @@ class ResultCache:
         tool: str | None = None,
         threshold: float | None = None,
     ) -> Any | None:
-        """Look up by semantic similarity. Requires ``embed_fn``."""
+        """Look up by semantic similarity. Requires ``embed_fn``.
+
+        Args:
+            query: The query to look up.
+            tool: The tool the result came from, which scopes the lookup.
+            threshold: Least similarity a hit must reach, defaulting to the
+                cache's own.
+
+        Returns:
+            The closest cached value above the threshold, or ``None``.
+        """
         if self._embed_fn is None:
             return None
         try:

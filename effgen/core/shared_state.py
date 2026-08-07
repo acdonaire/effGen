@@ -157,8 +157,12 @@ class SharedState:
             ))
 
     def delete(self, namespace: str, key: str, agent_id: str = "") -> Any:
-        """
-        Delete a key from the shared state.
+        """Delete a key from the shared state.
+
+        Args:
+            namespace: The namespace the key lives in.
+            key: The key to delete.
+            agent_id: The agent recorded as making the change.
 
         Returns:
             The deleted value, or None if key was missing

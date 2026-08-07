@@ -360,6 +360,13 @@ def structured_generate(
     Unlike a raising helper, this returns a :class:`StructuredOutcome` so callers
     can surface the attempt count and fail explicitly (raw text preserved) when no
     strategy produces a schema-valid object.
+
+    Args:
+        model: The model to generate with.
+        prompt: The prompt describing what to produce.
+        schema: The JSON schema the output must satisfy.
+        config: Strategy, retry and time-budget settings.
+        generation_kwargs: Extra keyword arguments forwarded to the model.
     """
     if config is None:
         config = StructuredOutputConfig(schema=schema)
