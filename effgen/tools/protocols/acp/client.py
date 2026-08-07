@@ -55,7 +55,7 @@ class ACPClientConfig:
     discovery_url: str | None = None
     enable_telemetry: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.headers is None:
             self.headers = {}
 

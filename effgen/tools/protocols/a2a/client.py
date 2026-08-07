@@ -49,7 +49,7 @@ class A2AClientConfig:
     verify_ssl: bool = True
     headers: dict[str, str] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.headers is None:
             self.headers = {}
 

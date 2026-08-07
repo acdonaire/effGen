@@ -78,7 +78,7 @@ class ACPServerConfig:
     enable_streaming: bool = True
     require_auth: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.cors_origins is None:
             self.cors_origins = []
 
