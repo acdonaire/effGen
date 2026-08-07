@@ -250,7 +250,21 @@ class TestFrameSampling:
         frames = vs.sample_frames(fps=1.0, max_frames=6)
         assert len(frames) >= 1
 
-    def test_fixture_fps_two_caps_at_eight_frames(self):
+    def test_fixture_sampling_caps_at_max_frames(self):
+        """The cap binds: the fixture offers more frames at this rate than are asked for."""
+        if not SAMPLE_VIDEO.exists():
+            pytest.skip("Sample fixture not found")
+
+        from effgen.multimodal.video_pre import VideoSource
+
+        vs = VideoSource(SAMPLE_VIDEO)
+        # The fixture runs 2 s at 6 fps, so sampling at its native rate offers
+        # 12 frames and the cap is what decides how many come back.
+        frames = vs.sample_frames(fps=6.0, max_frames=8)
+        assert len(frames) == 8
+
+    def test_fixture_sampling_below_the_cap_returns_what_the_rate_yields(self):
+        """Under the cap, the requested rate and the clip's length decide the count."""
         if not SAMPLE_VIDEO.exists():
             pytest.skip("Sample fixture not found")
 
@@ -258,7 +272,7 @@ class TestFrameSampling:
 
         vs = VideoSource(SAMPLE_VIDEO)
         frames = vs.sample_frames(fps=2.0, max_frames=8)
-        assert len(frames) == 8
+        assert len(frames) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -281,16 +295,16 @@ class TestAudioExtraction:
         assert audio.mime == "audio/mp3"
         assert len(audio.audio) > 0
 
-    def test_extract_audio_from_fixture(self):
+    def test_extract_audio_from_a_silent_video_returns_none(self):
+        """A video with no audio track yields ``None``, not an empty ``AudioPart``."""
         if not SAMPLE_VIDEO.exists():
             pytest.skip("Sample fixture not found")
 
         from effgen.multimodal.video_pre import VideoSource
 
+        # The shared fixture is generated silent (see generate_fixtures.make_video).
         vs = VideoSource(SAMPLE_VIDEO)
-        audio = vs.extract_audio()
-        assert audio is not None
-        assert isinstance(audio, AudioPart)
+        assert vs.extract_audio() is None
 
     def test_convenience_extract_audio(self, tmp_path):
         from effgen.multimodal.video_pre import extract_audio
