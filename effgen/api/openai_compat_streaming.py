@@ -28,6 +28,14 @@ def chat_sse_iter(
     an iterator of string chunks, possibly exposing the completed call's real
     usage as ``.usage`` once exhausted; a non-iterable result is stringified
     into a single chunk.
+
+    Args:
+        result: What the runner returned for the streaming request.
+        model: The model id reported in each chunk.
+        chat_id: The id shared by every chunk of this response.
+        prompt_tokens: Input tokens the call consumed.
+        effgen_meta: Extra effGen fields carried on the usage chunk.
+        include_usage: Emit the trailing usage-only chunk.
     """
     # Helper builders are looked up through the facade module at generation
     # time so a monkeypatch on ``effgen.api.openai_compat`` stays effective.
@@ -127,6 +135,11 @@ def completion_sse_iter(
     ``result`` is what the runner returned for a streaming request — normally
     an iterator of string chunks; a non-iterable result is stringified into a
     single chunk.
+
+    Args:
+        result: What the runner returned for the streaming request.
+        model: The model id reported in each chunk.
+        cmpl_id: The id shared by every chunk of this response.
     """
     from effgen.api import openai_compat as _compat
 

@@ -114,6 +114,11 @@ def check_budget(principal: str, cap: float, *, day: str | None = None) -> None:
     """Raise :class:`BudgetExceeded` if *principal* has already met *cap*.
 
     A *cap* of ``0.0`` means unlimited and never raises.
+
+    Args:
+        principal: Whose spend is checked.
+        cap: The daily limit in US dollars; ``0.0`` means unlimited.
+        day: The accounting day to check, defaulting to today.
     """
     if cap <= 0.0:
         return
@@ -176,6 +181,12 @@ def reserve(
 
     Raises :class:`BudgetExceeded` if committed + reserved spend has already met
     or exceeded a positive *cap*.
+
+    Args:
+        principal: Whose budget the reservation is taken from.
+        amount: The estimated cost to hold, in US dollars.
+        cap: The daily limit in US dollars; ``0.0`` means unlimited.
+        day: The accounting day to reserve against, defaulting to today.
     """
     import uuid
 
@@ -211,6 +222,12 @@ def reconcile(
     Returns the principal's new committed total. Pass ``actual_amount`` when the
     real provider usage/cost is known after the call completes; otherwise the
     originally reserved estimate is charged.
+
+    Args:
+        principal: Whose budget is charged.
+        token: The reservation token to commit.
+        actual_amount: What the call really cost, defaulting to the reservation.
+        day: The accounting day to charge, defaulting to today.
     """
     day = day or _today()
     with _lock:
@@ -223,7 +240,13 @@ def reconcile(
 
 
 def release(principal: str, token: str, *, day: str | None = None) -> None:
-    """Discard a reservation without charging (e.g. the call failed)."""
+    """Discard a reservation without charging (e.g. the call failed).
+
+    Args:
+        principal: Whose reservation is discarded.
+        token: The reservation token to discard.
+        day: The accounting day the reservation was made on.
+    """
     day = day or _today()
     with _lock:
         _pop_reservation(principal, token, day)

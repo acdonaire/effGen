@@ -69,6 +69,18 @@ def build_chat_completion(
     tokenizer counts); when ``None`` it is estimated from ``content``.
     ``effgen_meta`` adds a non-standard ``effgen`` object documenting the
     requested vs. resolved model (OpenAI clients ignore unknown top-level keys).
+
+    Args:
+        model: The model id reported in the response.
+        content: The assistant's answer text.
+        tool_calls: Tool calls the turn made, in OpenAI's shape.
+        prompt_tokens: Input tokens the call consumed.
+        completion_tokens: Output tokens, estimated from *content* when ``None``.
+        finish_reason: Why the turn ended.
+        effgen_meta: Extra effGen fields, such as the resolved model and cost.
+
+    Returns:
+        The response body, ready to serialize.
     """
     message: dict[str, Any] = {"role": "assistant", "content": content or None}
     if tool_calls:
@@ -109,7 +121,19 @@ def build_chat_chunk(
     finish_reason: str | None = None,
     role: str | None = None,
 ) -> dict[str, Any]:
-    """Build one chat.completion.chunk for SSE streaming."""
+    """Build one chat.completion.chunk for SSE streaming.
+
+    Args:
+        model: The model id reported in the chunk.
+        delta_content: The text this chunk adds.
+        chat_id: The id shared by every chunk of one response, generated when
+            absent.
+        finish_reason: Set on the last chunk to say why the turn ended.
+        role: Set on the first chunk to open the assistant message.
+
+    Returns:
+        One chunk body, ready to serialize into an SSE event.
+    """
     delta: dict[str, Any] = {}
     if role:
         delta["role"] = role
@@ -147,6 +171,16 @@ def build_usage_chunk(
     ``effgen`` object the non-streaming response carries — including
     ``cost_usd`` — so a client tallying spend reads one number from the server
     on both paths instead of re-deriving a price from the catalog itself.
+
+    Args:
+        model: The model id reported in the chunk.
+        chat_id: The id shared by every chunk of one response.
+        prompt_tokens: Input tokens the call consumed.
+        completion_tokens: Output tokens the call produced.
+        effgen_meta: Extra effGen fields, such as the resolved model and cost.
+
+    Returns:
+        The trailing usage-only chunk, ready to serialize.
     """
     chunk: dict[str, Any] = {
         "id": chat_id or _chat_id(),
@@ -173,7 +207,18 @@ def build_text_completion(
     completion_tokens: int | None = None,
     finish_reason: str = "stop",
 ) -> dict[str, Any]:
-    """Build a legacy ``text_completion`` response envelope for *text*."""
+    """Build a legacy ``text_completion`` response envelope for *text*.
+
+    Args:
+        model: The model id reported in the response.
+        text: The completion text.
+        prompt_tokens: Input tokens the call consumed.
+        completion_tokens: Output tokens, estimated from *text* when ``None``.
+        finish_reason: Why the completion ended.
+
+    Returns:
+        The response body, ready to serialize.
+    """
     if completion_tokens is None:
         completion_tokens = _approx_tokens(text)
     return {

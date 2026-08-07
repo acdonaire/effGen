@@ -113,7 +113,17 @@ class RequestQueue:
         priority: RequestPriority = RequestPriority.NORMAL,
         timeout: float | None = None,
     ) -> QueuedRequest:
-        """Add a request to the queue. Raises ``QueueFullError`` on overflow."""
+        """Add a request to the queue. Raises ``QueueFullError`` on overflow.
+
+        Args:
+            payload: The request to run when the slot comes up.
+            tenant_id: The tenant the request is accounted to.
+            priority: Where the request sits relative to others waiting.
+            timeout: Seconds the request may wait before it is dropped.
+
+        Returns:
+            The queued request, carrying its id and position.
+        """
         async with self._cond:
             if self._closed:
                 raise RuntimeError("Queue is closed")

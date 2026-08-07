@@ -155,6 +155,16 @@ def error_envelope(
     status alone would mislabel the failure — a 404 for an unknown URL path is
     an ``invalid_request_error``, not the ``model_not_found`` a 404 from the
     model routes means.
+
+    Args:
+        status: The HTTP status the envelope describes.
+        message: The message shown to the client.
+        code: Machine-readable code placed in the envelope.
+        error_type: Overrides the type derived from *status*.
+        redact: Run *message* through the secret scrubber first.
+
+    Returns:
+        The error body, ready to serialize.
     """
     err_type = error_type or _STATUS_ERROR_TYPE.get(
         status, "server_error" if status >= 500 else "invalid_request_error"

@@ -168,6 +168,19 @@ def create_app(
         raw socket peer is used); enable only when the deployment sits behind
         a reverse proxy that sets/overwrites this header, since any direct
         caller can otherwise set it to bypass the limit.
+
+    Args:
+        dev_mode: Relax CORS for local development.
+        oidc_issuer: Issuer whose tokens the server accepts.
+        oidc_client_id: Audience the tokens must carry.
+        oidc_jwks_uri: Where the issuer's signing keys are fetched from.
+        api_key: The API key clients authenticate with; one is minted when absent.
+        metrics_auth: Require authentication on ``/metrics``.
+        public_metrics: Serve ``/metrics`` without authentication.
+        public_dashboard: Serve the dashboard without authentication.
+        public_playground: Serve the playground without authentication.
+        cors_origins: Origins allowed to call the API cross-origin.
+        rate_limit_per_minute: Per-client request cap, or ``None`` for no limit.
     """
     try:
         from fastapi import FastAPI

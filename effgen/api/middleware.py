@@ -7,7 +7,7 @@ Provides:
 - CORS configuration
 - Response compression (gzip)
 - Request/response validation is handled by FastAPI/Pydantic by default
-- Graceful shutdown hooks (SIGTERM/SIGINT draining)
+- Shutdown hooks that drain in-flight requests (SIGTERM/SIGINT)
 """
 from __future__ import annotations
 
@@ -76,6 +76,19 @@ def install_production_middleware(
     only opened to ``*`` in dev mode. A wildcard origin is never combined with
     ``allow_credentials=True`` (that combination is both insecure and rejected
     by browsers), so credentials are enabled only for an explicit origin list.
+
+    Args:
+        app: The FastAPI application to install onto.
+        cors_origins: Origins allowed to call the API cross-origin.
+        dev_mode: Open CORS to any origin, for local development only.
+        allow_credentials: Whether cross-origin requests may carry credentials;
+            never combined with a wildcard origin.
+        enable_gzip: Compress responses above *gzip_min_size*.
+        gzip_min_size: Smallest response body, in bytes, that is compressed.
+        enable_request_id: Stamp and echo a request id on every response.
+        shutdown_timeout: Seconds in-flight requests get to finish on shutdown.
+        rate_limit_per_minute: Per-client request cap, or ``None`` for no limit.
+        trust_proxy: Read the client IP from the first ``X-Forwarded-For`` hop.
     """
     try:
         from starlette.middleware.cors import CORSMiddleware

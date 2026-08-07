@@ -130,7 +130,17 @@ class TenantManager:
         allowed_tools: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Tenant:
-        """Create a tenant, persist it and return the record."""
+        """Create a tenant, persist it and return the record.
+
+        Args:
+            name: Display name for the tenant.
+            tenant_id: The id to use, generated when absent.
+            rate_limit_per_min: Requests the tenant may make each minute.
+            daily_token_quota: Tokens the tenant may spend each day.
+            allowed_models: Model ids the tenant may call, or ``None`` for all.
+            allowed_tools: Tool names the tenant may use, or ``None`` for all.
+            metadata: Extra fields stored with the record.
+        """
         tenant = Tenant(
             id=tenant_id or secrets.token_hex(8),
             name=name,
