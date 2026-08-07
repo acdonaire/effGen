@@ -276,7 +276,16 @@ class CerebrasAdapter(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Async version of :meth:`generate` — preferred inside async contexts."""
+        """Async version of :meth:`generate` — preferred inside async contexts.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the provider SDK.
+
+        Returns:
+            The generated text with its usage metadata.
+        """
         if not self._is_loaded or self._client is None:
             raise not_loaded_error("cerebras", self.model_name, "async_generate")
 

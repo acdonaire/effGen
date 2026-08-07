@@ -727,6 +727,10 @@ class GeminiAdapter(FunctionCallingModel):
                 objects returned by :func:`~effgen.models.gemini_files.upload_file`.
                 Each file is prepended to the request content so the model can
                 read it before answering *prompt*.
+            **kwargs: Extra parameters forwarded to the provider SDK.
+
+        Returns:
+            The generated text with its usage metadata.
         """
         if not self._is_loaded:
             raise not_loaded_error("gemini", self.model_name, "generate")
@@ -971,7 +975,16 @@ class GeminiAdapter(FunctionCallingModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[str]:
-        """Stream generated text chunks."""
+        """Stream generated text chunks.
+
+        Args:
+            prompt: The prompt text, or a content list for multimodal input.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the provider SDK.
+
+        Yields:
+            Successive text chunks from the model.
+        """
         if not self._is_loaded:
             raise not_loaded_error("gemini", self.model_name, "generate_stream")
         if isinstance(prompt, str):
@@ -1050,7 +1063,17 @@ class GeminiAdapter(FunctionCallingModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Generate with explicit tool list (convenience wrapper over generate)."""
+        """Generate with explicit tool list (convenience wrapper over generate).
+
+        Args:
+            prompt: The prompt to send.
+            tools: Tool definitions to offer the model.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the provider SDK.
+
+        Returns:
+            The generated text, with any tool calls in its metadata.
+        """
         return self.generate(prompt, config=config, tools=tools, **kwargs)
 
     # ------------------------------------------------------------------

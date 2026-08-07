@@ -486,8 +486,7 @@ class AnthropicAdapter(FunctionCallingModel):
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """
-        Generate text from a prompt.
+        """Generate text from a prompt.
 
         When GenerationConfig.thinking is set (e.g., {"type": "enabled",
         "budget_tokens": 8000}), extended thinking is requested and the
@@ -496,6 +495,15 @@ class AnthropicAdapter(FunctionCallingModel):
         For multi-turn conversations, pass the assistant's raw_content_blocks
         (from result.metadata["raw_content_blocks"]) as the assistant message
         content in subsequent calls to preserve redacted_thinking blocks.
+
+        Args:
+            prompt: The prompt text, or a content-block list for multimodal input.
+            config: Sampling and budget settings for the call.
+            system_prompt: System instruction sent alongside the prompt.
+            **kwargs: Extra parameters forwarded to the Anthropic SDK.
+
+        Returns:
+            The generated text with its usage metadata.
         """
         if not self._is_loaded:
             raise not_loaded_error("anthropic", self.model_name, "generate")
@@ -602,13 +610,18 @@ class AnthropicAdapter(FunctionCallingModel):
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> Iterator[str]:
-        """
-        Generate text with streaming output.
+        """Generate text with streaming output.
 
         Yields text chunks only. Thinking deltas and tool_use blocks are
         consumed internally (not yielded). Use ``generate_stream_full()``
         if you need typed chunks that include thinking and tool_use events.
         Redacted_thinking blocks are preserved for logging but not yielded.
+
+        Args:
+            prompt: The prompt text, or a content-block list for multimodal input.
+            config: Sampling and budget settings for the call.
+            system_prompt: System instruction sent alongside the prompt.
+            **kwargs: Extra parameters forwarded to the Anthropic SDK.
         """
         if not self._is_loaded:
             raise not_loaded_error("anthropic", self.model_name, "generate_stream")
@@ -659,8 +672,7 @@ class AnthropicAdapter(FunctionCallingModel):
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
-        """
-        Generate with streaming, yielding typed ``StreamChunk`` objects.
+        """Generate with streaming, yielding typed ``StreamChunk`` objects.
 
         Chunk types:
         - ``"thinking"``: incremental thinking delta (text field populated)
@@ -684,6 +696,16 @@ class AnthropicAdapter(FunctionCallingModel):
                     print(chunk.text, end="")
                 elif chunk.type == "tool_use":
                     print(f"[tool] {chunk.data['name']}: {chunk.data['input']}")
+
+        Args:
+            prompt: The prompt text, or a content-block list for multimodal input.
+            config: Sampling and budget settings for the call.
+            system_prompt: System instruction sent alongside the prompt.
+            **kwargs: Extra parameters forwarded to the Anthropic SDK.
+
+        Yields:
+            One typed chunk per thinking delta, answer delta, redacted-thinking
+            block and completed tool-use block.
         """
         if not self._is_loaded:
             raise not_loaded_error("anthropic", self.model_name, "generate_stream_full")
@@ -839,13 +861,22 @@ class AnthropicAdapter(FunctionCallingModel):
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """
-        Generate text with tool use support.
+        """Generate text with tool use support.
 
         Tool calls are surfaced in ``result.metadata["tool_calls"]`` in the
         shape every adapter reports, and in ``result.metadata["tool_uses"]``
         in Anthropic's own ``{id, name, input}`` form. Multiple parallel
         tool_use blocks are supported.
+
+        Args:
+            prompt: The prompt text, or a content-block list for multimodal input.
+            tools: Tool definitions in Anthropic's format.
+            config: Sampling and budget settings for the call.
+            system_prompt: System instruction sent alongside the prompt.
+            **kwargs: Extra parameters forwarded to the Anthropic SDK.
+
+        Returns:
+            The generated text, with any tool calls in its metadata.
         """
         if not self._is_loaded:
             raise not_loaded_error("anthropic", self.model_name, "generate_with_tools")
@@ -936,13 +967,21 @@ class AnthropicAdapter(FunctionCallingModel):
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """
-        Generate a response given a full conversation history.
+        """Generate a response given a full conversation history.
 
         messages: list of {"role": "user"|"assistant", "content": str|list}
         When an assistant message was produced with thinking enabled, pass
         its content as the raw_content_blocks list (from build_assistant_message)
         to preserve redacted_thinking blocks and avoid 400 errors.
+
+        Args:
+            messages: The conversation so far, newest last.
+            config: Sampling and budget settings for the call.
+            system_prompt: System instruction sent alongside the conversation.
+            **kwargs: Extra parameters forwarded to the Anthropic SDK.
+
+        Returns:
+            The next assistant turn with its usage metadata.
         """
         if not self._is_loaded:
             raise not_loaded_error("anthropic", self.model_name, "generate_with_history")

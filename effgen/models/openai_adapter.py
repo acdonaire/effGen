@@ -640,6 +640,15 @@ class OpenAIAdapter(FunctionCallingModel):
         If ``tools`` is in *kwargs*, routes automatically to ``generate_with_tools``
         so the Agent loop can use native OpenAI function-calling without calling a
         separate method.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the provider SDK, including
+                ``tools`` to use native function calling.
+
+        Returns:
+            The generated text with its usage metadata.
         """
         if not self._is_loaded:
             raise not_loaded_error("openai", self.model_name, "generate")
@@ -737,7 +746,16 @@ class OpenAIAdapter(FunctionCallingModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[str]:
-        """Stream completions for *prompt*, yielding text chunks."""
+        """Stream completions for *prompt*, yielding text chunks.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the provider SDK.
+
+        Returns:
+            An iterator over the response's text chunks.
+        """
         if not self._is_loaded:
             raise not_loaded_error("openai", self.model_name, "generate_stream")
         if isinstance(prompt, str):
@@ -1006,6 +1024,9 @@ class OpenAIAdapter(FunctionCallingModel):
             config: Generation configuration.
             messages: Full conversation history. If provided, *prompt* is appended.
             **kwargs: Extra params forwarded to the API.
+
+        Returns:
+            The generated text, with any tool calls in its metadata.
         """
         if not self._is_loaded:
             raise not_loaded_error("openai", self.model_name, "generate_with_tools")
@@ -1349,6 +1370,9 @@ class OpenAIAdapter(FunctionCallingModel):
             config: Generation configuration.
             tools: Optional tool definitions.
             **kwargs: Extra params forwarded to the API.
+
+        Returns:
+            The next assistant turn, with any tool calls in its metadata.
         """
         if not self._is_loaded:
             raise not_loaded_error("openai", self.model_name, "chat")

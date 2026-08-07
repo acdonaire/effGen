@@ -110,11 +110,18 @@ def count_cache_breakpoints(
     messages: list[dict] | None,
     tools: list[dict] | None,
 ) -> int:
-    """
-    Count total ``cache_control`` markers across all parts of a request.
+    """Count total ``cache_control`` markers across all parts of a request.
 
     Parameters mirror the Anthropic ``messages.create`` fields so callers can
     validate before sending.  Evaluation order: tools → system → messages.
+
+    Args:
+        system: The system prompt, as text or content blocks.
+        messages: The conversation messages.
+        tools: The tool definitions sent with the request.
+
+    Returns:
+        How many ``cache_control`` markers the request carries.
     """
     count = 0
 

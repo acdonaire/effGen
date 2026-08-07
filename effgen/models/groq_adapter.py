@@ -347,7 +347,16 @@ class GroqAdapter(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Async version of :meth:`generate` — preferred inside async contexts."""
+        """Async version of :meth:`generate` — preferred inside async contexts.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the provider SDK.
+
+        Returns:
+            The generated text with its usage metadata.
+        """
         if not self._is_loaded or self._client is None:
             raise not_loaded_error("groq", self.model_name, "async_generate")
 
@@ -730,6 +739,7 @@ class GroqAdapter(BaseModel):
             tools: List of OpenAI-format tool dicts or effGen BaseTool objects.
             messages: Optional full conversation history (overrides *prompt*).
             config: Optional generation config.
+            **kwargs: Extra parameters forwarded to the provider SDK.
 
         Returns:
             GenerationResult whose ``metadata["tool_calls"]`` contains parsed calls.
@@ -747,6 +757,11 @@ class GroqAdapter(BaseModel):
         **kwargs: Any,
     ) -> Iterator[str]:
         """Stream a response token-by-token from the Groq API.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the provider SDK.
 
         Yields:
             str: Successive text chunks from the model.
