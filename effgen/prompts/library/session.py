@@ -68,7 +68,13 @@ class PlaygroundSession:
         self.touch()
 
     def add_run(self, model: str, rendered: str, output: str) -> None:
-        """Record a model run."""
+        """Record a model run.
+
+        Args:
+            model: The model that was called.
+            rendered: The prompt text that was sent.
+            output: What the model returned.
+        """
         self.run_history.append(RunEntry(model=model, rendered=rendered, output=output))
         self.touch()
 

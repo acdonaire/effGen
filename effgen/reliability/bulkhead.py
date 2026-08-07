@@ -278,7 +278,14 @@ class BulkheadRegistry:
         queue_size: int = 100,
         queue_timeout: float = 5.0,
     ) -> Bulkhead:
-        """Return existing :class:`Bulkhead` or create one."""
+        """Return existing :class:`Bulkhead` or create one.
+
+        Args:
+            name: The bulkhead's name in the registry.
+            max_concurrency: Calls that may run at once.
+            queue_size: Calls that may wait for a slot.
+            queue_timeout: Seconds a call may wait before it is rejected.
+        """
         with self._lock:
             if name not in self._bulkheads:
                 self._bulkheads[name] = Bulkhead(
@@ -316,7 +323,17 @@ def get_bulkhead(
     queue_size: int = 100,
     queue_timeout: float = 5.0,
 ) -> Bulkhead:
-    """Get or create a :class:`Bulkhead` from the default registry."""
+    """Get or create a :class:`Bulkhead` from the default registry.
+
+    Args:
+        name: The bulkhead's name in the registry.
+        max_concurrency: Calls that may run at once.
+        queue_size: Calls that may wait for a slot.
+        queue_timeout: Seconds a call may wait before it is rejected.
+
+    Returns:
+        The registered bulkhead.
+    """
     return _default_registry.get_or_create(
         name,
         max_concurrency=max_concurrency,

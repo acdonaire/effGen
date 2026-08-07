@@ -289,7 +289,13 @@ class SandboxBase(ABC):
         language: str,
         config: SandboxConfig,
     ) -> SandboxResult:
-        """Execute *code* in the sandbox and return a SandboxResult."""
+        """Execute *code* in the sandbox and return a SandboxResult.
+
+        Args:
+            code: The source to execute.
+            language: The language *code* is written in.
+            config: Limits and isolation settings for the execution.
+        """
 
     @abstractmethod
     async def is_available(self) -> bool:
@@ -370,7 +376,13 @@ class DockerSandbox(SandboxBase):
         language: str,
         config: SandboxConfig,
     ) -> SandboxResult:
-        """Run *code* in a one-shot Docker container and return the captured result."""
+        """Run *code* in a one-shot Docker container and return the captured result.
+
+        Args:
+            code: The source to execute.
+            language: The language *code* is written in.
+            config: Limits and isolation settings for the container.
+        """
         start = time.monotonic()
         tmp_dir = Path(tempfile.mkdtemp(prefix="effgen_sandbox_"))
         try:
@@ -598,7 +610,16 @@ class SubprocessSandbox(SandboxBase):
         language: str,
         config: SandboxConfig,
     ) -> SandboxResult:
-        """Run *code* in an isolated subprocess (user-namespace confinement when available)."""
+        """Run *code* in an isolated subprocess (user-namespace confinement when available).
+
+        Args:
+            code: The source to execute.
+            language: The language *code* is written in.
+            config: Limits and isolation settings for the subprocess.
+
+        Returns:
+            The captured output, exit status and timing of the run.
+        """
         start = time.monotonic()
         try:
             plan = await self._build_cmd(language, config)
@@ -886,7 +907,16 @@ class FirecrackerSandbox(SandboxBase):
         language: str,
         config: SandboxConfig,
     ) -> SandboxResult:
-        """Not implemented: raises to report the Firecracker backend as unusable."""
+        """Not implemented: raises to report the Firecracker backend as unusable.
+
+        Args:
+            code: The source that would be executed.
+            language: The language *code* is written in.
+            config: Limits and isolation settings that would apply.
+
+        Raises:
+            NotImplementedError: This backend has no implementation.
+        """
         raise NotImplementedError(
             "FirecrackerSandbox is not yet implemented in this release. "
             "Use 'docker' or 'subprocess' backend instead."
@@ -922,7 +952,16 @@ class OffSandbox(SandboxBase):
         language: str,
         config: SandboxConfig,
     ) -> SandboxResult:
-        """Run *code* directly on the host with no isolation."""
+        """Run *code* directly on the host with no isolation.
+
+        Args:
+            code: The source to execute.
+            language: The language *code* is written in.
+            config: Limits that still apply, such as the timeout.
+
+        Returns:
+            The captured output, exit status and timing of the run.
+        """
         if not OffSandbox._warned:
             logger.warning(
                 "\n"

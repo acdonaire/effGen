@@ -240,7 +240,16 @@ class PromptEval:
     def eval_all_live(
         self, prompts: list[LibraryPrompt], model: str, delay: float = 35.0
     ) -> EvalReport:
-        """Run each prompt against a live *model*, pausing *delay* seconds between runs."""
+        """Run each prompt against a live *model*, pausing *delay* seconds between runs.
+
+        Args:
+            prompts: The prompts to run.
+            model: The model id each prompt is sent to.
+            delay: Seconds to pause between runs, to stay inside rate limits.
+
+        Returns:
+            One report covering every prompt that was run.
+        """
         report = EvalReport()
         for i, p in enumerate(prompts):
             if i > 0 and delay > 0:
@@ -273,6 +282,12 @@ class PromptEval:
         when supplied. With neither set and no model-level cap, the completion
         cap defaults to 4096 so structured-output prompts (JSON arrays,
         multi-section briefs) don't truncate mid-stream.
+
+        Args:
+            prompt_text: The rendered prompt to send.
+            model: The model id to call.
+            max_tokens: Output cap for the call.
+            temperature: Sampling temperature for the call.
         """
         from effgen.models import load_model
 

@@ -309,6 +309,13 @@ class CircuitBreakerRegistry:
         """Return an existing :class:`CircuitBreaker` or create one.
 
         Parameters match :class:`CircuitBreaker.__init__`.
+
+        Args:
+            name: The breaker's name in the registry.
+            failure_threshold: Failures before the circuit opens.
+            recovery_timeout: Seconds the circuit stays open before a probe.
+            half_open_probes: Successful probes before the circuit closes again.
+            is_failure: Decides which exceptions count as a failure.
         """
         with self._lock:
             if name not in self._breakers:
@@ -361,6 +368,9 @@ def get_circuit_breaker(
         failure_threshold: Failures before OPEN.
         recovery_timeout:  Seconds in OPEN before HALF_OPEN.
         half_open_probes:  Successes in HALF_OPEN before CLOSED.
+
+    Returns:
+        The registered circuit breaker.
     """
     return _default_registry.get_or_create(
         name,

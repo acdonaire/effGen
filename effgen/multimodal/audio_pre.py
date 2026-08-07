@@ -107,6 +107,11 @@ def prepare(part: AudioPart, provider: str, model: str = "") -> AudioPart:
 
     Returns a new ``AudioPart`` (original is not mutated).  If the provider
     requires 16 kHz mono and ``pydub`` is available, the audio is resampled.
+
+    Args:
+        part: The audio to pre-process.
+        provider: The provider the audio is being prepared for.
+        model: The model id, when a provider's limits vary by model.
     """
     return AudioPreprocessor(provider).prepare(part)
 
@@ -117,6 +122,11 @@ def chunk(part: AudioPart, provider: str, model: str = "") -> list[AudioPart]:
     If the audio fits within the provider's limits, returns a one-element list
     with the (possibly pre-processed) part.  Otherwise splits on duration
     boundaries using ``pydub``.
+
+    Args:
+        part: The audio to split.
+        provider: The provider the chunks must fit.
+        model: The model id, when a provider's limits vary by model.
 
     Returns:
         List of ``AudioPart`` objects each within the provider's max_bytes and

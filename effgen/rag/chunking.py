@@ -39,6 +39,7 @@ class TextChunker(RecursiveChunker):
     don't need code/table/semantic awareness.
 
     Example:
+        >>> long_document = "A paragraph about chunking. " * 200
         >>> chunker = TextChunker(chunk_size=500, overlap=50)
         >>> pieces = chunker.split_text(long_document)        # list[str]
         >>> docs = chunker.chunk(long_document, doc_id="doc1")  # list[Document]
