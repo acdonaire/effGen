@@ -17,11 +17,13 @@ on:
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
-# A project page is served under /<repo>, so both bundles are built with that
-# prefix. Change these together if the repository is ever renamed.
+# A project page is served under /<repo>, and that path is case-sensitive even
+# though the repository URL is not. Both prefixes are taken from the repository
+# itself so a rename carries the site with it instead of silently serving a
+# bundle whose assets all point at the old name.
 env:
-  BASE_PATH: /effGen
-  DOCS_BASE_PATH: /effGen/docs/
+  BASE_PATH: /${{ github.event.repository.name }}
+  DOCS_BASE_PATH: /${{ github.event.repository.name }}/docs/
 
 permissions:
   contents: read
