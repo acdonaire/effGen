@@ -750,7 +750,7 @@ class MetricsCollector:
                         'timestamp': metric.timestamp,
                     })
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup when collector is destroyed."""
         self.stop_resource_monitoring()
 

@@ -62,7 +62,7 @@ class TimeoutError(builtins.TimeoutError):  # noqa: A001 — intentional shadow 
         self.operation = operation
         self.limit = limit
 
-    def __reduce__(self):  # pickling support
+    def __reduce__(self) -> tuple[type[TimeoutError], tuple[str, float]]:  # pickling support
         return (type(self), (self.operation, self.limit))
 
 

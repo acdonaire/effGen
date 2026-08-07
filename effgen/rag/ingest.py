@@ -39,7 +39,7 @@ class IngestedChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
     content_hash: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.content_hash:
             self.content_hash = hashlib.sha256(
                 self.content.encode("utf-8")

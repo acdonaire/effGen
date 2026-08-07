@@ -205,7 +205,7 @@ class LoggerManager:
     _instance = None
     _lock = threading.Lock()
 
-    def __new__(cls):
+    def __new__(cls) -> LoggerManager:
         """Singleton pattern to ensure only one logger manager exists."""
         if cls._instance is None:
             with cls._lock:

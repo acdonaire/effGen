@@ -35,7 +35,7 @@ class PromptTemplate:
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.created_at is None:
             self.created_at = datetime.now()
         if self.updated_at is None:

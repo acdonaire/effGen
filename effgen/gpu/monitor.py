@@ -694,7 +694,7 @@ class GPUMonitor:
         """Context manager exit"""
         self.stop()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup on deletion"""
         if self._running:
             self.stop()
