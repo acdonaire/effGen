@@ -61,6 +61,12 @@ def unified_diff_text(old: str, new: str, path: str, *, context: int = _CONTEXT)
 
     The header paths are ``a/<path>`` and ``b/<path>`` so the output reads like
     ``git diff``. An empty string is returned when the two are identical.
+
+    Args:
+        old: The content before the change.
+        new: The content after the change.
+        path: Workspace-relative path both header lines are labelled with.
+        context: Unchanged lines kept on each side of a change.
     """
     diff = difflib.unified_diff(
         _as_lines(old),
@@ -118,6 +124,14 @@ def split_hunks(old: str, new: str, *, context: int = _CONTEXT) -> list[Hunk]:
 
     Built from the same unified diff the preview renders, so the hunks a user
     sees are exactly the hunks :func:`apply_hunks` would apply.
+
+    Args:
+        old: The content before the change.
+        new: The content after the change.
+        context: Unchanged lines kept on each side of a change.
+
+    Returns:
+        One :class:`Hunk` per changed region, numbered from 1 in file order.
     """
     diff = list(
         difflib.unified_diff(_as_lines(old), _as_lines(new), n=context, lineterm="")
@@ -185,6 +199,15 @@ def apply_hunks(original: str, hunks: list[Hunk], accepted: list[int]) -> ApplyR
     hunks that do match still apply. Rejected hunks (not in *accepted*) are
     ignored. The returned text never mixes a partially matched hunk in: a hunk
     is applied whole or not at all.
+
+    Args:
+        original: The file's current content.
+        hunks: The hunks :func:`split_hunks` produced for that content.
+        accepted: The 1-based numbers of the hunks to apply.
+
+    Returns:
+        An :class:`ApplyResult` carrying the new text, the hunk numbers that
+        applied and the hunk numbers whose block was not found.
     """
     lines = _as_lines(original)
     applied: list[int] = []

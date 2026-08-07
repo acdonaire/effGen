@@ -410,6 +410,15 @@ class CodeEngine:
         *rel_paths* are workspace-relative (what the run reports as written) and
         are mapped to repository-relative paths. Nothing is staged or committed
         here; the caller shows the plan, then calls :meth:`perform_commit`.
+
+        Args:
+            rel_paths: Workspace-relative paths the run reported as written.
+            task: The task text, used as the commit body when no *message* is given.
+            message: A commit message to use as-is instead of a suggested one.
+
+        Returns:
+            A :class:`CommitPlan` naming the repository, branch, mapped paths and
+            message; a non-empty ``error`` means there is nothing to commit.
         """
         repo = (self.project.repo if self.project is not None else None)
         if repo is None:

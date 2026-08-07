@@ -65,12 +65,23 @@ def print_plain(cli: "CLIInterface", text: str = "", *, style: str | None = None
     as ``/apply [n]``. A console reads square brackets as markup, which drops
     ``[n]`` from a help line and raises on an unbalanced tag such as
     ``[/usr/bin]`` in a command's output, so these lines go out verbatim.
+
+    Args:
+        cli: The interface the line is written through.
+        text: The line to print, used verbatim.
+        style: A theme style name, applied only when color is enabled.
     """
     cli.print_line(text, style=style if color_enabled() else None)
 
 
 def print_status(cli: "CLIInterface", kind: str, text: str) -> None:
-    """Print a glyph-prefixed success/warning/error line, without markup."""
+    """Print a glyph-prefixed success/warning/error line, without markup.
+
+    Args:
+        cli: The interface the line is written through.
+        kind: ``success``, ``warning`` or ``error``, which picks the glyph.
+        text: The message shown after the glyph.
+    """
     from effgen.ui.palette import glyph
 
     print_plain(cli, f"{glyph(kind, cli._human_stream())} {text}", style=_STATUS_ROLES.get(kind))

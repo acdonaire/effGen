@@ -305,6 +305,15 @@ def unsafe_shell_git(command: str, _depth: int = 0) -> str | None:
 def run_git(root: Path, args: list[str], *, timeout: int = _TIMEOUT) -> subprocess.CompletedProcess:
     """Run a checked-safe git command in *root* and return the completed process.
 
+    Args:
+        root: Directory the command runs in.
+        args: The git arguments, without the leading ``git``.
+        timeout: Seconds to wait before the command is killed.
+
+    Returns:
+        The finished :class:`subprocess.CompletedProcess`, with stdout and
+        stderr captured as text.
+
     Raises:
         UnsafeGitAction: *args* is not one of the commands this module may run.
         RuntimeError: git is not installed.
@@ -340,6 +349,15 @@ def relative_to_repo(workspace: Path, root: Path, rel_paths: list[str]) -> list[
 
     Paths that resolve outside the repository are dropped: a commit only ever
     covers files inside the repository the workspace belongs to.
+
+    Args:
+        workspace: The directory the run's paths are relative to.
+        root: The repository root the paths are re-based onto.
+        rel_paths: Workspace-relative paths to map.
+
+    Returns:
+        The repository-relative paths, in the order given, with the ones
+        outside the repository left out.
     """
     out: list[str] = []
     repo_root = Path(root).resolve()
@@ -373,6 +391,12 @@ def suggest_message(paths: list[str], task: str = "", new_paths: list[str] | Non
     repository, ``Update`` otherwise — and the task text, when there is one,
     becomes the body so the commit records why. No tool, assistant or vendor name
     appears in it: the commit belongs to the repository's owner.
+
+    Args:
+        paths: The paths the commit will cover.
+        task: The task text, used as the commit body when it is not empty.
+        new_paths: Paths that do not exist in the repository yet, which decides
+            whether the subject reads ``Add`` or ``Update``.
     """
     names = [Path(p).name for p in paths]
     verb = "Add" if paths and new_paths is not None and set(new_paths) >= set(paths) else "Update"
@@ -439,6 +463,11 @@ def commit_paths(root: Path, paths: list[str], message: str) -> CommitOutcome:
 
     Returns a :class:`CommitOutcome` describing what happened — a failed commit
     reports git's own message rather than raising.
+
+    Args:
+        root: The repository root the commit is made in.
+        paths: Repository-relative paths to stage and commit.
+        message: The commit message.
     """
     root = Path(root)
     if not paths:

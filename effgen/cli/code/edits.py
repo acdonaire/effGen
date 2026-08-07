@@ -194,7 +194,14 @@ class EditJournal:
         self._save(entries)
 
     def record_write(self, rel_path: str, before: str | None, after: str) -> None:
-        """Record a write of *rel_path*, capturing what to restore on undo."""
+        """Record a write of *rel_path*, capturing what to restore on undo.
+
+        Args:
+            rel_path: Workspace-relative path that was written.
+            before: The content before the write, or ``None`` when the run created
+                the file — this is what an undo restores.
+            after: The content the write left on disk.
+        """
         self.record(
             AppliedEdit(
                 rel_path=rel_path,

@@ -406,6 +406,11 @@ def build_project_context(
     honored); otherwise the directory is walked. Either way it stops at *cap*
     entries, and the call never raises: a workspace that cannot be inspected
     yields an empty inventory rather than a failed run.
+
+    Args:
+        workspace: The directory to inspect.
+        cap: Most entries to list before the inventory is marked capped.
+        include_brief: Whether to read the project brief file when one exists.
     """
     workspace = Path(workspace)
     repo = detect_repo(workspace)

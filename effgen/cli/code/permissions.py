@@ -279,6 +279,10 @@ class PermissionGate:
             kind: One of :data:`ACTION_KINDS`.
             summary: One line describing the action, shown when confirming.
             target: The file path or command the action applies to.
+
+        Returns:
+            A :class:`Decision` that is true when the action may proceed, carrying
+            the reason and the :class:`ActionRecord` appended to the run report.
         """
         policy = _POLICY[self.mode].get(kind, _DENY)
         if kind in self._always:
@@ -314,7 +318,17 @@ class PermissionGate:
         )
 
     def refuse(self, kind: str, summary: str, reason: str, *, target: str | None = None) -> Decision:
-        """Record an action blocked by confinement, before any policy applies."""
+        """Record an action blocked by confinement, before any policy applies.
+
+        Args:
+            kind: One of :data:`ACTION_KINDS`.
+            summary: One line describing the action.
+            reason: Why confinement blocked it, shown to the user and recorded.
+            target: The file path or command the action applied to.
+
+        Returns:
+            A false :class:`Decision` carrying the recorded refusal.
+        """
         return self._record(kind, summary, "refused", reason, target)
 
     def _record(
@@ -329,7 +343,13 @@ class PermissionGate:
         return Decision(allowed=decision == "allowed", reason=reason, record=record)
 
     def note_outcome(self, record: ActionRecord, outcome: str, detail: str = "") -> None:
-        """Attach the result of an allowed action to its record."""
+        """Attach the result of an allowed action to its record.
+
+        Args:
+            record: The record :meth:`request` returned for the action.
+            outcome: How the action ended, as one word.
+            detail: Any extra line to show beside the outcome.
+        """
         record.outcome = outcome
         record.detail = detail
         if self._on_event is not None:
@@ -376,6 +396,13 @@ class PermissionGate:
 
         The report entry the matching ``announce_edit`` left is updated in place
         rather than duplicated, so each proposal appears once.
+
+        Args:
+            edit: The proposal that was written.
+            before: The file's content before the write, or ``None`` when the run
+                created it.
+            after: The content the write left on disk.
+            failed_hunks: How many of the edit's hunks did not apply.
         """
         if self.journal is not None:
             self.journal.record_write(edit.rel_path, before, after)
