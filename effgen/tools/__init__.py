@@ -5,6 +5,8 @@ This module provides the tool integration system including base classes,
 registry, built-in tools, and protocol implementations.
 """
 
+from typing import Any
+
 from .base_tool import (
     BaseTool,
     ParameterSpec,
@@ -47,7 +49,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     # The protocol subpackage (MCP/A2A/ACP interop) pulls heavy optional SDKs
     # (the official `mcp` SDK, jsonschema). Most agent runs never touch it, so
     # it is imported lazily on first access — `effgen.tools.protocols` and

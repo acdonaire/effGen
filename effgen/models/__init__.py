@@ -23,6 +23,8 @@ Example:
     >>> print(result.text)
 """
 
+from typing import Any
+
 from effgen.models._catalog import (
     ModelRecord,
     nearest_alternatives,
@@ -150,7 +152,7 @@ _LAZY_ENGINES: dict[str, tuple[str, str]] = {
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     target = _LAZY_ENGINES.get(name)
     if target is None:
         raise AttributeError(f"module 'effgen.models' has no attribute {name!r}")

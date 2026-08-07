@@ -558,7 +558,7 @@ class BaseModel(ABC):
         context_length: Maximum context length supported by the model
     """
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs: Any) -> None:
         """Auto-instrument each engine's generation methods with a budget
         pre-check and call timing.
 

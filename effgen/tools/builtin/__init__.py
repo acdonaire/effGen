@@ -4,6 +4,8 @@ Built-in tools for the effGen framework.
 This module contains the standard set of tools that ship with effGen.
 """
 
+from typing import Any
+
 # Import built-in tools (lazy loading handled by registry)
 __all__ = [
     # OpenAI native (server-side) tools
@@ -95,7 +97,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name):
+def __getattr__(name: str) -> Any:
     """Lazy import of tools."""
     if name in ("GoogleSearchTool", "GeminiUrlContextTool", "GeminiCodeExecutionTool"):
         from .gemini_native import (
