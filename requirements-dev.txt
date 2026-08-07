@@ -23,7 +23,10 @@ isort>=5.13.0
 # Linting & Type Checking
 # ==============================================================================
 flake8>=6.1.0
-mypy>=1.7.0
+# Pinned exactly: scripts/mypy_ratchet.py compares against a recorded error set,
+# and a different mypy reports a different set. Bumping this means re-recording
+# scripts/mypy_baseline.json in the same commit.
+mypy==2.1.0
 pylint>=3.0.0
 ruff>=0.1.0
 
