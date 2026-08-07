@@ -5,6 +5,7 @@ import { useInView } from "react-intersection-observer";
 import { FiArrowRight, FiBook, FiZap, FiStar, FiGitBranch, FiUsers } from "react-icons/fi";
 import Container from "./Container";
 import { useGitHubStats } from "./GitHubStats";
+import { withBasePath } from "./basePath";
 
 // Floating geometric shapes positions (fixed for SSR)
 const SHAPES = [
@@ -215,7 +216,7 @@ export default function CTA() {
               </motion.a>
 
               <motion.a
-                href="/docs"
+                href={withBasePath("/docs")}
                 className="px-10 py-5 rounded-full font-bold text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-900/50 text-lg flex items-center gap-2 hover:border-green-500/50 hover:text-green-600 dark:hover:text-green-400 transition-all"
                 whileHover={{ scale: 1.05, y: -2 }}
                 whileTap={{ scale: 0.95 }}

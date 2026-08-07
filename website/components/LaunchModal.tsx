@@ -23,6 +23,7 @@ import {
   FiServer,
 } from "react-icons/fi";
 
+import { withBasePath } from "./basePath";
 const STORAGE_KEY = "effgen_v031_launch_seen";
 
 const HIGHLIGHTS = [
@@ -436,7 +437,7 @@ export default function LaunchModal() {
                   transition={{ delay: 1.1 }}
                 >
                   <motion.a
-                    href="/docs/introduction"
+                    href={withBasePath("/docs/introduction")}
                     onClick={close}
                     className="group relative inline-flex items-center gap-2 px-6 py-3 rounded-full font-black text-black text-sm cursor-pointer overflow-hidden"
                     style={{

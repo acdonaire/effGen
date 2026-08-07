@@ -3,6 +3,7 @@ import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import LaunchModal from "@/components/LaunchModal";
+import { withBasePath } from "@/components/basePath";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -18,7 +19,7 @@ export const metadata: Metadata = {
   title: "effGen - Production AI Agent Framework for SLMs",
   description: "Build production AI agents with Small Language Models, 14 inference backends, provider-supported native tools, RAG, guardrails, evaluation, and an OpenAI-compatible API server.",
   icons: {
-    icon: "/favicon.svg",
+    icon: withBasePath("/favicon.svg"),
   },
 };
 

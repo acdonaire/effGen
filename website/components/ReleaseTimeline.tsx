@@ -18,6 +18,7 @@ import {
   FiZap,
 } from "react-icons/fi";
 import Container from "./Container";
+import { withBasePath } from "./basePath";
 
 const releases = [
   {
@@ -272,7 +273,7 @@ export default function ReleaseTimeline() {
           className="mt-10 flex flex-wrap gap-3 justify-center"
         >
           <a
-            href="/docs/releases"
+            href={withBasePath("/docs/releases")}
             className="inline-flex items-center gap-2 px-6 py-3 rounded-full font-bold text-black"
             style={{ background: "linear-gradient(135deg, #00ff88, #00c96e)" }}
           >
@@ -280,7 +281,7 @@ export default function ReleaseTimeline() {
             <FiArrowRight size={16} />
           </a>
           <a
-            href="/docs/providers"
+            href={withBasePath("/docs/providers")}
             className="inline-flex items-center gap-2 px-6 py-3 rounded-full font-bold text-green-600 dark:text-green-300 border border-green-500/30 bg-green-500/5 hover:bg-green-500/10"
           >
             Provider Matrix
