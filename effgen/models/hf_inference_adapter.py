@@ -1062,7 +1062,16 @@ class HFInferenceAdapter(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Async version of generate() — runs blocking call in thread pool."""
+        """Async version of generate() — runs blocking call in thread pool.
+
+        Args:
+            prompt: The prompt to send.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the provider SDK.
+
+        Returns:
+            The generated text with its usage metadata.
+        """
         import asyncio
         import functools
 

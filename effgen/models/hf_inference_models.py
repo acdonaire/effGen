@@ -320,6 +320,12 @@ def check_drift(
 
     If *warn* is True and any drift is detected, emits a single warning via
     the module logger so users know to call :func:`refresh_models`.
+
+    Args:
+        token: Credential for the live listing, otherwise read from the
+            environment.
+        timeout: Seconds to wait for the router before giving up.
+        warn: Whether to emit the one-time refresh suggestion on drift.
     """
     live_snap = _fetch_live(token=token, timeout=timeout)
     live_registry = _build_registry(live_snap)

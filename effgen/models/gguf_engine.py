@@ -119,7 +119,16 @@ class GGUFEngine(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Generate a completion for *prompt* and stamp usage metadata."""
+        """Generate a completion for *prompt* and stamp usage metadata.
+
+        Args:
+            prompt: The prompt to complete.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the llama.cpp backend.
+
+        Returns:
+            The completion with its usage metadata.
+        """
         if not self._is_loaded:
             self.load()
         params = self._to_kwargs(config)
@@ -153,7 +162,13 @@ class GGUFEngine(BaseModel):
         config: GenerationConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[str]:
-        """Yield completion text chunks for *prompt* as they are produced."""
+        """Yield completion text chunks for *prompt* as they are produced.
+
+        Args:
+            prompt: The prompt to complete.
+            config: Sampling and budget settings for the call.
+            **kwargs: Extra parameters forwarded to the llama.cpp backend.
+        """
         if not self._is_loaded:
             self.load()
         params = self._to_kwargs(config)

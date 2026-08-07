@@ -303,6 +303,7 @@ class MLXVLMAdapter(BaseModel):
         Args:
             messages: List of ``Message`` objects.
             config: Optional generation configuration.
+            **kwargs: Extra parameters forwarded to the MLX-VLM backend.
 
         Yields:
             str chunks of generated text.
