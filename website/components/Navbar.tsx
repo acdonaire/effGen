@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { FiSun, FiMoon, FiMenu, FiX, FiGithub, FiZap } from "react-icons/fi";
 import { usePyPIVersion } from "./PyPIVersion";
+import { withBasePath } from "./basePath";
 
 export default function Navbar() {
   const [mounted, setMounted] = useState(false);
@@ -101,7 +102,7 @@ export default function Navbar() {
                   }}
                   transition={{ duration: 3, repeat: Infinity }}
                 />
-                <img src="/favicon.svg" alt="effGen logo" className="w-9 h-9 relative z-10" />
+                <img src={withBasePath("/favicon.svg")} alt="effGen logo" className="w-9 h-9 relative z-10" />
               </div>
               <span className="text-xl font-black tracking-tight">
                 <span className="gradient-text">eff</span>
@@ -121,7 +122,7 @@ export default function Navbar() {
               return link.isExternal ? (
                 <motion.a
                   key={link.name}
-                  href={link.href}
+                  href={withBasePath(link.href)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="relative px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition-colors font-medium rounded-lg hover:bg-green-500/5"
@@ -160,7 +161,7 @@ export default function Navbar() {
               ) : (
                 <motion.a
                   key={link.name}
-                  href={link.href}
+                  href={withBasePath(link.href)}
                   className={`relative px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
                     active
                       ? "text-green-600 dark:text-green-400 bg-green-500/10"
@@ -279,7 +280,7 @@ export default function Navbar() {
                 ) : (
                   <motion.a
                     key={link.name}
-                    href={link.href}
+                    href={withBasePath(link.href)}
                     className="flex items-center px-4 py-3 rounded-xl text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-500/5 font-medium"
                     onClick={() => setIsOpen(false)}
                     whileHover={{ x: 6 }}

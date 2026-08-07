@@ -6,6 +6,7 @@ import { SiDiscord } from "react-icons/si";
 import { FaLinkedin as SiLinkedin } from "react-icons/fa6";
 import HelpBot from "./HelpBot";
 import { useState, useEffect } from "react";
+import { withBasePath } from "./basePath";
 
 // Brand color glows for social icons
 const socialBrandColors: Record<string, string> = {
@@ -88,7 +89,7 @@ export default function Footer() {
                   animate={{ scale: [1, 1.4, 1], opacity: [0.4, 0.7, 0.4] }}
                   transition={{ duration: 2.5, repeat: Infinity }}
                 />
-                <img src="/favicon.svg" alt="effGen logo" className="w-9 h-9 relative z-10" />
+                <img src={withBasePath("/favicon.svg")} alt="effGen logo" className="w-9 h-9 relative z-10" />
               </div>
               <div>
                 <span className="text-xl font-black">
@@ -142,7 +143,7 @@ export default function Footer() {
                 {links.map((link, index) => (
                   <li key={index}>
                     <motion.a
-                      href={link.href}
+                      href={withBasePath(link.href)}
                       target={link.external ? "_blank" : undefined}
                       rel={link.external ? "noopener noreferrer" : undefined}
                       className="text-sm text-gray-600 dark:text-gray-500 hover:text-green-600 dark:hover:text-green-400 transition-colors hover-underline inline-block"
@@ -186,7 +187,7 @@ export default function Footer() {
               ].map((item) => (
                 <a
                   key={item.name}
-                  href={item.href}
+                  href={withBasePath(item.href)}
                   className="hover:text-green-600 dark:hover:text-green-400 transition-colors hover-underline"
                 >
                   {item.name}

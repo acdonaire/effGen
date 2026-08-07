@@ -7,6 +7,7 @@ import { FiSun, FiMoon, FiMenu, FiX, FiGithub } from "react-icons/fi";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { usePyPIVersion } from "./PyPIVersion";
+import { withBasePath } from "./basePath";
 
 export default function NavbarEnhanced() {
   const [mounted, setMounted] = useState(false);
@@ -60,7 +61,7 @@ export default function NavbarEnhanced() {
               whileTap={{ scale: 0.95 }}
             >
               <img
-                src="/favicon.svg"
+                src={withBasePath("/favicon.svg")}
                 alt="effGen logo"
                 className="w-10 h-10"
               />
@@ -82,7 +83,7 @@ export default function NavbarEnhanced() {
               >
                 {link.href.startsWith("/#") ? (
                   <a
-                    href={link.href}
+                    href={withBasePath(link.href)}
                     className={`text-gray-700 dark:text-gray-300 hover:text-green-600 dark:hover:text-green-400 transition-colors font-medium relative group ${
                       isActive(link.href) ? "text-green-600 dark:text-green-400" : ""
                     }`}
@@ -174,7 +175,7 @@ export default function NavbarEnhanced() {
                 <motion.div key={link.name} whileHover={{ x: 10 }}>
                   {link.href.startsWith("/#") ? (
                     <a
-                      href={link.href}
+                      href={withBasePath(link.href)}
                       className="block text-gray-700 dark:text-gray-300 hover:text-green-600 dark:hover:text-green-400 font-medium"
                       onClick={() => setIsOpen(false)}
                     >
