@@ -147,7 +147,8 @@ def test_unhandled_route_error_is_a_redacted_500_envelope(client, monkeypatch):
         client.get("/dashboard/data.json", headers=AUTH), status=500, err_type="server_error"
     )
     assert "sk-abcdefghijklmnopqrstuvwxyz012345" not in err["message"]
-    assert "[REDACTED]" in err["message"]
+    # The marker names which pattern matched, so match the shape, not one word.
+    assert "REDACTED" in err["message"]
 
 
 def test_rbac_denial_reads_the_same_on_both_routes(client, monkeypatch):

@@ -10,16 +10,33 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_SECRET_RE = re.compile(
-    r"(sk-[A-Za-z0-9_\-]{8,}|(?:bearer|api[-_ ]?key|token|secret|password)"
-    r"[=: ]+[^\s'\"]+)",
-    re.IGNORECASE,
-)
+# A credential-prefixed token too short for the shared redactor's per-provider
+# patterns, which require the 20-plus characters a real key carries. This is
+# the last point text leaves the server, so a short one is blanked here rather
+# than trusted to be a placeholder.
+_SHORT_PREFIXED_SECRET_RE = re.compile(r"\b(?:sk|csk|gsk|xai)-[A-Za-z0-9_\-]{8,}")
 
 
 def _redact(text: str) -> str:
-    """Strip key/secret-looking substrings from an error message."""
-    return _SECRET_RE.sub("[REDACTED]", text or "")
+    """Strip secret material from an error message before it leaves the server.
+
+    Matching is on the shape of a key, never on the words around one. A
+    keyword-and-anything-after rule reads "Check the provider API key (present,
+    correct, ...)" as a secret and blanks the sentence that tells the caller
+    what to do, while missing key shapes that carry no keyword at all.
+
+    Redaction never masks the error itself: if the redactor cannot be loaded,
+    the shorter sweep still runs and the rest of the text is returned as is.
+    """
+    if not text:
+        return ""
+    try:
+        from effgen.observability.redact import get_redactor
+
+        text = get_redactor().scrub(text)
+    except Exception:  # noqa: BLE001 - redaction must not replace the error
+        pass
+    return _SHORT_PREFIXED_SECRET_RE.sub("[REDACTED]", text)
 
 
 class UnknownToolError(ValueError):

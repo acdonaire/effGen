@@ -106,7 +106,6 @@ async def _call_runner(runner: Runner, prompt: str, **kwargs: Any) -> Any:
 # Error classification and the shared OpenAI error envelope live in a sibling
 # module (they are also used by the server middleware and auth layers).
 from effgen.api.openai_compat_errors import (  # noqa: E402,F401  re-exported for import/patch parity
-    _SECRET_RE,
     _STATUS_ERROR_CODE,
     _STATUS_ERROR_TYPE,
     UnknownToolError,
