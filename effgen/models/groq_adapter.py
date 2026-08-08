@@ -60,6 +60,18 @@ logger = logging.getLogger(__name__)
 
 _GROQ_MODEL_TYPE_VALUE = "groq"
 
+#: How reasoning-family Groq models should report their reasoning chain.
+#:
+#: Groq's default is ``"raw"``, which embeds the chain in ``message.content``
+#: between ``<think>`` tags. For the qwen3 family that means a one-word question
+#: answers with several hundred tokens of reasoning and no answer in
+#: ``result.text``, and a tool-calling turn can spend its whole output budget
+#: thinking. ``"parsed"`` puts the chain on ``message.reasoning`` — the field
+#: :func:`extract_reasoning_text` already reads — and leaves the answer alone.
+#: A caller who wants the raw form back can pass ``reasoning_format="raw"``,
+#: which overrides this (``kwargs`` are applied last).
+_REASONING_FORMAT = "parsed"
+
 
 def _redact_groq_org(message: str) -> str:
     """Remove the caller's organization id from a Groq error body before it is
@@ -211,6 +223,11 @@ class GroqAdapter(BaseModel):
             model_type=_GroqModelType(),  # type: ignore[arg-type]
             context_length=info.get("context", 131_072),
         )
+        # Groq serves families that emit reasoning tokens before any visible
+        # text. Flagging them here is what earns the larger default token budget
+        # from default_max_output_tokens() — without it they can spend the whole
+        # budget thinking and return an empty (but billed) result.
+        self._is_reasoning_model = bool(info.get("reasoning", False))
         self._api_key = api_key
         self.max_retries = max_retries
         self.timeout = timeout
@@ -320,7 +337,7 @@ class GroqAdapter(BaseModel):
             provider="groq",
             model_name=self.model_name,
             supports_vision=GROQ_MODELS.get(self.model_name, {}).get("supports_vision", False),
-            hint="Use 'meta-llama/llama-4-scout-17b-16e-instruct' for Groq vision.",
+            hint="Use 'qwen/qwen3.6-27b' for Groq vision.",
         )
 
         try:
@@ -368,7 +385,7 @@ class GroqAdapter(BaseModel):
             provider="groq",
             model_name=self.model_name,
             supports_vision=GROQ_MODELS.get(self.model_name, {}).get("supports_vision", False),
-            hint="Use 'meta-llama/llama-4-scout-17b-16e-instruct' for Groq vision.",
+            hint="Use 'qwen/qwen3.6-27b' for Groq vision.",
         )
 
         try:
@@ -509,6 +526,8 @@ class GroqAdapter(BaseModel):
             request_params["presence_penalty"] = config.presence_penalty
         if config.frequency_penalty:
             request_params["frequency_penalty"] = config.frequency_penalty
+        if self._is_reasoning_model:
+            request_params["reasoning_format"] = _REASONING_FORMAT
 
         info = GROQ_MODELS.get(self.model_name, {})
         if tools and info.get("supports_native_tools", False):
@@ -777,7 +796,7 @@ class GroqAdapter(BaseModel):
             provider="groq",
             model_name=self.model_name,
             supports_vision=GROQ_MODELS.get(self.model_name, {}).get("supports_vision", False),
-            hint="Use 'meta-llama/llama-4-scout-17b-16e-instruct' for Groq vision.",
+            hint="Use 'qwen/qwen3.6-27b' for Groq vision.",
         )
 
         try:
@@ -811,6 +830,8 @@ class GroqAdapter(BaseModel):
             request_params["presence_penalty"] = config.presence_penalty
         if config.frequency_penalty:
             request_params["frequency_penalty"] = config.frequency_penalty
+        if self._is_reasoning_model:
+            request_params["reasoning_format"] = _REASONING_FORMAT
 
         request_params.update(kwargs)
 

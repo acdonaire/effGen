@@ -5,10 +5,12 @@ Rate limits from Groq dashboard (Developer plan free tier):
   https://console.groq.com/settings/limits
 Fetch date: 2026-04-28
 
-Context windows from Groq Models API (/openai/v1/models).
-
-Per-token pricing from https://groq.com/pricing (verified 2026-05-11).
-Free developer tier available with rate limits.
+Context windows, modalities and per-token pricing from the Groq Models API
+(/openai/v1/models); per-model request and token allowances are also returned as
+``x-ratelimit-*`` response headers.  A model whose ``supported_features`` include
+``reasoning`` is flagged ``reasoning: True``: it spends output budget on hidden
+reasoning, so it needs the larger default budget.  Catalog reconciled against the
+live listing on 2026-08-07.
 """
 
 from __future__ import annotations
@@ -49,38 +51,23 @@ GROQ_MODELS: dict[str, dict] = {
         "pricing_per_1m_input": 0.05,
         "pricing_per_1m_output": 0.08,
     },
-    "meta-llama/llama-4-scout-17b-16e-instruct": {
-        "family": "llama-4",
-        "context": 131_072,
-        "max_output": 8_192,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "supports_vision": True,
-        "rpm": 30,
-        "rpd": 1_000,
-        "tpm": 30_000,
-        "tpd": 500_000,
-        "active": True,
-        "modality": "chat",
-        "notes": "Llama 4 Scout 17B-16E — vision capable, MoE",
-        "pricing_per_1m_input": 0.11,
-        "pricing_per_1m_output": 0.34,
-    },
-    "qwen/qwen3-32b": {
+    "qwen/qwen3.6-27b": {
         "family": "qwen",
         "context": 131_072,
         "max_output": 16_384,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "rpm": 60,
+        "supports_vision": True,
+        "rpm": 30,
         "rpd": 1_000,
-        "tpm": 6_000,
-        "tpd": 500_000,
+        "tpm": 8_000,
+        "tpd": None,
         "active": True,
         "modality": "chat",
-        "notes": "Qwen3 32B — highest RPM on free tier (60 RPM)",
-        "pricing_per_1m_input": 0.29,
-        "pricing_per_1m_output": 0.59,
+        "reasoning": True,
+        "notes": "Qwen3.6 27B — accepts text and image input",
+        "pricing_per_1m_input": 0.60,
+        "pricing_per_1m_output": 3.00,
     },
     "openai/gpt-oss-120b": {
         "family": "gpt-oss",
@@ -94,6 +81,7 @@ GROQ_MODELS: dict[str, dict] = {
         "tpd": 200_000,
         "active": True,
         "modality": "chat",
+        "reasoning": True,
         "notes": "OpenAI GPT-OSS 120B open weights",
         "pricing_per_1m_input": 0.15,
         "pricing_per_1m_output": 0.60,
@@ -110,6 +98,7 @@ GROQ_MODELS: dict[str, dict] = {
         "tpd": 200_000,
         "active": True,
         "modality": "chat",
+        "reasoning": True,
         "notes": "OpenAI GPT-OSS 20B open weights",
         "pricing_per_1m_input": 0.075,
         "pricing_per_1m_output": 0.30,
@@ -126,6 +115,7 @@ GROQ_MODELS: dict[str, dict] = {
         "tpd": 200_000,
         "active": True,
         "modality": "chat",
+        "reasoning": True,
         "notes": "GPT-OSS 20B safety/guardrail variant",
         "pricing_per_1m_input": 0.075,
         "pricing_per_1m_output": 0.30,
@@ -185,6 +175,8 @@ GROQ_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "notes": "Llama Prompt Guard 2 86M — safety classifier",
+        "pricing_per_1m_input": 0.04,
+        "pricing_per_1m_output": 0.04,
     },
     "meta-llama/llama-prompt-guard-2-22m": {
         "family": "llama-guard",
@@ -199,6 +191,8 @@ GROQ_MODELS: dict[str, dict] = {
         "active": True,
         "modality": "chat",
         "notes": "Llama Prompt Guard 2 22M — lightweight safety classifier",
+        "pricing_per_1m_input": 0.03,
+        "pricing_per_1m_output": 0.03,
     },
     # -----------------------------------------------------------------------
     # Speech-to-Text models (not usable via chat completions)

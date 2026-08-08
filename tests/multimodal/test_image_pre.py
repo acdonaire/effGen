@@ -67,7 +67,7 @@ class TestPrepareFunction:
 
     def test_prepare_adds_preprocessing_meta(self):
         part = _make_part(_make_jpeg())
-        processed = prepare(part, "groq", "meta-llama/llama-4-scout-17b-16e-instruct")
+        processed = prepare(part, "groq", "qwen/qwen3.6-27b")
         assert "preprocessing" in processed.meta
 
     def test_prepare_unknown_provider_returns_original(self):

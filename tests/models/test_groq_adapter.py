@@ -56,7 +56,7 @@ class TestGroqModelsRegistry:
         capable = tool_capable_models()
         assert "llama-3.3-70b-versatile" in capable
         assert "llama-3.1-8b-instant" in capable
-        assert "qwen/qwen3-32b" in capable
+        assert "qwen/qwen3.6-27b" in capable
 
     def test_guard_models_no_tools(self):
         for model_id in ["meta-llama/llama-prompt-guard-2-22m", "meta-llama/llama-prompt-guard-2-86m"]:
@@ -66,6 +66,21 @@ class TestGroqModelsRegistry:
         chat = chat_models()
         assert "whisper-large-v3" not in chat
         assert "whisper-large-v3-turbo" not in chat
+
+    def test_reasoning_models_are_flagged(self):
+        """Groq's reasoning families carry the flag that earns the larger budget."""
+        for model_id in (
+            "qwen/qwen3.6-27b",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "openai/gpt-oss-safeguard-20b",
+        ):
+            assert GROQ_MODELS[model_id].get("reasoning") is True, model_id
+        assert not GROQ_MODELS["llama-3.1-8b-instant"].get("reasoning")
+
+    def test_only_one_vision_model(self):
+        vision = [k for k, v in GROQ_MODELS.items() if v.get("supports_vision")]
+        assert vision == ["qwen/qwen3.6-27b"], vision
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +258,44 @@ class TestGroqAdapterGenerate:
         call_kwargs = adapter._client.chat.completions.create.call_args.kwargs
         assert "frequency_penalty" not in call_kwargs
         assert "presence_penalty" not in call_kwargs
+
+    def test_reasoning_model_asks_for_a_parsed_reasoning_chain(self):
+        """A reasoning family must not return its chain inside the answer.
+
+        Groq's default ``reasoning_format`` is ``"raw"``, which embeds the chain
+        in ``message.content`` between ``<think>`` tags — so ``result.text`` for
+        a one-word question is several hundred tokens of reasoning and no answer,
+        and a tool-calling turn can spend its whole budget thinking. Asking for
+        ``"parsed"`` puts the chain on ``message.reasoning`` instead.
+        """
+        adapter = self._loaded_adapter("qwen/qwen3.6-27b")
+        adapter._client.chat.completions.create.return_value = self._make_mock_response("Paris")
+        adapter.generate("What is the capital of France?")
+        call_kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["reasoning_format"] == "parsed"
+
+    def test_reasoning_format_is_sent_on_the_streaming_path_too(self):
+        adapter = self._loaded_adapter("openai/gpt-oss-20b")
+        adapter._client.chat.completions.create.return_value = iter([])
+        list(adapter.generate_stream("Hi"))
+        call_kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["reasoning_format"] == "parsed"
+
+    def test_non_reasoning_model_is_not_sent_reasoning_format(self):
+        """Groq rejects the parameter on families that do not reason."""
+        adapter = self._loaded_adapter("llama-3.1-8b-instant")
+        adapter._client.chat.completions.create.return_value = self._make_mock_response("Hi")
+        adapter.generate("Hi")
+        call_kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert "reasoning_format" not in call_kwargs
+
+    def test_caller_can_override_the_reasoning_format(self):
+        """A caller who wants the raw chain back keeps that option."""
+        adapter = self._loaded_adapter("qwen/qwen3.6-27b")
+        adapter._client.chat.completions.create.return_value = self._make_mock_response("Paris")
+        adapter.generate("Hi", reasoning_format="raw")
+        call_kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["reasoning_format"] == "raw"
 
     def test_generate_with_tools_calls_api(self):
         adapter = self._loaded_adapter("llama-3.3-70b-versatile")
