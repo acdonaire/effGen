@@ -20,7 +20,7 @@ def add_workflow_parser(subparsers: argparse._SubParsersAction) -> None:
     workflow_run = workflow_subparsers.add_parser('run', help='Run a workflow from YAML file')
     workflow_run.add_argument('file', help='Path to workflow YAML file')
     workflow_run.add_argument('-m', '--model', help='Default model for all agents')
-    workflow_run.add_argument('--input', action='append', nargs=2, metavar=('NODE', 'TASK'),
+    workflow_run.add_argument('-i', '--input', action='append', nargs=2, metavar=('NODE', 'TASK'),
                               help='Input for a specific node (can be repeated)')
     workflow_run.add_argument('--task', help='A single task string routed to the '
                               'workflow entry node(s) (alternative to --input)')
@@ -66,7 +66,7 @@ def add_batch_parser(subparsers: argparse._SubParsersAction, *, preset_choices: 
                                    '"index" field back to its input position — sort on '
                                    'it if your consumer assumes line N corresponds to '
                                    'input row N.')
-    batch_parser.add_argument('--concurrency', type=int, default=5, help='Max concurrent queries (default: 5)')
+    batch_parser.add_argument('-c', '--concurrency', type=int, default=5, help='Max concurrent queries (default: 5)')
     batch_parser.add_argument('--batch-size', type=int, default=0, help='Batch size (0 = all at once)')
     batch_parser.add_argument('--timeout', type=float, default=120.0, help='Timeout per query in seconds')
     batch_parser.add_argument('--retries', type=int, default=1, help='Retries for failed queries')
@@ -188,7 +188,7 @@ def add_compare_parser(subparsers: argparse._SubParsersAction, *, preset_choices
             "to gate a build.\n"
         ),
     )
-    compare_parser.add_argument('--models', required=True,
+    compare_parser.add_argument('-m', '--models', required=True,
                                  help='Comma-separated model ids. Use a '
                                       'provider:model prefix to pin a provider '
                                       'for a bare id (e.g. '

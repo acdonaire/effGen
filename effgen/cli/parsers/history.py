@@ -34,7 +34,8 @@ def add_sessions_parser(subparsers: argparse._SubParsersAction) -> None:
     _sessions_list.add_argument('--search', help='Only sessions whose id, agent or messages match this text')
     _sessions_list.add_argument('--since', help='Only sessions updated on/after this date (YYYY-MM-DD)')
     _sessions_list.add_argument('--until', help='Only sessions updated on/before this date (YYYY-MM-DD)')
-    _sessions_list.add_argument('--model', help='Only sessions answered by a model matching this text')
+    _sessions_list.add_argument('-m', '--model',
+                                help='Only sessions answered by a model matching this text')
     _sessions_list.add_argument('--limit', type=int, default=50, help='Maximum sessions to show (default: 50)')
     ss = sessions_subparsers.add_parser(
         'show', help='Read a conversation turn by turn',
@@ -53,9 +54,11 @@ def add_sessions_parser(subparsers: argparse._SubParsersAction) -> None:
     sd.add_argument('session_id', help='Session id')
     se = sessions_subparsers.add_parser('export', help='Export a session')
     se.add_argument('session_id', help='Session id')
-    se.add_argument('--format', choices=['json', 'text'], default='json')
+    se.add_argument('--format', choices=['json', 'text'], default='json',
+                    help='Export format (default: json)')
     sc = sessions_subparsers.add_parser('cleanup', help='Delete sessions older than N days')
-    sc.add_argument('--days', type=int, default=30)
+    sc.add_argument('--days', type=int, default=30,
+                    help='Delete sessions older than this many days (default: 30)')
 
 def add_runs_parser(subparsers: argparse._SubParsersAction) -> None:
     """Declare ``effgen runs`` and its list/show/cleanup subcommands."""
@@ -79,7 +82,7 @@ def add_runs_parser(subparsers: argparse._SubParsersAction) -> None:
     rl.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
     rl.add_argument('--status', choices=['ok', 'error', 'failed'],
                     help="Only runs with this status ('failed' is an alias for 'error')")
-    rl.add_argument('--model', help='Only runs on a model matching this text')
+    rl.add_argument('-m', '--model', help='Only runs on a model matching this text')
     rl.add_argument('--search', help='Only runs whose task, answer, id or error match this text')
     rl.add_argument('--session-id', dest='session_filter', help='Only runs from this session')
     rl.add_argument('--since', help='Only runs on/after this date (YYYY-MM-DD)')
@@ -94,4 +97,5 @@ def add_runs_parser(subparsers: argparse._SubParsersAction) -> None:
                          'the card states that; use `effgen run --card` at run time '
                          'for the full answer, trace and sources.')
     rc = runs_subparsers.add_parser('cleanup', help='Delete run history older than N days')
-    rc.add_argument('--days', type=int, default=30)
+    rc.add_argument('--days', type=int, default=30,
+                    help='Delete runs older than this many days (default: 30)')

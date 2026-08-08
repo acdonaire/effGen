@@ -102,7 +102,7 @@ def add_run_parser(subparsers: argparse._SubParsersAction, *, preset_choices: li
              'restores a mid-run checkpoint snapshot.)',
     )
     run_parser.add_argument(
-        '--file', '--input', dest='input_files', action='append', metavar='PATH',
+        '-f', '--file', '--input', dest='input_files', action='append', metavar='PATH',
         help='Attach a file to the task. An image (.png/.jpg/.gif/.webp/...) is '
              'passed as multimodal input; a document (.pdf/.docx/.xlsx/.txt/'
              '.md/.csv/...) or a source file (.py/.js/.ts/.go/.rs/.java/.sql/'
@@ -119,7 +119,8 @@ def add_resume_parser(subparsers: argparse._SubParsersAction, *, preset_choices:
     resume_parser.add_argument('--checkpoint', required=True,
                                help='Checkpoint id, JSON path, or directory (uses latest)')
     resume_parser.add_argument('-m', '--model', help='Model to use')
-    resume_parser.add_argument('--preset', choices=preset_choices)
+    resume_parser.add_argument('--preset', choices=preset_choices,
+                               help='Preset to resume the run under')
 
 def add_chat_parser(subparsers: argparse._SubParsersAction, *, preset_choices: list[str]) -> None:
     """Declare ``effgen chat`` — an interactive session with one agent."""

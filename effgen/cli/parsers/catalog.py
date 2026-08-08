@@ -57,7 +57,8 @@ def add_models_parser(subparsers: argparse._SubParsersAction) -> None:
     models_list = models_subparsers.add_parser('list', help='List models')
     models_list.add_argument('--provider', help='Show only this provider\'s models (full detail)')
     models_list.add_argument('--free', action='store_true', help='Show only free-tier models')
-    models_list.add_argument('--tools', action='store_true', help='Show only tool-capable models')
+    models_list.add_argument('-t', '--tools', action='store_true',
+                             help='Show only tool-capable models')
     models_list.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
 
     models_browse = models_subparsers.add_parser(
@@ -70,7 +71,7 @@ def add_models_parser(subparsers: argparse._SubParsersAction) -> None:
     models_browse.add_argument(
         '--free', action='store_true', help='Only free-tier models')
     models_browse.add_argument(
-        '--tools', action='store_true', help='Only tool-calling models')
+        '-t', '--tools', action='store_true', help='Only tool-calling models')
     models_browse.add_argument(
         '--vision', action='store_true', help='Only vision-capable models')
     models_browse.add_argument(
@@ -164,7 +165,7 @@ def add_prompts_parser(subparsers: argparse._SubParsersAction) -> None:
     prompts_eval.add_argument('-m', '--model', help='Model to use for live evaluation')
     prompts_eval.add_argument('--delay', type=float, default=35.0,
                               help='Seconds to wait between live model calls (default: 35)')
-    prompts_eval.add_argument('--output', help='Write eval table to this file')
+    prompts_eval.add_argument('-o', '--output', help='Write eval table to this file')
     prompts_eval.add_argument('--fail-under', type=float, default=None, metavar='FRACTION',
                               help='Exit non-zero if the pass rate is below this fraction '
                                    '(0.0-1.0). Without it, any failing eval exits non-zero.')
@@ -174,13 +175,13 @@ def add_prompts_parser(subparsers: argparse._SubParsersAction) -> None:
 
     prompts_render = prompts_subparsers.add_parser('render', help='Non-interactive: render a prompt to stdout')
     prompts_render.add_argument('prompt_name', metavar='name', help='Prompt name (e.g. research.literature_review.v1)')
-    prompts_render.add_argument('--input', dest='input_file', metavar='FILE',
+    prompts_render.add_argument('-i', '--input', dest='input_file', metavar='FILE',
                                 help="JSON file with input variables, validated against the prompt's "
                                      "input_schema (see 'prompts show <name>'); omit to render the fixture")
 
     prompts_run = prompts_subparsers.add_parser('run', help='Non-interactive: render + run through a model')
     prompts_run.add_argument('prompt_name', metavar='name', help='Prompt name')
-    prompts_run.add_argument('--input', dest='input_file', metavar='FILE',
+    prompts_run.add_argument('-i', '--input', dest='input_file', metavar='FILE',
                              help="JSON file with input variables, validated against the prompt's "
                                   "input_schema (see 'prompts show <name>'); omit to render the fixture")
     prompts_run.add_argument('-m', '--model', required=True, help='Model identifier to run against')

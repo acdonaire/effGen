@@ -94,7 +94,7 @@ def add_loadtest_subparser(subparsers: argparse._SubParsersAction) -> None:
         help="Provider for live runs (e.g. cerebras, openai). Default: mock",
     )
     p.add_argument(
-        "--model",
+        "-m", "--model",
         default=None,
         metavar="MODEL_ID",
         help=(
