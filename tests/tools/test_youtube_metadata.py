@@ -237,3 +237,33 @@ def test_metadata_private_video_returns_error():
     ))
     assert _is_failure(r)
     assert _get_error(r)
+
+
+# ---------------------------------------------------------------------------
+# yt-dlp failure classification
+# ---------------------------------------------------------------------------
+
+# What yt-dlp writes when the host cannot be resolved. It contains the word
+# "page", so a bare "age" substring test reads it as an age restriction.
+_DNS_FAILURE_STDERR = (
+    "ERROR: [youtube] dQw4w9WgXcQ: Unable to download API page: "
+    "HTTPSConnection(host='www.youtube.com', port=443): Failed to resolve "
+    "'www.youtube.com' ([Errno -3] Temporary failure in name resolution)"
+)
+
+
+def test_a_network_failure_is_not_read_as_an_age_restriction():
+    from effgen.tools.builtin.youtube_metadata import _mentions_age_restriction
+
+    assert _mentions_age_restriction(_DNS_FAILURE_STDERR) is False
+
+
+def test_an_age_gate_is_still_recognized():
+    from effgen.tools.builtin.youtube_metadata import _mentions_age_restriction
+
+    for stderr in (
+        "ERROR: [youtube] abc: Sign in to confirm your age. This video may be inappropriate.",
+        "ERROR: [youtube] abc: This video is age-restricted.",
+        "ERROR: [youtube] abc: Content is AGE RESTRICTED in your region.",
+    ):
+        assert _mentions_age_restriction(stderr) is True, stderr

@@ -98,6 +98,18 @@ def _ytdlp_hint(stderr: str) -> str:
     )
 
 
+# Phrases yt-dlp uses for an age gate. A bare "age" test would also match
+# "Unable to download API page", so a network failure would be reported as an
+# age restriction.
+_AGE_RESTRICTION_PHRASES = ("age-restricted", "age restricted", "confirm your age")
+
+
+def _mentions_age_restriction(stderr: str) -> bool:
+    """Whether *stderr* reports an age gate rather than some other failure."""
+    lowered = stderr.lower()
+    return any(phrase in lowered for phrase in _AGE_RESTRICTION_PHRASES)
+
+
 def _metadata_with_ytdlp(video_id: str, timeout: int = 45) -> dict[str, Any]:
     ytdlp = _find_ytdlp()
     proc = subprocess.run(
@@ -122,7 +134,7 @@ def _metadata_with_ytdlp(video_id: str, timeout: int = 45) -> dict[str, Any]:
                 f"{stderr[:200]}. Check the id, or request a video that is "
                 "publicly listed."
             )
-        if "Sign in" in stderr or "age" in stderr.lower():
+        if "Sign in" in stderr or _mentions_age_restriction(stderr):
             raise ValueError(
                 f"Video '{video_id}' requires sign-in or is age-restricted: "
                 f"{stderr[:200]}. This tool fetches only publicly viewable "

@@ -128,6 +128,18 @@ def _filter_metadata(raw: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+# Phrases yt-dlp uses for an age gate. A bare "age" test would also match
+# "Unable to download API page", so a network failure would be reported as an
+# age restriction.
+_AGE_RESTRICTION_PHRASES = ("age-restricted", "age restricted", "confirm your age")
+
+
+def _mentions_age_restriction(stderr: str) -> bool:
+    """Whether *stderr* reports an age gate rather than some other failure."""
+    lowered = stderr.lower()
+    return any(phrase in lowered for phrase in _AGE_RESTRICTION_PHRASES)
+
+
 def _metadata_sync(url: str, timeout: int = 45) -> dict[str, Any]:
     """Synchronous yt-dlp metadata fetch."""
     ytdlp = _find_ytdlp()
@@ -158,8 +170,10 @@ def _metadata_sync(url: str, timeout: int = 45) -> dict[str, Any]:
         stderr = proc.stderr.strip()
         if "Video unavailable" in stderr or "Private video" in stderr:
             raise ValueError(f"Video is unavailable (private or deleted): {url!r}")
-        if "Sign in" in stderr or "age" in stderr.lower():
-            raise ValueError(f"Video requires sign-in or is age-restricted: {url!r}")
+        if "Sign in" in stderr or _mentions_age_restriction(stderr):
+            raise ValueError(
+                f"Video requires sign-in or is age-restricted: {url!r}. {stderr[:200]}"
+            )
         raise RuntimeError(
             f"yt-dlp failed (code {proc.returncode}): {_ytdlp_upgrade_message(stderr)}"
         )
