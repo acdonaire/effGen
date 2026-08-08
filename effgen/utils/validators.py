@@ -41,6 +41,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from effgen.errors import quote_for_message, with_next_step
+
 # jsonschema is surprisingly heavy to import (it pulls rfc3987 / referencing),
 # so we only probe availability here via find_spec (which does not execute the
 # module) and import it lazily inside validate_json_schema(). This keeps
@@ -80,15 +82,19 @@ class ValidationError(Exception):
         self.errors = errors or []
 
     def __str__(self) -> str:
-        """Return detailed error message."""
-        parts = [self.message]
+        """Return the message, the field and value that failed, and the fix."""
+        parts = [quote_for_message(self.message)]
         if self.field:
             parts.append(f"Field: {self.field}")
         if self.value is not None:
-            parts.append(f"Value: {self.value}")
+            parts.append(f"Value: {quote_for_message(self.value)}")
         if self.errors:
-            parts.append(f"Errors: {', '.join(self.errors)}")
-        return " | ".join(parts)
+            parts.append(f"Errors: {quote_for_message(', '.join(self.errors))}")
+        return with_next_step(
+            " | ".join(parts),
+            "Correct the value named above to match what the field accepts, "
+            "then re-run.",
+        )
 
 
 # ============================================================================

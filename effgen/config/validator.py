@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from effgen.errors import quote_for_message, with_next_step
+
 # jsonschema is heavy to import (it pulls rfc3987 / referencing). We only probe
 # availability here via find_spec — which does not execute the module — and
 # import Draft7Validator lazily at the single call site below. This keeps the
@@ -48,13 +50,19 @@ class ValidationError(Exception):
         super().__init__(message)
         self.errors = errors or []
 
-    def __str__(self) -> str:
-        """Format error message with details."""
-        if not self.errors:
-            return super().__str__()
+    _FOLLOW_ON = (
+        "Correct the keys named above in the configuration file, then re-run; "
+        "`effgen config show` prints the merged configuration effGen reads."
+    )
 
-        error_list = "\n  - ".join(self.errors)
-        return f"{super().__str__()}\n  - {error_list}"
+    def __str__(self) -> str:
+        """Format the message, each specific error, and how to fix them."""
+        head = quote_for_message(super().__str__())
+        if not self.errors:
+            return with_next_step(head, self._FOLLOW_ON)
+
+        error_list = "\n  - ".join(quote_for_message(e) for e in self.errors)
+        return f"{head}\n  - {error_list}\n\n{self._FOLLOW_ON}"
 
 
 @dataclass
