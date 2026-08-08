@@ -17,7 +17,10 @@ def _battle_body(data: dict[str, Any]) -> tuple[str, str, str]:
     """Render a head-to-head: the prompt, the tally, the verdict, the answers."""
     contenders = _sequence(data.get("contenders"))
     if not contenders:
-        raise ReportError("The battle result carries no contenders to render.")
+        raise ReportError(
+            "The battle result carries no contenders to render. Pass the JSON "
+            "`effgen battle --json` emitted, with its contenders intact."
+        )
     prompt = str(data.get("prompt") or "")
     verdict = _mapping(data.get("verdict"))
     finishers = [c for c in contenders if _mapping(c).get("answer") and not _mapping(c).get("error")]

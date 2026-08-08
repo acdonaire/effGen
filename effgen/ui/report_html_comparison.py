@@ -33,7 +33,10 @@ def _comparison_body(data: dict[str, Any]) -> tuple[str, str, str]:
     # not a mapping renders as an empty row rather than crashing the report.
     scores = [_mapping(s) for s in _sequence(data.get("scores"))]
     if not scores:
-        raise ReportError("The comparison result carries no scores to render.")
+        raise ReportError(
+            "The comparison result carries no scores to render. Pass the JSON "
+            "`effgen compare --json` emitted, with its scores intact."
+        )
     suites = sorted({str(s.get("suite", "")) for s in scores})
     models = sorted({str(s.get("model", "")) for s in scores})
     optimize = str(data.get("optimize", "accuracy"))

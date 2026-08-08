@@ -182,11 +182,12 @@ def _require_kind_data(data: dict[str, Any], kind: str) -> None:
     hint = (
         f" This document looks like a {actual} result — render it with --kind {actual}."
         if actual and actual != kind
-        else " Pass the JSON that command emitted, or --kind for the shape it is."
+        else ""
     )
     raise ReportError(
         f"This document has none of the fields the '{kind}' report renders "
-        f"({', '.join(required)}). It contains: {present}.{hint}"
+        f"({', '.join(required)}). It contains: {present}.{hint} "
+        "Pass the JSON that command emitted, or name the shape with --kind."
     )
 
 
@@ -219,7 +220,10 @@ def build_html_report(
             is missing the data the report needs.
     """
     if not isinstance(data, dict):
-        raise ReportError("A report is rendered from a JSON object, not a list or scalar.")
+        raise ReportError(
+            "A report is rendered from a JSON object, not a list or scalar. "
+            "Pass the JSON an effGen command emitted, not one element of it."
+        )
     resolved = kind or detect_report_kind(data)
     if resolved is None:
         raise ReportError(
@@ -274,7 +278,10 @@ def load_result_document(path: str | Path) -> dict[str, Any]:
     """
     src = Path(path)
     if not src.exists():
-        raise ReportError(f"No such result file: {src}")
+        raise ReportError(
+            f"No such result file: {src}. Check the path, or produce one with "
+            "`effgen eval --suite math --json > results.json`."
+        )
     try:
         data = json.loads(src.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:

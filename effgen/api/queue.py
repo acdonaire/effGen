@@ -130,7 +130,9 @@ class RequestQueue:
             if self._size >= self.max_size:
                 self.stats["rejected"] += 1
                 raise QueueFullError(
-                    f"request queue full ({self._size}/{self.max_size})"
+                    f"request queue full ({self._size}/{self.max_size}). "
+                    "Retry once in-flight requests drain, or raise max_size "
+                    "if the server has capacity for a deeper queue."
                 )
             now = time.time()
             effective_timeout = timeout if timeout is not None else self.default_timeout

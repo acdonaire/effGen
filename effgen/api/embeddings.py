@@ -270,8 +270,10 @@ class EmbeddingEngine:
                         # Fail closed instead of quietly degrading the vectors.
                         raise EmbeddingBackendUnavailable(
                             f"embedding backend for {resolved!r} could not load "
-                            f"({exc}); set EFFGEN_EMBEDDINGS_STRICT=0 to allow the "
-                            "lexical TF-IDF fallback"
+                            f"({exc}). Install the neural backend "
+                            "(`pip install 'effgen[rag]'`) and check the model "
+                            "id, or set EFFGEN_EMBEDDINGS_STRICT=0 to allow the "
+                            "lexical TF-IDF fallback."
                         ) from exc
                     # Non-spammy fallback: warn once per model, record it
                     # so the response can tell the caller the vectors are lexical.
