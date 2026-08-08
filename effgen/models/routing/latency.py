@@ -154,7 +154,9 @@ class LatencyBasedPolicy(RoutingPolicy):
         if not available:
             raise NoCandidateError(
                 "LatencyBasedPolicy: no candidate has a configured key, "
-                f"available model, and required capabilities. Eliminated {len(eliminated)}."
+                f"available model, and required capabilities. Eliminated {len(eliminated)}. "
+                "Configure a key for one of the candidate providers, or relax "
+                "the required capabilities."
             )
 
         # Once there are real measurements, route only on measured candidates.

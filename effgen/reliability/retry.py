@@ -37,6 +37,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from effgen.errors import quote_for_message, with_next_step
+
 log = logging.getLogger(__name__)
 
 __all__ = [
@@ -216,8 +218,14 @@ class RetryExhausted(Exception):
 
     def __init__(self, attempts: int, last_error: BaseException) -> None:
         super().__init__(
-            f"All {attempts} retry attempts exhausted. "
-            f"Last error: {type(last_error).__name__}: {last_error}"
+            with_next_step(
+                f"All {attempts} retry attempts exhausted. "
+                f"Last error: {type(last_error).__name__}: "
+                f"{quote_for_message(last_error)}",
+                "Fix the cause named above — retrying more will not clear it; "
+                "raise max_attempts only for a failure that is genuinely "
+                "transient.",
+            )
         )
         self.attempts = attempts
         self.last_error = last_error

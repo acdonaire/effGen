@@ -243,7 +243,9 @@ class CostBasedPolicy(RoutingPolicy):
         if not scored:
             raise NoCandidateError(
                 f"CostBasedPolicy: no candidate has a configured key and "
-                f"required capabilities. Eliminated {len(eliminated)}."
+                f"required capabilities. Eliminated {len(eliminated)}. "
+                "Configure a key for one of the candidate providers, or relax "
+                "the required capabilities."
             )
 
         # Sort cheapest-first; free-tier breaks ties

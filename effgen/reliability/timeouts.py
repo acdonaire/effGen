@@ -57,7 +57,9 @@ class TimeoutError(builtins.TimeoutError):  # noqa: A001 — intentional shadow 
 
     def __init__(self, operation: str, limit: float) -> None:
         super().__init__(
-            f"effGen operation '{operation}' exceeded {limit:.1f}s timeout"
+            f"effGen operation '{operation}' exceeded {limit:.1f}s timeout. "
+            "Raise the timeout for this operation, or reduce what the call "
+            "asks for (a smaller prompt, fewer tools, a faster model)."
         )
         self.operation = operation
         self.limit = limit

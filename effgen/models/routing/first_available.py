@@ -70,5 +70,6 @@ class FirstAvailablePolicy(RoutingPolicy):
         raise NoCandidateError(
             f"FirstAvailablePolicy: no provider has a configured key and supports "
             f"capabilities {[c.value for c in context.required_capabilities]}. "
-            f"Eliminated {len(eliminated)} candidates."
+            f"Eliminated {len(eliminated)} candidates. Configure a key for one "
+            "of the candidate providers, or relax the required capabilities."
         )
