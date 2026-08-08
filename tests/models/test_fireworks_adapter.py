@@ -35,16 +35,24 @@ class TestFireworksRegistry:
             assert mid.startswith(_FIREWORKS_PREFIX), f"{mid} missing prefix"
 
     def test_required_fields(self):
-        required = {"context", "supports_native_tools", "supports_streaming",
-                    "pricing_per_1m_input", "pricing_per_1m_output"}
+        required = {"context", "supports_native_tools", "supports_streaming"}
         for mid, info in FIREWORKS_MODELS.items():
             for field in required:
                 assert field in info, f"{mid} missing field '{field}'"
 
+    def test_pricing_keys_come_as_a_pair(self):
+        """An entry carries both prices or neither; one alone reports as free."""
+        for mid, info in FIREWORKS_MODELS.items():
+            has_in = "pricing_per_1m_input" in info
+            has_out = "pricing_per_1m_output" in info
+            assert has_in == has_out, f"{mid} has only one pricing key"
+
     def test_context_positive(self):
         for mid, info in FIREWORKS_MODELS.items():
-            # Image-modality models (e.g. FLUX) don't have a token context window.
-            if info.get("modality") == "image":
+            # A model Fireworks publishes no context length for is recorded as 0
+            # and flagged, so an accidental 0 still fails here.
+            if info.get("context_unpublished"):
+                assert info["context"] == 0, f"{mid} flagged unpublished but has a context"
                 continue
             assert info["context"] > 0, f"{mid} has context={info['context']}"
 
@@ -97,11 +105,11 @@ class TestFireworksAdapterInit:
         assert adapter.model_name == FIREWORKS_DEFAULT_MODEL
 
     def test_short_id_expansion(self):
-        adapter = FireworksAdapter("kimi-k2p5", enable_rate_limiting=False)
-        assert adapter.model_name == f"{_FIREWORKS_PREFIX}kimi-k2p5"
+        adapter = FireworksAdapter("kimi-k2p6", enable_rate_limiting=False)
+        assert adapter.model_name == f"{_FIREWORKS_PREFIX}kimi-k2p6"
 
     def test_full_id_unchanged(self):
-        full = f"{_FIREWORKS_PREFIX}kimi-k2p5"
+        full = f"{_FIREWORKS_PREFIX}kimi-k2p6"
         adapter = FireworksAdapter(full, enable_rate_limiting=False)
         assert adapter.model_name == full
 
@@ -123,14 +131,14 @@ class TestFireworksAdapterInit:
 
     def test_rate_limiter_created_for_known_model(self):
         adapter = FireworksAdapter(
-            f"{_FIREWORKS_PREFIX}kimi-k2p5",
+            f"{_FIREWORKS_PREFIX}kimi-k2p6",
             enable_rate_limiting=True,
         )
         assert adapter._rate_limiter is not None
 
     def test_rate_limiter_disabled(self):
         adapter = FireworksAdapter(
-            f"{_FIREWORKS_PREFIX}kimi-k2p5",
+            f"{_FIREWORKS_PREFIX}kimi-k2p6",
             enable_rate_limiting=False,
         )
         assert adapter._rate_limiter is None
@@ -387,7 +395,7 @@ def _make_tool_response(tool_name: str, tool_args: dict):
 
 class TestFireworksAdapterTools:
     def test_generate_with_tools_returns_tool_calls(self):
-        model = f"{_FIREWORKS_PREFIX}kimi-k2p5"
+        model = f"{_FIREWORKS_PREFIX}kimi-k2p6"
         adapter = _loaded_adapter(model)
         mock_resp = _make_tool_response("calculator", {"expression": "17*23"})
         adapter._client.chat.completions.create.return_value = mock_resp
@@ -413,7 +421,7 @@ class TestFireworksAdapterTools:
         # tests/unit/test_adapter_consistency.py.
 
     def test_tools_not_passed_for_non_tool_model(self):
-        non_tool_model = f"{_FIREWORKS_PREFIX}flux-1-dev-fp8"
+        non_tool_model = f"{_FIREWORKS_PREFIX}qwen3-embedding-8b"
         adapter = _loaded_adapter(non_tool_model)
         mock_resp = _make_mock_response("result")
         adapter._client.chat.completions.create.return_value = mock_resp
@@ -424,15 +432,15 @@ class TestFireworksAdapterTools:
         assert "tools" not in call_kwargs
 
     def test_supports_tool_calling_property(self):
-        # kimi-k2p5 confirmed native tool support
-        tool_model = f"{_FIREWORKS_PREFIX}kimi-k2p5"
+        # kimi-k2p6 returns native tool calls
+        tool_model = f"{_FIREWORKS_PREFIX}kimi-k2p6"
         adapter = _loaded_adapter(tool_model)
         assert adapter.supports_tool_calling() is True
         assert adapter.supports_native_tools is True
 
-        # Image-modality models don't support tools.
-        flux_model = f"{_FIREWORKS_PREFIX}flux-1-dev-fp8"
-        adapter2 = _loaded_adapter(flux_model)
+        # Embedding-modality models do not support tools.
+        embedding_model = f"{_FIREWORKS_PREFIX}qwen3-embedding-8b"
+        adapter2 = _loaded_adapter(embedding_model)
         assert adapter2.supports_tool_calling() is False
 
 
@@ -519,7 +527,7 @@ class TestFireworksAdapterTokens:
         assert result.model_name == FIREWORKS_DEFAULT_MODEL
 
     def test_get_context_length(self):
-        model = f"{_FIREWORKS_PREFIX}kimi-k2p5"
+        model = f"{_FIREWORKS_PREFIX}kimi-k2p6"
         adapter = _loaded_adapter(model)
         ctx = adapter.get_context_length()
         assert ctx == FIREWORKS_MODELS[model]["context"]
@@ -533,6 +541,29 @@ class TestFireworksAdapterTokens:
         ctx = adapter.get_context_length()
         assert ctx == 131_072  # default fallback
 
+    def test_unpublished_context_does_not_reject_every_prompt(self):
+        """An unknown context window is not a zero-token window.
+
+        Fireworks publishes ``contextLength: 0`` for some custom deployments, and
+        the catalog records that faithfully alongside ``context_unpublished``.
+        Validating a prompt against 0 would refuse every prompt for such a model.
+        """
+        unpublished = [m for m, i in FIREWORKS_MODELS.items() if i.get("context_unpublished")]
+        if not unpublished:
+            pytest.skip("no catalog entry currently has an unpublished context window")
+        adapter = _loaded_adapter(unpublished[0])
+        assert adapter.get_context_length() == 0
+        assert adapter.validate_prompt("What is the capital of France?") is True
+
+    def test_a_known_context_window_is_still_enforced(self):
+        """The skip above must not disable the check for models that publish one."""
+        model = f"{_FIREWORKS_PREFIX}kimi-k2p6"
+        adapter = _loaded_adapter(model)
+        window = FIREWORKS_MODELS[model]["context"]
+        assert window > 0
+        with pytest.raises(ValueError, match="exceeds"):
+            adapter.validate_prompt("word " * (window + 1000))
+
 
 # ---------------------------------------------------------------------------
 # Helpers / properties
@@ -540,7 +571,7 @@ class TestFireworksAdapterTokens:
 
 class TestFireworksAdapterHelpers:
     def test_pricing(self):
-        adapter = _loaded_adapter(f"{_FIREWORKS_PREFIX}kimi-k2p5")
+        adapter = _loaded_adapter(f"{_FIREWORKS_PREFIX}kimi-k2p6")
         p = adapter.pricing()
         assert "input_per_1m_usd" in p
         assert "output_per_1m_usd" in p
@@ -576,7 +607,7 @@ class TestFireworksRefreshModels:
         mock_response.json.return_value = {
             "models": [
                 {
-                    "name": "accounts/fireworks/models/kimi-k2p5",
+                    "name": "accounts/fireworks/models/kimi-k2p6",
                     "contextLength": 131072,
                     "displayName": "Llama 3.3 70B Instruct",
                     "baseModelDetails": {"modelType": "llama"},

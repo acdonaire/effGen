@@ -1,12 +1,18 @@
 """
 Fireworks AI model registry for effGen.
 
-Catalog reconciled with Fireworks serverless API on 2026-05-15. Only models
+Catalog reconciled with the Fireworks serverless API on 2026-08-07. Only models
 returned by the live List Models API with ``filter=supports_serverless=true``
-are kept here. Use ``refresh_models()`` to detect drift between this snapshot
-and the live serverless catalog.
+are kept here, so the ``accounts/fireworks/routers/*`` aliases the inference
+endpoint also serves are deliberately absent — listing them here would make
+``refresh_models()`` report them as removed on every run. Use ``refresh_models()``
+to detect drift between this snapshot and the live serverless catalog.
 
-Pricing from https://docs.fireworks.ai/serverless/pricing (2026-05-15).
+Context windows, tool support and image-input support come from that listing.
+``max_output`` is a curated default: Fireworks does not publish a per-model
+output cap. Pricing is from https://docs.fireworks.ai/serverless/pricing; an
+entry with no pricing keys is reported as unpriced rather than as free.
+
 Model IDs must be given in full format: ``accounts/fireworks/models/<id>``.
 """
 
@@ -18,13 +24,37 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-REGISTRY_FETCH_DATE = "2026-05-15"
+REGISTRY_FETCH_DATE = "2026-08-07"
 _FIREWORKS_PREFIX = "accounts/fireworks/models/"
 
 # ---------------------------------------------------------------------------
 # Main registry — keyed by SHORT model ID (without accounts/fireworks/models/)
 # ---------------------------------------------------------------------------
 _REGISTRY_SHORT: dict[str, dict] = {
+    "deepseek-v4-flash": {
+        "display_name": "DeepSeek-V4-Flash",
+        "family": "deepseek",
+        "organization": "DeepSeek",
+        "context": 1_048_576,
+        "max_output": 16_384,
+        "supports_native_tools": True,
+        "supports_streaming": True,
+        "rpm": 10,
+        "tpm": 40_000,
+        "modality": "chat",
+    },
+    "deepseek-v4-flash-0731": {
+        "display_name": "DeepSeek-V4-Flash-0731",
+        "family": "deepseek",
+        "organization": "DeepSeek",
+        "context": 1_048_576,
+        "max_output": 16_384,
+        "supports_native_tools": True,
+        "supports_streaming": True,
+        "rpm": 10,
+        "tpm": 40_000,
+        "modality": "chat",
+    },
     "deepseek-v4-pro": {
         "display_name": "DeepSeek-V4-Pro",
         "family": "deepseek",
@@ -35,6 +65,18 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "supports_streaming": True,
         "pricing_per_1m_input": 1.74,
         "pricing_per_1m_output": 3.48,
+        "rpm": 10,
+        "tpm": 40_000,
+        "modality": "chat",
+    },
+    "glm-5p2": {
+        "display_name": "GLM 5.2",
+        "family": "glm",
+        "organization": "Zhipu AI",
+        "context": 1_048_576,
+        "max_output": 16_384,
+        "supports_native_tools": True,
+        "supports_streaming": True,
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
@@ -59,7 +101,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "organization": "OpenAI",
         "context": 131_072,
         "max_output": 8_192,
-        "supports_native_tools": False,
+        "supports_native_tools": True,
         "supports_streaming": True,
         "pricing_per_1m_input": 0.07,
         "pricing_per_1m_output": 0.30,
@@ -67,16 +109,15 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "tpm": 40_000,
         "modality": "chat",
     },
-    "kimi-k2p5": {
-        "display_name": "Kimi K2.5",
-        "family": "kimi",
-        "organization": "Moonshot AI",
-        "context": 262_144,
+    "inkling": {
+        "display_name": "Inkling",
+        "family": "inkling",
+        "organization": "Thinking Machines",
+        "context": 1_048_576,
         "max_output": 16_384,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "pricing_per_1m_input": 0.60,
-        "pricing_per_1m_output": 3.00,
+        "supports_vision": True,
         "rpm": 10,
         "tpm": 40_000,
         "modality": "vision",
@@ -89,25 +130,38 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "max_output": 16_384,
         "supports_native_tools": True,
         "supports_streaming": True,
+        "supports_vision": True,
         "pricing_per_1m_input": 0.95,
         "pricing_per_1m_output": 4.00,
         "rpm": 10,
         "tpm": 40_000,
         "modality": "vision",
     },
-    "minimax-m2p5": {
-        "display_name": "MiniMax-M2.5",
-        "family": "minimax",
-        "organization": "MiniMax",
-        "context": 196_608,
+    "kimi-k2p7-code": {
+        "display_name": "Kimi K2.7 Code",
+        "family": "kimi",
+        "organization": "Moonshot AI",
+        "context": 262_144,
         "max_output": 16_384,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "pricing_per_1m_input": 0.30,
-        "pricing_per_1m_output": 1.20,
+        "supports_vision": True,
         "rpm": 10,
         "tpm": 40_000,
-        "modality": "chat",
+        "modality": "vision",
+    },
+    "kimi-k3": {
+        "display_name": "Kimi K3",
+        "family": "kimi",
+        "organization": "Moonshot AI",
+        "context": 1_048_576,
+        "max_output": 16_384,
+        "supports_native_tools": True,
+        "supports_streaming": True,
+        "supports_vision": True,
+        "rpm": 10,
+        "tpm": 40_000,
+        "modality": "vision",
     },
     "minimax-m2p7": {
         "display_name": "MiniMax M2.7",
@@ -123,75 +177,44 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "tpm": 40_000,
         "modality": "chat",
     },
-    "glm-5p1": {
-        "display_name": "GLM 5.1",
-        "family": "glm",
-        "organization": "Zhipu AI",
-        "context": 202_752,
+    "minimax-m3": {
+        "display_name": "MiniMax M3",
+        "family": "minimax",
+        "organization": "MiniMax",
+        "context": 512_000,
         "max_output": 16_384,
         "supports_native_tools": True,
         "supports_streaming": True,
-        "pricing_per_1m_input": 1.40,
-        "pricing_per_1m_output": 4.40,
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
     },
-    "flux-1-schnell-fp8": {
-        "display_name": "FLUX.1 [schnell] FP8",
-        "family": "flux",
-        "organization": "Black Forest Labs",
-        "context": 0,
-        "max_output": 0,
-        "supports_native_tools": False,
-        "supports_streaming": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
+    "nemotron-3-ultra-nvfp4": {
+        "display_name": "NVIDIA Nemotron 3 Ultra NVFP4",
+        "family": "nemotron",
+        "organization": "NVIDIA",
+        "context": 262_144,
+        "max_output": 16_384,
+        "supports_native_tools": True,
+        "supports_streaming": True,
         "rpm": 10,
         "tpm": 40_000,
-        "modality": "image",
+        "modality": "chat",
     },
-    "flux-1-dev-fp8": {
-        "display_name": "FLUX.1 [dev] FP8",
-        "family": "flux",
-        "organization": "Black Forest Labs",
+    "qwen3p7-plus": {
+        "display_name": "Qwen3.7 Plus",
+        "family": "qwen3",
+        "organization": "Alibaba",
         "context": 0,
-        "max_output": 0,
-        "supports_native_tools": False,
-        "supports_streaming": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
+        # Fireworks returns no context length for this model.
+        "context_unpublished": True,
+        "max_output": 16_384,
+        "supports_native_tools": True,
+        "supports_streaming": True,
+        "supports_vision": True,
         "rpm": 10,
         "tpm": 40_000,
-        "modality": "image",
-    },
-    "flux-kontext-pro": {
-        "display_name": "FLUX Kontext Pro",
-        "family": "flux",
-        "organization": "Black Forest Labs",
-        "context": 0,
-        "max_output": 0,
-        "supports_native_tools": False,
-        "supports_streaming": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 10,
-        "tpm": 40_000,
-        "modality": "image",
-    },
-    "flux-kontext-max": {
-        "display_name": "FLUX Kontext Max",
-        "family": "flux",
-        "organization": "Black Forest Labs",
-        "context": 0,
-        "max_output": 0,
-        "supports_native_tools": False,
-        "supports_streaming": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 10,
-        "tpm": 40_000,
-        "modality": "image",
+        "modality": "vision",
     },
     "qwen3-embedding-8b": {
         "display_name": "Qwen3 Embedding 8B",
@@ -200,9 +223,9 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "context": 40_960,
         "max_output": 0,
         "supports_native_tools": False,
-        "supports_streaming": False,
+        "supports_streaming": True,
         "pricing_per_1m_input": 0.10,
-        "pricing_per_1m_output": 0.0,
+        "pricing_per_1m_output": 0.00,
         "rpm": 10,
         "tpm": 40_000,
         "modality": "embedding",
@@ -214,26 +237,12 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "context": 40_960,
         "max_output": 0,
         "supports_native_tools": False,
-        "supports_streaming": False,
+        "supports_streaming": True,
         "pricing_per_1m_input": 0.10,
-        "pricing_per_1m_output": 0.0,
+        "pricing_per_1m_output": 0.00,
         "rpm": 10,
         "tpm": 40_000,
         "modality": "embedding",
-    },
-    "qwen3p6-plus": {
-        "display_name": "Qwen3.6 Plus",
-        "family": "qwen3",
-        "organization": "Alibaba",
-        "context": 0,
-        "max_output": 0,
-        "supports_native_tools": False,
-        "supports_streaming": False,
-        "pricing_per_1m_input": 0.0,
-        "pricing_per_1m_output": 0.0,
-        "rpm": 10,
-        "tpm": 40_000,
-        "modality": "image",
     },
 }
 
@@ -254,11 +263,14 @@ def available_models() -> list[str]:
 
 
 def chat_models() -> list[str]:
-    """Return IDs of chat/text models (excludes vision-only etc.)."""
+    """Return IDs of models usable via chat completions.
+
+    Selection is by modality, so a chat model whose context window Fireworks does
+    not publish (recorded as 0) is still listed.
+    """
     return [
         mid for mid, info in FIREWORKS_MODELS.items()
         if info.get("modality", "chat") in ("chat", "vision")
-        and info.get("context", 0) > 0
     ]
 
 
@@ -268,7 +280,6 @@ def tool_capable_models() -> list[str]:
         mid for mid, info in FIREWORKS_MODELS.items()
         if info.get("supports_native_tools", False)
         and info.get("modality", "chat") in ("chat", "vision")
-        and info.get("context", 0) > 0
     ]
 
 
