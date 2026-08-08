@@ -77,11 +77,13 @@ OWNERS = {
     "_doctor_reliability_report": "effgen.cli.commands.doctor",
     "_doctor_code_report": "effgen.cli.commands.doctor",
     "_doctor_system_report": "effgen.cli.commands.doctor",
+    "_env_template_hint": "effgen.cli.commands.doctor",
     "_doctor_live_probe": "effgen.cli.commands.doctor",
     # the guided first run
     "_QUICKSTART_CODE_TASK": "effgen.cli.commands.quickstart",
     "_quickstart_code_wanted": "effgen.cli.commands.quickstart",
     "_quickstart_code_step": "effgen.cli.commands.quickstart",
+    "_quickstart_init_step": "effgen.cli.commands.quickstart",
     "_handle_quickstart_command": "effgen.cli.commands.quickstart",
     # the remaining stranded handlers
     "_handle_prompts_command": "effgen.cli.commands.prompts",

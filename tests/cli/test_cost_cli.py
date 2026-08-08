@@ -277,6 +277,34 @@ class TestCostReportCLI:
                 code = _handle_cost_command(args, cli)
         assert code == 0
 
+    def test_no_spend_yet_reports_the_cap_already_in_force(self, tmp_path, capsys):
+        """With a cap set, the empty report states it instead of asking for one."""
+        budget_cfg = tmp_path / "budget.json"
+        budget_cfg.write_text(json.dumps({"daily": 1.0}))
+
+        from effgen.cli import _handle_cost_command
+        cli = _make_cli()
+        args = _args(cost_command="today")
+        with patch("effgen.models._cost._BUDGET_CONFIG_PATH", budget_cfg):
+            with patch("effgen.models._cost_store.SQLiteCostStore.query_today", return_value=[]):
+                assert _handle_cost_command(args, cli) == 0
+        out = capsys.readouterr().out
+        assert "Daily cap in force" in out
+        assert "Then set a cap with" not in out
+
+    def test_no_spend_and_no_cap_still_offers_to_set_one(self, tmp_path, capsys):
+        budget_cfg = tmp_path / "absent.json"
+
+        from effgen.cli import _handle_cost_command
+        cli = _make_cli()
+        args = _args(cost_command="today")
+        with patch("effgen.models._cost._BUDGET_CONFIG_PATH", budget_cfg):
+            with patch("effgen.models._cost_store.SQLiteCostStore.query_today", return_value=[]):
+                assert _handle_cost_command(args, cli) == 0
+        out = capsys.readouterr().out
+        assert "Then set a cap with: effgen cost set-budget 1.00" in out
+        assert "Daily cap in force" not in out
+
 
 # ---------------------------------------------------------------------------
 # BudgetExceededError integration
