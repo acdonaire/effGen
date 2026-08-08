@@ -1,8 +1,8 @@
 {
   "provider": "replicate",
-  "verified_on": "2026-06-08",
+  "verified_on": "2026-08-07",
   "source": "live-verified",
-  "count": 38,
+  "count": 37,
   "models": [
     {
       "id": "meta/meta-llama-3-8b-instruct",
@@ -23,7 +23,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000225/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -46,7 +46,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000975/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -69,7 +69,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000225/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -92,7 +92,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000975/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -115,7 +115,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000225/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -138,7 +138,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.0014/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -161,7 +161,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.0014/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -184,7 +184,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.0014/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -207,7 +207,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.001525/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -230,7 +230,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.001525/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -253,7 +253,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -276,7 +276,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -299,7 +299,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -322,7 +322,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -345,7 +345,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -368,7 +368,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -391,7 +391,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -414,7 +414,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -437,7 +437,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -460,7 +460,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -483,7 +483,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -506,7 +506,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -529,7 +529,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -552,7 +552,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -575,7 +575,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -598,7 +598,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -621,7 +621,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -644,7 +644,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -667,7 +667,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.0014/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -690,7 +690,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000975/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -713,7 +713,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -736,7 +736,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -759,30 +759,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
-      "price_note": "",
-      "notes": ""
-    },
-    {
-      "id": "xai/grok-4",
-      "provider": "replicate",
-      "display_name": "Grok 4",
-      "family": "grok",
-      "context_window": 256000,
-      "max_output": 32768,
-      "price_in_per_1m": 3.0,
-      "price_out_per_1m": 15.0,
-      "supports_tools": true,
-      "supports_vision": false,
-      "supports_audio": false,
-      "supports_video": false,
-      "free_tier": false,
-      "rpm": null,
-      "tpm": null,
-      "rpd": null,
-      "deprecated": false,
-      "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "",
       "notes": ""
     },
@@ -805,7 +782,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000225/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -828,7 +805,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000225/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -851,7 +828,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000225/sec (GPU-time billing, not per-token)",
       "notes": ""
     },
@@ -874,7 +851,7 @@
       "rpd": null,
       "deprecated": false,
       "price_source": "bundled-catalog",
-      "verified_on": "2026-06-08",
+      "verified_on": "2026-08-07",
       "price_note": "$0.000225/sec (GPU-time billing, not per-token)",
       "notes": ""
     }

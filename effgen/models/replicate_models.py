@@ -1,7 +1,8 @@
 """
 Replicate model registry for effGen.
 
-Full model catalog fetched from the Replicate API on 2026-04-29.
+Full model catalog fetched from the Replicate API on 2026-04-29 and
+reconciled against it on 2026-08-07.
 Includes all language models from the official Replicate language-models
 collection plus additional text-generation models.
 
@@ -17,7 +18,7 @@ Replicate billing model:
   - cost_per_second_usd is set to the typical hardware cost; actual billing
     depends on which hardware Replicate assigns at run time.
 
-REGISTRY_FETCH_DATE: str = "2026-04-29"
+REGISTRY_FETCH_DATE: str = "2026-08-07"
 Use refresh_models() to fetch the live catalog and detect drift vs this snapshot.
 """
 
@@ -29,7 +30,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-REGISTRY_FETCH_DATE = "2026-04-29"
+REGISTRY_FETCH_DATE = "2026-08-07"
 
 # ---------------------------------------------------------------------------
 # Main registry — keyed by "owner/name" (canonical Replicate model ID)
@@ -595,26 +596,6 @@ REPLICATE_MODELS: dict[str, dict[str, Any]] = {
         "pricing_per_1m_output": 5.0,
         "run_count": 463_672,
         "version": "68423ca56f33c1a0cebbb03c7e0a9c2b2d6d8c6d8eb6b5be7e3cf8e1b5a7a2c9",
-    },
-    # -------------------------------------------------------------------------
-    # xAI Grok
-    # -------------------------------------------------------------------------
-    "xai/grok-4": {
-        "display_name": "Grok 4",
-        "family": "grok",
-        "organization": "xAI",
-        "context": 256_000,
-        "max_output": 32_768,
-        "supports_native_tools": True,
-        "supports_streaming": True,
-        "input_schema": "messages",
-        "system_prompt_key": "system",
-        "prompt_template": None,
-        "cost_per_second_usd": 0.0,
-        "pricing_per_1m_input": 3.0,
-        "pricing_per_1m_output": 15.0,
-        "run_count": 58_516,
-        "version": "56f17471947d6bed37b7bf7de4ea9e2f1b67e63ad2c6c4e3d0dfb6a2e7c3d8f1",
     },
     # -------------------------------------------------------------------------
     # Google DeepMind  —  Gemma

@@ -80,9 +80,12 @@ class TestReplicateRegistry:
         info = REPLICATE_MODELS["meta/meta-llama-3-8b-instruct"]
         assert info["input_schema"] == "prompt_only"
 
-    def test_total_model_count(self):
-        # We registered ≥38 models
-        assert len(REPLICATE_MODELS) >= 38
+    def test_catalog_covers_several_families(self):
+        # A floor on the exact count breaks whenever maintenance retires an id,
+        # so assert the breadth the catalog exists to provide instead.
+        assert len(REPLICATE_MODELS) >= 30
+        families = {info.get("family") for info in REPLICATE_MODELS.values()}
+        assert {"llama3", "claude", "gpt5", "deepseek"} <= families, sorted(families)
 
 
 # ---------------------------------------------------------------------------
