@@ -793,11 +793,15 @@ def provider_runtime_error(
     """
     # Local import keeps the module import cost low and avoids a hard
     # dependency cycle at import time.
+    from ..errors import quote_for_message
     from ..observability.redact import get_redactor
 
     ctx = build_error_context(provider, model, request_type, exc)
     redactor = get_redactor()
-    cause = redactor.scrub(str(exc)) if str(exc) else exc.__class__.__name__
+    # A provider echoes the rejected request back, so the cause is bounded as
+    # well as redacted: a rate-limit body alone runs to well over a kilobyte,
+    # and this message is read in a terminal panel and a log line.
+    cause = quote_for_message(exc) if str(exc) else exc.__class__.__name__
     head = redactor.scrub(message) if message else f"{provider} {request_type} failed"
 
     remediation = ctx["remediation"]

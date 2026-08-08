@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from effgen.errors import quote_for_message, redact_for_message, with_next_step
+
 # ---------------------------------------------------------------------------
 # Structured error context (shared by typed errors below and by adapters via
 # effgen.models._adapter_utils). One source of truth for the per-category
@@ -76,6 +78,27 @@ _CONTEXT_OVERFLOW_SIGNALS = (
 )
 
 
+def generation_failure_text(detail: dict[str, Any]) -> str:
+    """Render a failed generation's error record as the text a caller reads.
+
+    The record keeps the cause and the guidance apart so a typed error can be
+    rebuilt from it without stacking two copies of the guidance. This is where
+    they are put back together for display.
+
+    Args:
+        detail: An error record carrying at least ``message``, and usually the
+            ``category`` the guidance is looked up from.
+
+    Returns:
+        What failed, then what to do about it.
+    """
+    message = detail.get("message") or "generation failed"
+    remediation = detail.get("remediation") or REMEDIATION_BY_CATEGORY.get(
+        detail.get("category", ""), REMEDIATION_BY_CATEGORY["unknown"]
+    )
+    return with_next_step(f"Generation failed: {message}", remediation)
+
+
 def context_overflow_hint(message: str) -> str | None:
     """Return an actionable hint when *message* signals a context/token-rate overflow.
 
@@ -106,14 +129,17 @@ def scrub_provider_message(message: str) -> str:
     envelope. Redaction never masks the error itself: if the redactor is
     unavailable, the original text is returned.
     """
-    if not message:
-        return message
-    try:
-        from effgen.observability.redact import get_redactor
+    return redact_for_message(message) if message else message
 
-        return get_redactor().scrub(message)
-    except Exception:  # noqa: BLE001 - redaction must not replace the error
-        return message
+
+#: How much of one failed candidate's error text the failover summary quotes.
+#: A failover run reports several failures at once, so each gets a smaller
+#: share than a single error message would.
+_PER_FAILURE_ECHO_LIMIT = 160
+
+#: Total room the failover summary gets, whatever the hop count. Bounds the
+#: message when a long chain each contributes its share.
+_FAILURE_SUMMARY_LIMIT = 800
 
 
 # Attributes provider SDKs keep a copy of the error text in when the value is
@@ -332,7 +358,11 @@ class ModelRefusalError(Exception):
         self.error_context = error_context_dict("", model_name, "request", "refusal")
         suffix = f" (model={model_name!r})" if model_name else ""
         super().__init__(
-            f"Model refused to generate structured output{suffix}: {self.refusal_message}"
+            with_next_step(
+                f"Model refused to generate structured output{suffix}: "
+                f"{quote_for_message(self.refusal_message)}",
+                self.error_context["remediation"],
+            )
         )
 
 
@@ -355,8 +385,13 @@ class ModelAuthError(Exception):
         self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "auth")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = self.message or "authentication failed"
-        super().__init__(f"{provider} auth error{suffix}: {body}")
+        body = quote_for_message(self.message) if self.message else "authentication failed"
+        super().__init__(
+            with_next_step(
+                f"{provider} auth error{suffix}: {body}",
+                self.error_context["remediation"],
+            )
+        )
 
 
 class ModelTimeoutError(Exception):
@@ -420,11 +455,19 @@ class ModelUnavailableError(Exception):
         self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "not_found")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = self.message or "model is not available on the serverless tier"
-        suggest_str = ""
-        if self.suggestions:
-            suggest_str = "  Try one of: " + ", ".join(self.suggestions)
-        super().__init__(f"{provider} unavailable{suffix}: {body}.{suggest_str}")
+        body = (
+            quote_for_message(self.message)
+            if self.message
+            else "model is not available on the serverless tier"
+        )
+        follow_on = (
+            "Try one of: " + ", ".join(self.suggestions) + "."
+            if self.suggestions
+            else self.error_context["remediation"]
+        )
+        super().__init__(
+            with_next_step(f"{provider} unavailable{suffix}: {body}", follow_on)
+        )
 
 
 class ModelNotFoundError(Exception):
@@ -441,8 +484,13 @@ class ModelNotFoundError(Exception):
         self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "not_found")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = self.message or "model not found"
-        super().__init__(f"{provider} error{suffix}: {body}")
+        body = quote_for_message(self.message) if self.message else "model not found"
+        super().__init__(
+            with_next_step(
+                f"{provider} error{suffix}: {body}",
+                self.error_context["remediation"],
+            )
+        )
 
 
 class AmbiguousModelError(Exception):
@@ -542,8 +590,13 @@ class ProviderTransientError(Exception):
         self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "transient")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = self.message or "transient server error"
-        super().__init__(f"{provider} {status_code}{suffix}: {body}")
+        body = quote_for_message(self.message) if self.message else "transient server error"
+        super().__init__(
+            with_next_step(
+                f"{provider} {status_code}{suffix}: {body}",
+                self.error_context["remediation"],
+            )
+        )
 
 
 class AllCandidatesExhaustedError(Exception):
@@ -568,13 +621,19 @@ class AllCandidatesExhaustedError(Exception):
         self.hop_limit = hop_limit
         self.attempts = len(failures)
         summary = "; ".join(
-            f"{prov}/{model}: {type(exc).__name__}({exc})"
+            f"{prov}/{model}: {type(exc).__name__}"
+            f"({quote_for_message(exc, _PER_FAILURE_ECHO_LIMIT)})"
             for prov, model, exc in failures
         )
         super().__init__(
-            f"All {len(failures)} candidate attempts exhausted after "
-            f"{hop_limit} failover hops. "
-            f"Failures: [{summary}]"
+            with_next_step(
+                f"All {len(failures)} candidate attempts exhausted after "
+                f"{hop_limit} failover hops. "
+                f"Failures: [{quote_for_message(summary, _FAILURE_SUMMARY_LIMIT)}]",
+                "Check the first failure above — the later hops usually repeat "
+                "it; widen the fallback chain or raise the hop limit if every "
+                "candidate is genuinely unavailable.",
+            )
         )
 
 
@@ -595,8 +654,13 @@ class InvalidRequestError(Exception):
         self.message = scrub_provider_message(message)
         self.error_context = error_context_dict(provider, model_name, "request", "invalid_request")
         suffix = f" (model={model_name!r})" if model_name else ""
-        body = self.message or "invalid request"
-        super().__init__(f"{provider} invalid request{suffix}: {body}")
+        body = quote_for_message(self.message) if self.message else "invalid request"
+        super().__init__(
+            with_next_step(
+                f"{provider} invalid request{suffix}: {body}",
+                self.error_context["remediation"],
+            )
+        )
 
 
 class BudgetExceededError(Exception):
@@ -654,8 +718,14 @@ class ToolIncompatibleError(Exception):
         self.reason = reason
         parts = [f"Tool '{tool_name}' is incompatible with model '{model_name}'."]
         if reason:
-            parts.append(reason)
-        super().__init__(" ".join(parts))
+            parts.append(quote_for_message(reason))
+        super().__init__(
+            with_next_step(
+                " ".join(parts),
+                "Remove the tool from the agent, or choose a model that "
+                "supports tool calling.",
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

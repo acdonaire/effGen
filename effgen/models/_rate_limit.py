@@ -60,10 +60,15 @@ class RateLimitExceeded(Exception):
     """
 
     def __init__(self, message: str) -> None:
-        super().__init__(message)
+        from effgen.errors import quote_for_message, with_next_step
         from effgen.models.errors import error_context_dict
 
         self.error_context = error_context_dict("", "", "request", "rate_limited")
+        super().__init__(
+            with_next_step(
+                quote_for_message(message), self.error_context["remediation"]
+            )
+        )
 
 
 @dataclass
