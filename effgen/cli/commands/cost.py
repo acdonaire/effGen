@@ -15,7 +15,47 @@ from effgen.cli.commands.report import _write_html_report_arg, _write_result_art
 from effgen.ui.tables import console_is_interactive, empty_state
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from effgen.cli._main import CLIInterface
+
+
+def set_daily_budget(amount: float) -> "Path":
+    """Set the daily spend cap to *amount* USD and return the file it was written to.
+
+    Keeps any monthly cap already configured. Raises ``OSError`` when the file
+    cannot be written, so a caller can report the reason rather than assume a
+    cap is in force.
+    """
+    import json as _json
+
+    from effgen.models._cost import _budget_config_path
+
+    budget_path = _budget_config_path()
+    budget_path.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict = {}
+    if budget_path.exists():
+        try:
+            existing = _json.loads(budget_path.read_text())
+        except Exception:  # noqa: BLE001 - an unreadable file is replaced
+            existing = {}
+    existing['daily'] = float(amount)
+    budget_path.write_text(_json.dumps(existing, indent=2))
+    return budget_path
+
+
+def configured_daily_budget() -> float | None:
+    """The daily spend cap currently in force, or ``None`` when none is set."""
+    from effgen.models._cost import _load_budget
+
+    raw = _load_budget().get("daily")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def _handle_cost_command(args, cli: "CLIInterface") -> int:
@@ -36,15 +76,11 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
 
     if cost_cmd == 'set-budget':
         amount = float(args.amount)
-        budget_path.parent.mkdir(parents=True, exist_ok=True)
-        existing = {}
-        if budget_path.exists():
-            try:
-                existing = _json.loads(budget_path.read_text())
-            except Exception:
-                pass
-        existing['daily'] = amount
-        budget_path.write_text(_json.dumps(existing, indent=2))
+        try:
+            set_daily_budget(amount)
+        except OSError as e:
+            cli.print_error(f"Failed to set the daily budget: {e}")
+            return 1
         cli.print_success(f"Daily budget set to {format_usd(amount)} USD")
         return 0
 
@@ -189,8 +225,17 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
 
     # Empty state: a next step instead of a blank table. The interactive terminal
     # gets the shared empty-state block; a piped/redirected stream keeps the exact
-    # plain lines so its bytes are unchanged.
+    # plain lines so its bytes are unchanged. The cap line reports the cap that is
+    # in force rather than asking for one that already exists.
     if not rows:
+        if daily_budget is None:
+            cap_hint = "Set a daily cap with effgen cost set-budget 1.00"
+            cap_line = "Then set a cap with: effgen cost set-budget 1.00"
+        else:
+            cap_hint = (f"Daily cap in force: {format_usd(daily_budget)} — "
+                        "effgen cost set-budget N changes it")
+            cap_line = (f"Daily cap in force: {format_usd(daily_budget)} "
+                        "(effgen cost set-budget N changes it)")
         if console_is_interactive(cli.console):
             empty_state(
                 cli.console,
@@ -201,7 +246,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
                         "Run an agent to start tracking — e.g. "
                         "effgen run \"What is 2+2?\" -m gpt-5-nano --provider openai"
                     ),
-                    "Set a daily cap with effgen cost set-budget 1.00",
+                    cap_hint,
                 ],
             )
         else:
@@ -209,7 +254,7 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
             cli.print("No spend recorded yet. 🎉")
             cli.print("Run an agent to start tracking — e.g. effgen run \"What is 2+2?\" "
                       "-m gpt-5-nano --provider openai")
-            cli.print("Then set a cap with: effgen cost set-budget 1.00")
+            cli.print(cap_line)
         return 0
 
     if console_is_interactive(cli.console):
