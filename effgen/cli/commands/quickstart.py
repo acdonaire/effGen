@@ -35,6 +35,74 @@ _QUICKSTART_CODE_TASK = (
 )
 
 
+def _quickstart_init_step(args, cli: "CLIInterface") -> int:
+    """Handle ``effgen quickstart --init [DIR]`` — scaffold a project.
+
+    Writes the configuration, the ``.env`` template, the example script and the
+    ignore file into the named directory, puts a daily spend cap in force when
+    none is configured, and prints the next three commands. Prompts for nothing,
+    so the same call works on a terminal, in a pipe and in CI.
+
+    Returns ``0`` when every file is in place, ``1`` when one could not be
+    written.
+    """
+    from effgen.cli import scaffold as _scaffold
+
+    directory = getattr(args, "init", None) or "."
+    budget = getattr(args, "budget", None)
+    if budget is None:
+        budget = _scaffold.DEFAULT_DAILY_BUDGET_USD
+
+    result = _scaffold.scaffold_project(
+        directory,
+        force=getattr(args, "force", False),
+        budget=budget,
+        model=getattr(args, "model", None),
+    )
+
+    cli.print_header("effGen project")
+    cli.print(f"Directory: {result.directory}\n")
+
+    widest = max(len(name) for name, _ in _scaffold.SCAFFOLD_FILES)
+    for name, description in _scaffold.SCAFFOLD_FILES:
+        if name in result.created:
+            cli.print(f"  wrote    {name:<{widest}}  {description}")
+        elif name in result.skipped:
+            cli.print(f"  kept     {name:<{widest}}  already there")
+    if result.skipped:
+        cli.print("\nExisting files were left as they are; --force replaces them.")
+
+    cli.print(f"\nModel:      {result.model}")
+    if result.model_reason:
+        cli.print(f"            {result.model_reason}")
+    cli.print(f"            change it on the 'model:' line of "
+              f"{_scaffold.PROJECT_CONFIG_NAME}")
+
+    if result.daily_budget_usd is not None:
+        note = "set now" if result.budget_was_set else "already configured"
+        cli.print(f"\nSpend cap:  ${result.daily_budget_usd:.2f} a day across all "
+                  f"runs ({note})")
+        cli.print("            'effgen cost set-budget N' changes it")
+        cli.print("            'effgen cost clear-budget' removes it")
+    else:
+        cli.print("\nSpend cap:  none in force")
+        cli.print("            set one with 'effgen cost set-budget 1.00'")
+
+    if result.errors:
+        for problem in result.errors:
+            cli.print_error(_onboarding.teach(
+                f"Scaffolding {result.directory}: {problem}",
+                fix="Pick a directory you can write to, e.g. "
+                    "'effgen quickstart --init ~/my-agent'.",
+            ))
+        return 1
+
+    cli.print_header("Next three commands")
+    for index, command in enumerate(_scaffold.next_commands(), 1):
+        cli.print(f"  {index}. {command}")
+    return 0
+
+
 def _quickstart_code_wanted(args, *, interactive: bool) -> bool:
     """Whether the guided run should include the coding step.
 
@@ -227,6 +295,11 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
     (``--model``/``--task``/``--yes``/``--code``/``--no-code``) for CI and docs.
     """
     from effgen.cli import _main
+
+    # --init scaffolds a project and stops: no model call, no key needed, and
+    # nothing to answer, so it is the one step that works before setup is done.
+    if getattr(args, 'init', None) is not None:
+        return _main._quickstart_init_step(args, cli)
 
     interactive = _onboarding.is_interactive() and not getattr(args, 'yes', False)
 

@@ -326,8 +326,24 @@ def add_quickstart_parsers(subparsers: argparse._SubParsersAction) -> None:
             + ('.  (`effgen tutorial` is an alias of `effgen quickstart`.)'
                if _qs_name == 'tutorial' else '.')
             + '  The coding step writes and runs a small program inside '
-              '~/.effgen/quickstart-code; the files it changes stay there.',
+              '~/.effgen/quickstart-code; the files it changes stay there.'
+              '  `--init DIR` instead scaffolds a project in DIR — a config, an '
+              '.env template, a runnable example and the next three commands — '
+              'and makes no model call.',
         )
+        qs_parser.add_argument('--init', nargs='?', const='.', metavar='DIR',
+                               help='Scaffold a project in DIR (default: the current '
+                                    'directory): effgen.yaml, .env.example, example.py '
+                                    'and .gitignore, plus a daily spend cap when none '
+                                    'is set. Prompts for nothing and calls no model; '
+                                    'every other quickstart step is skipped.')
+        qs_parser.add_argument('--force', action='store_true',
+                               help='With --init, overwrite a scaffolded file that is '
+                                    'already there (default: keep it)')
+        qs_parser.add_argument('--budget', type=float, metavar='USD',
+                               help='With --init, the daily spend cap to set when none '
+                                    'is configured (default: 1.00; 0 sets none). An '
+                                    'existing cap is never changed.')
         qs_parser.add_argument('-m', '--model', help='Model to use (skips the model prompt)')
         qs_parser.add_argument('--provider', help='Provider for a bare model id')
         qs_parser.add_argument('--task', help='Task to run (defaults to a sample task)')

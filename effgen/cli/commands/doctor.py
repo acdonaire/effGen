@@ -198,6 +198,9 @@ def _handle_doctor_command(args) -> int:
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
             console.print("\n[yellow]Missing keys — set in ~/.effgen/.env or export:[/yellow]", highlight=False)
+            template_hint = _main._env_template_hint()
+            if template_hint:
+                console.print(f"  {template_hint}", highlight=False)
             for prov in missing:
                 keys = results[prov].get("env_keys_checked", [])
                 key_str = " or ".join(keys) if keys else f"{prov.upper()}_API_KEY"
@@ -241,12 +244,40 @@ def _handle_doctor_command(args) -> int:
         missing = [p for p, i in results.items() if not i.get("available")]
         if missing:
             print("\nMissing keys — set in ~/.effgen/.env or export:")
+            template_hint = _main._env_template_hint()
+            if template_hint:
+                print(f"  {template_hint}")
             for prov in missing:
                 keys = results[prov].get("env_keys_checked", [])
                 key_str = " or ".join(keys) if keys else f"{prov.upper()}_API_KEY"
                 print(f"  export {key_str}=<your-key>")
 
     return exit_code
+
+
+def _env_template_hint() -> str | None:
+    """The "copy the template" line for a project that has one but no ``.env``.
+
+    A scaffolded project ships ``.env.example`` and nothing else; until it is
+    copied, every provider reads as missing and the generic ``export`` advice
+    points away from the file the project already carries.
+    """
+    from pathlib import Path
+
+    from effgen.cli.scaffold import ENV_TEMPLATE_NAME
+
+    try:
+        cwd = Path.cwd()
+    except OSError:
+        return None
+    for directory in [cwd, *cwd.parents]:
+        if (directory / ".env").exists():
+            return None
+        template = directory / ENV_TEMPLATE_NAME
+        if template.exists():
+            where = "" if directory == cwd else f" in {directory}"
+            return f"cp {ENV_TEMPLATE_NAME} .env{where}, then paste a key into it"
+    return None
 
 
 def _doctor_exit_code(results: dict[str, dict], live: bool) -> int:

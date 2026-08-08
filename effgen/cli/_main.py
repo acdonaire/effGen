@@ -164,6 +164,7 @@ from effgen.cli.commands.doctor import (  # noqa: F401 - re-export
     _doctor_live_probe,
     _doctor_reliability_report,
     _doctor_system_report,
+    _env_template_hint,
     _handle_doctor_command,
 )
 
@@ -187,14 +188,16 @@ from effgen.cli.commands.plugin import (  # noqa: F401 - re-export
 # ``from effgen.cli import _handle_prompts_command`` keeps resolving.
 from effgen.cli.commands.prompts import _handle_prompts_command  # noqa: F401 - re-export
 
-# The ``quickstart``/``tutorial`` guided run and its coding step. Imported at
-# module scope + re-exported; the coding step is called back through this module
-# so replacing it here changes what the guided run does.
+# The ``quickstart``/``tutorial`` guided run, its project scaffold and its
+# coding step. Imported at module scope + re-exported; the scaffold and the
+# coding step are called back through this module so replacing either here
+# changes what the guided run does.
 from effgen.cli.commands.quickstart import (  # noqa: F401 - re-export
     _QUICKSTART_CODE_TASK,
     _handle_quickstart_command,
     _quickstart_code_step,
     _quickstart_code_wanted,
+    _quickstart_init_step,
 )
 
 # The ``report`` command handler and the ``-o``/``--report`` artifact writers

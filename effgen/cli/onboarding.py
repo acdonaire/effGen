@@ -186,11 +186,13 @@ def maybe_print_tip(*, quiet: bool = False, force: bool = False, stream: Any = N
 _WELCOME_TEXT = """\
 {welcome}Welcome to effGen — a framework for building agents with small (and cloud) models.
 
-Get started in four steps:
+Get started in five steps:
   1. effgen doctor              # check which providers are ready to use
   2. effgen quickstart          # a 2-minute guided first run
   3. effgen run "What is 25 * 17?" -m gpt-5-nano --provider openai
-  4. effgen code                # a coding agent that writes, runs and fixes code
+  4. effgen quickstart --init my-agent   # a project: config, .env template,
+                                         # example, daily spend cap
+  5. effgen code                # a coding agent that writes, runs and fixes code
 
 Or in Python:
   from effgen import create_agent
