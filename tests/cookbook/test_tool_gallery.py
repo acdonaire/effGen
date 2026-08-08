@@ -211,6 +211,130 @@ def test_gallery_snippets_compile_and_use_keyword_execute():
     assert not problems, "\n".join(problems)
 
 
+def _result_names(tree: ast.Module) -> set[str]:
+    """Names bound to the result of an ``execute()`` call in *tree*."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        calls = [
+            n for n in ast.walk(node.value)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "execute"
+        ]
+        if not calls:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+    return names
+
+
+def _guard_line(tree: ast.Module, name: str) -> int | None:
+    """Line of the earliest ``if not <name>.success:`` that stops the snippet."""
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not (
+            isinstance(test, ast.UnaryOp)
+            and isinstance(test.op, ast.Not)
+            and isinstance(test.operand, ast.Attribute)
+            and test.operand.attr == "success"
+            and isinstance(test.operand.value, ast.Name)
+            and test.operand.value.id == name
+        ):
+            continue
+        # The guard has to end the snippet, not just print a note: a body that
+        # falls through leaves the following line to subscript ``None``. Only
+        # the guard's own body counts — a `raise` in its `else` branch runs
+        # when the call succeeded.
+        stops = any(
+            isinstance(stmt, ast.Raise)
+            or (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Call)
+                and isinstance(stmt.value.func, ast.Attribute)
+                and stmt.value.func.attr == "exit"
+            )
+            for body_stmt in node.body
+            for stmt in ast.walk(body_stmt)
+        )
+        if stops:
+            lines.append(node.lineno)
+    return min(lines) if lines else None
+
+
+def _first_output_line(tree: ast.Module, name: str) -> int | None:
+    """Line of the first read of ``<name>.output``."""
+    lines = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and node.attr == "output"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == name
+    ]
+    return min(lines) if lines else None
+
+
+# Headings under GATED whose tool also calls a remote host, so their snippets
+# carry the same guard as the unauthenticated ones: Wolfram Alpha's API, an
+# OCR.space fallback, the vision model router, an SMTP/IMAP server, and the
+# Slack and Discord webhook endpoints.
+CREDENTIALED_REMOTE = [
+    "WolframAlphaTool",
+    "OCRTool",
+    "ImageCaptionTool",
+    "EmailSMTPTool",
+    "EmailIMAPTool",
+    "SlackWebhookTool",
+    "DiscordWebhookTool",
+]
+
+_REMOTE = frozenset(NETWORK) | frozenset(CREDENTIALED_REMOTE)
+
+
+def test_network_snippets_check_success_before_reading_output():
+    """A network snippet reports the tool's error instead of raising on ``None``.
+
+    Every snippet that reaches a remote service can fail for a reason outside
+    the reader's control — a 5xx, a rate limit, no route to the host, a
+    credential the service rejected. Reading ``result.output`` first turns that
+    into ``TypeError: 'NoneType' object is not subscriptable`` and discards the
+    message the tool produced, so each of these snippets checks
+    ``result.success`` and exits with ``result.error``. Needing a credential
+    does not exempt a snippet: the host it calls is just as remote.
+
+    Offline snippets are exempt: they fail only when the reader's own machine
+    or arguments are wrong, and the traceback already says so.
+    """
+    problems: list[str] = []
+    for heading, code in _gallery_snippets():
+        if heading not in _REMOTE:
+            continue
+        tree = ast.parse(code)
+        for name in sorted(_result_names(tree)):
+            output_line = _first_output_line(tree, name)
+            if output_line is None:
+                continue
+            guard = _guard_line(tree, name)
+            if guard is None:
+                problems.append(
+                    f"{heading}: reads `{name}.output` (line {output_line}) with no "
+                    f"`if not {name}.success:` guard that raises or exits; an upstream "
+                    "outage would raise on None and hide the tool's error"
+                )
+            elif guard > output_line:
+                problems.append(
+                    f"{heading}: guards `{name}.success` on line {guard}, after "
+                    f"`{name}.output` is read on line {output_line}"
+                )
+    assert not problems, "\n".join(problems)
+
+
 def test_gallery_snippet_imports_resolve():
     """Every module imported by a snippet is importable (no stale paths)."""
     import importlib
@@ -261,8 +385,12 @@ except BaseException as exc:  # noqa: BLE001 - report, then exit non-zero
 '''
 
 # Wording used by the adapters and tools for an upstream problem that is not the
-# snippet's fault. Same vocabulary as tests/tools/test_semantic_scholar.py.
+# snippet's fault. Same vocabulary as tests/tools/test_semantic_scholar.py, plus
+# the refusals a service aims at the network rather than at the request: these
+# snippets send no credentials, so such a refusal says where the run happened,
+# not that the example is wrong.
 _TRANSIENT_UPSTREAM = (
+    "rejects unauthenticated api traffic",
     "429",
     "http 500",
     "http 502",

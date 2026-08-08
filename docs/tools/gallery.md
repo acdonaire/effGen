@@ -7,6 +7,20 @@ Quick-reference for every built-in tool in effGen. Each entry has a one-line des
 > it with `asyncio.run(...)`; inside an `async` function, `await` it directly.
 > Any tool can also be wired into an `Agent` for agentic use — see the end of
 > this page.
+>
+> On failure `.output` is `None` and `.error` carries the reason, so every
+> snippet that calls a network service checks `.success` before reading
+> `.output`:
+>
+> ```python
+> if not result.success:
+>     raise SystemExit(result.error)
+> ```
+>
+> An upstream 5xx, a rate limit, a missing credential or an unreachable host
+> then prints the message the tool produced instead of raising on `None`. The
+> offline snippets leave the check out to stay short; the same two lines apply
+> to any tool.
 
 ---
 
@@ -91,6 +105,8 @@ import asyncio
 from effgen.tools.builtin.web_search import WebSearch
 
 result = asyncio.run(WebSearch().execute(query="effGen AI framework", num_results=5))
+if not result.success:
+    raise SystemExit(result.error)
 for r in result.output:
     print(r["title"], r["url"])
 ```
@@ -103,6 +119,8 @@ import asyncio
 from effgen.tools.builtin.url_fetch import URLFetchTool
 
 result = asyncio.run(URLFetchTool().execute(url="https://example.com"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["title"])       # Example Domain
 print(result.output["text"][:200])
 ```
@@ -117,6 +135,8 @@ from effgen.tools.builtin.wikipedia_tool import WikipediaTool
 result = asyncio.run(WikipediaTool().execute(
     operation="summary", query="transformer neural network", sentences=2
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["title"])          # Transformer (deep learning)
 print(result.output["summary"][:300])
 # operation="search" returns a result list instead: [{"title", "snippet", "url"}, ...]
@@ -130,6 +150,8 @@ import asyncio
 from effgen.tools.builtin.devops import HTTPTool
 
 result = asyncio.run(HTTPTool().execute(method="GET", url="https://httpbin.org/get"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["status"])  # 200
 # result.output also carries "headers", "body", and parsed "json" when applicable
 ```
@@ -148,6 +170,8 @@ from effgen.tools.builtin.pubmed import PubMedTool
 result = asyncio.run(PubMedTool().execute(
     operation="search", query="CRISPR gene editing", max_results=5
 ))
+if not result.success:
+    raise SystemExit(result.error)
 for article in result.output["results"]:
     print(article["pmid"], article["title"])
 ```
@@ -162,6 +186,8 @@ from effgen.tools.builtin.arxiv import ArXivTool
 result = asyncio.run(ArXivTool().execute(
     operation="search", query="attention is all you need", max_results=3
 ))
+if not result.success:
+    raise SystemExit(result.error)
 for paper in result.output["results"]:
     print(paper["arxiv_id"], paper["title"])
 ```
@@ -176,6 +202,8 @@ from effgen.tools.builtin.semantic_scholar import SemanticScholarTool
 result = asyncio.run(SemanticScholarTool().execute(
     operation="search", query="large language models survey", max_results=3
 ))
+if not result.success:
+    raise SystemExit(result.error)
 for paper in result.output["results"]:
     print(paper["paperId"], paper["title"])
 ```
@@ -194,6 +222,8 @@ from effgen.tools.builtin.rss import RSSFeedTool
 result = asyncio.run(RSSFeedTool().execute(
     operation="latest", url="https://hnrss.org/frontpage", n=5
 ))
+if not result.success:
+    raise SystemExit(result.error)
 for entry in result.output["entries"]:
     print(entry["title"])
 ```
@@ -206,6 +236,8 @@ import asyncio
 from effgen.tools.builtin.news import NewsTool
 
 result = asyncio.run(NewsTool().execute(operation="top_headlines", max_results=5))
+if not result.success:
+    raise SystemExit(result.error)
 for article in result.output["articles"]:
     print(article["title"], "-", article["source"])
 ```
@@ -224,6 +256,8 @@ from effgen.tools.builtin.youtube_transcript import YouTubeTranscriptTool
 result = asyncio.run(YouTubeTranscriptTool().execute(
     operation="get_transcript", video_id="dQw4w9WgXcQ", lang="en"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["data"]["full_text"][:200])
 ```
 
@@ -237,6 +271,8 @@ from effgen.tools.builtin.youtube_metadata import YouTubeMetadataTool
 result = asyncio.run(YouTubeMetadataTool().execute(
     operation="metadata", video_id="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 info = result.output["data"]
 print(info["title"], "|", info["uploader"])
 # Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) | Rick Astley
@@ -256,6 +292,8 @@ from effgen.tools.builtin.reddit import RedditTool
 result = asyncio.run(RedditTool().execute(
     operation="subreddit_top", subreddit="python", time_filter="day", n=5
 ))
+if not result.success:
+    raise SystemExit(result.error)
 for post in result.output["data"]["posts"]:
     print(post["title"])
 ```
@@ -272,6 +310,8 @@ import asyncio
 from effgen.tools.builtin.hackernews import HackerNewsTool
 
 result = asyncio.run(HackerNewsTool().execute(operation="top_stories", n=5))
+if not result.success:
+    raise SystemExit(result.error)
 for story in result.output["data"]["stories"]:
     print(story["title"], story.get("url", ""))
 ```
@@ -290,6 +330,8 @@ from effgen.tools.builtin.translate import TranslateTool
 result = asyncio.run(TranslateTool().execute(
     operation="translate", text="Hello, world!", source="en", target="fr"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["translated_text"])  # Bonjour, le monde !
 ```
 
@@ -386,6 +428,8 @@ import asyncio
 from effgen.tools.builtin.finance import StockPriceTool
 
 result = asyncio.run(StockPriceTool().execute(symbol="AAPL"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["price"], result.output["currency"])  # e.g. 325.89 USD
 ```
 
@@ -399,6 +443,8 @@ from effgen.tools.builtin.finance import CurrencyConverterTool
 result = asyncio.run(CurrencyConverterTool().execute(
     amount=100, from_currency="USD", to_currency="EUR"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["converted"])  # e.g. 87.66
 ```
 
@@ -410,6 +456,8 @@ import asyncio
 from effgen.tools.builtin.finance import CryptoTool
 
 result = asyncio.run(CryptoTool().execute(coin="bitcoin", vs_currency="usd"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["price"])  # e.g. 65604.0
 ```
 
@@ -497,6 +545,8 @@ import asyncio
 from effgen.tools.builtin.weather import WeatherTool
 
 result = asyncio.run(WeatherTool().execute(operation="current", location="San Francisco"))
+if not result.success:
+    raise SystemExit(result.error)
 data = result.output["data"]
 print(data["temperature"], data["conditions"])  # e.g. 16.6 Clear sky
 ```
@@ -513,6 +563,8 @@ import asyncio
 from effgen.tools.builtin.knowledge import StackOverflowTool
 
 result = asyncio.run(StackOverflowTool().execute(query="python async await", max_results=3))
+if not result.success:
+    raise SystemExit(result.error)
 for q in result.output["results"]:
     print(q["title"])
 ```
@@ -525,6 +577,8 @@ import asyncio
 from effgen.tools.builtin.knowledge import GitHubTool
 
 result = asyncio.run(GitHubTool().execute(query="effGen", kind="repositories", max_results=3))
+if not result.success:
+    raise SystemExit(result.error)
 for repo in result.output["results"]:
     print(repo["full_name"], repo["stars"])
 ```
@@ -537,6 +591,8 @@ import asyncio
 from effgen.tools.builtin.knowledge import WolframAlphaTool
 
 result = asyncio.run(WolframAlphaTool().execute(query="integrate x^2 from 0 to 1"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["answer"])
 ```
 
@@ -625,6 +681,8 @@ from effgen.tools.builtin.ocr import OCRTool
 result = asyncio.run(OCRTool().execute(
     operation="extract", image_path="/tmp/scan.png", lang="eng"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["text"])
 ```
 
@@ -676,6 +734,8 @@ import asyncio
 from effgen.tools.builtin.image_caption import ImageCaptionTool
 
 result = asyncio.run(ImageCaptionTool().execute(operation="caption", image_path="/tmp/photo.jpg"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["caption"])  # one-sentence description of the image
 ```
 
@@ -740,6 +800,8 @@ import asyncio
 from effgen.tools.builtin.weather import WeatherTool
 
 result = asyncio.run(WeatherTool().execute(operation="current", lat=37.42, lon=-122.08))
+if not result.success:
+    raise SystemExit(result.error)
 data = result.output["data"]
 print(data["temperature"], data["conditions"])  # e.g. 18.0 Clear sky
 # Also: forecast (days=7), historical (start_date, end_date)
@@ -755,6 +817,8 @@ from effgen.tools.builtin.geocode import GeocodeTool
 result = asyncio.run(GeocodeTool().execute(
     operation="geocode", address="1600 Amphitheatre Pkwy, Mountain View, CA"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 data = result.output["data"]
 print(data["lat"], data["lon"])  # 37.4224858 -122.0855846
 # Also: reverse (lat, lon) → address
@@ -770,6 +834,8 @@ from effgen.tools.builtin.maps import MapsTool
 result = asyncio.run(MapsTool().execute(
     operation="render", lat=37.42, lon=-122.08, zoom=13, dest="/tmp/map.png"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["data"]["file"])  # /tmp/map.png
 # Also: bounding_box (south, west, north, east)
 ```
@@ -793,6 +859,8 @@ result = asyncio.run(EmailSMTPTool().execute(
     subject="Hello from effGen",
     body="This message was sent by an AI agent.",
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["accepted"])  # ['alice@example.com']
 ```
 
@@ -804,6 +872,8 @@ import asyncio
 from effgen.tools.builtin.email_imap import EmailIMAPTool
 
 result = asyncio.run(EmailIMAPTool().execute(operation="fetch_recent", folder="INBOX", n=5))
+if not result.success:
+    raise SystemExit(result.error)
 for msg in result.output["data"]["messages"]:
     print(msg["subject"], msg["from"])
 # Also: list_folders, search, get
@@ -823,6 +893,8 @@ import asyncio
 from effgen.tools.builtin.slack_webhook import SlackWebhookTool
 
 result = asyncio.run(SlackWebhookTool().execute(operation="post", text="Deployment complete!"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["data"]["ok"])  # True
 ```
 
@@ -836,6 +908,8 @@ from effgen.tools.builtin.discord_webhook import DiscordWebhookTool
 result = asyncio.run(DiscordWebhookTool().execute(
     operation="post", content="Build passed!", username="effGen Bot"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["data"]["ok"])  # True
 ```
 
