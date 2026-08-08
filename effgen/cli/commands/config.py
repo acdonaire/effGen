@@ -133,7 +133,14 @@ def config_validate(cli: "CLIInterface", args: argparse.Namespace) -> int:
 
 
 def config_init(cli: "CLIInterface", args: argparse.Namespace) -> int:
-    """Initialize a new configuration file; non-zero when nothing was written."""
+    """Write a config file a run reads; non-zero when nothing was written.
+
+    Emits the same document ``effgen quickstart --init`` scaffolds, so the keys
+    in it are the keys ``effgen run -c`` applies rather than a sample no
+    command reads.
+    """
+    from effgen.cli import scaffold as _scaffold
+
     output_path = Path(args.output or "config.yaml")
 
     if output_path.exists() and not args.force:
@@ -141,26 +148,16 @@ def config_init(cli: "CLIInterface", args: argparse.Namespace) -> int:
         cli.print("Use --force to overwrite")
         return 1
 
-    # Create default configuration
-    default_config = {
-        "models": {
-            "default": "Qwen/Qwen2.5-3B-Instruct",
-            "phi3_mini": {
-                "model_path": "microsoft/Phi-3-mini-4k-instruct",
-                "temperature": 0.7,
-                "max_tokens": 2048
-            }
-        },
-        "tools": {
-            "enabled": ["calculator", "web_search", "file_ops"]
-        },
-        "system_prompt": "You are a helpful AI assistant.",
-        "max_iterations": 10
-    }
-
-    import yaml
-    with open(output_path, 'w') as f:
-        yaml.dump(default_config, f, default_flow_style=False)
+    model_id, _reason = _scaffold.resolve_model()
+    body = _scaffold.render_project_config(model_id, config_name=output_path.name)
+    try:
+        output_path.write_text(body, encoding="utf-8")
+    except OSError as e:
+        cli.print_error(f"Could not write {output_path}: {e}")
+        return 1
 
     cli.print_success(f"Configuration initialized: {output_path}")
+    cli.print(f"Run it with: effgen run \"{_scaffold.SAMPLE_TASK}\" -c {output_path}")
+    cli.print("A whole project — this file, a .env template and a runnable "
+              "example — comes from: effgen quickstart --init")
     return 0
