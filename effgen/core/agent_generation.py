@@ -13,6 +13,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from ..errors import quote_for_message
 from ..models._adapter_utils import (
     FINISH_LENGTH,
     apply_stop_sequences,
@@ -21,11 +22,13 @@ from ..models._adapter_utils import (
 )
 from ..models.base import BaseModel, GenerationConfig
 from ..models.errors import (
+    REMEDIATION_BY_CATEGORY,
     InvalidRequestError,
     ModelAuthError,
     ModelNotFoundError,
     ModelRefusalError,
     classify_provider_error,
+    generation_failure_text,
     simplify_embedded_provider_error,
 )
 from ..observability import get_logger as _get_obs_logger
@@ -789,12 +792,10 @@ class AgentGenerationMixin:
     def _build_error_detail(self, exc: Exception, model: Any) -> dict[str, Any]:
         """Build a structured, redacted error record from an exception.
 
-        Shape: ``{type, category, provider, model, message, retryable}`` —
-        used identically by the tool-loop and direct-inference paths so a
-        failure looks the same regardless of which path produced it.
+        Shape: ``{type, category, provider, model, message, remediation,
+        retryable}`` — used identically by the tool-loop and direct-inference
+        paths so a failure looks the same regardless of which path produced it.
         """
-        from ..observability.redact import get_redactor
-
         ec = classify_provider_error(exc)
         # Prefer an explicit .provider, then the structured .error_context the
         # adapters attach (provider_runtime_error), then the model's own.
@@ -821,17 +822,21 @@ class AgentGenerationMixin:
         # ("Error code: 413 - {'error': {...}}") verbatim — collapse that to
         # its inner text so the response shows prose, not a dumped structure.
         raw_message = simplify_embedded_provider_error(raw_message)
-        try:
-            message = get_redactor().scrub(raw_message)
-        except Exception:  # redaction must never mask the underlying error
-            logger.debug("Error-message redaction failed", exc_info=True)
-            message = raw_message
+        # Redacted, then cut: a provider that echoes the rejected request back
+        # sends kilobytes, and this text is read in a terminal panel and a log
+        # line. ``remediation`` is kept beside the cause rather than folded
+        # into it, so rebuilding a typed error from this record does not stack
+        # two copies of the same guidance.
+        message = quote_for_message(raw_message)
         return {
             "type": type(exc).__name__,
             "category": ec.category,
             "provider": provider or "unknown",
             "model": model_name,
             "message": message,
+            "remediation": REMEDIATION_BY_CATEGORY.get(
+                ec.category, REMEDIATION_BY_CATEGORY["unknown"]
+            ),
             "retryable": ec.should_retry,
         }
 
@@ -855,13 +860,14 @@ class AgentGenerationMixin:
         meta_src = gen_result.get("metadata") or {}
         detail = meta_src.get("error_detail")
         if not isinstance(detail, dict):
-            message = str(meta_src.get("error") or "generation_failed")
+            message = quote_for_message(meta_src.get("error") or "generation_failed")
             detail = {
                 "type": "GenerationError",
                 "category": "unknown",
                 "provider": self._model_provider(self.model),
                 "model": self.model_name or "unknown",
                 "message": message,
+                "remediation": REMEDIATION_BY_CATEGORY["unknown"],
                 "retryable": False,
             }
         message = detail.get("message") or "generation failed"
@@ -871,7 +877,7 @@ class AgentGenerationMixin:
             debug_trace.success = False
             meta["debug_trace"] = debug_trace
         return AgentResponse(
-            output=f"Generation failed: {message}",
+            output=generation_failure_text(detail),
             success=False,
             mode=AgentMode.SINGLE,
             iterations=iterations,
@@ -1064,7 +1070,7 @@ class AgentGenerationMixin:
             logger.error(f"Direct inference failed: {e}")
             detail = self._build_error_detail(e, self.model)
             return AgentResponse(
-                output=f"Generation failed: {detail['message']}",
+                output=generation_failure_text(detail),
                 success=False,
                 mode=AgentMode.SINGLE,
                 iterations=1,

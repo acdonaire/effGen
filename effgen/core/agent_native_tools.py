@@ -15,6 +15,7 @@ from typing import Any
 
 from ..models._adapter_utils import default_max_output_tokens
 from ..models.base import GenerationConfig
+from ..models.errors import generation_failure_text
 from .agent_config import AgentMode
 from .agent_response import AgentResponse
 from .agent_runtime import (
@@ -98,7 +99,7 @@ class AgentNativeToolsMixin:
             logger.debug("Native tool generation failed", exc_info=True)
             detail = self._build_error_detail(e, self.model)
             return AgentResponse(
-                output=f"Generation failed: {detail['message']}",
+                output=generation_failure_text(detail),
                 success=False,
                 mode=AgentMode.SINGLE,
                 iterations=1,
@@ -213,7 +214,7 @@ class AgentNativeToolsMixin:
             "retryable": False,
         }
         return AgentResponse(
-            output=f"Generation failed: {detail['message']}",
+            output=generation_failure_text(detail),
             success=False,
             mode=AgentMode.SINGLE,
             iterations=1,
@@ -303,7 +304,7 @@ class AgentNativeToolsMixin:
                 detail["category"] = "invalid_request"
                 detail["retryable"] = False
             return AgentResponse(
-                output=f"Generation failed: {detail['message']}",
+                output=generation_failure_text(detail),
                 success=False,
                 mode=AgentMode.SINGLE,
                 iterations=1,
