@@ -178,6 +178,75 @@ def test_bundled_snapshots_exist_and_match_catalog():
         assert not diff["changed"], f"{prov} bundled snapshot drifted: {list(diff['changed'])[:3]}"
 
 
+# Fields compared field-for-field between a catalog module and its snapshot.
+# ``verified_on`` is excluded: a snapshot may carry the date each record was last
+# confirmed, which is older than the file-level date for entries a refresh
+# carried through untouched.
+_SNAPSHOT_IGNORED_FIELDS = {"verified_on"}
+
+
+def test_bundled_snapshots_match_catalog_field_for_field():
+    """Every shipped snapshot is what its catalog module produces today.
+
+    :func:`check_drift_against_snapshot` compares only the drift fields, so a
+    display name, family, note or rate limit edited in a catalog module without
+    regenerating the snapshot would otherwise ship a pair that disagree — and the
+    snapshot is what ``effgen models list`` reads offline.
+    """
+    for prov in C.known_providers():
+        meta = C.load_snapshot(prov)
+        assert meta is not None, f"missing bundled snapshot for {prov}"
+        stored = {m["id"]: m for m in meta["models"]}
+        built = {r.id: r.to_dict() for r in C.build_records(prov)}
+
+        assert meta["count"] == len(stored), (
+            f"{prov} snapshot count {meta['count']} != {len(stored)} models listed"
+        )
+        assert set(built) == set(stored), (
+            f"{prov} snapshot ids differ from the catalog: "
+            f"only in catalog={sorted(set(built) - set(stored))[:3]}, "
+            f"only in snapshot={sorted(set(stored) - set(built))[:3]}"
+        )
+        for mid in sorted(built):
+            want = {k: v for k, v in built[mid].items() if k not in _SNAPSHOT_IGNORED_FIELDS}
+            got = {k: v for k, v in stored[mid].items() if k not in _SNAPSHOT_IGNORED_FIELDS}
+            differing = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
+            assert not differing, (
+                f"{prov}/{mid} snapshot disagrees with the catalog "
+                f"(field: snapshot -> catalog): {differing}. "
+                f"Regenerate with save_snapshot({prov!r}, build_records({prov!r}))."
+            )
+
+
+def test_bundled_snapshot_dates_are_iso_and_match_the_registry_date():
+    """The snapshot date parses, is not in the future, and matches the module's."""
+    today = datetime.date.today()
+    for prov in C.known_providers():
+        meta = C.load_snapshot(prov)
+        assert meta is not None
+        when = datetime.date.fromisoformat(meta["verified_on"])
+        assert when <= today, f"{prov} snapshot is dated in the future: {when}"
+        for record in meta["models"]:
+            if record.get("verified_on"):
+                assert datetime.date.fromisoformat(record["verified_on"]) <= today
+
+    # A catalog module that publishes its own fetch date must agree with the file.
+    import importlib
+
+    for prov, module_path in (
+        ("fireworks", "effgen.models.fireworks_models"),
+        ("together", "effgen.models.together_models_data"),
+        ("replicate", "effgen.models.replicate_models"),
+    ):
+        module_date = getattr(importlib.import_module(module_path), "REGISTRY_FETCH_DATE", None)
+        assert module_date, f"{module_path} defines no REGISTRY_FETCH_DATE"
+        snapshot_date = C.load_snapshot(prov)["verified_on"]
+        assert module_date == snapshot_date, (
+            f"{prov}: REGISTRY_FETCH_DATE {module_date} != snapshot verified_on "
+            f"{snapshot_date}; re-stamp both when the catalog is refreshed."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Diff / drift
 # ---------------------------------------------------------------------------

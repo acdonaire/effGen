@@ -163,6 +163,11 @@ def _fetch_together(api_key: str) -> list[tuple[str, dict[str, Any]]]:
         ctx = getattr(m, "context_length", None)
         if ctx:
             raw["context"] = ctx
+        # Together types every id (chat / language / image / audio / ...).  Carry
+        # it so the chat filter can use the provider's own classification.
+        mtype = getattr(m, "type", None)
+        if mtype:
+            raw["live_type"] = str(mtype)
         out.append((mid, raw))
     return out
 
@@ -179,8 +184,21 @@ def _fetch_fireworks(api_key: str) -> list[tuple[str, dict[str, Any]]]:
     out: list[tuple[str, dict[str, Any]]] = []
     for m in resp.json().get("data", []):
         mid = m.get("id")
-        if mid:
-            out.append((mid, {}))
+        if not mid:
+            continue
+        # accounts/fireworks/routers/* are routing aliases for models the same
+        # listing already returns; the curated catalog tracks the models.
+        if mid.startswith("accounts/fireworks/routers/"):
+            continue
+        raw: dict[str, Any] = {}
+        ctx = m.get("context_length")
+        if ctx:
+            raw["context"] = ctx
+        if m.get("supports_tools") is not None:
+            raw["supports_native_tools"] = bool(m["supports_tools"])
+        if m.get("supports_image_input") is not None:
+            raw["supports_vision"] = bool(m["supports_image_input"])
+        out.append((mid, raw))
     return out
 
 
@@ -286,6 +304,14 @@ def _filter_chat_live(
     out: list[tuple[str, dict[str, Any]]] = []
     for mid, raw in live:
         if is_finetune(mid):
+            continue
+        # A provider that classifies its own ids wins over both the id heuristic
+        # and the curated table: a model retyped from chat to language upstream
+        # is no longer a chat model, however it is bundled here.
+        live_type = (raw or {}).get("live_type")
+        if live_type is not None:
+            if live_type == "chat":
+                out.append((mid, raw))
             continue
         if mid in bundled or is_chat_model(provider, mid):
             out.append((mid, raw))
