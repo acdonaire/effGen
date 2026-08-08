@@ -117,6 +117,7 @@ def resolve_provider_name(provider: str | None) -> tuple[str | None, str | None]
 # (directly or via the CLI arg of the same name winning first). Keep this in
 # sync with every `config.get(...)` call in `run_agent`.
 _RUN_CONFIG_APPLIED_KEYS = frozenset({
+    "model", "provider",
     "system_prompt", "temperature", "max_iterations", "max_tokens", "guardrails",
 })
 

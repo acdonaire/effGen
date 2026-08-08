@@ -596,19 +596,13 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     if not quiet:
         cli.print_header(f"effGen v{__version__} - Running Task")
 
-    # Resolve the model once so the preset and plain paths agree. With no
-    # -m/--model, mirror `quickstart`: prefer a detected cheap cloud model,
-    # else a small local model — and say why, so the choice is never a silent
-    # surprise (a paid cloud call or a multi-GB local download).
+    # Resolve the model once so the preset and plain paths agree. An explicit
+    # -m/--model wins; the resolution for a run without one needs the config
+    # file, so it happens after the file is loaded, below.
+    run_model: str | None = None
     if args.model:
         run_model = args.model
         _preflight_model_hint(cli, run_model, provider)
-    else:
-        run_model, _sugg_provider, _sugg_reason = _quickstart_suggest_model()
-        if provider is None and _sugg_provider:
-            provider = _sugg_provider
-        if not quiet:
-            cli.print(f"Using model {run_model} ({_sugg_reason}); override with -m/--model.")
 
     agent = None
     try:
@@ -625,6 +619,31 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             else:
                 cli.print_error(f"Configuration file not found: {config_path}")
                 return 1
+
+        # With no -m/--model: take the model the config file names, else mirror
+        # `quickstart` — prefer a detected cheap cloud model, else a small local
+        # one — and say which and why, so the choice is never a silent surprise
+        # (a paid cloud call or a multi-GB local download).
+        if run_model is None:
+            config_model = config.get("model")
+            if isinstance(config_model, str) and config_model.strip():
+                run_model = config_model.strip()
+                config_provider = config.get("provider")
+                if provider is None and isinstance(config_provider, str) and config_provider:
+                    provider, prov_err = resolve_provider_name(config_provider)
+                    if prov_err:
+                        cli.print_error(prov_err)
+                        return 1
+                if not quiet:
+                    cli.print(f"Using model {run_model} (from {args.config}); "
+                              "override with -m/--model.")
+            else:
+                run_model, _sugg_provider, _sugg_reason = _quickstart_suggest_model()
+                if provider is None and _sugg_provider:
+                    provider = _sugg_provider
+                if not quiet:
+                    cli.print(f"Using model {run_model} ({_sugg_reason}); "
+                              "override with -m/--model.")
 
         guardrails = getattr(args, 'guardrails', None) or config.get("guardrails")
 
