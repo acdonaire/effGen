@@ -791,6 +791,12 @@ class BaseModel(ABC):
         """
         Validate that a prompt is within context length limits.
 
+        Some providers publish no context window for a model (Fireworks reports
+        ``contextLength: 0`` for a custom deployment, for instance). An unknown
+        window is not a zero-token window, so the length check is skipped rather
+        than rejecting every prompt; the provider still enforces its own limit
+        and reports a truncated result.
+
         Args:
             prompt: Prompt to validate
 
@@ -798,10 +804,13 @@ class BaseModel(ABC):
             bool: True if prompt is valid
 
         Raises:
-            ValueError: If prompt exceeds context length
+            ValueError: If prompt exceeds a known context length
         """
         token_count = self.count_tokens(prompt)
         max_length = self.get_context_length()
+
+        if not max_length or max_length <= 0:
+            return True
 
         if token_count.count > max_length:
             raise ValueError(
