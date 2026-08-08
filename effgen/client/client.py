@@ -142,7 +142,9 @@ class EffGenClient:
             import requests  # type: ignore
         except ImportError as e:  # pragma: no cover
             raise EffGenClientError(  # noqa: F821
-                "The 'requests' package is required for sync EffGenClient calls"
+                "The 'requests' package is required for sync EffGenClient calls. "
+                "Install it with `pip install requests`, or use "
+                "AsyncEffGenClient."
             ) from e
 
         last_exc: BaseException | None = None
@@ -186,7 +188,9 @@ class EffGenClient:
             import httpx  # type: ignore
         except ImportError as e:  # pragma: no cover
             raise EffGenClientError(  # noqa: F821
-                "The 'httpx' package is required for async EffGenClient calls"
+                "The 'httpx' package is required for async EffGenClient calls. "
+                "Install it with `pip install httpx`, or use the sync "
+                "EffGenClient."
             ) from e
 
         last_exc: BaseException | None = None
@@ -279,7 +283,11 @@ class EffGenClient:
         try:
             import requests  # type: ignore
         except ImportError as e:  # pragma: no cover
-            raise EffGenClientError("requests required for sync streaming") from e  # noqa: F821
+            raise EffGenClientError(  # noqa: F821
+                "The 'requests' package is required for sync streaming. "
+                "Install it with `pip install requests`, or stream with "
+                "AsyncEffGenClient."
+            ) from e
 
         body = {
             "model": model or "effgen-default",
@@ -353,7 +361,11 @@ class EffGenClient:
         try:
             import httpx  # type: ignore
         except ImportError as e:  # pragma: no cover
-            raise EffGenClientError("httpx required for async streaming") from e  # noqa: F821
+            raise EffGenClientError(  # noqa: F821
+                "The 'httpx' package is required for async streaming. Install "
+                "it with `pip install httpx`, or stream with the sync "
+                "EffGenClient."
+            ) from e
 
         body = {
             "model": model or "effgen-default",

@@ -46,6 +46,13 @@ class TestToolsPayload:
 
 
 class TestErrorMessageParsing:
+    """The server's own message is extracted from every envelope shape it uses.
+
+    Each error then closes with what the caller can do about that status, so the
+    assertions pin the extracted text as the opening and check the follow-on
+    separately rather than fixing the whole string.
+    """
+
     def _client(self):
         return EffGenClient(base_url="http://localhost:9", api_key="k")
 
@@ -55,7 +62,8 @@ class TestErrorMessageParsing:
                              "code": "invalid_api_key"}}
         with pytest.raises(EffGenAuthError) as ei:
             c._raise_for_status(401, payload)
-        assert str(ei.value) == "Invalid API key"
+        assert str(ei.value).startswith("Invalid API key.")
+        assert "API key the client was built with" in str(ei.value)
         assert ei.value.status_code == 401
         assert ei.value.payload is payload
 
@@ -63,13 +71,15 @@ class TestErrorMessageParsing:
         c = self._client()
         with pytest.raises(EffGenAPIError) as ei:
             c._raise_for_status(400, {"error": "bad request"})
-        assert str(ei.value) == "bad request"
+        assert str(ei.value).startswith("bad request.")
+        assert "server logs" in str(ei.value)
 
     def test_top_level_message_fallback(self):
         c = self._client()
         with pytest.raises(EffGenServerError) as ei:
             c._raise_for_status(500, {"message": "boom"})
-        assert str(ei.value) == "boom"
+        assert str(ei.value).startswith("boom.")
+        assert "retry if the status is a 5xx" in str(ei.value)
 
     def test_status_only_when_no_body(self):
         c = self._client()
