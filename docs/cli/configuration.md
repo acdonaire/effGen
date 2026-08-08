@@ -32,6 +32,10 @@ export EFFGEN_NO_DOTENV=1
 effgen serve
 ```
 
+A new project can start from a template naming every one of these variables:
+`effgen quickstart --init my-agent` writes `.env.example` alongside a config
+and a runnable example — see [Starting a new project](new-project.md).
+
 Check what keys effGen can see (no secrets are printed):
 
 ```bash

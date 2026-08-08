@@ -84,6 +84,9 @@ loads every tool — powerful but heavier for a small model to reason over. Run
 ## CLI Usage
 
 ```bash
+# Start a project: config, .env template, runnable example, spend cap
+effgen quickstart --init my-agent
+
 # Run a task directly
 effgen run "What is 2+2?" --model Qwen/Qwen2.5-3B-Instruct
 
@@ -102,6 +105,7 @@ effgen run "Calculate 10!" --preset math --verbose
 
 ## Next Steps
 
+- [Starting a new project](../cli/new-project.md) — `effgen quickstart --init`
 - [Building a Math Agent](building-math-agent.md)
 - [Building a Research Agent](building-research-agent.md)
 - [Custom Tools Guide](custom-tools.md)
