@@ -30,6 +30,8 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
+from effgen.errors import quote_for_message, with_next_step
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -150,10 +152,24 @@ def _discover_jwks_uri(issuer: str) -> str:
 
 
 class AuthError(Exception):
-    """Raised when a JWT cannot be validated."""
+    """Raised when a JWT cannot be validated.
+
+    The message names the check that failed and then what the caller can do
+    about it, because a bare rejection leaves an operator guessing which of
+    the token, the clock and the server configuration is wrong.
+
+    Attributes:
+        status_code: The HTTP status this maps to (401 by default).
+    """
+
+    _FOLLOW_ON = (
+        "Send a current token in the Authorization header — mint one with the "
+        "key `effgen serve` printed at startup (EFFGEN_API_KEY), and check the "
+        "issuer, audience and clock skew match the server configuration."
+    )
 
     def __init__(self, message: str, status_code: int = 401) -> None:
-        super().__init__(message)
+        super().__init__(with_next_step(quote_for_message(message), self._FOLLOW_ON))
         self.status_code = status_code
 
 
@@ -612,7 +628,11 @@ class AuthMiddleware:
                 )
                 return
             if not hmac.compare_digest(presented, self.api_key):
-                await self._reject(scope, send, 401, "Invalid API key")
+                await self._reject(
+                    scope, send, 401,
+                    "Invalid API key. Check the key the client sends against "
+                    "the one this server was started with (EFFGEN_API_KEY).",
+                )
                 return
             scope.setdefault("state", {})["user"] = TokenPayload(
                 sub="api-key",
@@ -627,7 +647,12 @@ class AuthMiddleware:
             return
 
         if not auth_str.startswith("Bearer "):
-            await self._reject(scope, send, 401, "Missing or invalid Authorization header")
+            await self._reject(
+                scope, send, 401,
+                "Missing or invalid Authorization header. Send "
+                "'Authorization: Bearer <token>' with a token this server "
+                "accepts.",
+            )
             return
 
         raw_token = auth_str.removeprefix("Bearer ").strip()

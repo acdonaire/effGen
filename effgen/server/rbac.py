@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from effgen.errors import quote_for_message, with_next_step
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -179,10 +181,23 @@ def reset_registry(roles: list[Role] | None = None) -> None:
 
 
 class PolicyDenied(Exception):
-    """Raised when an RBAC policy check fails."""
+    """Raised when an RBAC policy check fails.
+
+    The message names what the policy refused and then how to change the
+    outcome, so a caller is not left guessing whether to change the request or
+    the role.
+
+    Attributes:
+        status_code: The HTTP status this maps to (403 by default).
+    """
+
+    _FOLLOW_ON = (
+        "Request only what the principal's roles allow, or grant the role the "
+        "missing permission in the policy configuration."
+    )
 
     def __init__(self, reason: str, status_code: int = 403) -> None:
-        super().__init__(reason)
+        super().__init__(with_next_step(quote_for_message(reason), self._FOLLOW_ON))
         self.status_code = status_code
 
 

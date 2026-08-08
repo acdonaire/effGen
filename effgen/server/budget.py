@@ -23,17 +23,29 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from effgen.errors import quote_for_message, with_next_step
+
 logger = logging.getLogger(__name__)
 
 
 class BudgetExceeded(Exception):
     """Raised when a principal exceeds its daily cost cap.
 
-    Surfaced by the API server as HTTP 429 (Too Many Requests).
+    Surfaced by the API server as HTTP 429 (Too Many Requests). The message
+    names the cap that was reached and then what clears it.
+
+    Attributes:
+        status_code: The HTTP status this maps to (429 by default).
     """
 
+    _FOLLOW_ON = (
+        "The cap resets at the start of the next UTC day. Raise the "
+        "principal's daily limit in the budget configuration, or route the "
+        "request to a cheaper model."
+    )
+
     def __init__(self, reason: str, status_code: int = 429) -> None:
-        super().__init__(reason)
+        super().__init__(with_next_step(quote_for_message(reason), self._FOLLOW_ON))
         self.status_code = status_code
 
 
