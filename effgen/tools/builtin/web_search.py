@@ -32,6 +32,32 @@ class SearchBackend(Enum):
     GOOGLE = "google"
 
 
+_TIME_RANGE_CODES = {"day": "d", "week": "w", "month": "m", "year": "y"}
+
+
+def _duckduckgo_options(
+    num_results: int,
+    time_range: str | None,
+    language: str,
+    region: str | None,
+) -> dict[str, Any]:
+    """Keyword arguments for the DuckDuckGo backend's ``text()`` call.
+
+    Only filters that have a value are included. The backend reads ``region``
+    and ``timelimit`` as strings, so passing an explicit ``None`` makes it fail
+    while preparing the filter rather than while searching, and the reported
+    error then names an attribute on ``None`` instead of the network or service
+    problem that actually stopped the search.
+    """
+    options: dict[str, Any] = {"max_results": num_results}
+    timelimit = _TIME_RANGE_CODES.get(time_range) if time_range else None
+    if timelimit:
+        options["timelimit"] = timelimit
+    if region:
+        options["region"] = f"{region}-{language}"
+    return options
+
+
 class WebSearch(BaseTool):
     """
     Web search tool with multiple backend support.
@@ -265,23 +291,12 @@ class WebSearch(BaseTool):
             except ImportError:
                 raise RuntimeError("ddgs or duckduckgo-search not installed")
 
-        # Map time range
-        timelimit = None
-        if time_range:
-            time_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
-            timelimit = time_map.get(time_range)
+        options = _duckduckgo_options(num_results, time_range, language, region)
 
         # Execute search in thread pool (blocking API)
         def search():
             with DDGS() as ddgs:
-                results = list(
-                    ddgs.text(
-                        query,
-                        max_results=num_results,
-                        timelimit=timelimit,
-                        region=f"{region}-{language}" if region else None,
-                    )
-                )
+                results = list(ddgs.text(query, **options))
             return results
 
         raw_results = await asyncio.to_thread(search)
