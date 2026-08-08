@@ -75,7 +75,28 @@ The RSS backend includes feeds from:
       }
     ]
   },
+  "sources_reached": 4,
+  "sources_tried": 5,
   "error": null
+}
+```
+
+`sources_reached` and `sources_tried` report how many of the feeds answered, so
+a thin result is distinguishable from a full one. They are present on the RSS
+backend only.
+
+## When no source answers
+
+A feed that cannot be fetched is skipped and the remaining ones still produce
+articles. If **every** feed fails, the call reports a failure rather than an
+empty headline list — an outage does not read as a day with no news:
+
+```json
+{
+  "success": false,
+  "count": 0,
+  "articles": [],
+  "error": "No news source could be reached (5 feeds tried; first failure: BBC World News: Cannot resolve host 'feeds.bbci.co.uk': ...). Check this machine's network access to the feed hosts, or set NEWS_API_KEY to fetch through NewsAPI.org instead."
 }
 ```
 
