@@ -202,12 +202,23 @@ class URLFetchTool(BaseTool):
             parsed = urlparse(url)
             domain = parsed.hostname or ""
         except ValueError as e:
-            raise BlockedURLError(f"Refusing to fetch unparseable URL '{url}': {e}") from e
+            raise BlockedURLError(
+                f"Refusing to fetch unparseable URL '{url}': {e}. Pass a "
+                "complete http(s) URL — check the scheme, the host, and that "
+                "any IPv6 literal is bracketed."
+            ) from e
 
         if self.allowed_domains and domain not in self.allowed_domains:
-            raise ValueError(f"Domain '{domain}' not in allowed domains list")
+            raise ValueError(
+                f"Domain '{domain}' is not in this tool's allowed domains "
+                f"({sorted(self.allowed_domains)}). Request one of those, or "
+                "add this domain to allowed_domains."
+            )
         if domain in self.blocked_domains:
-            raise ValueError(f"Domain '{domain}' is blocked")
+            raise ValueError(
+                f"Domain '{domain}' is blocked for this tool. Request a "
+                "different host, or remove it from blocked_domains."
+            )
 
         self._check_address_safe(url)
         return url

@@ -117,9 +117,17 @@ def _metadata_with_ytdlp(video_id: str, timeout: int = 45) -> dict[str, Any]:
     if proc.returncode != 0:
         stderr = proc.stderr.strip()
         if "Video unavailable" in stderr or "Private video" in stderr:
-            raise ValueError(f"Video '{video_id}' is unavailable (private or deleted): {stderr[:200]}")
+            raise ValueError(
+                f"Video '{video_id}' is unavailable (private or deleted): "
+                f"{stderr[:200]}. Check the id, or request a video that is "
+                "publicly listed."
+            )
         if "Sign in" in stderr or "age" in stderr.lower():
-            raise ValueError(f"Video '{video_id}' requires sign-in or is age-restricted: {stderr[:200]}")
+            raise ValueError(
+                f"Video '{video_id}' requires sign-in or is age-restricted: "
+                f"{stderr[:200]}. This tool fetches only publicly viewable "
+                "captions — request a video that needs no sign-in."
+            )
         raise RuntimeError(f"yt-dlp metadata fallback failed: {_ytdlp_hint(stderr)}")
     if not proc.stdout.strip():
         raise RuntimeError("yt-dlp metadata fallback returned no output")
@@ -261,7 +269,10 @@ def _parse_caption_payload(ext: str, payload: str) -> list[dict[str, Any]]:
     else:
         snippets = _parse_text_captions(payload)
     if not snippets:
-        raise NoTranscriptAvailableError("Caption payload was empty or could not be parsed")
+        raise NoTranscriptAvailableError(
+            "Caption payload was empty or could not be parsed. Try another "
+            "caption language for this video, or a video with captions."
+        )
     return snippets
 
 
@@ -291,7 +302,10 @@ def _list_languages_ytdlp_sync(video_id: str) -> dict[str, Any]:
     raw = _metadata_with_ytdlp(video_id)
     langs = _caption_languages(raw)
     if not langs:
-        raise NoTranscriptAvailableError(f"No transcript languages available for video '{video_id}'")
+        raise NoTranscriptAvailableError(
+            f"No transcript languages available for video '{video_id}'. "
+            "Captions are absent or disabled for it — try another video."
+        )
     return {
         "success": True,
         "data": {
@@ -340,10 +354,15 @@ def _get_transcript_sync(video_id: str, lang: str) -> dict[str, Any]:
         }
     except (NoTranscriptFound, TranscriptsDisabled) as exc:
         raise NoTranscriptAvailableError(
-            f"No transcript available for video '{video_id}' in language '{lang}': {exc}"
+            f"No transcript available for video '{video_id}' in language "
+            f"'{lang}': {exc}. List the languages this video does carry, then "
+            "request one of those."
         ) from exc
     except VideoUnavailable as exc:
-        raise ValueError(f"Video '{video_id}' is unavailable (private or deleted): {exc}") from exc
+        raise ValueError(
+            f"Video '{video_id}' is unavailable (private or deleted): {exc}. "
+            "Check the id, or request a video that is publicly listed."
+        ) from exc
     except (IpBlocked, RequestBlocked) as exc:
         try:
             return _get_transcript_ytdlp_sync(video_id, lang)
@@ -393,10 +412,14 @@ def _list_languages_sync(video_id: str) -> dict[str, Any]:
         }
     except TranscriptsDisabled as exc:
         raise NoTranscriptAvailableError(
-            f"Transcripts are disabled for video '{video_id}': {exc}"
+            f"Transcripts are disabled for video '{video_id}': {exc}. The "
+            "uploader turned captions off — try another video."
         ) from exc
     except VideoUnavailable as exc:
-        raise ValueError(f"Video '{video_id}' is unavailable: {exc}") from exc
+        raise ValueError(
+            f"Video '{video_id}' is unavailable: {exc}. Check the id, or "
+            "request a video that is publicly listed."
+        ) from exc
     except (IpBlocked, RequestBlocked) as exc:
         try:
             return _list_languages_ytdlp_sync(video_id)
@@ -436,7 +459,9 @@ def _translated_sync(video_id: str, target_lang: str) -> dict[str, Any]:
                 break
         if transcript is None:
             raise NoTranscriptAvailableError(
-                f"No translatable transcript found for video '{video_id}'"
+                f"No translatable transcript found for video '{video_id}'. "
+                "Fetch the transcript in a language the video carries and "
+                "translate it yourself."
             )
         translated = transcript.translate(target_lang)
         ft = translated.fetch()
@@ -458,14 +483,18 @@ def _translated_sync(video_id: str, target_lang: str) -> dict[str, Any]:
         }
     except (NoTranscriptFound, TranscriptsDisabled) as exc:
         raise NoTranscriptAvailableError(
-            f"No transcript available for video '{video_id}': {exc}"
+            f"No transcript available for video '{video_id}': {exc}. "
+            "Captions are absent or disabled for it — try another video."
         ) from exc
     except (NotTranslatable, TranslationLanguageNotAvailable) as exc:
         raise ValueError(
             f"Translation to '{target_lang}' not available for video '{video_id}': {exc}"
         ) from exc
     except VideoUnavailable as exc:
-        raise ValueError(f"Video '{video_id}' is unavailable: {exc}") from exc
+        raise ValueError(
+            f"Video '{video_id}' is unavailable: {exc}. Check the id, or "
+            "request a video that is publicly listed."
+        ) from exc
     except (IpBlocked, RequestBlocked) as exc:
         try:
             fallback = _get_transcript_ytdlp_sync(video_id, target_lang)

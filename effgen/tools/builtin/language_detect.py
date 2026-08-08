@@ -63,7 +63,10 @@ def _detect_one(text: str) -> dict[str, Any]:
 
     text = text.strip()
     if not text:
-        raise InvalidInputError("Empty text provided: language detection requires non-empty input")
+        raise InvalidInputError(
+            "Empty text provided: language detection requires non-empty "
+            "input. Pass the text to identify in the 'text' argument."
+        )
 
     try:
         results = detect_langs(text)
@@ -180,14 +183,25 @@ class LanguageDetectTool(BaseTool):
 
         if op == "detect":
             if not text:
-                raise InvalidInputError("'text' is required and must be non-empty for the detect operation")
+                raise InvalidInputError(
+                    "'text' is required and must be non-empty for the detect "
+                    "operation. Pass the text to identify, or use detect_batch "
+                    "for several."
+                )
             return await asyncio.to_thread(_detect_one, text)
 
         elif op == "detect_batch":
             if not texts:
-                raise InvalidInputError("'texts' (list of strings) is required for detect_batch")
+                raise InvalidInputError(
+                    "'texts' (list of strings) is required for detect_batch. "
+                    "Pass a list of the strings to identify, or use detect for "
+                    "one."
+                )
             if not isinstance(texts, list):
-                raise InvalidInputError("'texts' must be a list of strings")
+                raise InvalidInputError(
+                    "'texts' must be a list of strings. Pass each item as "
+                    "text — wrap a single string in a list."
+                )
             return await asyncio.to_thread(_detect_batch, texts)
 
         else:

@@ -269,11 +269,20 @@ def _translate(text: str, source: str, target: str) -> dict[str, Any]:
     target = (target or "en").strip()
 
     if not text:
-        raise InvalidInputError("Translation requires non-empty text")
+        raise InvalidInputError(
+            "Translation requires non-empty text. Pass the text to translate "
+            "in the 'text' argument."
+        )
     if not source:
-        raise InvalidInputError("Translation source language must be non-empty")
+        raise InvalidInputError(
+            "Translation source language must be non-empty. Pass a language "
+            "code such as 'en', or 'auto' to detect it."
+        )
     if not target:
-        raise InvalidInputError("Translation target language must be non-empty")
+        raise InvalidInputError(
+            "Translation target language must be non-empty. Pass the language "
+            "code to translate into, such as 'fr'."
+        )
 
     if source == "auto":
         source = _libre_detect_language(text)
@@ -454,7 +463,10 @@ class TranslateTool(BaseTool):
 
         if op == "translate":
             if not text or not text.strip():
-                raise InvalidInputError("'text' is required and must be non-empty for the translate operation")
+                raise InvalidInputError(
+                    "'text' is required and must be non-empty for the "
+                    "translate operation. Pass the text to translate."
+                )
             return await asyncio.to_thread(_translate, text, source, target)
 
         elif op == "available_pairs":
