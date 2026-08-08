@@ -1,7 +1,7 @@
 """
 Together AI model registry for effGen.
 
-Chat-model catalog last verified against the Together API on 2026-07-19 (129
+Chat-model catalog last verified against the Together API on 2026-08-07 (168
 chat models; the language and embedding registries are bundled as well). The
 registry tables themselves live in :mod:`effgen.models.together_models_data`
 and are re-exported here, so ``effgen.models.together_models`` remains the

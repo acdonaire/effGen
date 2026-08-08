@@ -36,7 +36,7 @@ class TestTogetherModelsRegistry:
         assert len(available_models()) > 0
 
     def test_chat_models_count(self):
-        assert len(chat_models()) == 129
+        assert len(chat_models()) == 168
 
     def test_chat_models_match_bundled_snapshot(self):
         """The in-package catalog and the shipped snapshot list the same ids."""
@@ -193,7 +193,7 @@ class TestTogetherAdapterInit:
         p = adapter.pricing()
         assert "input_per_1m_usd" in p
         assert "output_per_1m_usd" in p
-        assert p["input_per_1m_usd"] == 0.88
+        assert p["input_per_1m_usd"] == 1.04
 
     def test_rate_limiting_enabled_by_default(self):
         adapter = TogetherAdapter(

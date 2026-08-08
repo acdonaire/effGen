@@ -162,9 +162,10 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
         "*": (0.0, 0.0),
     },
     "together": {
-        # OFFICIAL rates from Together AI pricing page (2026-04-28).
+        # OFFICIAL rates from the Together AI pricing page, reconciled against
+        # the live /v1/models listing on 2026-08-07.
         # Per million tokens: (input, output)
-        "meta-llama/Llama-3.3-70B-Instruct-Turbo": (0.88, 0.88),
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo": (1.04, 1.04),
         "meta-llama/Meta-Llama-3-8B-Instruct": (0.20, 0.20),
         "meta-llama/Llama-4-Scout-17B-16E-Instruct": (0.18, 0.59),
         "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": (0.27, 0.85),
@@ -180,7 +181,7 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
         "Qwen/Qwen2.5-14B-Instruct": (0.80, 0.80),
         "Qwen/Qwen2.5-Coder-32B-Instruct": (0.80, 0.80),
         "Qwen/QwQ-32B": (1.20, 1.20),
-        "Qwen/Qwen3.5-9B": (0.10, 0.15),
+        "Qwen/Qwen3.5-9B": (0.17, 0.25),
         "Qwen/Qwen3.5-397B-A17B": (0.60, 3.60),
         "Qwen/Qwen3-Coder-Next-FP8": (0.50, 1.20),
         "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8": (2.00, 2.00),
@@ -193,7 +194,7 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
         "Qwen/Qwen2.5-VL-72B-Instruct": (1.95, 8.00),
         "deepseek-ai/DeepSeek-V3.1": (0.60, 1.70),
         "deepseek-ai/DeepSeek-V3-0324": (1.25, 1.25),
-        "deepseek-ai/DeepSeek-V4-Pro": (2.10, 4.40),
+        "deepseek-ai/DeepSeek-V4-Pro": (1.74, 3.48),
         "deepseek-ai/DeepSeek-R1": (3.00, 7.00),
         "deepseek-ai/DeepSeek-R1-0528": (3.00, 7.00),
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B": (0.18, 0.18),
@@ -220,7 +221,7 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
         "zai-org/GLM-4.7": (0.45, 2.00),
         "zai-org/GLM-5": (1.00, 3.20),
         "zai-org/GLM-5.1": (1.40, 4.40),
-        "google/gemma-4-31B-it": (0.20, 0.50),
+        "google/gemma-4-31B-it": (0.39, 0.97),
         "google/gemma-3n-E4B-it": (0.06, 0.12),
         "arize-ai/qwen-2-1.5b-instruct": (0.10, 0.10),
         "deepcogito/cogito-v2-1-671b": (1.25, 1.25),
