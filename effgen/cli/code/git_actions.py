@@ -122,7 +122,8 @@ def ensure_safe(args: list[str]) -> None:
         if arg in FORBIDDEN_FLAGS:
             raise UnsafeGitAction(
                 f"git {subcommand} {arg} is not available to the coding agent: it "
-                "would rewrite, force or discard work."
+                "would rewrite, force or discard work. Run it yourself if you "
+                "intend it."
             )
 
 

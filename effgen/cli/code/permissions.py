@@ -251,12 +251,17 @@ class PermissionGate:
                 candidate = self.workspace / candidate
             resolved = candidate.resolve()
         except (OSError, RuntimeError) as exc:
-            raise PathNotAllowedError(f"Invalid path {path!r}: {exc}") from exc
+            raise PathNotAllowedError(
+                f"Invalid path {path!r}: {exc}. Pass a path inside the "
+                "workspace that this process can resolve."
+            ) from exc
 
         if is_credential_filename(resolved.name):
             raise PathNotAllowedError(
                 f"Refusing to write {path!r}: the filename matches a common "
-                "credentials shape (.env, id_rsa, credentials, ...)."
+                "credentials shape (.env, id_rsa, credentials, ...). Choose a "
+                "different filename, or write the secret outside the workspace "
+                "yourself."
             )
 
         root = self.workspace.resolve()
