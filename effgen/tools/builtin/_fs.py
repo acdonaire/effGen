@@ -149,7 +149,8 @@ def check_content_not_credentials(text: str, *, source: str = "") -> None:
         raise PathNotAllowedError(
             f"Refusing to return the content of{where}: it reads like a "
             "credentials file (dotenv-style KEY=VALUE lines or a private-key "
-            "header), regardless of its extension."
+            "header), regardless of its extension. Point the tool at the file "
+            "you meant, or strip the credentials from this one."
         )
 
 
@@ -278,14 +279,19 @@ def confine_path(
     try:
         resolved = Path(path).resolve()
     except (OSError, RuntimeError) as e:
-        raise PathNotAllowedError(f"Invalid path '{path}': {e}")
+        raise PathNotAllowedError(
+            f"Invalid path '{path}': {e}. Pass a path this process can "
+            "resolve — check for a broken symlink or an unreadable parent "
+            "directory."
+        )
 
     if not is_path_allowed(resolved, allowed_dirs):
         if allowed_dirs is None:
             raise PathNotAllowedError(
                 f"Refusing to read '{path}': it resolves to a protected system "
                 "or credential location. Reading secrets via a tool argument is "
-                "blocked."
+                "blocked. Copy what the tool genuinely needs to a working "
+                "directory and pass that path instead."
             )
         raise PathNotAllowedError(
             f"Path '{path}' is outside the allowed directories "
@@ -295,8 +301,14 @@ def confine_path(
 
     if must_exist:
         if not resolved.exists():
-            raise FileNotFoundError(f"File not found: {path}")
+            raise FileNotFoundError(
+                f"File not found: {path}. Check the path and that the file "
+                "exists on this machine."
+            )
         if not resolved.is_file():
-            raise PathNotAllowedError(f"Path '{path}' is not a regular file")
+            raise PathNotAllowedError(
+                f"Path '{path}' is not a regular file. Pass a file rather than "
+                "a directory, socket or device node."
+            )
 
     return resolved

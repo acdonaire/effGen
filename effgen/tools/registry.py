@@ -228,13 +228,18 @@ class ToolRegistry:
                 name = metadata.name
             except Exception as e:
                 raise ToolRegistrationError(
-                    f"Failed to instantiate tool {tool_class.__name__}: {e}"
+                    f"Failed to instantiate tool {tool_class.__name__}: {e}. "
+                    "A tool class must be constructible with no arguments; "
+                    "give its __init__ defaults, or register an instance you "
+                    "built yourself."
                 )
             constructor = tool_class
             dependencies = temp_instance.dependencies
         elif inspect.isclass(tool_class):
             raise ToolRegistrationError(
-                f"Tool class {tool_class.__name__} must inherit from BaseTool"
+                f"Tool class {tool_class.__name__} must inherit from BaseTool. "
+                "Subclass effgen.tools.BaseTool, or wrap the callable with "
+                "effgen.tool() or Tool.from_function()."
             )
         else:
             raise ToolRegistrationError(
@@ -426,7 +431,9 @@ class ToolRegistry:
         missing = dependencies - registered
         if missing:
             raise ToolDependencyError(
-                f"Tool '{tool_name}' has missing dependencies: {missing}"
+                f"Tool '{tool_name}' has missing dependencies: {missing}. "
+                "Register those tools first, or drop them from this tool's "
+                "dependencies."
             )
 
         # Detect circular dependencies
@@ -436,7 +443,10 @@ class ToolRegistry:
         def check_circular(name: str) -> None:
             if name in path:
                 cycle = " -> ".join(path + [name])
-                raise ToolDependencyError(f"Circular dependency detected: {cycle}")
+                raise ToolDependencyError(
+                    f"Circular dependency detected: {cycle}. Break the cycle — "
+                    "one of these tools must not depend on the others."
+                )
             if name in visited:
                 return
 
@@ -600,7 +610,10 @@ class ToolRegistry:
             ToolRegistrationError: If plugin loading fails
         """
         if not plugin_path.is_dir():
-            raise ToolRegistrationError(f"Plugin path {plugin_path} is not a directory")
+            raise ToolRegistrationError(
+                f"Plugin path {plugin_path} is not a directory. Pass the "
+                "package directory that holds the plugin's __init__.py."
+            )
 
         # Try to import the plugin module
         try:
@@ -621,7 +634,10 @@ class ToolRegistry:
                 logger.debug(f"Registered plugin: {plugin_path.name}")
 
         except Exception as e:
-            raise ToolRegistrationError(f"Failed to load plugin {plugin_path}: {e}")
+            raise ToolRegistrationError(
+                f"Failed to load plugin {plugin_path}: {e}. Import the "
+                "plugin's __init__.py directly to see the underlying error."
+            )
 
     def discover_builtin_tools(self) -> None:
         """

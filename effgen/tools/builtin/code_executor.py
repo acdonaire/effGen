@@ -320,10 +320,17 @@ class CodeExecutor(BaseTool):
             )
         except Exception as exc:
             logger.error("Sandbox execution error: %s", exc)
-            raise CodeExecutionError(f"Execution failed: {exc}") from exc
+            raise CodeExecutionError(
+                f"Execution failed: {exc}. Check the code for the error "
+                "named above, then run it again."
+            ) from exc
 
         if result.error:
-            raise CodeExecutionError(f"Sandbox error: {result.error}")
+            raise CodeExecutionError(
+                f"Sandbox error: {result.error}. Check that the sandbox "
+                "backend is available (`effgen doctor` reports it), then run "
+                "the code again."
+            )
 
         out: dict[str, Any] = {
             "stdout": result.stdout[: self.DEFAULT_MAX_OUTPUT],

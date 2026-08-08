@@ -94,23 +94,36 @@ def check_url_safe(
     try:
         parsed = urlparse(url)
     except ValueError as e:
-        raise BlockedURLError(f"Refusing to fetch unparseable URL '{url}': {e}") from e
+        raise BlockedURLError(
+            f"Refusing to fetch unparseable URL '{url}': {e}. "
+            "Pass a complete http(s) URL — check the scheme, the host, and "
+            "that any IPv6 literal is bracketed."
+        ) from e
     if parsed.scheme not in ("http", "https"):
         raise BlockedURLError(
             f"Refusing to fetch non-http(s) URL '{url}' (scheme "
-            f"'{parsed.scheme or 'none'}')."
+            f"'{parsed.scheme or 'none'}'). Pass an http:// or https:// URL; "
+            "this tool does not read other schemes."
         )
     try:
         host = parsed.hostname
     except ValueError as e:
-        raise BlockedURLError(f"Refusing to fetch unparseable URL '{url}': {e}") from e
+        raise BlockedURLError(
+            f"Refusing to fetch unparseable URL '{url}': {e}. "
+            "Pass a complete http(s) URL — check the scheme, the host, and "
+            "that any IPv6 literal is bracketed."
+        ) from e
     if not host:
-        raise BlockedURLError(f"URL '{url}' has no host")
+        raise BlockedURLError(
+            f"URL '{url}' has no host. Pass an absolute URL including the "
+            "host, such as https://example.com/page."
+        )
 
     if allowed_hosts is not None and not _host_matches(host, allowed_hosts):
         raise BlockedURLError(
             f"Refusing to fetch host '{host}': not in the allowed host list "
-            f"for this tool ({sorted(allowed_hosts)})."
+            f"for this tool ({sorted(allowed_hosts)}). Request one of those "
+            "hosts, or add this one to the tool's allowed_hosts."
         )
 
     if allow_private:
@@ -132,11 +145,18 @@ def check_url_safe(
     try:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
     except ValueError as e:
-        raise BlockedURLError(f"Refusing to fetch unparseable URL '{url}': {e}") from e
+        raise BlockedURLError(
+            f"Refusing to fetch unparseable URL '{url}': {e}. "
+            "Pass a complete http(s) URL — check the scheme, the host, and "
+            "that any IPv6 literal is bracketed."
+        ) from e
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as e:
-        raise BlockedURLError(f"Cannot resolve host '{host}': {e}")
+        raise BlockedURLError(
+            f"Cannot resolve host '{host}': {e}. Check the spelling and that "
+            "this machine has working DNS for it."
+        )
     for info in infos:
         ip_str = info[4][0]
         try:
@@ -217,7 +237,11 @@ def safe_urlopen(
             if e.code in _REDIRECT_CODES:
                 location = e.headers.get("Location")
                 if not location:
-                    raise BlockedURLError("Redirect without a Location header")
+                    raise BlockedURLError(
+                        "Redirect without a Location header. The server sent "
+                        "a redirect status with nowhere to go; request the "
+                        "final URL directly."
+                    )
                 current = urljoin(current, location)
                 # 301/302/303 downgrade to GET without a body (HTTP semantics);
                 # 307/308 preserve method and body.
@@ -226,7 +250,11 @@ def safe_urlopen(
                     current_method = "GET" if current_method not in (None, "GET") else current_method
                 continue
             raise
-    raise BlockedURLError(f"Too many redirects (>{max_redirects}) fetching '{url}'")
+    raise BlockedURLError(
+        f"Too many redirects (>{max_redirects}) fetching '{url}'. Request the "
+        "final URL directly, or raise max_redirects if the chain is genuinely "
+        "that long."
+    )
 
 
 def safe_requests_get(
@@ -275,4 +303,8 @@ def safe_requests_get(
                 current = urljoin(current, location)
                 continue
             return resp
-    raise BlockedURLError(f"Too many redirects (>{max_redirects}) fetching '{url}'")
+    raise BlockedURLError(
+        f"Too many redirects (>{max_redirects}) fetching '{url}'. Request the "
+        "final URL directly, or raise max_redirects if the chain is genuinely "
+        "that long."
+    )
