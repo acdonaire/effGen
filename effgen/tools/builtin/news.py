@@ -100,8 +100,15 @@ def _download_feed(url: str, timeout: int = 15) -> bytes:
         raise ConnectionError(f"Network error: {exc.reason}") from exc
 
 
-def _fetch_rss_entries(url: str, name: str = "") -> list[dict[str, Any]]:
-    """Fetch and parse a single RSS feed, returning plain entry dicts."""
+def _fetch_rss_source(url: str, name: str = "") -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch and parse one RSS feed.
+
+    Returns the feed's entries and, when the feed could not be fetched or
+    parsed, the reason. An empty list with no reason means the feed answered
+    and carried no entries — the callers keep the two apart so a run in which
+    every source was unreachable is reported as a failure rather than as no
+    news.
+    """
     try:
         import feedparser
     except ImportError as e:
@@ -112,7 +119,7 @@ def _fetch_rss_entries(url: str, name: str = "") -> list[dict[str, Any]]:
         feed = feedparser.parse(raw)
     except Exception as exc:
         logger.warning("Failed to fetch feed '%s' (%s): %s", name or url, url, exc)
-        return []
+        return [], f"{name or url}: {exc}"
 
     bozo_exc = getattr(feed, "bozo_exception", None)
     if feed.bozo and bozo_exc:
@@ -144,8 +151,50 @@ def _fetch_rss_entries(url: str, name: str = "") -> list[dict[str, Any]]:
     version = getattr(feed, "version", "") or ""
     if not entries and not version:
         logger.warning("URL for feed '%s' did not contain a valid RSS/Atom feed", name or url)
+        return [], f"{name or url}: not a valid RSS/Atom feed"
 
-    return entries
+    return entries, None
+
+
+async def _gather_sources(
+    feed_list: list[dict[str, str]],
+) -> tuple[list[dict[str, Any]], int, list[str]]:
+    """Fetch every feed in *feed_list* concurrently.
+
+    Returns the combined entries, how many sources answered, and the reason
+    each of the others gave.
+    """
+    tasks = [asyncio.to_thread(_fetch_rss_source, src["url"], src["name"]) for src in feed_list]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    entries: list[dict[str, Any]] = []
+    reached = 0
+    reasons: list[str] = []
+    for src, result in zip(feed_list, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning("RSS fetch error: %s", result)
+            reasons.append(f"{src['name']}: {result}")
+            continue
+        source_entries, reason = result
+        if reason:
+            reasons.append(reason)
+            continue
+        reached += 1
+        entries.extend(source_entries)
+    return entries, reached, reasons
+
+
+def _unreachable_error(feed_list: list[dict[str, str]], reasons: list[str]) -> str:
+    """Message for a run in which not one news source answered."""
+    first = reasons[0] if reasons else "no reason reported"
+    if len(first) > 200:
+        first = first[:197] + "..."
+    return (
+        f"No news source could be reached ({len(feed_list)} feed"
+        f"{'s' if len(feed_list) != 1 else ''} tried; first failure: {first}). "
+        "Check this machine's network access to the feed hosts, or set NEWS_API_KEY "
+        "to fetch through NewsAPI.org instead."
+    )
 
 
 def _newsapi_top_headlines(
@@ -349,15 +398,19 @@ class NewsTool(BaseTool):
             if filtered:
                 feed_list = filtered
 
-        tasks = [asyncio.to_thread(_fetch_rss_entries, src["url"], src["name"]) for src in feed_list]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        articles: list[dict[str, Any]] = []
-        for r in results:
-            if isinstance(r, Exception):
-                logger.warning("RSS fetch error: %s", r)
-                continue
-            articles.extend(r)
+        articles, reached, reasons = await _gather_sources(feed_list)
+        if not reached:
+            return {
+                "success": False,
+                "operation": "top_headlines",
+                "backend": "rss",
+                "category": category,
+                "region": region,
+                "count": 0,
+                "articles": [],
+                "data": {"articles": []},
+                "error": _unreachable_error(feed_list, reasons),
+            }
 
         # De-duplicate by link
         seen: set[str] = set()
@@ -378,6 +431,8 @@ class NewsTool(BaseTool):
             "count": len(selected),
             "articles": selected,
             "data": {"articles": selected},
+            "sources_reached": reached,
+            "sources_tried": len(feed_list),
             "error": None,
         }
 
@@ -414,21 +469,27 @@ class NewsTool(BaseTool):
         else:
             feed_list = _ALL_SOURCES
 
-        tasks = [asyncio.to_thread(_fetch_rss_entries, src["url"], src["name"]) for src in feed_list]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        entries, reached, reasons = await _gather_sources(feed_list)
+        if not reached:
+            return {
+                "success": False,
+                "operation": "search",
+                "backend": "rss",
+                "query": query,
+                "count": 0,
+                "articles": [],
+                "data": {"articles": []},
+                "error": _unreachable_error(feed_list, reasons),
+            }
 
         q_lower = query.lower()
         matched: list[dict[str, Any]] = []
-        for r in results:
-            if isinstance(r, Exception):
-                logger.warning("RSS fetch error during search: %s", r)
-                continue
-            for entry in r:
-                if (
-                    q_lower in entry.get("title", "").lower()
-                    or q_lower in entry.get("summary", "").lower()
-                ):
-                    matched.append(entry)
+        for entry in entries:
+            if (
+                q_lower in entry.get("title", "").lower()
+                or q_lower in entry.get("summary", "").lower()
+            ):
+                matched.append(entry)
 
         # De-duplicate
         seen: set[str] = set()
@@ -448,5 +509,7 @@ class NewsTool(BaseTool):
             "count": len(selected),
             "articles": selected,
             "data": {"articles": selected},
+            "sources_reached": reached,
+            "sources_tried": len(feed_list),
             "error": None,
         }

@@ -39,6 +39,7 @@ _TRANSIENT_MARKERS = (
     "Timeout",
     "Network error",
     "Connection",
+    "No news source could be reached",
 )
 
 
@@ -72,6 +73,61 @@ def test_news_unknown_operation_fails():
 def test_news_search_requires_query():
     r = _run(NewsTool().execute(operation="search"))
     assert not r.success
+
+
+# ---------------------------------------------------------------------------
+# No source reachable: reported as a failure, not as an empty news day
+# ---------------------------------------------------------------------------
+
+# ``.invalid`` is reserved and never resolves, so these entries fail the same
+# way an outage does — a real fetch against a host that is really not there.
+_UNREACHABLE = [
+    {"name": "Unreachable One", "url": "https://news-one.invalid/rss.xml", "region": "global"},
+    {"name": "Unreachable Two", "url": "https://news-two.invalid/rss.xml", "region": "global"},
+]
+
+
+@pytest.fixture
+def unreachable_sources(monkeypatch):
+    """Point every category at feeds that cannot be fetched."""
+    from effgen.tools.builtin import news as news_module
+
+    monkeypatch.delenv("NEWS_API_KEY", raising=False)
+    monkeypatch.setitem(news_module._RSS_SOURCES, "general", _UNREACHABLE)
+    monkeypatch.setattr(news_module, "_ALL_SOURCES", _UNREACHABLE)
+
+
+def test_top_headlines_reports_failure_when_no_source_answers(unreachable_sources):
+    result = _run(NewsTool().execute(operation="top_headlines", max_results=5))
+    assert result.success is False, "an outage must not read as a day with no news"
+    assert "No news source could be reached" in result.error
+    assert "2 feeds tried" in result.error
+    assert "NEWS_API_KEY" in result.error
+    assert result.output["count"] == 0
+    assert result.output["articles"] == []
+
+
+def test_search_reports_failure_when_no_source_answers(unreachable_sources):
+    result = _run(NewsTool().execute(operation="search", query="anything", max_results=5))
+    assert result.success is False
+    assert "No news source could be reached" in result.error
+    assert result.output["operation"] == "search"
+
+
+def test_unreachable_error_bounds_the_reason_it_quotes():
+    from effgen.tools.builtin.news import _unreachable_error
+
+    message = _unreachable_error(_UNREACHABLE, ["Feed: " + "x" * 5000])
+    assert len(message) < 500
+    assert message.endswith("to fetch through NewsAPI.org instead.")
+
+
+def test_fetch_rss_source_separates_an_unreachable_feed_from_an_empty_one():
+    from effgen.tools.builtin.news import _fetch_rss_source
+
+    entries, reason = _fetch_rss_source("https://news-one.invalid/rss.xml", "Unreachable One")
+    assert entries == []
+    assert reason and "Unreachable One" in reason
 
 
 # ---------------------------------------------------------------------------
