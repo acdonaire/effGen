@@ -1,6 +1,6 @@
 # Together AI Backend
 
-effGen ships a full-featured `TogetherAdapter` for the Together AI inference API. It supports 129 chat models (as of 2026-07-19) including serverless access (no dedicated endpoint required), native tool-calling on 53 models, real token-by-token streaming, and per-request cost tracking with official Together AI pricing.
+effGen ships a full-featured `TogetherAdapter` for the Together AI inference API. It supports 168 chat models (as of 2026-08-07) including serverless access (no dedicated endpoint required), native tool-calling on 66 models, real token-by-token streaming, and per-request cost tracking with official Together AI pricing.
 
 ## Setup
 
@@ -165,12 +165,12 @@ if drift["new_models"]:
 
 effGen will **always** use the bundled registry as the offline fallback. `refresh_models()` is purely informational — it never mutates the local registry.
 
-## Model Coverage (2026-07-19 snapshot)
+## Model Coverage (2026-08-07 snapshot)
 
-- **Total chat models**: 129
-- **Serverless (no endpoint needed)**: 12
-- **Tool-capable**: 53
-- **Registry date**: 2026-07-19
+- **Total chat models**: 168
+- **Serverless (no endpoint needed)**: 25
+- **Tool-capable**: 66
+- **Registry date**: 2026-08-07
 - **Families**: Llama 3/4, Qwen 2.5/3/3.5, DeepSeek V3/R1, Mistral/Mixtral, Gemma 3/4, OpenAI OSS, GLM, Kimi, MiniMax, Nemotron, Cogito, LFM, and more
 
 ## Dedicated Endpoint Models

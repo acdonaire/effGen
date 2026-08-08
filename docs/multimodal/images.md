@@ -30,7 +30,7 @@ adapter.unload()
 |---|---|---|
 | **Gemini** | gemini-3.1-flash-lite, gemini-2.5-flash, ... | Native vision, inline JPEG/PNG/WEBP/GIF |
 | **OpenAI** | gpt-4o-mini, gpt-4o, gpt-5 | data-URI base64 inline |
-| **Groq** | meta-llama/llama-4-scout-17b-16e-instruct | Llama 4 Scout 17B vision |
+| **Groq** | qwen/qwen3.6-27b | Qwen3.6 27B, text and image input |
 | **Together** | nim/meta/llama-3.2-90b-vision-instruct | Requires dedicated endpoint |
 | **HF** | Qwen/Qwen3-VL-8B-Instruct, ... | Via HF Router, paid tier |
 | **Anthropic** | claude-sonnet-4-6, claude-opus-4-7 | Base64 media blocks |

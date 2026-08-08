@@ -88,7 +88,8 @@ The shape of `metadata["tool_calls"]` is the same for every adapter — see
 
 ## Models
 
-All models are on Groq's free developer tier (as of 2026-04-28). Rate limits below are for the Developer plan.
+Rate limits below are for the Developer plan. Catalog reconciled against Groq's
+live model listing on 2026-08-07; `qwen/qwen3.6-27b` is the vision-capable entry.
 
 ### Chat Completion Models
 
@@ -96,8 +97,7 @@ All models are on Groq's free developer tier (as of 2026-04-28). Rate limits bel
 |-------|---------|-----------|-------|-----|-----|-----|-----|
 | `llama-3.1-8b-instant` | 131k | 8k | ✓ | 30 | 14,400 | 6k | 500k |
 | `llama-3.3-70b-versatile` | 131k | 32k | ✓ | 30 | 1,000 | 12k | 100k |
-| `meta-llama/llama-4-scout-17b-16e-instruct` | 131k | 8k | ✓ | 30 | 1,000 | 30k | 500k |
-| `qwen/qwen3-32b` | 131k | 16k | ✓ | **60** | 1,000 | 6k | 500k |
+| `qwen/qwen3.6-27b` | 131k | 16k | ✓ | 30 | 1,000 | 8k | — |
 | `openai/gpt-oss-120b` | 131k | 16k | ✓ | 30 | 1,000 | 8k | 200k |
 | `openai/gpt-oss-20b` | 131k | 16k | ✓ | 30 | 1,000 | 8k | 200k |
 | `openai/gpt-oss-safeguard-20b` | 131k | 4k | ✓ | 30 | 1,000 | 8k | 200k |
@@ -143,9 +143,9 @@ adapter = GroqAdapter("llama-3.1-8b-instant", enable_rate_limiting=False)
 ```python
 from effgen.models.groq_models import available_models, chat_models, tool_capable_models, model_info
 
-print(available_models())       # all 16 models
-print(chat_models())            # 12 chat-capable models
-print(tool_capable_models())    # 9 models with native tool support
+print(available_models())       # all 15 models
+print(chat_models())            # 11 chat-capable models
+print(tool_capable_models())    # 8 models with native tool support
 
 info = model_info("llama-3.3-70b-versatile")
 print(info["context"])          # 131072

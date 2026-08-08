@@ -236,7 +236,6 @@ replicate_models.refresh_models() to check for drift.
 | `google/gemini-3-pro` | gemini | 1000K | **Yes** | Yes | per-token |
 | `google/gemini-3.1-pro` | gemini | 1000K | **Yes** | Yes | per-token |
 | **xAI** | | | | | |
-| `xai/grok-4` | grok | 256K | **Yes** | Yes | per-token |
 
 ---
 
