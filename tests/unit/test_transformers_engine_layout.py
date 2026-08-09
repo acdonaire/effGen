@@ -173,6 +173,7 @@ ENGINE_MEMBERS = (
     "is_loaded",
     "load",
     "reset_cost",
+    "streams_tool_calls",
     "supports_tool_calling",
     "tool_call_support",
     "unload",

@@ -261,6 +261,53 @@ def record_stream_usage(
         logger.debug("Could not record stream usage", exc_info=True)
 
 
+def clear_stream_tool_calls(model: "BaseModel") -> None:
+    """Drop any tool calls recorded by a previous streaming call on *model*.
+
+    Called immediately before a stream starts, so reading the buffer afterwards
+    returns this call's tool calls or an empty list — never the previous call's.
+    """
+    try:
+        model._last_stream_tool_calls = []  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - a model that rejects attributes still streams
+        logger.debug("Could not clear stream tool calls", exc_info=True)
+
+
+def get_stream_tool_calls(model: "BaseModel") -> list[dict[str, Any]]:
+    """Return the tool calls the current or most recent stream declared.
+
+    Each entry is in the documented ``metadata["tool_calls"]`` shape (see
+    :func:`effgen.models._usage.tool_call_entry`). An adapter records a call as
+    soon as its first delta arrives, so a consumer reading this mid-stream can
+    tell that the turn is making a call before any text is committed as the
+    answer. Returns ``[]`` when the stream declared none, or when the adapter
+    does not record streamed calls (see :meth:`BaseModel.streams_tool_calls`).
+    """
+    calls = getattr(model, "_last_stream_tool_calls", None)
+    return calls if isinstance(calls, list) else []
+
+
+def record_stream_tool_calls(
+    model: "BaseModel", calls: list[dict[str, Any]]
+) -> None:
+    """Record the tool calls a streaming call has declared so far.
+
+    ``generate()`` returns them in ``GenerationResult.metadata["tool_calls"]``;
+    ``generate_stream()`` has no return value, so an adapter records them here
+    and the consumer reads them back with :func:`get_stream_tool_calls`. Called
+    repeatedly as the arguments accumulate — each call replaces the buffer with
+    the current state — and once more when the stream ends.
+
+    Args:
+        model: The adapter whose stream declared the calls.
+        calls: The calls so far, in the documented ``tool_calls`` shape.
+    """
+    try:
+        model._last_stream_tool_calls = list(calls)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - tool-call accounting must not break streaming
+        logger.debug("Could not record stream tool calls", exc_info=True)
+
+
 #: Engine types whose ``count_tokens`` runs against a local tokenizer — no
 #: network call, so it is cheap enough to use for an after-the-fact estimate.
 _LOCAL_ENGINE_TYPES = frozenset(
@@ -751,6 +798,21 @@ class BaseModel(ABC):
             str: One of ``"api"``, ``"template"`` or ``"none"``.
         """
         return "api" if self.supports_tool_calling() else "none"
+
+    def streams_tool_calls(self) -> bool:
+        """Report whether ``generate_stream`` records the turn's tool calls.
+
+        An adapter that returns ``True`` writes every call the stream declares
+        into the buffer :func:`get_stream_tool_calls` reads, as soon as the
+        call's first delta arrives. That is what lets a caller stream a turn's
+        assistant text while still dispatching the calls the same turn makes;
+        an adapter that returns ``False`` drops them, so a tool loop has to run
+        the turn without streaming.
+
+        Returns:
+            bool: True when streamed tool calls are recorded.
+        """
+        return False
 
     def is_loaded(self) -> bool:
         """

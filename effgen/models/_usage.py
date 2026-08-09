@@ -124,6 +124,56 @@ def tool_call_entry(
     }
 
 
+def accumulate_stream_tool_call_deltas(
+    buffer: dict[int, dict[str, Any]], deltas: Any
+) -> None:
+    """Fold one streamed chunk's tool-call fragments into *buffer*.
+
+    Providers with an OpenAI-shaped stream send a call in pieces: the index and
+    id first, the function name once, and the arguments as a run of string
+    fragments. *buffer* is keyed by the call's index so parallel calls in one
+    turn stay separate, and the fragments are concatenated in arrival order.
+
+    Args:
+        buffer: The per-index accumulator, mutated in place.
+        deltas: The chunk's ``delta.tool_calls`` list.
+    """
+    for delta in deltas or []:
+        index = delta.index if getattr(delta, "index", None) is not None else 0
+        entry = buffer.setdefault(
+            index,
+            {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+        )
+        if getattr(delta, "id", None):
+            entry["id"] = delta.id
+        function = getattr(delta, "function", None)
+        if function is None:
+            continue
+        if getattr(function, "name", None):
+            entry["function"]["name"] = function.name
+        if getattr(function, "arguments", None):
+            entry["function"]["arguments"] += function.arguments
+
+
+def stream_tool_call_entries(
+    buffer: dict[int, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return *buffer* as ``metadata["tool_calls"]`` entries, in index order.
+
+    The accumulated ``arguments`` stay the JSON string the model streamed,
+    matching what a non-streamed call reports.
+    """
+    return [
+        tool_call_entry(
+            entry["function"]["name"],
+            entry["function"]["arguments"],
+            call_id=entry["id"],
+            call_type=entry["type"],
+        )
+        for _index, entry in sorted(buffer.items())
+    ]
+
+
 def normalize_tool_calls(raw: Any) -> list[dict[str, Any]]:
     """Coerce a provider's tool-call list into the documented shape.
 
