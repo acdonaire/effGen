@@ -31,13 +31,20 @@ from effgen.models._adapter_utils import (
 )
 from effgen.models._cost import CostTracker
 from effgen.models._rate_limit import RateLimitCoordinator
-from effgen.models._usage import cost_label, tool_call_entry, tool_calls_from_message
+from effgen.models._usage import (
+    accumulate_stream_tool_call_deltas,
+    cost_label,
+    stream_tool_call_entries,
+    tool_calls_from_message,
+)
 from effgen.models.base import (
     BaseModel,
     GenerationConfig,
     GenerationResult,
     TokenCount,
     accumulate_stream_cost,
+    clear_stream_tool_calls,
+    record_stream_tool_calls,
 )
 from effgen.models.errors import ModelAuthError, ModelNotFoundError, error_has_status
 from effgen.models.fireworks_models import (
@@ -587,7 +594,7 @@ class FireworksAdapter(BaseModel):
 
         request_params.update(kwargs)
 
-        self._last_stream_tool_calls: list[dict[str, Any]] = []
+        clear_stream_tool_calls(self)
         self._last_stream_finish_reason: str | None = None
 
         try:
@@ -623,26 +630,24 @@ class FireworksAdapter(BaseModel):
                         yield delta.content
 
                     if delta and getattr(delta, "tool_calls", None):
-                        for tc in delta.tool_calls:
-                            idx = tc.index if getattr(tc, "index", None) is not None else 0
-                            buf = tool_calls_buf.setdefault(
-                                idx, {"id": "", "type": "function",
-                                      "function": {"name": "", "arguments": ""}}
-                            )
-                            if getattr(tc, "id", None):
-                                buf["id"] = tc.id
-                            fn = getattr(tc, "function", None)
-                            if fn is not None:
-                                if getattr(fn, "name", None):
-                                    buf["function"]["name"] = fn.name
-                                if getattr(fn, "arguments", None):
-                                    buf["function"]["arguments"] += fn.arguments
+                        accumulate_stream_tool_call_deltas(
+                            tool_calls_buf, delta.tool_calls
+                        )
+                        # Recorded as it accumulates, so a consumer streaming
+                        # this turn knows it is a tool call before it commits
+                        # any text as the answer.
+                        record_stream_tool_calls(
+                            self, stream_tool_call_entries(tool_calls_buf)
+                        )
 
                     if delta:
                         reasoning_buf.append(reasoning_delta_text(delta))
 
                     if choice.finish_reason:
                         self._last_stream_finish_reason = choice.finish_reason
+
+                streamed_calls = stream_tool_call_entries(tool_calls_buf)
+                record_stream_tool_calls(self, streamed_calls)
 
                 warn_reasoning_only_stream(
                     model_name=self.model_name,
@@ -651,20 +656,9 @@ class FireworksAdapter(BaseModel):
                     reasoning_tokens=extract_reasoning_tokens(stream_usage),
                     finish_reason=self._last_stream_finish_reason,
                     max_tokens=request_params.get("max_tokens"),
+                    tool_calls=streamed_calls,
                     logger=logger,
                 )
-
-                # The accumulated ``arguments`` deltas are kept as the JSON
-                # string the model streamed, matching the non-streaming shape.
-                self._last_stream_tool_calls = [
-                    tool_call_entry(
-                        buf["function"]["name"],
-                        buf["function"]["arguments"],
-                        call_id=buf["id"],
-                        call_type=buf["type"],
-                    )
-                    for _idx, buf in sorted(tool_calls_buf.items())
-                ]
 
             if self._enable_cost_tracking and (prompt_tokens or completion_tokens):
                 cost = CostTracker.get().record(
@@ -740,6 +734,10 @@ class FireworksAdapter(BaseModel):
     def supports_tool_calling(self) -> bool:
         """Return True if the loaded model supports native tool-calling."""
         return bool(FIREWORKS_MODELS.get(self.model_name, {}).get("supports_native_tools", False))
+
+    def streams_tool_calls(self) -> bool:
+        """True: a streamed turn's native tool calls are recorded."""
+        return True
 
     def supports_function_calling(self) -> bool:
         """Alias for :meth:`supports_tool_calling`."""
