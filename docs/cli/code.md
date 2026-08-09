@@ -171,6 +171,21 @@ every mode, including when the model tries to reach them through the shell.
 
 Type `/` on its own for the menu; tab completes command names.
 
+### What a turn shows while it runs
+
+An interactive turn shows a status line naming the tool in flight, each proposed
+edit's diff before it is written, and a tick per decided action. On a model whose
+provider streams its tool calls — openai, gemini, groq, together, fireworks and
+cerebras — the answer is also written to the screen as the model produces it,
+rather than appearing in one block when the turn ends. The status line and the
+answer take turns owning the terminal: the status line runs while the model is
+thinking and dispatching tools, and hands over from the first word of the answer.
+
+Everything else keeps the previous behavior and prints the answer once the turn
+finishes: a model whose tool calls are not streamed (the local engines, among
+others), and every non-interactive surface — piped output, `--json`, `--quiet`,
+`--no-animation` and `NO_COLOR`.
+
 ## Scripting and non-TTY behavior
 
 Piped or with `--json`, stdout carries only the result — the answer text, or one

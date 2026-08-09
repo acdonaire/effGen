@@ -156,9 +156,50 @@ for event in agent.stream(task, include_events=True):
 
 `include_events=True` yields `StreamEvent` objects with a `kind` of `answer`,
 `thought`, `tool_call`, `observation`, `status`, or `usage`; concatenating the
-`answer` events still reconstructs the final answer. For the best tool-use
-quality on capable models, `agent.run(task)` (which uses native function-calling
-where available) is recommended over streaming.
+`answer` events still reconstructs the final answer.
+
+### Streaming with native tool calling
+
+A tool-using stream takes one of two paths, chosen from the model:
+
+- **The provider's tool calling.** When the adapter records the tool calls it
+  streams — openai, gemini, groq, together, fireworks and cerebras do — the loop
+  dispatches those calls the same way `agent.run()` does, and the assistant's
+  text streams through as it is written. This is the same loop, the same repeat
+  guards and the same failure vocabulary as a non-streamed run.
+- **The ReAct text protocol.** Every other model — the local chat-template
+  engines, and any provider whose stream drops its tool calls — keeps the
+  prompt-based scaffold, where the answer arrives once the turn is parsed.
+
+`agent.model.streams_tool_calls()` reports whether an adapter records what it
+streams. The path is chosen per turn and needs no configuration.
+
+On the native path a turn's text is held back until the turn can no longer
+become a tool call: once a call has been declared the text is delivered as a
+`thought` and never enters the answer, and once a text delta has arrived with no
+call declared the turn is committed to answering. Text is also sanitized before
+it is emitted, so what reaches the screen is what the answer ends up being.
+
+### The record a streamed turn leaves
+
+After a stream that took the native path, `agent.last_stream_response` holds the
+`AgentResponse` the same task would have produced through `run()` — `output`,
+`success`, `iterations`, `tool_calls`, `tokens_used`, `execution_time`, and the
+`reason` / `error` / `partial` metadata described under [Results](#results). It
+is `None` after a stream that did not take that path.
+
+```python
+events = list(agent.stream(task, include_events=True))
+answer = "".join(e.text for e in events if e.kind == "answer")
+response = agent.last_stream_response
+assert answer == response.output          # a turn that answered
+```
+
+For a turn that answered, joining the `answer` events reproduces
+`response.output` exactly. A turn that stopped at its iteration cap, or whose
+model wrote its tool call out as text instead of making it, has no answer to
+stream: `output` carries the typed outcome and it arrives as a `status` event,
+not as answer deltas.
 
 ### Usage after a stream
 
