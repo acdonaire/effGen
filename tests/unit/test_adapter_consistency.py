@@ -1296,3 +1296,179 @@ def test_a_streamed_turn_keeps_the_accumulated_argument_string(provider):
     assert isinstance(arguments, str)
     assert arguments == '{"expression": "6*7"}'
     assert json.loads(arguments) == {"expression": "6*7"}
+
+
+# --------------------------------------------------------------------------- #
+# Streamed tool calls: which adapters record them, and when
+# --------------------------------------------------------------------------- #
+#: Adapters whose ``generate_stream`` records the turn's native tool calls, and
+#: which therefore report ``streams_tool_calls() is True``.
+_STREAMS_TOOL_CALLS = ("groq", "cerebras", "together", "fireworks", "openai")
+
+
+@pytest.mark.parametrize("provider", _STREAMS_TOOL_CALLS)
+def test_an_adapter_that_records_streamed_calls_says_so(provider):
+    assert _loaded_adapter(provider).streams_tool_calls() is True
+
+
+@pytest.mark.parametrize("provider", ["hf_inference"])
+def test_an_adapter_that_drops_streamed_calls_says_so(provider):
+    assert _loaded_adapter(provider).streams_tool_calls() is False
+
+
+def test_the_default_engine_does_not_claim_to_record_streamed_calls():
+    """Every engine that has not implemented it keeps the conservative default."""
+    from effgen.models.base import BaseModel
+
+    assert BaseModel.streams_tool_calls(object()) is False
+
+
+@pytest.mark.parametrize("provider", _STREAMS_TOOL_CALLS)
+def test_a_streamed_call_is_readable_through_the_shared_accessor(provider):
+    """The buffer four adapters already filled is now read the same way."""
+    from effgen.models.base import get_stream_tool_calls
+
+    adapter = _loaded_adapter(provider)
+    adapter._client.chat.completions.create.return_value = _tool_call_delta_chunks()
+
+    list(adapter.generate_stream("What is 6*7?"))
+
+    calls = get_stream_tool_calls(adapter)
+    assert [c["function"]["name"] for c in calls] == ["calculator"]
+    assert calls[0]["function"]["arguments"] == '{"expression": "6*7"}'
+
+
+def _call_then_text_chunks():
+    """A stream that declares a call and then emits text in the same turn."""
+    from unittest.mock import MagicMock
+
+    def chunk(*, tc_id=None, name=None, args=None, content=None, finish=None):
+        c = MagicMock()
+        c.usage = None
+        delta = MagicMock()
+        delta.content = content
+        delta.reasoning = None
+        delta.reasoning_content = None
+        if name is None and args is None and tc_id is None:
+            delta.tool_calls = None
+        else:
+            call = MagicMock()
+            call.index = 0
+            call.id = tc_id
+            call.function.name = name
+            call.function.arguments = args
+            delta.tool_calls = [call]
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = finish
+        c.choices = [choice]
+        return c
+
+    return [
+        chunk(tc_id="call_1", name="calculator", args='{"expression": "6*7"}'),
+        chunk(content="Working"),
+        chunk(content=" on it.", finish="tool_calls"),
+    ]
+
+
+@pytest.mark.parametrize("provider", _STREAMS_TOOL_CALLS)
+def test_a_streamed_call_is_visible_before_the_next_text_delta(provider):
+    """A consumer must tell a tool turn from an answer turn while it streams.
+
+    The call is recorded as its deltas arrive, so text that follows it can be
+    held back rather than committed as an answer the turn was not giving.
+    """
+    from effgen.models.base import get_stream_tool_calls
+
+    adapter = _loaded_adapter(provider)
+    adapter._client.chat.completions.create.return_value = _call_then_text_chunks()
+
+    seen: list[int] = []
+    for _text in adapter.generate_stream("What is 6*7?"):
+        seen.append(len(get_stream_tool_calls(adapter)))
+
+    assert seen and all(count == 1 for count in seen), (
+        "the call was not readable while the turn was still streaming"
+    )
+
+
+@pytest.mark.parametrize("provider", _STREAMS_TOOL_CALLS)
+def test_a_new_stream_clears_the_previous_turns_calls(provider):
+    from effgen.models.base import get_stream_tool_calls
+
+    adapter = _loaded_adapter(provider)
+    adapter._client.chat.completions.create.return_value = _tool_call_delta_chunks()
+    list(adapter.generate_stream("What is 6*7?"))
+    assert get_stream_tool_calls(adapter)
+
+    adapter._client.chat.completions.create.return_value = _reasoning_only_stream()
+    list(adapter.generate_stream("Say hi"))
+    assert get_stream_tool_calls(adapter) == []
+
+
+def _reasoning_then_tool_call_stream():
+    """A turn that reasons and then makes a call, with no visible token.
+
+    The shape a tool-calling model produces on the streamed path: the chain is
+    billed, the call is declared, and nothing is yielded to the caller.
+    """
+    from unittest.mock import MagicMock
+
+    def chunk(*, reasoning=None, tc_id=None, name=None, args=None,
+              finish=None, usage=None):
+        c = MagicMock()
+        c.usage = usage
+        delta = MagicMock()
+        delta.content = None
+        delta.reasoning = reasoning
+        delta.reasoning_content = None
+        if name is None and args is None and tc_id is None:
+            delta.tool_calls = None
+        else:
+            call = MagicMock()
+            call.index = 0
+            call.id = tc_id
+            call.function.name = name
+            call.function.arguments = args
+            delta.tool_calls = [call]
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = finish
+        c.choices = [choice]
+        return c
+
+    usage = MagicMock()
+    usage.prompt_tokens = 20
+    usage.completion_tokens = 48
+    usage.total_tokens = 68
+    usage.completion_tokens_details.reasoning_tokens = 48
+    usage.prompt_tokens_details.cached_tokens = 0
+
+    return [
+        chunk(reasoning="Thinking Process:\n1. Multiply.\n"),
+        chunk(tc_id="call_1", name="calculator", args='{"expression": "6*7"}'),
+        chunk(finish="tool_calls", usage=usage),
+    ]
+
+
+@pytest.mark.parametrize("provider", _STREAMS_TOOL_CALLS)
+def test_a_streamed_tool_turn_is_not_reported_as_reasoning_only(provider, caplog):
+    """A tool turn yields no text on purpose; it is not a missing answer.
+
+    The non-streamed path already exempts a native call from the reasoning-only
+    report. The streamed path has to agree, or every tool-calling turn tells the
+    reader to raise a cap that was never the problem.
+    """
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    adapter = _loaded_adapter(provider)
+    adapter._client.chat.completions.create.return_value = (
+        _reasoning_then_tool_call_stream()
+    )
+
+    assert "".join(adapter.generate_stream("What is 6*7?")) == ""
+
+    assert not [r for r in caplog.records if "no visible text" in r.message], (
+        "a streamed tool turn was reported as a turn with no answer"
+    )

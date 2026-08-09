@@ -27,6 +27,7 @@ from effgen.models._adapter_utils import (
     extract_reasoning_text,
     extract_reasoning_tokens,
     reasoning_only_message,
+    warn_reasoning_only_stream,
 )
 from effgen.models.base import BaseModel, GenerationResult, ModelType, TokenCount
 
@@ -140,6 +141,37 @@ def test_a_native_tool_call_is_a_complete_turn():
     flagged, metadata = _annotate(tool_calls=[{"id": "1"}])
     assert flagged is False
     assert "reasoning_only" not in metadata
+
+
+def test_a_streamed_tool_call_is_a_complete_turn(caplog):
+    """The streamed twin exempts a tool turn the same way.
+
+    A turn spent making a native call reaches the caller as an empty token
+    stream beside a reasoning chain, which is the shape of a reasoning-only
+    turn without being one. Warning about it tells the reader to raise a cap
+    that is not the problem.
+    """
+    caplog.set_level(logging.WARNING)
+    warn_reasoning_only_stream(
+        model_name="reasoner-stream-1", yielded_text=False,
+        reasoning_text=REASONING_CHAIN, reasoning_tokens=64,
+        finish_reason="tool_calls", max_tokens=1024,
+        tool_calls=[{"function": {"name": "calculator", "arguments": "{}"}}],
+        logger=logging.getLogger("effgen.test.reasoning.stream"),
+    )
+    assert not [r for r in caplog.records if "no visible text" in r.message]
+
+
+def test_a_streamed_turn_with_no_call_still_reports_why(caplog):
+    """The exemption must not silence the signal it was built to carry."""
+    caplog.set_level(logging.WARNING)
+    warn_reasoning_only_stream(
+        model_name="reasoner-stream-2", yielded_text=False,
+        reasoning_text=REASONING_CHAIN, reasoning_tokens=64,
+        finish_reason="length", max_tokens=64,
+        logger=logging.getLogger("effgen.test.reasoning.stream"),
+    )
+    assert [r for r in caplog.records if "no visible text" in r.message]
 
 
 def test_no_reasoning_signal_is_not_flagged():

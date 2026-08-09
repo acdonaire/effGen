@@ -615,6 +615,7 @@ def warn_reasoning_only_stream(
     reasoning_tokens: int = 0,
     finish_reason: Any = None,
     max_tokens: int | None,
+    tool_calls: Any = None,
     logger: Any,
 ) -> None:
     """Report a stream that ended without yielding a single visible token.
@@ -630,9 +631,13 @@ def warn_reasoning_only_stream(
         reasoning_tokens: Output tokens the provider billed as reasoning.
         finish_reason: The provider's finish reason for the stream.
         max_tokens: The output cap in force, or ``None`` when none was set.
+        tool_calls: Native tool calls the stream declared. A turn spent making
+            one is complete with no visible text, so it is never reported as
+            reasoning-only — the same rule :func:`annotate_reasoning_only`
+            applies to a non-streamed turn.
         logger: Logger the message is written to.
     """
-    if yielded_text:
+    if yielded_text or tool_calls:
         return
     if not (reasoning_text or "").strip() and reasoning_tokens <= 0:
         return
