@@ -76,7 +76,14 @@ class CodeViewMixin:
     # ------------------------------------------------------------------
     # The answer and the per-turn footer
     # ------------------------------------------------------------------
-    def _render_answer(self, result: Any) -> None:
+    def _render_answer(self, result: Any, *, already_streamed: bool = False) -> None:
+        """Print the turn's answer, and any partial progress beside it.
+
+        With *already_streamed* the answer text is on screen already — it was
+        written there as the model produced it — so only what did not stream is
+        printed: the partial-progress panel and, for a turn that failed, the
+        error panel carrying the typed outcome.
+        """
         from effgen.cli.commands.run import PARTIAL_PROGRESS_TITLE
         from effgen.ui.render import answer_surface
 
@@ -88,14 +95,15 @@ class CodeViewMixin:
                 result.answer or "The run produced no answer.", title="Error"
             )
         elif console:
-            answer_surface(
-                result.answer,
-                success=result.success,
-                partial=result.partial,
-                framed=False,
-                label="agent",
-                console=console,
-            )
+            if not already_streamed:
+                answer_surface(
+                    result.answer,
+                    success=result.success,
+                    partial=result.partial,
+                    framed=False,
+                    label="agent",
+                    console=console,
+                )
             if progress:
                 answer_surface(
                     progress,

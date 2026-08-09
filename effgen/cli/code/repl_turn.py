@@ -65,6 +65,9 @@ class CodeTurnMixin:
         tok0, cost0 = self._snapshot()
         t0 = time.monotonic()
         self.last_trace = None
+        # What the turn already put on screen as it was written, so the answer
+        # is not printed a second time when the record is rendered.
+        self._streamed_answer = ""
 
         try:
             with workspace_env(self.workspace):
@@ -84,7 +87,7 @@ class CodeTurnMixin:
         except Exception:  # noqa: BLE001
             self.last_trace = None
 
-        self._render_answer(result)
+        self._render_answer(result, already_streamed=bool(self._streamed_answer))
         self.turns += 1
         elapsed = time.monotonic() - t0
         tok1, cost1 = self._snapshot()
@@ -114,11 +117,17 @@ class CodeTurnMixin:
     def _run_agent(self, task: str) -> Any:
         """Run one turn under the live status line ``chat`` uses.
 
-        The turn goes through ``agent.run``, which drives the tool loop with the
-        model's native tool calling where the provider supports it. The status
-        line follows the same execution events (``Running file_operations…``),
-        and each write's diff and each decided action print through it as they
-        happen, so the session shows its work while the loop runs.
+        The turn drives the tool loop with the model's native tool calling where
+        the provider supports it. The status line follows the execution events
+        (``Running file_operations…``), and each write's diff and each decided
+        action print through it as they happen, so the session shows its work
+        while the loop runs.
+
+        On an animating terminal, a model whose adapter streams its tool calls
+        takes the streamed loop, so the answer appears as it is written rather
+        than in one block when the turn ends. Everything else — a piped or
+        redirected session, ``--quiet``, ``--json``, a model without streamed
+        tool calls — runs the same blocking turn as before.
         """
         from effgen.cli import progress as _progress
         from effgen.core.agent import AgentMode
@@ -134,6 +143,11 @@ class CodeTurnMixin:
                 self._banner_line("· working…", style="dim")
             return self.agent.run(task, mode=AgentMode.AUTO)
 
+        if self._can_stream_turn():
+            response = self._stream_agent(task, console)
+            if response is not None:
+                return response
+
         with _progress.LiveStatus(
             console,
             model_label=_progress.short_model_label(self.model_id),
@@ -142,6 +156,64 @@ class CodeTurnMixin:
             hint="Ctrl-C to cancel",
         ):
             return self.agent.run(task, mode=AgentMode.AUTO)
+
+    def _can_stream_turn(self) -> bool:
+        """True when this turn's answer can be rendered as it is written."""
+        probe = getattr(self.agent, "_can_stream_native_tools", None)
+        try:
+            return bool(probe and probe())
+        except Exception:  # noqa: BLE001 - a capability probe never breaks a turn
+            return False
+
+    def _stream_agent(self, task: str, console: Any) -> Any:
+        """Stream one turn, handing the terminal between status and answer.
+
+        Only one live region may own the terminal, so the status line runs while
+        the model is thinking and dispatching tools, and the answer region takes
+        over from the first answer delta. A tool call after the answer has begun
+        closes the region — leaving what was printed — and hands back to the
+        status line until the answer resumes.
+
+        Returns the turn's reconstructed record, or ``None`` when the stream
+        produced none, which tells the caller to run the turn the blocking way.
+        """
+        from effgen.cli import progress as _progress
+
+        status = _progress.LiveStatus(
+            console,
+            model_label=_progress.short_model_label(self.model_id),
+            reasoning=_progress.is_reasoning_agent(self.agent),
+            tracker=getattr(self.agent, "execution_tracker", None),
+            hint="Ctrl-C to cancel",
+        )
+        answer = _progress.LiveAnswer(console)
+        status.__enter__()
+        status_open = True
+        try:
+            for event in self.agent.stream(task, include_events=True):
+                if event.kind == "answer" and event.text:
+                    if status_open:
+                        status.__exit__(None, None, None)
+                        status_open = False
+                    if not answer.is_open:
+                        answer.open()
+                    answer.push(event.text)
+                elif event.kind in ("tool_call", "thought", "observation"):
+                    if answer.is_open:
+                        answer.close()
+                        status.__enter__()
+                        status_open = True
+        finally:
+            answer.close()
+            if status_open:
+                status.__exit__(None, None, None)
+        response = getattr(self.agent, "last_stream_response", None)
+        if response is None:
+            # The turn is about to be run again the blocking way, so nothing is
+            # claimed to be on screen already and its answer prints normally.
+            return None
+        self._streamed_answer = answer.text
+        return response
 
     def _post_turn_notes(self, result: Any) -> None:
         """Surface files written, refusals, withheld actions and the iteration cap."""

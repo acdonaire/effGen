@@ -458,6 +458,80 @@ class thinking_status:  # noqa: N801 - used as a lowercase context-manager facto
         return False
 
 
+class LiveAnswer:
+    """A live region that re-renders an answer as its deltas arrive.
+
+    :func:`stream_answer` renders one answer from start to finish; this is the
+    same region under the caller's control, for a surface that has to hand the
+    terminal back and forth — a coding turn opens it when the model starts
+    answering, closes it when a tool call interrupts, and opens it again when
+    the answer resumes. Only one live region may own the terminal at a time, so
+    the caller closes this before starting a status line and vice versa.
+
+    Closing leaves the rendered answer on screen (the region is not transient),
+    and :attr:`text` is everything pushed so far.
+
+    A no-op when ``rich`` is unavailable or *console* is ``None``: the deltas
+    still accumulate in :attr:`text`, nothing is drawn.
+    """
+
+    def __init__(self, console: Any) -> None:
+        self.console = console
+        self._parts: list[str] = []
+        self._live: Any = None
+        self._active = bool(_RICH_AVAILABLE and console is not None)
+
+    @property
+    def is_open(self) -> bool:
+        """True while the region owns the terminal."""
+        return self._live is not None
+
+    @property
+    def text(self) -> str:
+        """Everything pushed into the region, in order."""
+        return "".join(self._parts)
+
+    def open(self) -> None:
+        """Start drawing. Does nothing if the region is already open."""
+        if not self._active or self._live is not None:
+            return
+        self._live = Live(
+            console=self.console,
+            refresh_per_second=STREAM_REFRESH_PER_SECOND,
+            transient=False,
+            vertical_overflow="visible",
+        )
+        self._live.__enter__()
+        self._render()
+
+    def push(self, delta: str) -> None:
+        """Add *delta* to the answer and redraw."""
+        if not delta:
+            return
+        self._parts.append(delta)
+        self._render()
+
+    def close(self) -> None:
+        """Stop drawing, leaving what has been rendered on screen."""
+        live, self._live = self._live, None
+        if live is None:
+            return
+        try:
+            live.__exit__(None, None, None)
+        except Exception:  # noqa: BLE001 - never let cosmetics break a turn
+            pass
+
+    def _render(self) -> None:
+        if self._live is None:
+            return
+        from effgen.ui.render import answer_renderable
+
+        try:
+            self._live.update(answer_renderable(self.text))
+        except Exception:  # noqa: BLE001 - never let cosmetics break a turn
+            pass
+
+
 def stream_answer(
     console: Any,
     token_iter: Any,
