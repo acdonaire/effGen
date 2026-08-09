@@ -1,0 +1,855 @@
+"""Streaming tool loop driven by a provider's native tool calling.
+
+``Agent.stream()`` has always had two shapes: with no tools it streams the
+model's answer directly, and with tools it runs the prompt-based ReAct scaffold
+and hands back the parsed answer as one block. This module adds the third: for a
+model whose adapter reports its streamed tool calls, the loop dispatches those
+calls while the assistant's text streams through as it arrives.
+
+The loop mirrors the blocking one in :mod:`effgen.core.agent_react` — same
+prompt pieces, same dispatch, same repeat guards (they come from the shared
+:class:`~effgen.core.agent_tool_loop.NativeToolLoop`), same failure vocabulary —
+and reconstructs the :class:`~effgen.core.agent_response.AgentResponse` a
+non-streamed turn would have returned, so a caller that needs the per-turn record
+reads :attr:`Agent.last_stream_response` instead of running the task twice.
+
+Two rules decide what may be shown, and when:
+
+* **The answer-commit rule.** A turn's text is held back until the turn can no
+  longer become a tool call. Once the adapter has recorded a tool call the text
+  is delivered as a ``thought`` and never enters the answer; once a text delta
+  has arrived with no call declared the turn is committed to answering and every
+  later delta is passed through as it arrives.
+* **Sanitize before emitting.** Only the settled prefix of
+  :func:`~effgen.core.agent_runtime.sanitize_final_answer` applied to the text so
+  far is emitted, so what reaches the screen is what the answer ends up being.
+  The final word of the text so far is held back until more arrives, because it
+  can still grow.
+
+Together they give the invariant a consumer can rely on: for a stream that
+answered, joining the ``answer`` events reproduces
+``last_stream_response.output`` exactly. A stream that stopped at its iteration
+cap, or one whose model wrote its call out as text, reports the typed outcome in
+``output`` the same way ``run()`` does — that text is a ``status`` event, not an
+answer delta.
+
+This module imports nothing from ``agent.py``.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from collections.abc import Callable, Iterator
+from typing import Any
+
+from ..models._adapter_utils import default_max_output_tokens
+from ..models.base import (
+    GenerationConfig,
+    clear_stream_tool_calls,
+    clear_stream_usage,
+    get_stream_tool_calls,
+)
+from .agent_config import AgentMode
+from .agent_response import AgentResponse, StreamEvent
+from .agent_runtime import (
+    NUDGE_ALREADY_COMPUTED,
+    NUDGE_CONTINUE,
+    NUDGE_HAVE_RESULTS,
+    NUDGE_NOT_USABLE,
+    TEMPLATE_TOOL_USE_INSTRUCTION,
+    find_written_tool_call,
+    sanitize_final_answer,
+    unknown_tool_observation,
+)
+from .agent_tool_loop import NativeToolLoop
+
+logger = logging.getLogger(__name__)
+
+
+#: Labels that make sanitizing promote what follows them and discard what came
+#: before. Once the label is resolved the text after it grows monotonically, so
+#: only the label itself has to be held back.
+_ANSWER_LABELS = ("final answer:", "answer:")
+
+#: Tool-call syntax a model sometimes writes out instead of calling. Sanitizing
+#: removes these constructs from the middle of the text, so nothing can be
+#: emitted from a turn that contains one — what survives is not an extension of
+#: what came before it.
+_CALL_CONSTRUCTS = (
+    "<|channel>",
+    "<channel|>",
+    "<|tool_call>",
+    "<tool_call>",
+    "<function=",
+    "[tool_calls]",
+    "<|python_tag|>",
+)
+
+_REWRITE_MARKERS = _ANSWER_LABELS + _CALL_CONSTRUCTS
+
+
+def _contains(text: str, markers: tuple[str, ...]) -> bool:
+    """True when *text* holds any of *markers*."""
+    low = text.lower()
+    return any(marker in low for marker in markers)
+
+
+def _ends_mid_marker(text: str) -> bool:
+    """True when *text* ends with something that could still become a marker."""
+    low = text.lower()
+    for marker in _REWRITE_MARKERS:
+        for length in range(min(len(marker) - 1, len(low)), 0, -1):
+            if low.endswith(marker[:length]):
+                return True
+    return False
+
+
+class _AnswerStream:
+    """Turns raw model text into sanitized answer deltas, in order.
+
+    Fed the text as it arrives, it hands back only the part of the sanitized
+    answer that has settled. Two things are withheld: the trailing word, because
+    sanitizing collapses runs of spaces and strips the tail, and everything at
+    all while the text could still turn into a construct that rewrites what came
+    before it. :meth:`flush` releases the remainder once the model has stopped.
+
+    ``emitted`` is always exactly what the consumer received, so a caller can
+    use it as the answer and know the two agree.
+    """
+
+    def __init__(self) -> None:
+        self.raw = ""
+        self.emitted = ""
+        #: Set when sanitizing rewrote text that had already been delivered.
+        #: Nothing further is emitted, since a delta cannot be taken back;
+        #: ``emitted`` stays the answer of record.
+        self.diverged = False
+
+    def push(self, text: str) -> str:
+        """Add *text* to the answer and return the next delta (``""`` if none)."""
+        self.raw += text
+        return self._advance(hold_tail=True)
+
+    def flush(self) -> str:
+        """Release whatever is left once no more text is coming."""
+        return self._advance(hold_tail=False)
+
+    def _advance(self, hold_tail: bool) -> str:
+        if self.diverged:
+            return ""
+        if hold_tail and _ends_mid_marker(self.raw):
+            # The tail could still be the first half of a marker — an answer
+            # label being typed out, say. Emitting it now would put half a
+            # label on screen and then have to take it back.
+            return ""
+        if hold_tail and _contains(self.raw, _CALL_CONSTRUCTS):
+            # The turn is writing tool-call syntax into its text. Sanitizing
+            # cuts that construct out of the middle, so nothing here extends
+            # what came before it: hold the whole turn and deliver the cleaned
+            # text once the model stops, which is what a non-streamed turn does.
+            return ""
+        safe = sanitize_final_answer(self.raw) or ""
+        if hold_tail and _contains(safe, _ANSWER_LABELS):
+            # Sanitizing has not resolved the label yet: a bare "Final Answer:"
+            # with nothing after it is still the label, not the answer. Once the
+            # answer follows, what survives is the text after the label — which
+            # grows monotonically from there.
+            return ""
+        if not safe.startswith(self.emitted):
+            # Sanitizing changed text already on screen — a construct that
+            # rewrites its predecessor arriving after the answer was under way.
+            # It cannot be withdrawn, so stop advancing and keep what the
+            # consumer already has.
+            logger.debug("Streamed answer diverged from its sanitized form")
+            self.diverged = True
+            return ""
+        settled = safe
+        if hold_tail:
+            stripped = safe.rstrip()
+            cut = max(
+                stripped.rfind(" "), stripped.rfind("\n"), stripped.rfind("\t")
+            ) + 1
+            settled = safe[:cut] if cut > 0 else ""
+        if len(settled) <= len(self.emitted):
+            return ""
+        delta = settled[len(self.emitted):]
+        self.emitted = settled
+        return delta
+
+
+class AgentNativeStreamMixin:
+    """The streamed tool loop, and the record it leaves behind."""
+
+    # ------------------------------------------------------------------
+    # Eligibility
+    # ------------------------------------------------------------------
+    def _can_stream_native_tools(self) -> bool:
+        """True when this agent's next streamed turn can dispatch native calls.
+
+        Every condition has to hold: the agent carries ordinary tools, no
+        provider-side native tool is attached (those have their own run paths),
+        the strategy asks for native calling, the definitions travel through the
+        provider's tool-calling API rather than a chat template, the adapter
+        records the calls it streams, and no custom system-prompt template owns
+        the prompt. Anything else keeps today's path.
+        """
+        if not self.tools or self.model is None:
+            return False
+        if self.config.system_prompt_template:
+            return False
+        try:
+            if self._has_native_tools() or self._has_gemini_native_tools():
+                return False
+        except Exception:  # noqa: BLE001 - an unreadable tool set is not eligible
+            logger.debug("Native-tool probe failed", exc_info=True)
+            return False
+        if self._tool_calling_strategy.name not in ("native", "hybrid"):
+            return False
+        if self._model_tool_call_support() != "api":
+            return False
+        probe = getattr(self.model, "streams_tool_calls", None)
+        try:
+            return bool(probe and probe())
+        except Exception:  # noqa: BLE001 - a capability probe never breaks a run
+            logger.debug("streams_tool_calls probe failed", exc_info=True)
+            return False
+
+    @property
+    def last_stream_response(self) -> AgentResponse | None:
+        """The record of the most recent streamed tool loop, or ``None``.
+
+        Set once the iterator is exhausted, and shaped exactly like the
+        :class:`~effgen.core.agent_response.AgentResponse` the same task would
+        have produced through :meth:`run` — ``output``, ``success``,
+        ``iterations``, ``tool_calls``, ``tokens_used``, ``execution_time`` and
+        the ``reason`` / ``error`` / ``partial`` metadata — so a caller that
+        renders a turn can report it without running the task again. It is
+        ``None`` after a stream that did not take the native tool path (a
+        tool-free stream, or a model whose adapter does not record streamed
+        calls).
+        """
+        return getattr(self, "_last_stream_response", None)
+
+    # ------------------------------------------------------------------
+    # Prompt
+    # ------------------------------------------------------------------
+    def _native_tool_prompt(
+        self, task: str, scratchpad: str, conversation_history: str,
+        previous_actions: list[tuple[str, str]],
+    ) -> str:
+        """Build the turn's prompt, the same way the blocking loop builds it."""
+        if scratchpad:
+            prompt = (
+                f"{task}\n\n"
+                f"Previous steps:\n{scratchpad}\n\n"
+                f"{self._continuation_instruction(previous_actions)}"
+            )
+        else:
+            prompt = task
+        if conversation_history:
+            prompt = f"{conversation_history}\n\n{prompt}"
+        prompt = f"{self._persona_prefix()}{prompt}"
+        if not scratchpad and self.tools and self._model_tool_call_support() == "template":
+            prompt = f"{prompt}\n\n{TEMPLATE_TOOL_USE_INSTRUCTION}"
+        return prompt
+
+    # ------------------------------------------------------------------
+    # The loop
+    # ------------------------------------------------------------------
+    def _stream_native_tools(
+        self,
+        task: str,
+        on_thought: Callable[[str], None] | None = None,
+        on_tool_call: Callable[[str, str], None] | None = None,
+        on_observation: Callable[[str], None] | None = None,
+        on_answer: Callable[[str], None] | None = None,
+        include_events: bool = False,
+        _usage_acc: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> "Iterator[str] | Iterator[StreamEvent]":
+        """Stream one task through the model's native tool calling.
+
+        Yields answer-text deltas (or typed events with *include_events*) while
+        dispatching each tool call the model makes, and leaves the turn's record
+        in :attr:`last_stream_response`.
+        """
+        started = time.perf_counter()
+        max_iterations = kwargs.get("max_iterations", self.config.max_iterations)
+        guards = NativeToolLoop(self.tools, nudge_cap=self.config.max_iterations)
+        answer = _AnswerStream()
+        scratchpad = ""
+        iterations = 0
+        tool_calls = 0
+        committed = False  # has any answer delta reached the consumer this run
+
+        conversation_history = self._format_conversation_history()
+        # The same sampling settings the blocking loop sends: a value configured
+        # on the agent, or pinned per call, has to reach the model whichever path
+        # the turn takes. No stop sequences — there is no text scaffold to trim
+        # here, and the reasoning families reject them.
+        # A cap pinned on the call wins, then one configured on the agent — the
+        # same order ``run()`` resolves, so a turn does not get a different
+        # output budget for taking the streamed path.
+        max_tokens = kwargs.get("max_tokens")
+        if max_tokens is None:
+            max_tokens = self.config.max_tokens
+        if max_tokens is None:
+            max_tokens = default_max_output_tokens(self.model)
+        gen_config = GenerationConfig(
+            temperature=kwargs.get("temperature", self.config.temperature),
+            max_tokens=max_tokens,
+            top_p=kwargs.get("top_p", self.config.top_p),
+            top_k=kwargs.get("top_k", self.config.top_k),
+            seed=kwargs.get("seed", self.config.seed),
+            presence_penalty=kwargs.get(
+                "presence_penalty", self.config.presence_penalty
+            ),
+            frequency_penalty=kwargs.get(
+                "frequency_penalty", self.config.frequency_penalty
+            ),
+            repetition_penalty=kwargs.get(
+                "repetition_penalty", self.config.repetition_penalty
+            ),
+            reasoning_effort=kwargs.get("reasoning_effort"),
+        )
+
+        def _emit(text: str) -> "StreamEvent | str":
+            return StreamEvent(kind="answer", text=text) if include_events else text
+
+        while iterations < max_iterations:
+            iterations += 1
+            prompt = self._native_tool_prompt(
+                task, scratchpad, conversation_history, guards.previous_actions
+            )
+            gen_kwargs: dict[str, Any] = {}
+            # Once the guards stop offering tools the prompt stays the native
+            # one rather than switching to the ReAct scaffold the blocking loop
+            # falls back to: that scaffold's ``Thought:``/``Action:`` shape is
+            # written to the screen here, which is exactly what this path exists
+            # to avoid. Withholding the definitions is what forces the answer.
+            if not guards.tools_suppressed():
+                tool_defs = self._tool_calling_strategy.format_tools_for_prompt(
+                    list(self.tools.values())
+                )
+                if isinstance(tool_defs, list):
+                    gen_kwargs["tools"] = tool_defs
+
+            clear_stream_usage(self.model)
+            clear_stream_tool_calls(self.model)
+            raw = ""
+            turn_committed = False
+            failure: Exception | None = None
+            stream_iter: Any = None
+            try:
+                # Opening the stream belongs inside the guard: the budget gate
+                # wrapping ``generate_stream`` refuses synchronously, before the
+                # iterator exists, so a refusal raised here would otherwise
+                # leave the loop with no record and no fallback.
+                stream_iter = self.model.generate_stream(
+                    prompt, config=gen_config, **gen_kwargs
+                )
+                for token in stream_iter:
+                    if not token:
+                        continue
+                    raw += token
+                    if not turn_committed:
+                        if get_stream_tool_calls(self.model):
+                            # The turn is making a call; its text is reasoning.
+                            continue
+                        turn_committed = True
+                        delta = answer.push(raw)
+                    else:
+                        delta = answer.push(token)
+                    if delta:
+                        committed = True
+                        yield _emit(delta)
+            except Exception as exc:  # noqa: BLE001 - handled below
+                logger.debug("Native streaming turn failed", exc_info=True)
+                failure = exc
+            finally:
+                close_stream = getattr(stream_iter, "close", None)
+                if close_stream is not None:
+                    close_stream()
+
+            if failure is not None:
+                if committed:
+                    # Part of the answer is already on screen; the contract says
+                    # a mid-stream failure is raised, not disguised as an end.
+                    self._last_stream_response = self._native_stream_failure(
+                        task, failure, iterations=iterations, tool_calls=tool_calls,
+                        usage_acc=_usage_acc, started=started,
+                    )
+                    raise failure
+                # Nothing has been delivered yet, so the whole task can be run
+                # again on the non-streaming path, which retries provider-side
+                # rejections the stream has no retry for. The answer then
+                # arrives in one block — today's behaviour.
+                yield from self._native_stream_fallback(
+                    task, failure, include_events=include_events,
+                    on_answer=on_answer, usage_acc=_usage_acc, started=started,
+                    **kwargs,
+                )
+                return
+
+            if _usage_acc is not None:
+                self._fold_stream_usage(_usage_acc, prompt, raw)
+
+            calls = get_stream_tool_calls(self.model)
+
+            if not calls:
+                # ---- the turn is the answer -------------------------------
+                delta = answer.flush()
+                if delta:
+                    committed = True
+                    yield _emit(delta)
+                if not turn_committed or not raw.strip():
+                    scratchpad += "\nThought: "
+                    scratchpad += "\nAction: (continue reasoning)"
+                    continue
+                text = answer.emitted
+                if not text.strip():
+                    # The turn produced only scaffolding. When what leaked is a
+                    # call for a tool this agent holds, the model is writing the
+                    # call instead of making it: say so once, then report it.
+                    written = find_written_tool_call(raw, self.tools)
+                    if written and guards.is_unmade_call(written, raw):
+                        if guards.note_written_call(written):
+                            self._last_stream_response = self._native_written_call(
+                                task, guards, raw, iterations=iterations,
+                                tool_calls=tool_calls, usage_acc=_usage_acc,
+                                started=started,
+                            )
+                            yield from self._yield_outcome(
+                                self._last_stream_response, include_events
+                            )
+                            return
+                    scratchpad += f"\nObservation: {NUDGE_NOT_USABLE}"
+                    continue
+                written = find_written_tool_call(
+                    text, self.tools
+                ) or find_written_tool_call(raw, self.tools)
+                if written and guards.is_unmade_call(written, raw):
+                    self._last_stream_response = self._native_written_call(
+                        task, guards, raw, iterations=iterations,
+                        tool_calls=tool_calls, usage_acc=_usage_acc,
+                        started=started, written=written,
+                    )
+                    yield from self._yield_outcome(
+                        self._last_stream_response, include_events
+                    )
+                    return
+                if on_answer:
+                    on_answer(text)
+                self.short_term_memory.add_user_message(task)
+                self.short_term_memory.add_assistant_message(text)
+                self._last_stream_response = self._native_stream_response(
+                    task, output=text, success=True, iterations=iterations,
+                    tool_calls=tool_calls, usage_acc=_usage_acc, started=started,
+                    meta={"reason": "final_answer"},
+                )
+                return
+
+            # ---- the turn made tool calls ---------------------------------
+            thought = "" if turn_committed else raw.strip()
+            if thought:
+                if on_thought:
+                    on_thought(thought)
+                if include_events:
+                    yield StreamEvent(kind="thought", text=thought)
+            scratchpad += f"\nThought: {thought}"
+
+            if len(calls) > 1:
+                # Several calls in one turn are dispatched as a batch and
+                # answered together, matching the blocking loop.
+                for call in calls:
+                    name, args = _call_parts(call)
+                    if on_tool_call:
+                        on_tool_call(name, json.dumps(args))
+                    if include_events:
+                        yield StreamEvent(
+                            kind="tool_call", tool=name, tool_input=json.dumps(args)
+                        )
+                    if name in self.tools:
+                        observation = self._execute_tool(name, json.dumps(args))
+                        tool_calls += 1
+                        guards.record_execution(name)
+                        scratchpad += (
+                            f"\nAction: {name}"
+                            f"\nAction Input: {json.dumps(args)}"
+                            f"\nObservation: {observation}"
+                        )
+                    else:
+                        observation = unknown_tool_observation(name, list(self.tools))
+                    if on_observation:
+                        on_observation(observation)
+                    if include_events:
+                        yield StreamEvent(
+                            kind="observation", tool=name, text=observation
+                        )
+                scratchpad += f"\n{NUDGE_CONTINUE}"
+                guards.note_batch_run()
+                continue
+
+            parsed = self._tool_call_result_to_dict(
+                self._parse_native_tool_calls(calls)
+            )
+            action = parsed.get("action")
+            action_input = parsed.get("action_input")
+            if not action or action_input is None:
+                scratchpad += "\nAction: (continue reasoning)"
+                continue
+
+            if on_tool_call:
+                on_tool_call(action, str(action_input))
+            if include_events:
+                yield StreamEvent(
+                    kind="tool_call", tool=action, tool_input=str(action_input)
+                )
+
+            check = guards.check_action(action, action_input)
+            if check.is_loop:
+                logger.info(
+                    "[Loop detected] Repeated action '%s' (%s) while streaming",
+                    action, check.loop_type,
+                )
+                partial = self._extract_partial_answer(scratchpad)
+                if (
+                    partial
+                    and self._is_context_retrieval_tool(action)
+                    and not guards.force_text_answer
+                ):
+                    guards.force_text_answer = True
+                    scratchpad += (
+                        f"\nAction: {action}"
+                        f"\nAction Input: {action_input}"
+                        f"\nObservation: {NUDGE_HAVE_RESULTS}"
+                    )
+                    continue
+                if partial:
+                    yield from self._finish_with_recovered(
+                        task, partial, guards, iterations=iterations,
+                        tool_calls=tool_calls, usage_acc=_usage_acc,
+                        started=started, include_events=include_events,
+                        on_answer=on_answer, answer_stream=answer,
+                        answer_source="loop_detected", repeated_action=action,
+                        partial=True,
+                    )
+                    return
+                guards.force_text_answer = True
+                scratchpad += (
+                    f"\nAction: {action}"
+                    f"\nAction Input: {action_input}"
+                    f"\nObservation: {NUDGE_ALREADY_COMPUTED}"
+                )
+                continue
+
+            guards.record_action(check)
+
+            if action not in self.tools:
+                observation = unknown_tool_observation(action, list(self.tools))
+                scratchpad += (
+                    f"\nAction: {action}"
+                    f"\nAction Input: {action_input}"
+                    f"\nObservation: {observation}"
+                )
+                if on_observation:
+                    on_observation(observation)
+                if include_events:
+                    yield StreamEvent(
+                        kind="observation", tool=action, text=observation
+                    )
+                continue
+
+            observation = self._execute_tool(action, action_input)
+            tool_calls += 1
+            guards.record_execution(action)
+            scratchpad += (
+                f"\nAction: {action}"
+                f"\nAction Input: {action_input}"
+                f"\nObservation: {observation}"
+            )
+            if on_observation:
+                on_observation(observation)
+            if include_events:
+                yield StreamEvent(kind="observation", tool=action, text=observation)
+
+            if self._should_return_direct_calculator_result(task, action, action_input):
+                yield from self._finish_with_recovered(
+                    task, observation, guards, iterations=iterations,
+                    tool_calls=tool_calls, usage_acc=_usage_acc, started=started,
+                    include_events=include_events, on_answer=on_answer,
+                    answer_stream=answer, answer_source="direct_calculator_result",
+                )
+                return
+
+            if guards.result_is_repeat(action, observation):
+                if (
+                    self._is_context_retrieval_tool(action)
+                    and not guards.force_text_answer
+                ):
+                    guards.force_text_answer = True
+                    scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
+                    continue
+                extra: dict[str, Any] = (
+                    {"partial": True} if self._is_context_retrieval_tool(action) else {}
+                )
+                yield from self._finish_with_recovered(
+                    task, observation, guards, iterations=iterations,
+                    tool_calls=tool_calls, usage_acc=_usage_acc, started=started,
+                    include_events=include_events, on_answer=on_answer,
+                    answer_stream=answer, answer_source="repeated_tool_result",
+                    **extra,
+                )
+                return
+            guards.record_result(action, observation)
+
+            nudge = guards.post_tool_nudge(
+                iterations, check.action_call_count, observation
+            )
+            if nudge:
+                scratchpad += f"\n{nudge}"
+
+        # ---- the iteration cap ------------------------------------------
+        partial_answer = self._extract_partial_answer(scratchpad)
+        if guards.written_call and not partial_answer:
+            self._last_stream_response = self._native_written_call(
+                task, guards, "", iterations=iterations, tool_calls=tool_calls,
+                usage_acc=_usage_acc, started=started,
+            )
+            yield from self._yield_outcome(self._last_stream_response, include_events)
+            return
+        if partial_answer:
+            partial_answer = sanitize_final_answer(partial_answer) or partial_answer
+        detail = self._iteration_cap_detail(max_iterations, partial_answer)
+        meta: dict[str, Any] = {
+            "reason": (
+                "max_iterations_partial" if partial_answer else "max_iterations_exhausted"
+            ),
+            "error": detail,
+        }
+        if partial_answer:
+            meta["partial"] = True
+            meta["partial_output"] = partial_answer
+        self._last_stream_response = self._native_stream_response(
+            task, output=detail["message"], success=False, iterations=iterations,
+            tool_calls=tool_calls, usage_acc=_usage_acc, started=started, meta=meta,
+        )
+        yield from self._yield_outcome(self._last_stream_response, include_events)
+
+    # ------------------------------------------------------------------
+    # Terminal shapes
+    # ------------------------------------------------------------------
+    def _yield_outcome(
+        self, response: AgentResponse, include_events: bool
+    ) -> "Iterator[str] | Iterator[StreamEvent]":
+        """Deliver a terminal notice that is not an answer.
+
+        The iteration cap and a written-out call have no answer to stream, so
+        the typed outcome travels as a ``status`` event (plain text without
+        events), exactly as the ReAct streaming path already reports its step
+        limit.
+        """
+        if include_events:
+            yield StreamEvent(kind="status", text=response.output)
+        else:
+            yield response.output
+
+    def _finish_with_recovered(
+        self,
+        task: str,
+        text: str,
+        guards: NativeToolLoop,
+        *,
+        iterations: int,
+        tool_calls: int,
+        usage_acc: dict[str, Any] | None,
+        started: float,
+        include_events: bool,
+        on_answer: Callable[[str], None] | None,
+        answer_stream: _AnswerStream,
+        answer_source: str,
+        **extra_meta: Any,
+    ) -> "Iterator[str] | Iterator[StreamEvent]":
+        """End the run on an answer the loop recovered rather than streamed.
+
+        A repeated call or a tool that reproduced its own result ends the run
+        with an observation as the answer; it was never streamed, so it is
+        emitted here as answer deltas and folded into the same buffer, keeping
+        the join invariant true.
+        """
+        output = sanitize_final_answer(text) or text
+        written = find_written_tool_call(output, self.tools) or find_written_tool_call(
+            text, self.tools
+        )
+        if written and guards.is_unmade_call(written, text):
+            self._last_stream_response = self._native_written_call(
+                task, guards, text, iterations=iterations, tool_calls=tool_calls,
+                usage_acc=usage_acc, started=started, written=written,
+            )
+            yield from self._yield_outcome(self._last_stream_response, include_events)
+            return
+        delta = answer_stream.push(output)
+        delta += answer_stream.flush()
+        if delta:
+            yield StreamEvent(kind="answer", text=delta) if include_events else delta
+        final = answer_stream.emitted
+        if on_answer:
+            on_answer(final)
+        if final:
+            self.short_term_memory.add_user_message(task)
+            self.short_term_memory.add_assistant_message(final)
+        meta: dict[str, Any] = {"reason": "final_answer", "answer_source": answer_source}
+        meta.update(extra_meta)
+        self._last_stream_response = self._native_stream_response(
+            task, output=final, success=True, iterations=iterations,
+            tool_calls=tool_calls, usage_acc=usage_acc, started=started, meta=meta,
+        )
+
+    def _native_stream_fallback(
+        self,
+        task: str,
+        failure: Exception,
+        *,
+        include_events: bool,
+        on_answer: Callable[[str], None] | None,
+        usage_acc: dict[str, Any] | None,
+        started: float,
+        **kwargs: Any,
+    ) -> "Iterator[str] | Iterator[StreamEvent]":
+        """Re-run *task* without streaming after a failure that reached nobody.
+
+        A streamed call has no retry layer, while the blocking path has two, so
+        a provider-side rejection that ``run()`` would have retried away must not
+        end the turn. Nothing has been delivered at this point, so the task is
+        run once more and its answer is emitted as deltas.
+        """
+        logger.info(
+            "Streaming tool turn failed before any output; retrying without "
+            "streaming (%s)", type(failure).__name__,
+        )
+        from .agent_streaming import _chunk_answer_text
+
+        run_kwargs = {
+            k: v for k, v in kwargs.items()
+            if k in {"temperature", "max_tokens", "top_p", "seed", "max_iterations",
+                     "reasoning_effort"}
+        }
+        response = self.run(task, **run_kwargs)
+        if usage_acc is not None:
+            usage_acc["total_tokens"] = (
+                usage_acc.get("total_tokens") or 0
+            ) + int(response.tokens_used or 0)
+            cost = (response.metadata or {}).get("cost_usd")
+            if cost is not None:
+                usage_acc["cost_usd"] = (usage_acc.get("cost_usd") or 0.0) + float(cost)
+            usage_acc["model_calls"] = usage_acc.get("model_calls", 0) + 1
+        response.execution_time = time.perf_counter() - started
+        (response.metadata or {}).setdefault("stream_fallback", True)
+        self._last_stream_response = response
+        if response.success and response.output:
+            if on_answer:
+                on_answer(response.output)
+            for chunk in _chunk_answer_text(response.output):
+                yield StreamEvent(kind="answer", text=chunk) if include_events else chunk
+            return
+        yield from self._yield_outcome(response, include_events)
+
+    def _native_written_call(
+        self,
+        task: str,
+        guards: NativeToolLoop,
+        text: str,
+        *,
+        iterations: int,
+        tool_calls: int,
+        usage_acc: dict[str, Any] | None,
+        started: float,
+        written: str | None = None,
+    ) -> AgentResponse:
+        """Build the record for a turn that wrote its tool call out as text."""
+        name = written or guards.written_call or ""
+        detail = self._written_tool_call_detail(
+            name, text, tool_ran=guards.tool_ran(name)
+        )
+        logger.warning("Tool call was written as text, not made: %s", detail["message"])
+        return self._native_stream_response(
+            task, output=detail["message"], success=False, iterations=iterations,
+            tool_calls=tool_calls, usage_acc=usage_acc, started=started,
+            meta={"reason": "written_tool_call", "error": detail},
+        )
+
+    def _native_stream_failure(
+        self,
+        task: str,
+        failure: Exception,
+        *,
+        iterations: int,
+        tool_calls: int,
+        usage_acc: dict[str, Any] | None,
+        started: float,
+    ) -> AgentResponse:
+        """Build the record for a stream that failed after it began answering."""
+        detail = self._build_error_detail(failure, self.model)
+        return self._native_stream_response(
+            task, output=str(detail.get("message") or failure), success=False,
+            iterations=iterations, tool_calls=tool_calls, usage_acc=usage_acc,
+            started=started, meta={"reason": "generation_failed", "error": detail},
+        )
+
+    def _native_stream_response(
+        self,
+        task: str,
+        *,
+        output: str,
+        success: bool,
+        iterations: int,
+        tool_calls: int,
+        usage_acc: dict[str, Any] | None,
+        started: float,
+        meta: dict[str, Any],
+    ) -> AgentResponse:
+        """Assemble the :class:`AgentResponse` a streamed turn reconstructs."""
+        usage = dict(usage_acc or {})
+        metadata: dict[str, Any] = {
+            "tool_calling_strategy": self._tool_calling_strategy.name,
+            "streamed": True,
+        }
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cost_usd"):
+            metadata[key] = usage.get(key)
+        metadata["latency_ms"] = round((time.perf_counter() - started) * 1000.0, 1)
+        metadata.update(meta)
+        return AgentResponse(
+            output=output,
+            success=success,
+            mode=AgentMode.SINGLE,
+            iterations=iterations,
+            tool_calls=tool_calls,
+            tokens_used=int(usage.get("total_tokens") or 0),
+            execution_time=time.perf_counter() - started,
+            metadata=metadata,
+            task=task,
+            model=getattr(self.model, "model_name", None) or self.model_name,
+            provider=self._model_provider(self.model),
+        )
+
+
+def _call_parts(call: dict[str, Any]) -> tuple[str, Any]:
+    """Return ``(name, arguments)`` for one recorded tool call.
+
+    Arguments arrive as the JSON string the model streamed; text that is not
+    JSON is passed through under ``__raw_input__`` so the tool layer reports it
+    rather than the loop dropping the call.
+    """
+    fn = call.get("function", call)
+    name = fn.get("name", "")
+    args = fn.get("arguments", {})
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (json.JSONDecodeError, TypeError):
+            args = {"__raw_input__": args}
+    if not isinstance(args, dict):
+        args = {}
+    return name, args

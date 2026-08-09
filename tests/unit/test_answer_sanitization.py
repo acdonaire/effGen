@@ -312,29 +312,33 @@ def test_every_unknown_tool_observation_is_stripped():
 
 
 def test_injection_sites_use_the_shared_nudges():
-    """The agent_react injection sites must reference the shared NUDGE_* values.
+    """Every injection site must reference the shared NUDGE_* values.
 
-    Reading the source keeps the two files in sync: every literal a loop appends
-    should be one of the named constants (so it is also on the strip-list).
+    Reading the source keeps the files in sync: every literal a loop appends
+    should be one of the named constants (so it is also on the strip-list). The
+    sites are the blocking loop, the streamed loop, and the repeat policy they
+    share.
     """
     import inspect
 
     import effgen.core.agent_react as ar
     import effgen.core.agent_runtime as rt
+    import effgen.core.agent_stream_native as sn
+    import effgen.core.agent_tool_loop as tl
 
-    src = inspect.getsource(ar)
+    src = "\n".join(inspect.getsource(m) for m in (ar, tl, sn))
     for name in ("NUDGE_CONTINUE", "NUDGE_HAVE_ANSWER", "NUDGE_HAVE_RESULTS",
                  "NUDGE_ALREADY_COMPUTED", "NUDGE_NO_TOOLS", "NUDGE_NOT_USABLE"):
         assert getattr(rt, name, None), f"missing nudge constant {name}"
-        assert name in src, f"agent_react no longer references {name}"
+        assert name in src, f"no tool-loop module references {name}"
 
-    # The unknown-tool observation is built, not a constant. Both loops must
-    # build it from the one shared function, or run() and stream() diverge on
-    # the same model output.
+    # The unknown-tool observation is built, not a constant. Every loop must
+    # build it from the one shared function, or the paths diverge on the same
+    # model output.
     import effgen.core.agent_streaming as st
 
     assert callable(getattr(rt, "unknown_tool_observation", None))
-    for module in (ar, st):
+    for module in (ar, st, sn):
         # The call, not the import — a module that keeps the import but writes
         # its own observation text is exactly the drift this guards.
         assert "unknown_tool_observation(" in inspect.getsource(module), (

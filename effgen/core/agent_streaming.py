@@ -212,6 +212,10 @@ class AgentStreamingMixin:
         usage_acc: dict[str, Any] = {}
         started = time.perf_counter()
         ttft: float | None = None
+        # Cleared up front so a stream that does not reconstruct a response —
+        # a tool-free stream, or a model whose calls are not streamed — never
+        # leaves the previous stream's record readable as if it were this one's.
+        self._last_stream_response = None
         for item in self._stream_impl(
             task,
             mode=mode,
@@ -245,6 +249,20 @@ class AgentStreamingMixin:
         usage["latency_ms"] = round((time.perf_counter() - started) * 1000.0, 1)
         usage["ttft_ms"] = round(ttft * 1000.0, 1) if ttft is not None else None
         self._last_stream_usage = usage
+        # A reconstructed per-turn record is built before these run-level
+        # timings exist, so it is completed here rather than carrying its own
+        # narrower numbers.
+        response = getattr(self, "_last_stream_response", None)
+        if response is not None:
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens",
+                        "cost_usd"):
+                if usage.get(key) is not None:
+                    response.metadata[key] = usage[key]
+            response.metadata["latency_ms"] = usage["latency_ms"]
+            response.metadata["ttft_ms"] = usage["ttft_ms"]
+            response.tokens_used = int(
+                usage.get("total_tokens") or response.tokens_used or 0
+            )
         if include_events:
             yield StreamEvent(kind="usage", usage=usage)
 
@@ -319,6 +337,23 @@ class AgentStreamingMixin:
             yield from self._stream_direct(
                 task, on_answer=on_answer, include_events=include_events,
                 _usage_acc=_usage_acc, **kwargs
+            )
+            return
+
+        # With a model whose adapter records the tool calls it streams, the loop
+        # can dispatch those calls natively while the assistant's text streams
+        # through as it arrives — the same loop ``run()`` drives, rather than the
+        # ReAct text scaffold below. Every other model keeps that scaffold.
+        if self._can_stream_native_tools():
+            yield from self._stream_native_tools(
+                task,
+                on_thought=on_thought,
+                on_tool_call=on_tool_call,
+                on_observation=on_observation,
+                on_answer=on_answer,
+                include_events=include_events,
+                _usage_acc=_usage_acc,
+                **kwargs,
             )
             return
 

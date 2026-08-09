@@ -35,6 +35,7 @@ from .agent_citations import AgentCitationsMixin
 from .agent_native_tools import AgentNativeToolsMixin
 from .agent_react_parsing import AgentReActParsingMixin
 from .agent_tool_execution import AgentToolExecutionMixin
+from .agent_tool_loop import NativeToolLoop
 from .execution_tracker import EventType, ExecutionEvent
 from .router import RoutingDecision, RoutingStrategy
 
@@ -49,7 +50,6 @@ from .agent_runtime import (  # noqa: E402
     CONTINUE_INSTRUCTION,
     NUDGE_ALREADY_COMPUTED,
     NUDGE_CONTINUE,
-    NUDGE_HAVE_ANSWER,
     NUDGE_HAVE_RESULTS,
     NUDGE_NO_TOOLS,
     NUDGE_NOT_USABLE,
@@ -58,7 +58,6 @@ from .agent_runtime import (  # noqa: E402
     find_written_tool_call,
     sanitize_final_answer,
     unknown_tool_observation,
-    written_call_only,
 )
 
 #: Models that complete a tool loop through the provider's tool-calling API,
@@ -138,30 +137,11 @@ class AgentReActMixin(
         # Format conversation history
         conversation_history = self._format_conversation_history()
 
-        # ReAct loop
-        previous_actions: list[tuple[str, str]] = []  # Track (action, input) pairs for loop detection
-        previous_results: list[tuple[str, str]] = []  # Track (action, result) pairs to stop on a confident, repeated answer
-        _batch_tool_runs = 0  # Count of batch native-tool runs; cap at 2 to prevent infinite loops
-        # Set once a repeated action loops with no usable partial answer (every
-        # attempt failed/was denied) — stops re-offering tools so the model
-        # must synthesize a prose answer instead of retrying forever.
-        _force_text_answer = False
-        # The tool whose call the model wrote out as text instead of making,
-        # and how many turns did it — one nudge is allowed before the run is
-        # reported as a turn that ran no tool.
-        _written_call: str | None = None
-        _written_call_turns = 0
-        # Tools this run actually dispatched. An answer that recaps a call the
-        # run really made is an answer, not a call the model only described.
-        _executed_tools: set[str] = set()
-
-        def _is_unmade_call(written: str, text: str) -> bool:
-            """True when a written-out call block means the work never happened.
-
-            Either the named tool never ran in this run, or the text is nothing
-            but the call — a recap beside a real answer is neither.
-            """
-            return written not in _executed_tools or written_call_only(text, self.tools)
+        # ReAct loop. The repeat guards — which calls have been dispatched, which
+        # results have already come back, when to stop offering tools and when a
+        # written-out call has been seen once too often — live in the loop policy
+        # the streaming loop shares, so both reach the same decisions.
+        guards = NativeToolLoop(self.tools, nudge_cap=self.config.max_iterations)
 
         # Optional periodic checkpointing
         _ckpt_interval = _ckpt_interval_arg
@@ -207,7 +187,7 @@ class AgentReActMixin(
             gen_kwargs = dict(kwargs)
             # After 2 multi-tool batches, or once a loop with no usable partial
             # answer was detected, stop passing tools to force synthesis.
-            if _batch_tool_runs >= 2 or _force_text_answer:
+            if guards.tools_suppressed():
                 use_native_prompt = False
             if use_native_prompt and not self.config.system_prompt_template:
                 # Native/hybrid mode: use a simple user message and pass
@@ -218,7 +198,7 @@ class AgentReActMixin(
                     prompt = (
                         f"{task}\n\n"
                         f"Previous steps:\n{scratchpad}\n\n"
-                        f"{self._continuation_instruction(previous_actions)}"
+                        f"{self._continuation_instruction(guards.previous_actions)}"
                     )
                 else:
                     prompt = task
@@ -266,7 +246,7 @@ class AgentReActMixin(
                     conversation_history=conversation_history,
                     system_prompt=self.config.system_prompt,
                     verbose=self._verbose_tools,
-                    closing_instruction=self._context_answer_instruction(previous_actions),
+                    closing_instruction=self._context_answer_instruction(guards.previous_actions),
                 )
 
             # Debug: log first iteration prompt to see if history is included
@@ -345,17 +325,17 @@ class AgentReActMixin(
                             except Exception:
                                 logger.debug("Failed to set tool span status", exc_info=True)
                         tool_calls += 1
-                        _executed_tools.add(_tname)
+                        guards.record_execution(_tname)
                         batch_observations.append(f"[{_tname}({_targs})] → {_obs}")
                         scratchpad += f"\nAction: {_tname}\nAction Input: {json.dumps(_targs)}\nObservation: {_obs}"
                     else:
                         batch_observations.append(f"[{_tname}] → Tool not found")
                 # After batch execution, nudge model to synthesize a final answer.
                 scratchpad += f"\n{NUDGE_CONTINUE}"
-                _batch_tool_runs += 1
+                guards.note_batch_run()
                 parsed = {"thought": "", "action": None, "action_input": None, "final_answer": None}
                 cur_observation = "\n".join(batch_observations)
-                logger.info(f"[Batch native tool calls] {len(native_tool_calls)} calls executed (batch run #{_batch_tool_runs})")
+                logger.info(f"[Batch native tool calls] {len(native_tool_calls)} calls executed (batch run #{guards.batch_tool_runs})")
             elif native_tool_calls:
                 strategy_result = self._parse_native_tool_calls(native_tool_calls)
                 # Convert to legacy dict format for compatibility with rest of loop
@@ -371,8 +351,10 @@ class AgentReActMixin(
             # Debug: Log what was parsed
             logger.info(f"[Iteration {iterations}] Parsed - Action: {parsed.get('action')}, Input: {parsed.get('action_input')}, Final: {parsed.get('final_answer')}")
 
-            # Add to scratchpad
-            scratchpad += f"\nThought: {parsed.get('thought', '')}"
+            # Add to scratchpad. A turn that made a native tool call reports no
+            # thought, and the scratchpad is prompt text the model reads back —
+            # so an absent thought is an empty line, never the word "None".
+            scratchpad += f"\nThought: {parsed.get('thought') or ''}"
 
             # Capture debug iteration data
             cur_observation = None  # filled later if tool runs
@@ -399,14 +381,14 @@ class AgentReActMixin(
                     written = find_written_tool_call(
                         output, self.tools
                     ) or find_written_tool_call(raw_answer, self.tools)
-                    if written and _is_unmade_call(written, raw_answer):
+                    if written and guards.is_unmade_call(written, raw_answer):
                         return self._written_tool_call_response(
                             written,
                             output,
                             iterations=_iterations,
                             tool_calls=_tool_calls,
                             tokens_used=_tokens_used,
-                            tool_ran=written in _executed_tools,
+                            tool_ran=guards.tool_ran(written),
                             debug_trace=debug_trace,
                         )
                 meta: dict[str, Any] = {
@@ -455,17 +437,15 @@ class AgentReActMixin(
             # outcome.
             if final_answer and not (sanitize_final_answer(final_answer) or "").strip():
                 written = find_written_tool_call(final_answer, self.tools)
-                if written and _is_unmade_call(written, final_answer):
-                    _written_call = _written_call or written
-                    _written_call_turns += 1
-                    if _written_call_turns > 1:
+                if written and guards.is_unmade_call(written, final_answer):
+                    if guards.note_written_call(written):
                         return self._written_tool_call_response(
-                            _written_call,
+                            guards.written_call,
                             final_answer,
                             iterations=iterations,
                             tool_calls=tool_calls,
                             tokens_used=tokens_used,
-                            tool_ran=_written_call in _executed_tools,
+                            tool_ran=guards.tool_ran(guards.written_call),
                             debug_trace=debug_trace,
                         )
                 logger.info(
@@ -517,31 +497,13 @@ class AgentReActMixin(
                 action = parsed["action"]
                 action_input = parsed["action_input"]
 
-                # Loop detection: check if we've seen this exact (action, input) before
-                # Also detect fuzzy loops: same tool called 3+ times with different inputs
-                # (SLMs like Llama produce slightly different formatting each time)
-                # Normalize action_input for comparison
-                normalized_input = action_input.strip()
-                try:
-                    parsed_json = json.loads(normalized_input)
-                    normalized_input = json.dumps(parsed_json, sort_keys=True)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-                current_pair = (action, normalized_input)
-                action_call_count = sum(1 for a, _ in previous_actions if a == action)
-                exact_loop_count = sum(1 for pair in previous_actions if pair == current_pair)
-                is_exact_loop = exact_loop_count >= 1 and action in self.tools
-                fuzzy_threshold = 5
-                if action in self.tools:
-                    tool = self.tools[action]
-                    if hasattr(tool, 'metadata') and hasattr(tool.metadata, 'category'):
-                        if tool.metadata.category == ToolCategory.DATA_PROCESSING:
-                            fuzzy_threshold = 7
-                is_fuzzy_loop = action_call_count >= fuzzy_threshold and action in self.tools
-                if is_exact_loop or is_fuzzy_loop:
-                    loop_type = "exact" if is_exact_loop else f"fuzzy ({action_call_count + 1} calls)"
+                # Repeat detection: the same call again, or the same tool
+                # enough times with drifting inputs that it reads as a loop.
+                check = guards.check_action(action, action_input)
+                action_call_count = check.action_call_count
+                if check.is_loop:
                     logger.info(
-                        f"[Loop detected] Repeated action '{action}' ({loop_type}) — "
+                        f"[Loop detected] Repeated action '{action}' ({check.loop_type}) — "
                         f"breaking loop and returning last observation"
                     )
                     # Extract the last successful observation from scratchpad
@@ -554,9 +516,9 @@ class AgentReActMixin(
                     if (
                         partial
                         and self._is_context_retrieval_tool(action)
-                        and not _force_text_answer
+                        and not guards.force_text_answer
                     ):
-                        _force_text_answer = True
+                        guards.force_text_answer = True
                         scratchpad += (
                             f"\nAction: {action}"
                             f"\nAction Input: {action_input}"
@@ -576,7 +538,7 @@ class AgentReActMixin(
                     # max_iterations (the model keeps retrying the tool it was
                     # just told is already computed). Stop offering tools for
                     # the rest of this run so the model must respond in prose.
-                    _force_text_answer = True
+                    guards.force_text_answer = True
                     scratchpad += (
                         f"\nAction: {action}"
                         f"\nAction Input: {action_input}"
@@ -584,7 +546,7 @@ class AgentReActMixin(
                     )
                     continue
 
-                previous_actions.append(current_pair)
+                guards.record_action(check)
 
                 # Check if tool is available (handle no-tool mode without raising)
                 if not self.tools or action not in self.tools:
@@ -612,7 +574,7 @@ class AgentReActMixin(
                             logger.debug("Failed to set tool span status", exc_info=True)
                     tool_elapsed = time.time() - tool_start
                     tool_calls += 1
-                    _executed_tools.add(action)
+                    guards.record_execution(action)
                     cur_observation = tool_result
 
                     # Metrics for tool execution
@@ -646,55 +608,49 @@ class AgentReActMixin(
                     # guard never fires. If a tool reproduces a result it already
                     # returned, the answer is confident — stop and return it
                     # instead of burning iterations on redundant re-planning.
-                    if not tool_result.startswith("Error executing tool"):
-                        normalized_result = " ".join(tool_result.split())[:500]
-                        result_key = (action, normalized_result)
-                        if result_key in previous_results:
-                            # A retrieval/search tool's output is context, not a
-                            # synthesized answer, so returning it verbatim hands
-                            # back a passage dump. The observation is already in
-                            # the scratchpad: stop offering tools and give the
-                            # model one turn to write the answer from it. A
-                            # compute tool (e.g. calculator) reproducing its
-                            # result is a confident answer and is returned as-is.
-                            if (
-                                self._is_context_retrieval_tool(action)
-                                and not _force_text_answer
-                            ):
-                                logger.info(
-                                    "[Loop efficiency] Retrieval tool '%s' repeated a "
-                                    "result; asking for a synthesized answer",
-                                    action,
-                                )
-                                _force_text_answer = True
-                                scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
-                                continue
+                    if guards.result_is_repeat(action, tool_result):
+                        # A retrieval/search tool's output is context, not a
+                        # synthesized answer, so returning it verbatim hands
+                        # back a passage dump. The observation is already in
+                        # the scratchpad: stop offering tools and give the
+                        # model one turn to write the answer from it. A
+                        # compute tool (e.g. calculator) reproducing its
+                        # result is a confident answer and is returned as-is.
+                        if (
+                            self._is_context_retrieval_tool(action)
+                            and not guards.force_text_answer
+                        ):
                             logger.info(
-                                "[Loop efficiency] Tool '%s' reproduced an identical "
-                                "result; returning it as the final answer",
+                                "[Loop efficiency] Retrieval tool '%s' repeated a "
+                                "result; asking for a synthesized answer",
                                 action,
                             )
-                            extra = (
-                                {"partial": True}
-                                if self._is_context_retrieval_tool(action)
-                                else {}
-                            )
-                            return _build_response(
-                                tool_result,
-                                _tool_calls=tool_calls,
-                                answer_source="repeated_tool_result",
-                                **extra,
-                            )
-                        previous_results.append(result_key)
+                            guards.force_text_answer = True
+                            scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
+                            continue
+                        logger.info(
+                            "[Loop efficiency] Tool '%s' reproduced an identical "
+                            "result; returning it as the final answer",
+                            action,
+                        )
+                        extra = (
+                            {"partial": True}
+                            if self._is_context_retrieval_tool(action)
+                            else {}
+                        )
+                        return _build_response(
+                            tool_result,
+                            _tool_calls=tool_calls,
+                            answer_source="repeated_tool_result",
+                            **extra,
+                        )
+                    guards.record_result(action, tool_result)
 
-                    # Nudge model to answer when iterations are running low
-                    if iterations >= self.config.max_iterations - 2:
-                        scratchpad += f"\n{NUDGE_HAVE_ANSWER}"
-                    elif action_call_count >= 1 and not tool_result.startswith("Error executing tool"):
-                        # This tool has now run at least twice. The needed data is
-                        # almost certainly in the scratchpad — nudge toward a final
-                        # answer before the loop drifts into repeated re-planning.
-                        scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
+                    nudge = guards.post_tool_nudge(
+                        iterations, action_call_count, tool_result
+                    )
+                    if nudge:
+                        scratchpad += f"\n{nudge}"
 
             else:
                 # A turn that produced neither an action nor an answer, but did
@@ -704,17 +660,15 @@ class AgentReActMixin(
                 # report the cause rather than grinding to the iteration cap
                 # and reporting only that the cap was reached.
                 written = find_written_tool_call(response["text"], self.tools)
-                if written and _is_unmade_call(written, response["text"]):
-                    _written_call = _written_call or written
-                    _written_call_turns += 1
-                    if _written_call_turns > 1:
+                if written and guards.is_unmade_call(written, response["text"]):
+                    if guards.note_written_call(written):
                         return self._written_tool_call_response(
-                            _written_call,
+                            guards.written_call,
                             response["text"],
                             iterations=iterations,
                             tool_calls=tool_calls,
                             tokens_used=tokens_used,
-                            tool_ran=_written_call in _executed_tools,
+                            tool_ran=guards.tool_ran(guards.written_call),
                             debug_trace=debug_trace,
                         )
                     scratchpad += f"\nObservation: {NUDGE_NOT_USABLE}"
@@ -740,14 +694,14 @@ class AgentReActMixin(
         # Max iterations reached. When every turn wrote its tool call out as
         # text and nothing ran, the cap is a symptom: report the cause instead.
         partial_answer = self._extract_partial_answer(scratchpad)
-        if _written_call and not partial_answer:
+        if guards.written_call and not partial_answer:
             return self._written_tool_call_response(
-                _written_call,
+                guards.written_call,
                 "",
                 iterations=iterations,
                 tool_calls=tool_calls,
                 tokens_used=tokens_used,
-                tool_ran=_written_call in _executed_tools,
+                tool_ran=guards.tool_ran(guards.written_call),
                 debug_trace=debug_trace,
             )
         # The run stopped without a final answer. Whatever the scratchpad holds

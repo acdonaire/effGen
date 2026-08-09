@@ -18,6 +18,7 @@ Three invariants make that split safe:
 
 from __future__ import annotations
 
+import ast
 import inspect
 
 import pytest
@@ -26,7 +27,9 @@ import effgen.core.agent_citations as agent_citations
 import effgen.core.agent_native_tools as agent_native_tools
 import effgen.core.agent_react as agent_react
 import effgen.core.agent_react_parsing as agent_react_parsing
+import effgen.core.agent_stream_native as agent_stream_native
 import effgen.core.agent_tool_execution as agent_tool_execution
+import effgen.core.agent_tool_loop as agent_tool_loop
 from effgen.core.agent import Agent
 from effgen.core.agent_react import AgentReActMixin
 
@@ -112,26 +115,52 @@ def test_the_react_mixin_inherits_every_split_out_mixin(mixin: type) -> None:
     assert mixin in Agent.__mro__
 
 
+def _imported_modules(module) -> set[str]:
+    """Every module name *module* imports, however the import is written.
+
+    Read from the syntax tree rather than the text: ``from effgen.core import
+    agent`` and ``import effgen.core.agent`` name the same module as ``from
+    effgen.core.agent import X`` but share no substring with it, and an import
+    inside a function body is a dependency just as much as one at the top.
+    """
+    names: set[str] = set()
+    package = module.__name__.rsplit(".", 1)[0]
+    for node in ast.walk(ast.parse(inspect.getsource(module))):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                base = f"{package}.{base}" if base else package
+            names.add(base)
+            names.update(f"{base}.{alias.name}" for alias in node.names)
+    return names
+
+
 @pytest.mark.parametrize(
     "module",
-    [agent_react_parsing, agent_native_tools],
+    [agent_react_parsing, agent_native_tools, agent_tool_loop, agent_stream_native],
     ids=lambda m: m.__name__,
 )
 def test_new_modules_do_not_import_the_agent_module(module) -> None:
-    src = inspect.getsource(module)
-    assert "from .agent import" not in src
-    assert "from effgen.core.agent import" not in src
+    assert "effgen.core.agent" not in _imported_modules(module)
 
 
 @pytest.mark.parametrize("nudge", NUDGES)
 def test_every_nudge_is_injected_from_the_loop(nudge: str) -> None:
-    """The nudge strings and the loop that appends them stay in one module.
+    """A nudge is appended by the loop or by the policy both loops share.
 
     ``test_answer_sanitization`` compares the injected nudges against the
-    strip-list by reading this module's source; a nudge injected from somewhere
-    else would escape that comparison.
+    strip-list by reading those sources; a nudge injected from somewhere else
+    would escape that comparison.
     """
-    assert nudge in inspect.getsource(Agent._run_single_agent)
+    from effgen.core.agent_tool_loop import NativeToolLoop
+
+    sources = (
+        inspect.getsource(Agent._run_single_agent),
+        inspect.getsource(NativeToolLoop),
+    )
+    assert any(nudge in src for src in sources)
 
 
 def test_the_react_module_no_longer_defines_the_moved_members() -> None:

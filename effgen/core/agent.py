@@ -110,6 +110,7 @@ from .agent_orchestration import AgentOrchestrationMixin  # noqa: E402
 from .agent_prompting import AgentPromptingMixin  # noqa: E402
 from .agent_react import AgentReActMixin  # noqa: E402
 from .agent_result import AgentResultMixin  # noqa: E402
+from .agent_stream_native import AgentNativeStreamMixin  # noqa: E402
 from .agent_streaming import AgentStreamingMixin, _chunk_answer_text  # noqa: E402,F401
 
 
@@ -133,6 +134,7 @@ class Agent(
     AgentGenerationMixin,
     AgentReActMixin,
     AgentStreamingMixin,
+    AgentNativeStreamMixin,
     AgentRuntimeMixin,
 ):
     """
