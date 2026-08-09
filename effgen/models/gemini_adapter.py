@@ -40,7 +40,9 @@ from effgen.models.base import (
     GenerationResult,
     ModelType,
     TokenCount,
+    clear_stream_tool_calls,
     fold_call_totals,
+    record_stream_tool_calls,
     record_stream_usage,
 )
 from effgen.models.errors import (
@@ -59,6 +61,40 @@ from effgen.observability.spans import ModelAttrs
 from effgen.observability.tracing import set_span_attribute as _set_span_attr
 
 logger = logging.getLogger(__name__)
+
+
+def _chunk_parts(candidates: Any) -> list[Any]:
+    """Return the content parts of a response chunk's first candidate.
+
+    A chunk carrying only usage or a finish reason has no parts, and a
+    ``None`` content block reads the same way, so both come back empty.
+    """
+    if not candidates:
+        return []
+    content = getattr(candidates[0], "content", None)
+    return list(getattr(content, "parts", None) or [])
+
+
+def _function_call_entry(part: Any) -> dict[str, Any] | None:
+    """Return one part's function call in the documented shape, or ``None``.
+
+    The nested ``function`` block is the shape every adapter reports; the flat
+    ``name``/``arguments`` keys are kept beside it for callers written against
+    the earlier shape.
+    """
+    call = getattr(part, "function_call", None)
+    if not call or not getattr(call, "name", None):
+        return None
+    args: dict[str, Any] = {}
+    if hasattr(call, "args"):
+        try:
+            args = dict(call.args)
+        except Exception:  # noqa: BLE001 - a mapping-like args object still reads
+            args = {key: call.args[key] for key in call.args}
+    entry = tool_call_entry(call.name, args, call_id=getattr(call, "id", "") or "")
+    entry["name"] = call.name
+    entry["arguments"] = args
+    return entry
 
 
 class GeminiAdapter(FunctionCallingModel):
@@ -790,22 +826,8 @@ class GeminiAdapter(FunctionCallingModel):
                     elif getattr(part, "text", None):
                         generated_text += part.text
                     # Parallel function calls
-                    fc = getattr(part, "function_call", None)
-                    if fc and getattr(fc, "name", None):
-                        args: dict[str, Any] = {}
-                        if hasattr(fc, "args"):
-                            try:
-                                args = dict(fc.args)
-                            except Exception:
-                                args = {k: fc.args[k] for k in fc.args}
-                        # The nested block is the shape every adapter reports;
-                        # the flat ``name``/``arguments`` keys are kept beside
-                        # it for callers written against the earlier shape.
-                        entry = tool_call_entry(
-                            fc.name, args, call_id=getattr(fc, "id", "") or "",
-                        )
-                        entry["name"] = fc.name
-                        entry["arguments"] = args
+                    entry = _function_call_entry(part)
+                    if entry is not None:
                         tool_calls.append(entry)
                     # Code execution result — surface output in generated text
                     cer = getattr(part, "code_execution_result", None)
@@ -1002,6 +1024,8 @@ class GeminiAdapter(FunctionCallingModel):
 
         _usage_metadata = None
         _raw_finish_reason = None
+        clear_stream_tool_calls(self)
+        _tool_calls: list[dict[str, Any]] = []
         try:
             with timed_call("gemini", self.model_name) as _stream_timer:
                 response = self._generate_with_retry(
@@ -1017,17 +1041,47 @@ class GeminiAdapter(FunctionCallingModel):
                     candidates = getattr(chunk, "candidates", None) or []
                     if candidates and getattr(candidates[0], "finish_reason", None):
                         _raw_finish_reason = candidates[0].finish_reason
-                    try:
-                        if chunk.text:
+                    # Read the parts rather than ``chunk.text``: that accessor
+                    # drops every non-text part, so a streamed function call was
+                    # lost (and the SDK warned about it on stderr) while its
+                    # tokens were billed. A chunk that exposes no parts is still
+                    # read through ``text``, which is where a response shape
+                    # without a candidate block carries it.
+                    parts = _chunk_parts(candidates)
+                    if not parts:
+                        try:
+                            text = chunk.text
+                        except Exception:
+                            logger.debug(
+                                "Failed to read chunk.text during streaming",
+                                exc_info=True,
+                            )
+                            text = None
+                        if text:
                             if _first_token:
                                 _stream_timer.mark_first_token()
                                 _first_token = False
-                            yield chunk.text
-                    except Exception:
-                        logger.debug("Failed to read chunk.text during streaming", exc_info=True)
+                            yield text
+                        continue
+                    for part in parts:
+                        text = getattr(part, "text", None)
+                        if text:
+                            if _first_token:
+                                _stream_timer.mark_first_token()
+                                _first_token = False
+                            yield text
+                        entry = _function_call_entry(part)
+                        if entry is not None:
+                            _tool_calls.append(entry)
+                            # Recorded as it arrives, so a consumer streaming
+                            # this turn knows it is a tool call before it
+                            # commits any text as the answer.
+                            record_stream_tool_calls(self, _tool_calls)
         except Exception as exc:
             logger.error("Gemini streaming failed: %s", exc)
             raise provider_runtime_error("gemini", self.model_name, "stream", exc, message="Gemini streaming failed") from exc
+
+        record_stream_tool_calls(self, _tool_calls)
 
         # A stream has no metadata channel back to the caller, so a turn spent
         # entirely on thinking is reported here instead of arriving as an empty
@@ -1039,6 +1093,7 @@ class GeminiAdapter(FunctionCallingModel):
             reasoning_tokens=getattr(_usage_metadata, "thoughts_token_count", None) or 0,
             finish_reason=_raw_finish_reason,
             max_tokens=getattr(gen_config, "max_output_tokens", None),
+            tool_calls=_tool_calls,
             logger=logger,
         )
 
@@ -1086,6 +1141,10 @@ class GeminiAdapter(FunctionCallingModel):
 
     def supports_tool_calling(self) -> bool:
         """Alias for :meth:`supports_function_calling`."""
+        return True
+
+    def streams_tool_calls(self) -> bool:
+        """True: a streamed turn's native function calls are recorded."""
         return True
 
     def count_tokens(self, text: str) -> TokenCount:

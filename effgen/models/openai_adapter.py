@@ -41,9 +41,11 @@ from effgen.models._multimodal import (
     require_vision_support,
 )
 from effgen.models._usage import (
+    accumulate_stream_tool_call_deltas,
     cost_label,
     extract_openai_usage,
     record_tracker_cost,
+    stream_tool_call_entries,
     stringify_tool_arguments,
     tool_calls_from_message,
     usage_metadata,
@@ -54,7 +56,9 @@ from effgen.models.base import (
     GenerationResult,
     ModelType,
     TokenCount,
+    clear_stream_tool_calls,
     fold_call_totals,
+    record_stream_tool_calls,
     record_stream_usage,
 )
 from effgen.models.errors import (
@@ -777,6 +781,8 @@ class OpenAIAdapter(FunctionCallingModel):
         _finish_reason = None
         _reasoning_buf: list[str] = []
         _yielded_text = False
+        clear_stream_tool_calls(self)
+        _tool_calls_buf: dict[int, dict[str, Any]] = {}
         try:
             with timed_call("openai", self.model_name) as _stream_timer:
                 stream = self.client.chat.completions.create(**request_params)
@@ -791,6 +797,19 @@ class OpenAIAdapter(FunctionCallingModel):
                         _reasoning_buf.append(
                             reasoning_delta_text(getattr(_choice, "delta", None))
                         )
+                        _delta = getattr(_choice, "delta", None)
+                        if _delta is not None and getattr(_delta, "tool_calls", None):
+                            # A tool turn streams its call and no content at all,
+                            # so without this the call is lost while its tokens
+                            # are still billed. Recorded as it accumulates, so a
+                            # consumer knows the turn is a call before it commits
+                            # any text as the answer.
+                            accumulate_stream_tool_call_deltas(
+                                _tool_calls_buf, _delta.tool_calls
+                            )
+                            record_stream_tool_calls(
+                                self, stream_tool_call_entries(_tool_calls_buf)
+                            )
                     if chunk.choices and chunk.choices[0].delta.content is not None:
                         if _first_token:
                             _stream_timer.mark_first_token()
@@ -805,6 +824,10 @@ class OpenAIAdapter(FunctionCallingModel):
             logger.error(f"OpenAI streaming failed: {e}")
             raise provider_runtime_error("openai", self.model_name, "stream", e, message="OpenAI streaming failed") from e
 
+        self._last_stream_finish_reason = _finish_reason
+        _streamed_calls = stream_tool_call_entries(_tool_calls_buf)
+        record_stream_tool_calls(self, _streamed_calls)
+
         warn_reasoning_only_stream(
             model_name=self.model_name,
             yielded_text=_yielded_text,
@@ -812,6 +835,7 @@ class OpenAIAdapter(FunctionCallingModel):
             reasoning_tokens=extract_reasoning_tokens(_usage),
             finish_reason=_finish_reason,
             max_tokens=self._requested_output_cap(request_params),
+            tool_calls=_streamed_calls,
             logger=logger,
         )
 
@@ -1451,6 +1475,10 @@ class OpenAIAdapter(FunctionCallingModel):
     def supports_tool_calling(self) -> bool:
         """True when the catalog marks this model as supporting native tools."""
         return OPENAI_MODELS.get(self.model_name, {}).get("supports_native_tools", True)
+
+    def streams_tool_calls(self) -> bool:
+        """True: a streamed turn's native tool calls are recorded."""
+        return True
 
     def is_reasoning_model(self) -> bool:
         """Return True if this is an o-series reasoning model."""

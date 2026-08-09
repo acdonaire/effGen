@@ -344,3 +344,110 @@ class TestGeminiAdapterStream:
         with patch.object(adapter, "_generate_with_retry", return_value=iter(chunks)):
             list(adapter.generate_stream("hi"))
         assert getattr(adapter, "total_cost", 0.0) == 0.0
+
+
+class _FakePart:
+    """One content part: text, a function call, or both absent."""
+
+    def __init__(self, text=None, function_call=None):
+        self.text = text
+        self.function_call = function_call
+
+
+class _FakeFunctionCall:
+    def __init__(self, name, args, call_id=""):
+        self.name = name
+        self.args = args
+        self.id = call_id
+
+
+class _FakeCandidate:
+    def __init__(self, parts, finish_reason=None):
+        self.content = type("_C", (), {"parts": parts})()
+        self.finish_reason = finish_reason
+
+
+class _FakePartsChunk:
+    """A chunk shaped the way the SDK sends one: candidates carrying parts."""
+
+    def __init__(self, parts, usage_metadata=None, finish_reason=None):
+        self.candidates = [_FakeCandidate(parts, finish_reason)]
+        self.usage_metadata = usage_metadata
+
+    @property
+    def text(self):  # the accessor that drops non-text parts
+        joined = "".join(p.text for p in self.candidates[0].content.parts if p.text)
+        if not joined:
+            raise ValueError("no text parts in this chunk")
+        return joined
+
+
+class TestGeminiAdapterStreamToolCalls:
+    """A streamed function call must reach the caller, not be dropped."""
+
+    def _adapter(self):
+        from unittest.mock import MagicMock, patch
+
+        from effgen.models.base import TokenCount
+
+        with patch("google.genai.Client"):
+            adapter = GeminiAdapter(model_name="gemini-3.1-flash-lite", api_key="fake")
+        adapter._is_loaded = True
+        adapter.client = MagicMock()
+        adapter.count_tokens = MagicMock(
+            return_value=TokenCount(count=5, model_name=adapter.model_name)
+        )
+        return adapter
+
+    def test_a_streamed_function_call_is_recorded(self):
+        from unittest.mock import patch
+
+        from effgen.models.base import get_stream_tool_calls
+
+        chunks = [
+            _FakePartsChunk([_FakePart(text="Let me check. ")]),
+            _FakePartsChunk([
+                _FakePart(function_call=_FakeFunctionCall(
+                    "calculator", {"expression": "6*7"}, "call_1"
+                ))
+            ]),
+        ]
+        adapter = self._adapter()
+        with patch.object(adapter, "_generate_with_retry", return_value=iter(chunks)):
+            text = "".join(adapter.generate_stream("What is 6*7?"))
+
+        assert text == "Let me check. "
+        calls = get_stream_tool_calls(adapter)
+        assert [c["function"]["name"] for c in calls] == ["calculator"]
+        assert calls[0]["arguments"] == {"expression": "6*7"}
+
+    def test_the_call_is_readable_while_the_turn_still_streams(self):
+        from unittest.mock import patch
+
+        from effgen.models.base import get_stream_tool_calls
+
+        chunks = [
+            _FakePartsChunk([
+                _FakePart(function_call=_FakeFunctionCall(
+                    "calculator", {"expression": "6*7"}
+                ))
+            ]),
+            _FakePartsChunk([_FakePart(text="working")]),
+        ]
+        adapter = self._adapter()
+        seen = []
+        with patch.object(adapter, "_generate_with_retry", return_value=iter(chunks)):
+            for _text in adapter.generate_stream("What is 6*7?"):
+                seen.append(len(get_stream_tool_calls(adapter)))
+        assert seen and all(count == 1 for count in seen)
+
+    def test_a_turn_with_no_call_records_none(self):
+        from unittest.mock import patch
+
+        from effgen.models.base import get_stream_tool_calls
+
+        chunks = [_FakePartsChunk([_FakePart(text="just an answer")])]
+        adapter = self._adapter()
+        with patch.object(adapter, "_generate_with_retry", return_value=iter(chunks)):
+            assert "".join(adapter.generate_stream("hi")) == "just an answer"
+        assert get_stream_tool_calls(adapter) == []
