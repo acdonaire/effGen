@@ -243,12 +243,28 @@
     renderModelOptions();
   }
 
+  // Model ids that name an embedding model. A catalog entry carries no "can
+  // this answer a prompt" flag, so the id is what this reads: the names below
+  // are the ones that ship as sentence/embedding encoders. This chat surface
+  // leaves them out; the dashboard's catalog browser still lists every model.
+  const EMBEDDING_ID_SIGNALS = [
+    "embedding", "embed-", "-embed", "sentence-transformers/",
+    "bge-", "/bge", "minilm", "gte-", "e5-",
+  ];
+
+  function isEmbeddingModelId(id) {
+    const lowered = String(id || "").toLowerCase();
+    return EMBEDDING_ID_SIGNALS.some((signal) => lowered.includes(signal));
+  }
+
   function renderModelOptions() {
     const sel = $("model-select");
     sel.innerHTML = "";
 
     // Locally-cached models first — the zero-config, no-key-needed entry.
-    const locals = (catalog.local || []).filter((m) => m.complete !== false);
+    const locals = (catalog.local || [])
+      .filter((m) => m.complete !== false)
+      .filter((m) => !isEmbeddingModelId(m.id));
     if (locals.length) {
       const grp = document.createElement("optgroup");
       grp.label = "Local (no cloud key)";
@@ -265,6 +281,7 @@
     const byProvider = {};
     (catalog.data || []).forEach((rec) => {
       if (rec.deprecated) return;
+      if (isEmbeddingModelId(rec.id)) return;
       (byProvider[rec.provider] = byProvider[rec.provider] || []).push(rec);
     });
     Object.keys(byProvider).sort().forEach((prov) => {
@@ -383,6 +400,8 @@
       answerEl.className = "answer placeholder";
       answerEl.textContent = "Run failed.";
     } finally {
+      // Whatever happened, the answer box is no longer receiving deltas.
+      answerEl.setAttribute("aria-busy", "false");
       const ms = performance.now() - started;
       const lat = $("stat-latency");
       if (lat && lat.textContent === "—") lat.textContent = (ms / 1000).toFixed(2) + "s";
@@ -426,7 +445,20 @@
     let text = "";
     let usage = null;
     let model = body.model;
-    let cursor = '<span class="cursor">▋</span>';
+    // The answer box is a polite live region. Rewriting it per delta made a
+    // screen reader re-read the whole answer from the start on every token, so
+    // the deltas are appended as text nodes instead and the region is marked
+    // busy for the duration: one announcement at the end, not one per token.
+    // The cursor lives outside the announced text.
+    answerEl.textContent = "";
+    answerEl.setAttribute("aria-busy", "true");
+    const answerText = document.createTextNode("");
+    answerEl.appendChild(answerText);
+    const cursorEl = document.createElement("span");
+    cursorEl.className = "cursor";
+    cursorEl.setAttribute("aria-hidden", "true");
+    cursorEl.textContent = "▋";
+    answerEl.appendChild(cursorEl);
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -446,12 +478,13 @@
         const delta = (obj.choices && obj.choices[0] && obj.choices[0].delta) || {};
         if (delta.content) {
           text += delta.content;
-          answerEl.innerHTML = esc(text) + cursor;
+          answerText.appendData(delta.content);
           answerEl.scrollTop = answerEl.scrollHeight;
         }
       }
     }
     answerEl.textContent = text || "(no content)";
+    answerEl.setAttribute("aria-busy", "false");
     renderStats({ model, usage, effgen: {} });
     // The streamed path returns tokens, not the tool trace; a non-streamed run
     // surfaces the step trace.
@@ -565,14 +598,22 @@
   function renderBattleColumns(entries) {
     const host = $("battle-grid");
     if (!host) return;
+    // Each column is a named group with its own heading, so heading and group
+    // navigation move between contenders instead of reading straight through.
     host.innerHTML = entries.map((e, i) => (
-      `<div class="battle-col" data-i="${i}">`
-      + `<div class="battle-head"><span class="battle-model">${esc(e.model)}</span>`
+      `<div class="battle-col" data-i="${i}" role="group" aria-labelledby="battle-name-${i}">`
+      + `<div class="battle-head"><h3 class="battle-model" id="battle-name-${i}">${esc(e.model)}</h3>`
       + `<span class="battle-state" data-state="${esc(e.state)}">${esc(stateLabel(e))}</span></div>`
       + `<div class="battle-answer">${e.error ? '<span class="battle-err">' + esc(e.error) + "</span>" : esc(e.text)}</div>`
       + `<div class="battle-foot">${esc(battleFooter(e))}</div>`
       + "</div>"
     )).join("");
+  }
+
+  // One polite live region for everything this page announces; the shared
+  // keyboard layer owns it. Without webui.js the page still works, silently.
+  function announce(message) {
+    if (webui && webui.announce) webui.announce(message);
   }
 
   function stateLabel(e) {
@@ -631,6 +672,21 @@
         + `<span class="verdict-val">${v}</span></div>`
     ).join("");
     host.hidden = false;
+    // The race itself is silent (the grid is rebuilt ten times a second); this
+    // is the one announcement, and it carries the outcome.
+    announce("Battle complete. " + rows.map(([k, v]) => k + ": " + stripTags(v)).join(". ") + ".");
+  }
+
+  // The verdict values are already-escaped HTML fragments; an announcement is
+  // plain text.
+  function stripTags(html) {
+    return String(html)
+      .replace(/<[^>]*>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
   }
 
   async function streamContender(entry, body, onTick) {
@@ -707,6 +763,8 @@
     btn.disabled = true;
     btn.textContent = "Racing…";
     $("battle-verdict").hidden = true;
+    const grid = $("battle-grid");
+    if (grid) grid.setAttribute("aria-busy", "true");
     renderBattleColumns(entries);
 
     // One frame per animation tick rather than per token, so a fast model does
@@ -737,6 +795,7 @@
     }));
     clearInterval(timer);
     renderBattleColumns(entries);
+    if (grid) grid.setAttribute("aria-busy", "false");
     renderBattleVerdict(entries, performance.now() - started);
     btn.disabled = false;
     syncMode();

@@ -90,11 +90,11 @@
 
       <details class="advanced">
         <summary>Advanced controls</summary>
-        <div class="field">
-          <label>Attach tools</label>
+        <fieldset class="field tool-field">
+          <legend>Attach tools</legend>
           <div class="tool-list" id="tool-list"></div>
           <p class="hint">Tools run server-side; the step trace shows what ran (non-streamed runs).</p>
-        </div>
+        </fieldset>
         <div class="row-2">
           <div class="field">
             <label for="temperature">Temperature</label>
@@ -116,14 +116,15 @@
     <!-- Battle results -->
     <section class="panel results" id="battle-results" aria-label="Battle results" hidden>
       <h2>Battle</h2>
-      <div class="battle-grid" id="battle-grid" aria-live="polite"></div>
-      <div class="battle-verdict" id="battle-verdict" hidden></div>
+      <div class="battle-grid" id="battle-grid" aria-live="off" aria-busy="false"></div>
+      <div class="battle-verdict" id="battle-verdict" role="status" hidden></div>
     </section>
 
     <!-- Results -->
     <section class="panel results" id="single-results" aria-label="Results">
       <h2>Result</h2>
-      <div class="answer placeholder" id="answer" aria-live="polite">
+      <div class="answer placeholder" id="answer" aria-live="polite"
+           aria-atomic="false" aria-busy="false">
         The answer appears here after you Run.
       </div>
 
