@@ -350,6 +350,16 @@ class BaseTool(ABC):
     # callers can use the obvious verb instead of memorizing the exact enum.
     operation_aliases: dict[str, str] = {}
 
+    #: Whether this tool's output is retrieved source material rather than a
+    #: computed answer. The agent loop reads it when the same call repeats: a
+    #: computed result that repeats is a confident answer and is returned, while
+    #: retrieved context is not — the model is given one tool-free turn to write
+    #: the answer from what it already has. Tools in the
+    #: ``INFORMATION_RETRIEVAL`` category are treated this way without setting
+    #: it; set it on a tool whose category says otherwise (a file tool narrowed
+    #: to reading, for instance).
+    is_context_retrieval: bool = False
+
     def __init__(self, metadata: ToolMetadata) -> None:
         """
         Initialize the tool with metadata.

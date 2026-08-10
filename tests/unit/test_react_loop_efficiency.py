@@ -323,3 +323,88 @@ def test_repeated_denied_tool_call_stops_offering_tools_and_answers():
     # well short of max_iterations instead of exhausting the budget.
     assert model.saw_tools_on_call == [True, True, False]
     assert model.calls == 3
+
+
+# ---------------------------------------------------------------------------
+# A tool that declares its output to be retrieved context
+#
+# The classifier reads a tool's category, which is right for the tools that
+# ship. A tool whose category says otherwise — a file tool narrowed to reading,
+# whose output is source material — declares it on the instance instead, and the
+# loop must then give the model a tool-free turn rather than handing the file
+# back as the answer.
+# ---------------------------------------------------------------------------
+
+FILE_BODY = "def add(a, b):\n    return a + b\n"
+
+
+class _FileReadTool(BaseTool):
+    """A file-reading tool, in the category the shipped file tool carries."""
+
+    def __init__(self, *, context_retrieval: bool = False) -> None:
+        super().__init__(metadata=ToolMetadata(
+            name="file_operations",
+            description="Read files.",
+            category=ToolCategory.FILE_OPERATIONS,
+            parameters=[ParameterSpec(
+                name="path", type=ParameterType.STRING,
+                description="path", required=True,
+            )],
+        ))
+        if context_retrieval:
+            self.is_context_retrieval = True
+
+    async def _execute(self, path: str = "", **kwargs):
+        return FILE_BODY
+
+
+def _read_action(path: str) -> str:
+    return (
+        "Thought: I will read the file.\n"
+        "Action: file_operations\n"
+        f'Action Input: {{"path": "{path}"}}'
+    )
+
+
+_REVIEW = "Final Answer: divide() has no guard against a zero divisor."
+
+
+def _review_agent(*, context_retrieval: bool) -> Agent:
+    model = _ScriptedModel([_read_action("calc.py"), _read_action("calc.py"), _REVIEW])
+    return Agent(config=AgentConfig(
+        name="review-loop-test", model=model,
+        tools=[_FileReadTool(context_retrieval=context_retrieval)],
+        max_iterations=6, tool_calling_mode="react",
+    ))
+
+
+def test_a_repeated_read_returns_the_file_when_the_tool_says_nothing():
+    """The shipped behaviour for a plain file tool is unchanged."""
+    resp = _review_agent(context_retrieval=False).run(
+        "Review calc.py and report any correctness risk."
+    )
+    assert resp.metadata.get("answer_source") == "loop_detected"
+    assert resp.metadata.get("partial") is True
+    assert " ".join((resp.output or "").split()) == " ".join(FILE_BODY.split())
+
+
+def test_a_tool_that_declares_retrieved_context_gets_the_synthesis_turn():
+    """The same script, with the tool declaring what its output is."""
+    resp = _review_agent(context_retrieval=True).run(
+        "Review calc.py and report any correctness risk."
+    )
+    assert resp.metadata.get("answer_source") in (None, "")
+    assert not resp.metadata.get("partial")
+    assert "zero divisor" in (resp.output or "")
+
+
+def test_the_declaration_is_read_off_the_tool_instance():
+    """A positive declaration only ever adds; it never reclassifies a tool down."""
+    from effgen.tools.base_tool import BaseTool as _BaseTool
+
+    assert _BaseTool.is_context_retrieval is False
+    agent = _review_agent(context_retrieval=False)
+    assert agent._is_context_retrieval_tool("file_operations") is False
+    assert agent._is_context_retrieval_tool("retrieval") is True
+    flagged = _review_agent(context_retrieval=True)
+    assert flagged._is_context_retrieval_tool("file_operations") is True

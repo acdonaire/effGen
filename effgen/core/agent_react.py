@@ -889,8 +889,16 @@ class AgentReActMixin(
         Used to flag a fallback that returns such a tool's raw observation as
         partial, so a passage dump is not presented as a synthesized answer, and
         to pick the continuation instruction in :meth:`_continuation_instruction`.
+
+        A tool may declare it directly with ``is_context_retrieval = True``,
+        which is how a tool whose category says otherwise — a file tool narrowed
+        to reading, whose output is source material — opts in. The category and
+        name checks below are unchanged, so every other agent classifies exactly
+        as before.
         """
         tool = self.tools.get(action)
+        if getattr(tool, "is_context_retrieval", False):
+            return True
         category = getattr(getattr(tool, "metadata", None), "category", None)
         if category is ToolCategory.INFORMATION_RETRIEVAL:
             return True
