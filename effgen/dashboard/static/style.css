@@ -9,6 +9,9 @@
   --bg-card:     #21253a;
   --bg-inset:    #0a0c14;
   --border:      #2c3150;
+  /* A boundary a control is recognised by has to clear 3:1 against the surface
+     behind it (WCAG 1.4.11); --border stays as it is for decorative dividers. */
+  --border-strong: #6b74a6;
   --text:        #e2e8f0;
   --text-muted:  #aab4c5;
   --text-faint:  #93a0b4;
@@ -18,6 +21,8 @@
   --warn:        #fbbf24;
   --err:         #f87171;
   --focus:       #22d3ee;
+  /* Ink on an accent-filled control. */
+  --on-accent:   #0a0c14;
   /* Label ink for waterfall bars. The dark-theme bar fills are light/saturated,
      so white text on them fails WCAG; near-black reads on every bar color. */
   --wf-label:    #0a0c14;
@@ -36,15 +41,17 @@
   --bg-card:     #f0f2f8;
   --bg-inset:    #eef0f6;
   --border:      #d3d8e6;
+  --border-strong: #8189a0;
   --text:        #1a1d27;
   --text-muted:  #4a5468;
   --text-faint:  #5a6478;
   --accent:      #4f46e5;
   --accent2:     #0e7490;
   --ok:          #047857;
-  --warn:        #b45309;
+  --warn:        #a34a07;
   --err:         #b91c1c;
   --focus:       #4f46e5;
+  --on-accent:   #ffffff;
   /* Light-theme bar fills are dark, so white label ink reads on them. */
   --wf-label:    #ffffff;
 }
@@ -56,15 +63,17 @@
     --bg-card:     #f0f2f8;
     --bg-inset:    #eef0f6;
     --border:      #d3d8e6;
+    --border-strong: #8189a0;
     --text:        #1a1d27;
     --text-muted:  #4a5468;
     --text-faint:  #5a6478;
     --accent:      #4f46e5;
     --accent2:     #0e7490;
     --ok:          #047857;
-    --warn:        #b45309;
+    --warn:        #a34a07;
     --err:         #b91c1c;
     --focus:       #4f46e5;
+    --on-accent:   #ffffff;
     --wf-label:    #ffffff;
   }
 }
@@ -121,7 +130,7 @@ select:focus-visible,
 
 #refresh-btn, #theme-btn, #palette-btn {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   color: var(--text-muted);
   border-radius: 4px;
   padding: 0.2rem 0.5rem;
@@ -251,6 +260,25 @@ tbody tr td {
   border-bottom: 1px solid var(--border);
   font-family: var(--mono);
 }
+
+/* Sortable headers: the button is the control, the <th> carries aria-sort. */
+.sort-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.sort-btn:hover { color: var(--accent2); }
+th[aria-sort] .sort-btn { color: var(--text); }
+th[aria-sort="ascending"] .sort-btn::after  { content: " ↑"; }
+th[aria-sort="descending"] .sort-btn::after { content: " ↓"; }
+
+.outcome-ok  { color: var(--text-muted); }
+.outcome-err { color: var(--warn); }
 tbody tr:hover { background: var(--bg-card); }
 .empty-row { color: var(--text-muted); text-align: center; padding: 1rem; font-style: italic; }
 td.num { text-align: right; }
@@ -285,7 +313,7 @@ td.num { text-align: right; }
 }
 .span-toolbar button {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   color: var(--text-muted);
   border-radius: 4px;
   padding: 0.15rem 0.5rem;
@@ -420,7 +448,7 @@ td.num { text-align: right; }
 .catalog-toolbar select {
   background: var(--bg-inset);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   padding: 0.3rem 0.45rem;
   font-size: 0.82rem;
@@ -453,7 +481,7 @@ td.num { text-align: right; }
 .catalog-footer button {
   background: var(--bg-card);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   padding: 0.3rem 0.7rem;
   cursor: pointer;
@@ -505,7 +533,7 @@ td.num { text-align: right; }
   color: var(--text-muted);
 }
 .run-detail dd { margin: 0.1rem 0 0; font-size: 0.85rem; word-break: break-word; }
-.history-detail h4 {
+.history-detail h3 {
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -536,7 +564,7 @@ td.num { text-align: right; }
 .run-export button {
   background: var(--bg-card);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   padding: 0.3rem 0.7rem;
   cursor: pointer;

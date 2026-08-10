@@ -9,6 +9,9 @@
   --bg-card:     #21253a;
   --bg-inset:    #0a0c14;
   --border:      #2c3150;
+  /* A control boundary has to clear 3:1 against the surface behind it
+     (WCAG 1.4.11); --border stays as it is for decorative dividers. */
+  --border-strong: #6b74a6;
   --text:        #e2e8f0;
   --text-muted:  #aab4c5;
   --text-faint:  #93a0b4;
@@ -18,6 +21,8 @@
   --warn:        #fbbf24;
   --err:         #f87171;
   --focus:       #22d3ee;
+  /* Ink on an accent-filled control. */
+  --on-accent:   #0a0c14;
   --font:        system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --mono:        ui-monospace, SFMono-Regular, Menlo, Consolas, 'JetBrains Mono', 'Fira Code', monospace;
   --radius:      8px;
@@ -29,15 +34,17 @@
   --bg-card:     #f0f2f8;
   --bg-inset:    #eef0f6;
   --border:      #d3d8e6;
+  --border-strong: #8189a0;
   --text:        #1a1d27;
   --text-muted:  #4a5468;
   --text-faint:  #5a6478;
   --accent:      #4f46e5;
   --accent2:     #0e7490;
   --ok:          #047857;
-  --warn:        #b45309;
+  --warn:        #a34a07;
   --err:         #b91c1c;
   --focus:       #4f46e5;
+  --on-accent:   #ffffff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -47,15 +54,17 @@
     --bg-card:     #f0f2f8;
     --bg-inset:    #eef0f6;
     --border:      #d3d8e6;
+    --border-strong: #8189a0;
     --text:        #1a1d27;
     --text-muted:  #4a5468;
     --text-faint:  #5a6478;
     --accent:      #4f46e5;
     --accent2:     #0e7490;
     --ok:          #047857;
-    --warn:        #b45309;
+    --warn:        #a34a07;
     --err:         #b91c1c;
     --focus:       #4f46e5;
+    --on-accent:   #ffffff;
   }
 }
 
@@ -110,7 +119,7 @@ textarea:focus-visible,
 .nav-link:hover { color: var(--accent2); }
 #theme-btn, #palette-btn {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   color: var(--text-muted);
   border-radius: 4px;
   padding: 0.2rem 0.5rem;
@@ -169,11 +178,25 @@ textarea:focus-visible,
   letter-spacing: 0.05em;
   margin-bottom: 0.3rem;
 }
+/* A checkbox group is a fieldset so the group carries a name. It should look
+   like every other field, so the browser's default box is dropped and the
+   legend takes the same typography as a field label. The mode picker keeps its
+   own box and sets both further down. */
+.tool-field { border: 0; padding: 0; }
+.tool-field legend {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.3rem;
+  padding: 0;
+}
 select, input[type="text"], input[type="password"], input[type="number"], textarea {
   width: 100%;
   background: var(--bg-inset);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 0.5rem 0.6rem;
   font-family: var(--font);
@@ -199,7 +222,7 @@ details.advanced > summary {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 99px;
   padding: 0.2rem 0.6rem;
   font-size: 0.8rem;
@@ -221,7 +244,9 @@ details.advanced > summary {
 .run-btn {
   width: 100%;
   background: var(--accent);
-  color: #0a0c14;
+  /* Near-black reads on the dark theme's accent but only reaches 3.11:1 on the
+     light theme's; the token carries the right ink for each. */
+  color: var(--on-accent);
   border: none;
   border-radius: 6px;
   padding: 0.7rem;
@@ -298,7 +323,7 @@ details.advanced > summary {
 .snippet-tabs { display: flex; gap: 0.4rem; margin-bottom: 0.5rem; }
 .snippet-tab {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   color: var(--text-muted);
   border-radius: 4px;
   padding: 0.25rem 0.6rem;
@@ -326,7 +351,7 @@ details.advanced > summary {
   top: 0.4rem;
   right: 0.4rem;
   background: var(--bg-card);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   color: var(--text-muted);
   border-radius: 4px;
   padding: 0.15rem 0.5rem;
@@ -356,7 +381,7 @@ details.advanced > summary {
    Battle — several models answering one prompt side by side
    ------------------------------------------------------------------ */
 .mode-field {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 0.5rem 0.7rem 0.6rem;
 }

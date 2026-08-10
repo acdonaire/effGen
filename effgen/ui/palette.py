@@ -255,6 +255,9 @@ DASHBOARD_DARK: dict[str, str] = {
     "bg-card": "#21253a",
     "bg-inset": "#0a0c14",
     "border": "#2c3150",
+    # A boundary a control is recognised by has to clear 3:1 against the surface
+    # behind it (WCAG 1.4.11); ``border`` stays as it is for decorative dividers.
+    "border-strong": "#6b74a6",
     "text": "#e2e8f0",
     "text-muted": "#aab4c5",
     "text-faint": "#93a0b4",
@@ -264,6 +267,8 @@ DASHBOARD_DARK: dict[str, str] = {
     "warn": "#fbbf24",
     "err": "#f87171",
     "focus": "#22d3ee",
+    # Ink on an accent-filled control.
+    "on-accent": "#0a0c14",
     # Label ink for waterfall bars: near-black reads against the light/saturated
     # dark-theme bar fills (white on them fails WCAG).
     "wf-label": "#0a0c14",
@@ -275,15 +280,17 @@ DASHBOARD_LIGHT: dict[str, str] = {
     "bg-card": "#f0f2f8",
     "bg-inset": "#eef0f6",
     "border": "#d3d8e6",
+    "border-strong": "#8189a0",
     "text": "#1a1d27",
     "text-muted": "#4a5468",
     "text-faint": "#5a6478",
     "accent": "#4f46e5",
     "accent2": "#0e7490",
     "ok": "#047857",
-    "warn": "#b45309",
+    "warn": "#a34a07",
     "err": "#b91c1c",
     "focus": "#4f46e5",
+    "on-accent": "#ffffff",
     # Light-theme bar fills are dark, so white label ink reads on them.
     "wf-label": "#ffffff",
 }

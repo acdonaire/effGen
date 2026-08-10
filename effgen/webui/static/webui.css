@@ -95,7 +95,7 @@
   font-family: inherit;
   color: var(--text);
   background: var(--bg-inset, var(--bg));
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius, 8px);
 }
 
