@@ -888,6 +888,23 @@ def test_a_hosted_model_without_a_rate_is_not_labelled_local():
     assert "$0.00" not in text
 
 
+def test_a_run_that_never_billed_a_call_is_not_called_unpriced():
+    # A run that failed on its first request spends nothing, which says nothing
+    # about whether the model publishes a rate. Labelling it "no published rate"
+    # states something untrue about a priced model.
+    doc = json.loads(json.dumps(LOCAL_RUN_DOC))
+    doc["model"] = "llama-3.1-8b-instant"
+    doc["provider"] = "groq"
+    doc["success"] = False
+    for key in ("tokens_used", "total_tokens", "prompt_tokens", "completion_tokens"):
+        doc.pop(key, None)
+        (doc.get("metadata") or {}).pop(key, None)
+    text = " ".join(_parse(build_html_report(doc, kind="run")).text)
+    assert "no billed call" in text
+    assert "no published rate" not in text
+    assert "$0.00" not in text
+
+
 def test_run_card_links_only_http_schemes():
     doc = json.loads(json.dumps(RUN_DOC))
     doc["sources"] = [

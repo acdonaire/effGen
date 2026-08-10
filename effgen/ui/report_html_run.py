@@ -63,15 +63,21 @@ def _tool_steps(tree: Any) -> list[dict[str, Any]]:
 _LOCAL_ENGINES = ("transformers:", "vllm:", "gguf:", "mlx:")
 
 
-def _unpriced_label(model: str, provider: str) -> str:
+def _unpriced_label(model: str, provider: str, total_tokens: Any = None) -> str:
     """What to show in place of a cost the run does not carry.
 
-    A run on local hardware has no price to report. A hosted model can also
-    reach here when the catalog has no rate for it, and that is a gap in the
-    pricing data rather than a free call, so the two are not labelled alike.
+    A run on local hardware has no price to report. A hosted run reaches here
+    either because it never completed a billed call — a run that failed on the
+    first request spends nothing, which says nothing about the model's price —
+    or because the model was billed and the catalog has no rate for it, a gap in
+    the pricing data rather than a free call. The three are not labelled alike,
+    so a card never reads as "this model publishes no rate" for a run that
+    simply never got that far.
     """
     if model.startswith(_LOCAL_ENGINES) or not provider:
         return "unpriced (local)"
+    if not total_tokens:
+        return "no billed call"
     return "unpriced (no published rate)"
 
 
@@ -150,7 +156,12 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
         ),
         # A model with no published price records no cost at all. Reporting
         # $0.00 for it would read as a free cloud call rather than a local run.
-        ("Cost", _usd(cost, 6) if cost is not None else _unpriced_label(model, provider), ""),
+        (
+            "Cost",
+            _usd(cost, 6) if cost is not None
+            else _unpriced_label(model, provider, total_tokens),
+            "",
+        ),
     ]))
 
     error = metadata.get("error")
