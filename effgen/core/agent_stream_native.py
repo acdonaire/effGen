@@ -276,7 +276,15 @@ class AgentNativeStreamMixin:
         in :attr:`last_stream_response`.
         """
         started = time.perf_counter()
-        max_iterations = kwargs.get("max_iterations", self.config.max_iterations)
+        # An explicit ``max_iterations=None`` — what an optional flag forwards when
+        # the user did not set it — must fall back to the configured cap rather
+        # than reach the loop comparison as None.
+        _requested_iterations = kwargs.get("max_iterations")
+        max_iterations: int = (
+            self.config.max_iterations
+            if _requested_iterations is None
+            else int(_requested_iterations)
+        )
         guards = NativeToolLoop(self.tools, nudge_cap=self.config.max_iterations)
         answer = _AnswerStream()
         scratchpad = ""

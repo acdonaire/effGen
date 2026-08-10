@@ -408,3 +408,32 @@ def test_the_declaration_is_read_off_the_tool_instance():
     assert agent._is_context_retrieval_tool("retrieval") is True
     flagged = _review_agent(context_retrieval=True)
     assert flagged._is_context_retrieval_tool("file_operations") is True
+
+
+def test_an_explicit_none_iteration_cap_falls_back_to_the_configured_one():
+    """``max_iterations=None`` is what an unset optional flag forwards.
+
+    It has to mean "use the configured cap", not reach the loop's comparison
+    as ``None`` and raise a bare ``TypeError`` from inside the run.
+    """
+    model = _ScriptedModel([
+        _calc_action("2 + 2"),
+        "Thought: I have it.\nFinal Answer: 4",
+    ])
+    agent = _make_agent(model, max_iterations=6)
+
+    response = agent.run("What is 2 + 2?", max_iterations=None)
+
+    assert response.success
+    assert "4" in (response.output or "")
+
+
+def test_an_explicit_iteration_cap_of_zero_is_honored():
+    """Zero means zero — the fallback must not read it as "unset"."""
+    model = _ScriptedModel(["Thought: thinking.\nFinal Answer: 4"])
+    agent = _make_agent(model, max_iterations=6)
+
+    response = agent.run("What is 2 + 2?", max_iterations=0)
+
+    assert model.calls == 0
+    assert not response.success
