@@ -198,9 +198,10 @@ def add_code_parser(subparsers: argparse._SubParsersAction) -> None:
             'cap is reached. Each file change is shown as a unified diff before '
             'it is written, and --undo reverses the last applied edit. '
             'On a terminal with no task it opens an interactive session with '
-            'slash commands (/plan, /diff, /apply, /undo, /run, /context, '
-            '/git, /model, /help); a task, -p, piped stdin or --json runs once '
-            'and exits.'
+            'slash commands (/plan, /review, /diff, /apply, /undo, /run, '
+            '/context, /git, /model, /help); a task, -p, piped stdin or --json '
+            'runs once and exits. --review makes a run read-only, and '
+            '--session-id continues a saved session.'
         ),
         epilog=(
             "Examples:\n"
@@ -210,6 +211,25 @@ def add_code_parser(subparsers: argparse._SubParsersAction) -> None:
             "  cat pytest.log | effgen code -p \"why did this fail?\"\n"
             "  effgen code --undo                  # revert the last applied edit\n"
             "  effgen code \"fix the failing test\" --auto-edit --commit\n"
+            "  effgen code --review                # review everything uncommitted\n"
+            "  effgen code --review staged -p \"is this safe to merge?\"\n"
+            "  effgen code --review main...HEAD --json | jq -r .answer\n"
+            "  effgen code -f src/app.py -f src/db.py -p \"where can this raise?\"\n"
+            "  effgen code --session-id refactor-42 # continue a saved session\n"
+            "\n"
+            "Review mode is read-only in the tools it holds, not only in the\n"
+            "mode it runs in: the file tool is narrowed to reading and the git\n"
+            "tool is the read-only surface, so there is nothing attached that\n"
+            "writes a file, runs code or runs a shell command. The change under\n"
+            "review is handed to the model as context. --review cannot be\n"
+            "combined with a permission flag, --commit or --undo.\n"
+            "\n"
+            "--session-id restores the conversation, the files in context, the\n"
+            "files the session wrote, and (on a terminal, when no permission\n"
+            "flag was given) the permission mode. The workspace always comes\n"
+            "from -w/--workspace or the current directory; a stored one that\n"
+            "differs is reported and not adopted. Edits proposed by /plan are\n"
+            "not stored -- re-run /plan against the current files.\n"
             "\n"
             "In a git repository the branch, the short status and a bounded file\n"
             "layout (ignored files excluded) become part of the agent's context,\n"
@@ -276,6 +296,26 @@ def add_code_parser(subparsers: argparse._SubParsersAction) -> None:
     code_parser.add_argument('-y', '--yes', dest='assume_yes', action='store_true',
                              help='Apply writes, sandboxed runs and shell commands '
                                   'without asking (still confined to the workspace)')
+    code_parser.add_argument(
+        '--review', nargs='?', const='uncommitted', metavar='TARGET',
+        help='Review instead of change: read-only, with no tool that writes a '
+             'file or runs a command. TARGET is uncommitted (the default), '
+             'staged, or any revision or range git accepts (HEAD~3, '
+             'main...HEAD). Combine with -f/--file, or use -f/--file alone to '
+             'review files outside a repository.',
+    )
+    code_parser.add_argument(
+        '-f', '--file', dest='review_files', action='append', metavar='PATH',
+        help='Include a workspace file in the review, in full. Repeatable. '
+             'Used with --review, or on its own to review files without a diff.',
+    )
+    code_parser.add_argument(
+        '--session-id', '--resume', dest='session_id', metavar='ID',
+        help='Continue a persistent session by id (the same store as `effgen '
+             'chat --session-id` and `effgen sessions list`). Prior turns are '
+             'recalled and new ones saved, along with the workspace, files in '
+             'context and files written; a new id starts a fresh session.',
+    )
     code_parser.add_argument('--commit', action='store_true',
                              help='After the run, offer to commit the files it '
                                   'wrote (y/N; needs --yes without a terminal). '

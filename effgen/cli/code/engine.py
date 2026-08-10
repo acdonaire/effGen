@@ -10,8 +10,9 @@ what was withheld, and the usual token/cost/timing numbers.
 
 from __future__ import annotations
 
+import logging
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,11 +30,18 @@ from .git_actions import (
     untracked_among,
 )
 from .permissions import ActionRecord, PermissionGate, PermissionMode
-from .project import ProjectContext, build_project_context
-from .tools import build_code_tools
+from .project import ProjectContext, ReviewSubject, build_project_context
+from .tools import build_code_tools, build_review_tools
+
+logger = logging.getLogger(__name__)
 
 #: The preset whose prompt, tools and iteration budget ``effgen code`` builds on.
 CODE_PRESET = "coding"
+
+#: Where a coding session's own state lives on a session record, beside the
+#: conversation every ``effgen`` session stores. Additive, so ``effgen
+#: sessions`` and the history views read a coding session unchanged.
+CODING_METADATA_KEY = "coding"
 
 #: Added to the preset prompt so the model works inside the one workspace root
 #: and treats a gate refusal as a real constraint rather than something to retry.
@@ -50,6 +58,56 @@ _WORKSPACE_PROMPT = (
     "workspace. Base every claim on a tool's real output. If a tool reports that "
     "an action was not permitted, tell the user instead of retrying the same "
     "action or answering as if it had succeeded."
+)
+
+#: The system prompt a read-only review run uses in place of
+#: :data:`_WORKSPACE_PROMPT`, which instructs the model to write files.
+REVIEW_PROMPT = (
+    "You are reviewing code in {workspace}. This run is read-only: you cannot "
+    "write a file, run code or run a shell command, and no such tool is "
+    "attached. Your tools read — the file tool reads, lists and searches files "
+    "in the workspace, and the git tool reports the repository's status, log, "
+    "branches and stat-level diffs. The change under review is included with "
+    "the request, so read a file only when you need the code around a hunk, and "
+    "never read the same file twice — a second read returns what you already "
+    "have. Answer with the review itself: the correctness risks first, one "
+    "finding per bullet, each naming the file and the line it is on, then "
+    "anything else worth raising. Say plainly when something you would need is "
+    "not visible to you rather than guessing at it. Describe the change you "
+    "would make; do not attempt to make it."
+)
+
+#: ``answer_source`` values that mean the loop recovered an answer rather than
+#: the model writing one: the last tool observation after a repeated call, or
+#: the loop's own text after the model returned none. A run reporting one of
+#: these completed, but its answer is not what the model wrote, so the coding
+#: surfaces label it. ``direct_calculator_result`` is not here — that is a
+#: computed result the loop returned deliberately.
+RECOVERED_ANSWER_SOURCES: frozenset[str] = frozenset(
+    {"loop_detected", "repeated_tool_result", "null_final_from_model"}
+)
+
+#: How each recovered source reads in the run report.
+RECOVERED_ANSWER_LABELS: dict[str, str] = {
+    "loop_detected": "the last tool result, after the model repeated the same call",
+    "repeated_tool_result": "a tool result the model asked for twice",
+    "null_final_from_model": "what the run had reached when the model returned no answer",
+}
+
+#: The default question a review answers when the caller gave no task.
+REVIEW_TASK = (
+    "Review the change below. Report the correctness risks first — one finding "
+    "per bullet, each naming the file and the line it is on — then anything "
+    "else worth raising."
+)
+
+#: What a read-only run reports when the loop had no answer to hand back but the
+#: last thing it read. Returning that would present the file as the review.
+REVIEW_NO_ANSWER = (
+    "The model did not produce a review. The run ended with the last thing it "
+    "read rather than with an answer, and that is not a review. Re-run it, "
+    "raise the output budget with --max-tokens (a reasoning model can spend the "
+    "whole budget before writing anything), or use a different model."
 )
 
 
@@ -198,6 +256,14 @@ class CodeRunResult:
     #: ``hybrid`` or a provider-native path. Empty when the run failed before
     #: the tool loop.
     tool_calling: str = ""
+    #: Where the answer came from when the loop recovered one rather than the
+    #: model writing it (``loop_detected``, ``repeated_tool_result``, ...).
+    #: Empty when the model wrote the answer.
+    answer_source: str = ""
+    #: True when the run held no tool that writes, runs or executes anything.
+    read_only: bool = False
+    #: What a read-only review was asked to look at, or ``None``.
+    review: dict[str, Any] | None = None
     iterations: int = 0
     tool_calls: int = 0
     tokens: int = 0
@@ -248,6 +314,17 @@ class CodeRunResult:
         """True when the loop stopped at its iteration cap without an answer."""
         return self.reason in ("max_iterations_partial", "max_iterations_exhausted")
 
+    @property
+    def recovered_answer(self) -> bool:
+        """True when the loop recovered the answer instead of the model writing it.
+
+        The loop hands back the last tool observation when a model keeps
+        repeating a call, and hands back its own text when the model returns
+        none. Both are reported as a completed run, so the surfaces label them
+        rather than showing an ordinary success.
+        """
+        return self.answer_source in RECOVERED_ANSWER_SOURCES
+
     def to_dict(self) -> dict[str, Any]:
         """Return the result as the JSON document ``--json`` prints."""
         return {
@@ -261,6 +338,9 @@ class CodeRunResult:
             "workspace": self.workspace,
             "permission_mode": self.permission_mode,
             "tool_calling": self.tool_calling,
+            "answer_source": self.answer_source,
+            "read_only": self.read_only,
+            "review": self.review,
             "repo": self.repo,
             "commit": self.commit,
             "files_written": list(self.files_written),
@@ -295,6 +375,12 @@ class CodeEngine:
             decided, so its diff can be shown before it touches disk.
         project: The workspace's repository state, layout and project brief,
             appended to the system prompt. ``None`` builds it from the workspace.
+        review: What a read-only review is looking at. Set it and the run holds
+            only reading tools, writes nothing, and carries the subject as
+            context instead of reaching for a shell to find it.
+        session_id: A persistent conversation session to continue and append to.
+            The stored turns are recalled into the agent's memory and each new
+            turn is written back.
     """
 
     def __init__(
@@ -313,6 +399,8 @@ class CodeEngine:
         on_event: Callable[[ActionRecord], None] | None = None,
         on_diff: Callable[[ProposedEdit], None] | None = None,
         project: ProjectContext | None = None,
+        review: ReviewSubject | None = None,
+        session_id: str | None = None,
     ) -> None:
         self.model = model
         self.provider = provider
@@ -321,6 +409,8 @@ class CodeEngine:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.project = project
+        self.review = review
+        self.session_id = session_id
         self.gate = PermissionGate(
             mode,
             self.workspace,
@@ -338,15 +428,41 @@ class CodeEngine:
         """The permission mode this run is using."""
         return self.gate.mode
 
+    @property
+    def read_only(self) -> bool:
+        """True when this run holds no tool that writes, runs or executes."""
+        return self.review is not None
+
     def system_prompt(self) -> str:
-        """Return the preset prompt, the workspace instruction and the project context."""
+        """Return the preset prompt, the mode instruction and the project context.
+
+        A review run replaces the workspace instruction — which tells the model
+        to write files through the file tool — with the read-only review brief.
+        """
         from effgen.presets import get_preset
 
         base = get_preset(CODE_PRESET).system_prompt
-        parts = [base, _WORKSPACE_PROMPT.format(workspace=self.workspace)]
+        instruction = (
+            REVIEW_PROMPT if self.read_only else _WORKSPACE_PROMPT
+        ).format(workspace=self.workspace)
+        parts = [base, instruction]
         if self.project is not None:
             parts.append(self.project.as_prompt())
         return "\n\n".join(parts)
+
+    def compose_review_task(self, task: str) -> str:
+        """Return *task* with the review subject in front of it.
+
+        The subject is handed to the model as context because the tools a review
+        holds cannot produce a diff: the only route to one is a shell, and a
+        read-only run has none.
+        """
+        if self.review is None or not self.review.text:
+            return task
+        return (
+            f"{task or REVIEW_TASK}\n\n--- the change under review "
+            f"({self.review.describe().lower()}) ---\n{self.review.text}"
+        )
 
     def load_project(self, *, refresh: bool = False) -> ProjectContext:
         """Return the workspace's project context, building it once on demand.
@@ -364,7 +480,11 @@ class CodeEngine:
         return self.project
 
     def build_agent(self) -> Any:
-        """Construct the agent, reusing the ``coding`` preset's configuration."""
+        """Construct the agent, reusing the ``coding`` preset's configuration.
+
+        A review run is given the read-only tool set; a ``session_id`` attaches
+        the persistent session, whose stored turns the agent recalls.
+        """
         from effgen.core.agent import Agent, AgentConfig
         from effgen.presets import get_preset
 
@@ -373,7 +493,10 @@ class CodeEngine:
             name="code-agent",
             model=self.model,
             provider=self.provider,
-            tools=build_code_tools(self.gate),
+            tools=(
+                build_review_tools(self.gate) if self.read_only
+                else build_code_tools(self.gate)
+            ),
             system_prompt=self.system_prompt(),
             max_iterations=(
                 self.max_iterations if self.max_iterations is not None
@@ -386,19 +509,105 @@ class CodeEngine:
             enable_memory=preset.enable_memory,
             enable_sub_agents=False,
         )
-        self._agent = Agent(config=config)
+        self._agent = (
+            Agent(config=config, session_id=self.session_id)
+            if self.session_id else Agent(config=config)
+        )
         return self._agent
 
     def run(self, task: str) -> CodeRunResult:
         """Run *task* to completion and return its :class:`CodeRunResult`.
 
         ``EFFGEN_WORKSPACE`` is set for the duration of the run so every tool
-        resolves the same root, and restored afterwards.
+        resolves the same root, and restored afterwards. A review run carries
+        its subject into the task.
         """
         agent = self._agent or self.build_agent()
+        composed = self.compose_review_task(task) if self.read_only else task
         with workspace_env(self.workspace):
-            response = agent.run(task)
+            response = agent.run(composed)
         return self.result_from_response(task, response)
+
+    # -- the persistent session ---------------------------------------------
+
+    def coding_state(
+        self,
+        *,
+        files_in_context: Iterable[str] = (),
+        files_written: Iterable[str] = (),
+    ) -> dict[str, Any]:
+        """Return the coding half of a session record.
+
+        The conversation is stored by the session itself; this is what a coding
+        session additionally needs to pick up where it left off — where it was
+        working, under which permissions, on which files.
+        """
+        from datetime import datetime
+
+        return {
+            "workspace": str(self.workspace),
+            "permission_mode": self.mode.value,
+            "files_in_context": list(files_in_context),
+            "files_written": list(files_written),
+            "model": self.model,
+            "provider": self.provider,
+            "updated_at": datetime.now().isoformat(),
+        }
+
+    def save_coding_state(
+        self,
+        *,
+        files_in_context: Iterable[str] = (),
+        files_written: Iterable[str] = (),
+    ) -> None:
+        """Write the coding state onto the attached session, if there is one.
+
+        Additive: everything else in the record is left as it is, so listing,
+        ``sessions show`` and the history views read the session unchanged. A
+        store that cannot be written is logged and does not fail the turn.
+        """
+        session = getattr(self._agent, "session", None)
+        if session is None:
+            return
+        session.metadata[CODING_METADATA_KEY] = self.coding_state(
+            files_in_context=files_in_context, files_written=files_written
+        )
+        try:
+            session.save()
+        except Exception as exc:  # noqa: BLE001 - a store failure never fails a turn
+            logger.warning("Could not save the coding session state: %s", exc)
+
+    @contextmanager
+    def review_turn(self, subject: ReviewSubject) -> Iterator[None]:
+        """Make the live agent read-only for the duration of the block.
+
+        The agent's tool dict, its system prompt and the gate's mode are swapped
+        for the review set, the review brief and ``plan``, and all three are put
+        back in ``finally`` — including when the turn raises — so the next turn
+        has its writing tools again. The loop reads ``self.tools`` per call, so
+        the swap takes effect for the turn that runs inside the block.
+        """
+        agent = self._agent
+        previous_review = self.review
+        previous_mode = self.gate.mode
+        previous_tools = dict(getattr(agent, "tools", {}) or {}) if agent else {}
+        config = getattr(agent, "config", None)
+        previous_prompt = getattr(config, "system_prompt", None)
+        self.review = subject
+        self.gate.mode = PermissionMode.PLAN
+        try:
+            if agent is not None:
+                agent.tools = {t.metadata.name: t for t in build_review_tools(self.gate)}
+                if config is not None and hasattr(config, "system_prompt"):
+                    config.system_prompt = self.system_prompt()
+            yield
+        finally:
+            self.review = previous_review
+            self.gate.mode = previous_mode
+            if agent is not None:
+                agent.tools = previous_tools
+                if config is not None and previous_prompt is not None:
+                    config.system_prompt = previous_prompt
 
     # -- git ----------------------------------------------------------------
 
@@ -489,27 +698,55 @@ class CodeEngine:
         path does.
         """
         metadata = response.metadata or {}
+        answer = response.output or ""
+        success = bool(response.success)
+        reason = str(metadata.get("reason", ""))
+        partial = bool(metadata.get("partial"))
+        partial_output = str(metadata.get("partial_output") or "")
+        answer_source = str(metadata.get("answer_source", "") or "")
+        error = metadata.get("error")
+
+        if self.read_only and answer_source in RECOVERED_ANSWER_SOURCES and success:
+            # In a review the recovered "answer" is the file the model just
+            # read. Handing that back would present the source as the review,
+            # so the run reports what happened and keeps the text as progress.
+            success = False
+            partial = True
+            partial_output = answer
+            answer = REVIEW_NO_ANSWER
+            reason = answer_source
+            error = error or {
+                "type": "NoReviewProduced",
+                "category": "loop_recovery",
+                "message": REVIEW_NO_ANSWER,
+                "answer_source": answer_source,
+                "retryable": True,
+            }
+
         return CodeRunResult(
             task=task,
-            answer=response.output or "",
-            success=bool(response.success),
-            reason=str(metadata.get("reason", "")),
+            answer=answer,
+            success=success,
+            reason=reason,
             model=self.model,
             provider=self.provider or getattr(response, "provider", None),
             workspace=str(self.workspace),
             permission_mode=self.mode.value,
             tool_calling=str(metadata.get("tool_calling_strategy", "") or ""),
+            answer_source=answer_source,
+            read_only=self.read_only,
+            review=self.review.to_dict() if self.review is not None else None,
             iterations=int(getattr(response, "iterations", 0) or 0),
             tool_calls=int(getattr(response, "tool_calls", 0) or 0),
             tokens=int(getattr(response, "tokens_used", 0) or 0),
             cost_usd=metadata.get("cost_usd"),
             duration_s=float(getattr(response, "execution_time", 0.0) or 0.0),
-            partial=bool(metadata.get("partial")),
-            partial_output=str(metadata.get("partial_output") or ""),
+            partial=partial,
+            partial_output=partial_output,
             actions=list(self.gate.actions),
             files_written=self.gate.files_written,
             diffs=list(self.gate.edits),
-            error=metadata.get("error"),
+            error=error,
             repo=(
                 self.project.repo.to_dict()
                 if self.project is not None and self.project.repo is not None

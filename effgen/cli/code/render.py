@@ -155,3 +155,25 @@ def print_summary(cli: "CLIInterface", result: "CodeRunResult") -> None:
     path = getattr(result, "tool_calling", "")
     if path:
         print_plain(cli, f"Tool calling: {tool_calling_label(path)}")
+    note = recovered_answer_note(result)
+    if note:
+        print_status(cli, "warning", note)
+
+
+def recovered_answer_note(result: "CodeRunResult") -> str:
+    """Return the line naming a recovered answer, or ``""`` for a written one.
+
+    When a model will not write a final answer the loop hands back what it has —
+    the last tool result, or its own text. The run completed, so the footer
+    reads as a success; this says where the answer actually came from, so a
+    repeated file read is not mistaken for a review.
+    """
+    from .engine import RECOVERED_ANSWER_LABELS
+
+    if not getattr(result, "recovered_answer", False):
+        return ""
+    source = getattr(result, "answer_source", "")
+    return (
+        f"The model did not write this answer; it is "
+        f"{RECOVERED_ANSWER_LABELS.get(source, source)}."
+    )

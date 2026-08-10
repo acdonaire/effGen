@@ -41,6 +41,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from effgen.cli.code.engine import (
+    REVIEW_TASK,
     CodeEngine,
     CodeRunResult,
     resolve_workspace,
@@ -53,7 +54,7 @@ from effgen.cli.code.permissions import (
     PermissionMode,
     default_mode,
 )
-from effgen.cli.code.project import build_project_context
+from effgen.cli.code.project import build_project_context, review_subject
 from effgen.cli.code.render import (
     print_action,
     print_diff,
@@ -66,6 +67,7 @@ from effgen.cli.commands._shared import (
     _quickstart_suggest_model,
     resolve_provider_name,
 )
+from effgen.models._coding import coding_suitability
 from effgen.ui.render import json_ensure_ascii
 
 if TYPE_CHECKING:
@@ -100,6 +102,36 @@ def _resolve_mode(args: argparse.Namespace, interactive: bool) -> tuple[Permissi
     if named:
         return named[0][0], True, None
     return default_mode(interactive), False, None
+
+
+def _resolve_review(args: argparse.Namespace) -> tuple[str | None, list[str], str | None]:
+    """Return ``(target, files, error)`` for a read-only review run.
+
+    ``target`` is ``None`` when ``--review`` was not given; ``files`` is what
+    ``-f/--file`` named. A review cannot be combined with a permission flag,
+    ``--commit`` or ``--undo``: each of those asks for something a read-only run
+    will not do, so naming both is an error rather than a silent precedence rule.
+    """
+    target = getattr(args, "review", None)
+    files = list(getattr(args, "review_files", None) or [])
+    if target is None:
+        return None, files, None
+
+    conflicts = [
+        flag for flag, given in (
+            ("--plan", bool(getattr(args, "plan_only", False))),
+            ("--auto-edit", bool(getattr(args, "auto_edit", False))),
+            ("--yes", bool(getattr(args, "assume_yes", False))),
+            ("--commit", bool(getattr(args, "commit", False))),
+            ("--undo", bool(getattr(args, "undo", False))),
+        ) if given
+    ]
+    if conflicts:
+        return None, files, (
+            f"--review cannot be combined with {', '.join(conflicts)} — a review "
+            "writes nothing, runs nothing and commits nothing. Pass one."
+        )
+    return target, files, None
 
 
 #: Seconds a piped-stdin read may go without closing before the wait is announced.
@@ -233,6 +265,12 @@ def _report(cli: "CLIInterface", result: CodeRunResult, *, quiet: bool) -> None:
 
     console = cli._human()
     stopped = not result.success and result.partial
+    if result.read_only:
+        title = "Review"
+    else:
+        title = "Coding Agent"
+    if result.recovered_answer:
+        title = "Recovered answer"
     if not result.success and not result.partial:
         cli.print_error_panel(result.answer or "The run produced no answer.", title="Error")
     elif console:
@@ -241,7 +279,7 @@ def _report(cli: "CLIInterface", result: CodeRunResult, *, quiet: bool) -> None:
             success=result.success,
             partial=result.partial,
             framed=True,
-            title="Stopped" if stopped else "Coding Agent",
+            title="Stopped" if stopped else title,
             console=console,
         )
         if stopped and result.partial_output:
@@ -422,8 +460,8 @@ def _report_partial_hunks(cli: "CLIInterface", result: CodeRunResult) -> None:
 
 def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
     """Run one ``effgen code`` task and return the process exit code."""
-    if bool(getattr(args, "undo", False)):
-        return _run_undo(cli, args)
+    review_target, review_files, review_error = _resolve_review(args)
+    reviewing = review_target is not None or bool(review_files)
 
     json_mode = bool(getattr(args, "output_json", False))
     quiet = bool(getattr(args, "quiet", False))
@@ -434,13 +472,26 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
     except (ValueError, OSError):  # pragma: no cover - closed std streams
         stdin_tty = interactive = False
 
+    # Piped or JSON output keeps stdout for the result alone; everything a
+    # human reads — including an argument error — goes to stderr.
+    if json_mode or not interactive:
+        cli._human_to_stderr = True
+
+    if review_error:
+        cli.print_error(review_error)
+        return 1
+
+    if bool(getattr(args, "undo", False)):
+        return _run_undo(cli, args)
+
     # A terminal with no task and no piped stdin opens the interactive REPL; a
-    # given task, ``-p``, piped stdin, or ``--json`` runs the single-shot path so
-    # scripted and non-TTY invocations stay byte-clean.
+    # given task, ``-p``, piped stdin, ``--json`` or a review runs the
+    # single-shot path so scripted and non-TTY invocations stay byte-clean.
     if (
         interactive
         and stdin_tty
         and not json_mode
+        and not reviewing
         and getattr(args, "print_task", None) is None
         and not getattr(args, "task", None)
     ):
@@ -462,21 +513,24 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
 
         return CodeREPL(cli, args).run()
 
-    # Piped or JSON output keeps stdout for the result alone; everything a
-    # human reads goes to stderr.
-    if json_mode or not interactive:
-        cli._human_to_stderr = True
-
     mode, mode_explicit, mode_error = _resolve_mode(args, interactive)
     if mode_error:
         cli.print_error(mode_error)
         return 1
+    if reviewing:
+        # A review holds no tool that writes or runs, and the gate denies all
+        # four kinds behind them. ``permission_mode`` keeps reporting one of the
+        # four documented values; ``read_only`` in the record says what this is.
+        mode, mode_explicit = PermissionMode.PLAN, True
 
-    task, task_error = _resolve_task(args, interactive)
+    task, task_error = _resolve_task(args, interactive and not reviewing)
     if task is None:
-        if task_error:
-            cli.print_error(task_error)
-        return 1
+        if reviewing:
+            task = REVIEW_TASK
+        else:
+            if task_error:
+                cli.print_error(task_error)
+            return 1
 
     provider, provider_error = resolve_provider_name(getattr(args, "provider", None))
     if provider_error:
@@ -503,12 +557,25 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
     # call, and travel with the run as context.
     project = build_project_context(workspace)
 
+    # A review's subject is assembled here, before any model call, so a bad
+    # revision or a missing file is a one-line error rather than a wasted run.
+    subject = None
+    if reviewing:
+        subject = review_subject(workspace, review_target, review_files)
+        if subject.error:
+            cli.print_error(subject.error)
+            return 1
+
     if not quiet:
         print_plain(cli, f"Workspace: {workspace}")
         print_plain(cli, project.summary_line())
         if project.brief_path:
             print_plain(cli, f"Project instructions: {project.brief_path}")
-        cli.print(f"Permissions: {mode.value} — {MODE_DESCRIPTIONS[mode]}")
+        if subject is not None:
+            print_plain(cli, subject.describe())
+            cli.print("Read-only review: no file is written and no command runs.")
+        else:
+            cli.print(f"Permissions: {mode.value} — {MODE_DESCRIPTIONS[mode]}")
         if mode is not PermissionMode.PLAN:
             note = workspace_execution_note(workspace)
             if note:
@@ -538,12 +605,23 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
         on_event=on_event,
         on_diff=on_diff,
         project=project,
+        review=subject,
+        session_id=getattr(args, "session_id", None),
     )
 
     agent: Any = None
+    suitability = None
     try:
         agent = engine.build_agent()
+        # The model is loaded here, so what it says about its own tool calling
+        # is answerable; the note goes out before the first billed call.
+        suitability = coding_suitability(model, provider, getattr(agent, "model", None))
+        if not quiet and not suitability.is_suitable:
+            print_status(cli, "warning", suitability.note())
         result = engine.run(task)
+        # Recorded before the agent is closed, so a session continued on the
+        # command line knows where it was working and what it wrote.
+        engine.save_coding_state(files_written=result.files_written)
     except KeyboardInterrupt:
         cli.print_warning("Interrupted; no further actions were taken.")
         return 130
@@ -569,7 +647,10 @@ def run_code_command(cli: "CLIInterface", args: argparse.Namespace) -> int:
         _offer_commit(cli, args, engine, result, quiet=quiet)
 
     if json_mode:
-        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=json_ensure_ascii()))
+        document = result.to_dict()
+        if suitability is not None:
+            document["coding_suitability"] = suitability.to_dict()
+        print(json.dumps(document, indent=2, ensure_ascii=json_ensure_ascii()))
     elif interactive:
         _report(cli, result, quiet=quiet)
     else:
