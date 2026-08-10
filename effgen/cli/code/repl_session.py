@@ -16,6 +16,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from effgen.cli.chat import _history_dir
 from effgen.cli.code.engine import workspace_env
@@ -49,6 +50,7 @@ class CodeSessionMixin:
         self.mode_explicit = True
         if self.engine is not None:
             self.engine.gate.mode = new_mode
+        self._save_coding_state()
         self._status("success", f"Permission mode: {new_mode.value} — {MODE_DESCRIPTIONS[new_mode]}")
 
     def _resolve_swap_target(self, new_id: str) -> tuple[str | None, str]:
@@ -334,14 +336,176 @@ class CodeSessionMixin:
             return
         self._status("success", f"Saved to {path}")
 
+    def _report_coding_suitability(self) -> None:
+        """Say once, before the first turn, when this model is a poor fit for coding.
+
+        Runs after the agent is built, so what the model reports about its own
+        tool calling is answerable. It never blocks: a session on a model that
+        cannot write files still starts, having said so.
+        """
+        if self.quiet:
+            return
+        from effgen.models._coding import coding_suitability
+
+        note = coding_suitability(
+            self.model_id or "", self.provider, getattr(self.agent, "model", None)
+        ).note()
+        if note:
+            self._status("warning", note)
+
+    # ------------------------------------------------------------------
+    # The resumable session
+    # ------------------------------------------------------------------
+    def _adopt_session_state(self, name: str) -> None:
+        """Adopt the stored coding state of session *name*, under the restore rules.
+
+        Called before the model is picked and the engine is built, so a stored
+        model is the one the session starts on. The conversation itself is
+        restored separately, by attaching the session to the agent.
+
+        Nothing here silently widens what the run may do: the workspace always
+        comes from the command line or the current directory, and a stored
+        permission mode is adopted only on a terminal and only when the caller
+        named no permission flag.
+        """
+        from effgen.cli.code.engine import CODING_METADATA_KEY
+
+        try:
+            from effgen.core.session import Session
+
+            session = Session.load_or_create(name)
+        except Exception as e:  # noqa: BLE001 - a bad store never blocks a session
+            self._status("warning", f"Could not read session '{name}': {e}")
+            return
+
+        turns = len(session.messages) // 2
+        state = session.metadata.get(CODING_METADATA_KEY) or {}
+        if not session.messages and not state:
+            self._say(f"Starting a new session '{name}'; it is saved as it grows.")
+            return
+
+        stored_ws = str(state.get("workspace") or "")
+        if stored_ws and Path(stored_ws) != self.workspace:
+            self._status(
+                "warning",
+                f"Session '{name}' was last used in {stored_ws}; this run works "
+                f"in {self.workspace} and keeps it.",
+            )
+
+        if not self.model_id:
+            model = state.get("model") or session.metadata.get("model")
+            if model:
+                self.model_id = model
+                self.provider = state.get("provider") or self.provider
+                self._model_defaulted = False
+                self._say(f"Using the session's model {model}; swap with /model.")
+
+        kept, missing = self._existing_context_files(state.get("files_in_context") or [])
+        self.context_files = kept
+        if missing:
+            self._status(
+                "warning",
+                f"{len(missing)} file(s) in the stored context no longer exist "
+                f"and were dropped: {', '.join(missing)}",
+            )
+        self.session_files = [
+            rel for rel in (state.get("files_written") or []) if isinstance(rel, str)
+        ]
+
+        stored_mode = state.get("permission_mode")
+        if stored_mode and not self.mode_explicit and self.interactive:
+            try:
+                self.mode = PermissionMode(stored_mode)
+                self._say(f"Permission mode restored: {self.mode.value}")
+            except ValueError:
+                pass
+        elif stored_mode and stored_mode != self.mode.value:
+            self._say(
+                f"The session was last in {stored_mode} mode; this run uses "
+                f"{self.mode.value}. Change it with /mode."
+            )
+
+        self._say(
+            f"Resumed '{name}' ({turns} turn(s), {len(kept)} file(s) in context)."
+        )
+
+    def _existing_context_files(self, stored: list) -> tuple[list[str], list[str]]:
+        """Split *stored* context paths into those still on disk and those gone."""
+        kept: list[str] = []
+        missing: list[str] = []
+        for rel in stored:
+            if not isinstance(rel, str):
+                continue
+            try:
+                exists = (self.workspace / rel).is_file()
+            except OSError:  # pragma: no cover - unreadable path
+                exists = False
+            (kept if exists else missing).append(rel)
+        return kept, missing
+
+    def _save_coding_state(self) -> None:
+        """Record where this session is working, under which permissions, on what.
+
+        The conversation is stored by :meth:`_record_turn`; this is the coding
+        half of the record, refreshed after every turn and after ``/add``,
+        ``/drop`` and ``/mode`` so it is never a stale first snapshot.
+        """
+        if self.engine is None or not self.session_id:
+            return
+        self.engine.save_coding_state(
+            files_in_context=self.context_files, files_written=self.session_files
+        )
+
+    def _record_turn(self, result: Any) -> None:
+        """Store this turn on the session, and store the line the user typed.
+
+        A turn that runs to completion before it is rendered is written back by
+        the agent itself; a streamed turn renders the answer as it arrives and
+        writes nothing, so the conversation has to be recorded here or a resumed
+        session would carry its coding state and none of what was said.
+
+        Either way the stored user message is the line the person typed, not the
+        task the model received — that one has the files-in-context inlined in
+        front of it, and a resumed conversation should not replay file bodies as
+        the user's words. The files that were sent are recorded beside it.
+        """
+        if self.engine is None or not self.session_id:
+            return
+        session = getattr(self.agent, "session", None)
+        if session is None or not getattr(result, "success", False):
+            return
+        answer = getattr(result, "answer", "") or ""
+        if not answer:
+            return
+        messages = session.messages
+        if len(messages) >= self._stored_before + 2 and messages[-1].get("role") in (
+            "assistant", "agent"
+        ):
+            # The agent stored the turn; replace the composed task it recorded.
+            user = messages[-2]
+            if user.get("role") != "user":
+                return
+            user["content"] = self._last_task
+        else:
+            session.add_message("user", self._last_task)
+            session.add_message("assistant", answer)
+        meta = messages[-2].setdefault("metadata", {})
+        if isinstance(meta, dict):
+            meta["context_files"] = list(self.context_files)
+        try:
+            session.save()
+        except Exception as exc:  # noqa: BLE001 - a store failure never fails a turn
+            self._status("warning", f"Could not save the session: {exc}")
+
     def _cmd_session(self, arg: str) -> None:
-        """Show, or begin persisting under, the resumable session id."""
+        """Show, resume, or begin persisting under, the resumable session id."""
         if not arg:
             if self.session_id:
                 self._say(f"Session id: {self.session_id}")
                 self._say(
                     "It is listed by `effgen sessions`; the conversation is saved as it grows."
                 )
+                self._say(f"Continue it later with:  effgen code --session-id {self.session_id}")
             else:
                 self._say("This session is not being saved to the session store.")
                 self._say("Start persisting:  /session <id>")
@@ -357,21 +521,59 @@ class CodeSessionMixin:
             from effgen.core.session import Session
 
             session = Session.load_or_create(name)
-            for msg in self._dump_history():
-                if msg["role"] == "user":
-                    session.add_user_message(msg["content"])
-                elif msg["role"] == "assistant":
-                    session.add_assistant_message(msg["content"])
-            session.metadata["model"] = self.model_id
-            session.metadata["files_in_context"] = list(self.context_files)
-            session.save()
-            self.session_id = name
-            if self.agent is not None:
-                self.agent.session = session
-                self.agent._session_id = name
-            self._status("success", f"Saving this session as '{name}'.")
+            if session.messages:
+                self._resume_stored_session(name, session)
+            else:
+                self._begin_session(name, session)
         except Exception as e:  # noqa: BLE001
             self._status("error", f"Could not start session '{name}': {e}")
+
+    def _begin_session(self, name: str, session) -> None:
+        """Start persisting the live conversation under a session id with no turns."""
+        for msg in self._dump_history():
+            if msg["role"] == "user":
+                session.add_user_message(msg["content"])
+            elif msg["role"] == "assistant":
+                session.add_assistant_message(msg["content"])
+        session.metadata["model"] = self.model_id
+        self._attach_session(name, session)
+        self._save_coding_state()
+        self._status("success", f"Saving this session as '{name}'.")
+
+    def _resume_stored_session(self, name: str, session) -> None:
+        """Load a stored session's turns into memory instead of appending to them.
+
+        Appending the live conversation to a session that already has one would
+        store both twice, so the stored turns replace live memory and anything
+        said in this process before the command is reported as dropped.
+        """
+        live = len(self._dump_history())
+        try:
+            self.agent.reset_memory()
+            for msg in session.messages:
+                if msg.get("role") == "user":
+                    self.agent.short_term_memory.add_user_message(msg.get("content", ""))
+                elif msg.get("role") in ("assistant", "agent"):
+                    self.agent.short_term_memory.add_assistant_message(msg.get("content", ""))
+        except Exception:  # noqa: BLE001 - memory hydration is best-effort
+            pass
+        self._attach_session(name, session)
+        self._adopt_session_state(name)
+        if live:
+            self._status(
+                "warning",
+                f"{live} message(s) from this process were replaced by the "
+                f"stored conversation of '{name}'.",
+            )
+
+    def _attach_session(self, name: str, session) -> None:
+        """Point this session and its agent at *session*, saving as it grows."""
+        session.metadata.setdefault("model", self.model_id)
+        session.save()
+        self.session_id = name
+        if self.agent is not None:
+            self.agent.session = session
+            self.agent._session_id = name
 
     def _cmd_load(self, arg: str) -> None:
         files = sorted(_history_dir().glob("code_*.json"), reverse=True)

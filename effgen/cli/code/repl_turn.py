@@ -26,7 +26,19 @@ class CodeTurnMixin:
     """
 
     def _compose_task(self, message: str) -> str:
-        """Prepend the live content of any files-in-context to *message*."""
+        """Prepend the live content of any files-in-context to *message*.
+
+        While a ``/review`` turn is running, the change under review follows,
+        because a read-only turn holds no tool that could go and find it.
+        """
+        composed = self._with_context_files(message)
+        engine = self.engine
+        if engine is not None and engine.read_only:
+            return engine.compose_review_task(composed)
+        return composed
+
+    def _with_context_files(self, message: str) -> str:
+        """Return *message* behind the live content of the files in context."""
         if not self.context_files:
             return message
         blocks: list[str] = []
@@ -61,6 +73,10 @@ class CodeTurnMixin:
         assert self.engine is not None
         task = self._compose_task(message)
         self._last_task = message
+        # How much of the conversation was already stored, so the turn is
+        # recorded once whether the agent wrote it back or the streamed path ran.
+        session = getattr(self.agent, "session", None)
+        self._stored_before = len(session.messages) if session is not None else 0
         self.engine.gate.begin_turn()
         tok0, cost0 = self._snapshot()
         t0 = time.monotonic()
@@ -97,6 +113,8 @@ class CodeTurnMixin:
         self.session_cost += max(rcost or 0.0, 0.0)
         if not self.quiet:
             self._print_footer(elapsed, rtok, rcost or 0.0)
+        self._record_turn(result)
+        self._save_coding_state()
         self._post_turn_notes(result)
 
     def _note_written(self, paths: list[str]) -> None:
@@ -228,6 +246,11 @@ class CodeTurnMixin:
 
             self._named_tool_calling = True
             self._say(f"Tool calling: {tool_calling_label(path)}")
+        from .render import recovered_answer_note
+
+        note = recovered_answer_note(result)
+        if note:
+            self._status("warning", note)
         if result.files_written:
             self._say(f"Files written: {', '.join(result.files_written)}")
         for diff in result.diffs:

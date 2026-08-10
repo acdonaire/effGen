@@ -132,7 +132,9 @@ class CodeREPL(CodeCommandsMixin, CodeSessionMixin, CodeTurnMixin, CodeViewMixin
         self.session_files: list[str] = []
 
         self.engine: CodeEngine | None = None
-        self.session_id: str | None = None
+        # A session id given on the command line resumes that session: its turns
+        # are recalled and every new one is written back.
+        self.session_id: str | None = getattr(args, "session_id", None)
         self.session_tokens = 0
         self.session_cost = 0.0
         self.turns = 0
@@ -140,6 +142,8 @@ class CodeREPL(CodeCommandsMixin, CodeSessionMixin, CodeTurnMixin, CodeViewMixin
         self.last_result: Any = None
         self._named_tool_calling = False
         self._last_task = ""
+        # Messages already on the attached session when the current turn began.
+        self._stored_before = 0
         self._history_file = _history_dir() / "code_input_history"
 
     # ------------------------------------------------------------------
@@ -172,7 +176,12 @@ class CodeREPL(CodeCommandsMixin, CodeSessionMixin, CodeTurnMixin, CodeViewMixin
             self._say(f"Using model {model} ({reason}); swap with /model.")
 
     def _build_engine(self, carry_from: CodeEngine | None = None) -> CodeEngine:
-        """Build the engine and its agent, carrying conversation memory across a swap."""
+        """Build the engine and its agent, carrying conversation memory across a swap.
+
+        The persistent session is attached on the first build only: a ``/model``
+        swap carries the live conversation and the same session object across
+        instead, so the stored turns are never loaded — and written — twice.
+        """
         engine = CodeEngine(
             model=self.model_id or "",
             provider=self.provider,
@@ -186,6 +195,7 @@ class CodeREPL(CodeCommandsMixin, CodeSessionMixin, CodeTurnMixin, CodeViewMixin
             on_event=self._on_event,
             on_diff=self._on_diff,
             project=self.project,
+            session_id=self.session_id if carry_from is None else None,
         )
         agent = engine.build_agent()
         if carry_from is not None and carry_from._agent is not None:
@@ -296,6 +306,10 @@ class CodeREPL(CodeCommandsMixin, CodeSessionMixin, CodeTurnMixin, CodeViewMixin
     # ------------------------------------------------------------------
     def run(self) -> int:
         """Run the coding REPL until exit; returns the process exit code."""
+        if self.session_id:
+            # Read before the model is picked and the engine is built, so a
+            # stored model is the one this session starts on.
+            self._adopt_session_state(self.session_id)
         self._resolve_model()
         if self.interactive:
             self._banner()
@@ -305,6 +319,7 @@ class CodeREPL(CodeCommandsMixin, CodeSessionMixin, CodeTurnMixin, CodeViewMixin
         except Exception as e:  # noqa: BLE001
             self._status("error", f"Could not start the coding agent: {e}")
             return 1
+        self._report_coding_suitability()
 
         try:
             while True:
