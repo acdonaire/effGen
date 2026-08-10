@@ -35,6 +35,11 @@ dashboard reads included, so it is normally the larger number. Both are
 labelled, and the histogram's own scope is on the JSON panel as
 `by_status_scope`.
 
+Every Per-model row is scoped to one `(model, provider)` pair: its p95 comes
+from that provider's own observations and its cost from the runs recorded
+against it, so a model name served by two providers reports two rows that do not
+borrow each other's latency tail or spend.
+
 Activity lists **completed** runs. A run that is still executing is not in the
 history yet and does not appear until it finishes.
 

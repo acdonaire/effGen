@@ -6,13 +6,19 @@ The effGen local dashboard is a lightweight single-page web app served by the AP
 
 | Panel | Description |
 |-------|-------------|
-| **Summary cards** | Total requests, errors, average latency, estimated daily cost, and total tokens used. |
+| **Summary cards** | Total requests, model-call errors, average latency, session cost, and total tokens used. |
 | **SLO burn rates** | Visual progress bars showing how close p99 latency, error rate, and availability are to their SLO thresholds. |
 | **Request latency chart** | Rolling line chart of average latency over recent polling intervals, drawn on a canvas. |
+| **By model** | One row per model *and provider*: calls, error rate, p95 latency, the dominant failure class with its remediation, tokens and cost. Model, Provider, Calls, Error rate, p95 and Cost sort on click. Spend that could not be matched to a row is stated below the table rather than spread across it. |
+| **HTTP responses by status** | One chip per status code. Each chip states the code, the status class and the count as text, so it does not depend on color. |
+| **Responses by route** | Requests, failures and error rate per route and method, worst-first, with a per-class breakdown. This is the panel with a denominator: it separates the routes behind a shared status code. Traffic outside the recorded route list — including the dashboard's own polling — is labelled `other`. |
 | **Recent agent runs** | Table of the last 50 agent runs with model, token counts, cost, duration, and success/error badge. |
-| **Agent topology** | Team and workflow executions as a node-link graph: agents (the manager marked apart) and the tools they reached as nodes, delegation, handoff and tool use as edges. Status is carried by a glyph and a text label as well as color; nodes are keyboard-focusable and open a detail panel. |
+| **History** | Stored runs and saved sessions, filterable by text and status, each run opening a detail pane. |
 | **Live span stream** | Real-time feed of trace spans via Server-Sent Events (SSE).  Includes a pause toggle and clear button. |
-| **Prometheus metrics (raw)** | Sortable table of all registered Prometheus metric names and their current values. |
+| **Run timeline** | Spans grouped by run, bars positioned by start offset and sized by duration. |
+| **Agent topology** | Team and workflow executions as a node-link graph: agents (the manager marked apart) and the tools they reached as nodes, delegation, handoff and tool use as edges. Status is carried by a glyph and a text label as well as color; nodes are keyboard-focusable and open a detail panel. |
+| **Model catalog** | Every model the catalog knows, with context window, output limit, price and capabilities, filterable and paged. |
+| **Prometheus metrics (raw)** | Table of all registered Prometheus metric names and their current values. |
 
 ## Keyboard navigation
 
@@ -90,10 +96,70 @@ Response structure:
       "error": null
     }
   ],
+  "by_model": [
+    {
+      "model": "gpt-oss-120b",
+      "provider": "cerebras",
+      "calls": 4,
+      "errors": 1,
+      "error_rate": 0.25,
+      "p95_latency_s": 8.0,
+      "input_tokens": 100,
+      "output_tokens": 50,
+      "cost_usd": 0.75,
+      "outcomes": {"ok": 3, "not_found": 1},
+      "top_error": "not_found",
+      "top_error_hint": "Model id not found — run `effgen models list` to see ids, …"
+    }
+  ],
+  "unattributed_cost_usd": 0.0,
+  "by_status": {"200": 7, "400": 1, "404": 3},
+  "by_status_detail": [
+    {"status": "404", "class": "4xx", "route": "/v1/chat/completions", "method": "POST", "count": 2},
+    {"status": "404", "class": "4xx", "route": "other", "method": "GET", "count": 1}
+  ],
+  "by_route": [
+    {"route": "/v1/chat/completions", "method": "POST", "requests": 8, "errors": 4,
+     "error_rate": 0.5, "by_status": {"200": 4, "400": 1, "401": 1, "404": 2}}
+  ],
   "recent_spans": [...],
   "raw_metrics": {...}
 }
 ```
+
+Every figure in a `by_model` row is scoped to that row's `(model, provider)`
+pair, so one model name served by two providers reports each provider's own
+latency tail and each provider's own spend. `outcomes` tallies the recorded
+outcome label verbatim; `top_error` names the most frequent failure and
+`top_error_hint` is the same remediation sentence the CLI prints for that class.
+`unattributed_cost_usd` holds spend from a run that could not be matched to any
+row — reported apart so the cost column always sums to money actually attributed.
+
+`by_status` keeps its `{status: count}` shape. `by_status_detail` and `by_route`
+sit beside it and carry the `route` and `method` the request counter already
+records, which is what separates a bad model id on `/v1/chat/completions` from a
+probe of an unknown path.
+
+## Accessibility
+
+The two web surfaces make these guarantees, and the tests in
+`tests/dx/test_web_a11y.py` drive the real pages to hold them:
+
+- **Focus survives a refresh.** Focus on a run's disclosure button stays there
+  when the five-second poll rebuilds the History table; the topology graph
+  behaves the same way. If the run is no longer listed, focus moves to the
+  History panel rather than to the top of the document.
+- **Nothing is announced when nothing changed.** Every value the page writes
+  goes through a write-if-changed rule, so an idle dashboard is silent instead
+  of re-reading five cards, the SLO line and the connection status every poll.
+- **A streamed answer announces once.** The playground's answer box is
+  `aria-atomic="false"` and marks itself `aria-busy` for the duration of the
+  stream, with deltas appended rather than the whole answer rewritten. A battle
+  grid is not a live region at all — the verdict is, and it is stated once.
+- **Every control boundary clears 3:1** against the surface behind it in both
+  themes (WCAG 1.4.11), and every text pair clears its AA threshold.
+- **Sorting is announced.** A sortable header is a button inside the `<th>`,
+  exactly one header carries `aria-sort`, and the new order is spoken.
 
 ## SSE span stream
 
