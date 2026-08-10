@@ -27,6 +27,7 @@ from effgen.models._adapter_utils import (
     extract_reasoning_text,
     extract_reasoning_tokens,
     reasoning_only_message,
+    warn_empty_stream,
     warn_reasoning_only_stream,
 )
 from effgen.models.base import BaseModel, GenerationResult, ModelType, TokenCount
@@ -172,6 +173,72 @@ def test_a_streamed_turn_with_no_call_still_reports_why(caplog):
         logger=logging.getLogger("effgen.test.reasoning.stream"),
     )
     assert [r for r in caplog.records if "no visible text" in r.message]
+
+
+def test_a_stream_that_sent_nothing_at_all_still_reports_why(caplog):
+    """A provider can end the stream with no chunk, so no signal to key on.
+
+    Gemini answers a request whose whole output budget went to thinking with an
+    empty stream — no content, no usage block, no finish reason — which reaches
+    the caller as an iterator that yielded nothing.
+    """
+    caplog.set_level(logging.WARNING)
+    warn_empty_stream(
+        model_name="reasoner-stream-3", yielded_text=False, max_tokens=32,
+        logger=logging.getLogger("effgen.test.reasoning.stream"),
+    )
+    reports = [r for r in caplog.records if "streamed no tokens at all" in r.message]
+    assert len(reports) == 1
+    assert "max_tokens cap of 32" in reports[0].message
+
+
+def test_an_empty_stream_report_fires_once_per_model(caplog):
+    caplog.set_level(logging.WARNING)
+    logger = logging.getLogger("effgen.test.reasoning.stream")
+    for _ in range(3):
+        warn_empty_stream(
+            model_name="reasoner-stream-4", yielded_text=False, max_tokens=32,
+            logger=logger,
+        )
+    assert sum("streamed no tokens at all" in r.message for r in caplog.records) == 1
+
+
+@pytest.mark.parametrize(
+    ("yielded_text", "tool_calls"),
+    [(True, None), (False, [{"function": {"name": "calculator", "arguments": "{}"}}])],
+)
+def test_a_stream_that_produced_something_is_not_reported(caplog, yielded_text, tool_calls):
+    """A stream that yielded a token, or made a call, is a complete turn."""
+    caplog.set_level(logging.WARNING)
+    warn_empty_stream(
+        model_name="reasoner-stream-5", yielded_text=yielded_text, max_tokens=32,
+        tool_calls=tool_calls,
+        logger=logging.getLogger("effgen.test.reasoning.stream"),
+    )
+    assert not [r for r in caplog.records if "streamed no tokens at all" in r.message]
+
+
+def test_a_gemini_stream_with_no_chunks_reports_the_empty_turn(caplog):
+    """The adapter wires the report to a stream the SDK ended with no chunk."""
+    from unittest.mock import MagicMock
+
+    from effgen.models.base import GenerationConfig
+    from effgen.models.gemini_adapter import GeminiAdapter
+
+    caplog.set_level(logging.WARNING)
+    adapter = GeminiAdapter(model_name="gemini-2.5-flash-empty-stream", api_key="test-key")
+    adapter._is_loaded = True
+    adapter._client = MagicMock()
+    adapter._generate_with_retry = MagicMock(return_value=iter(()))
+
+    chunks = list(adapter.generate_stream("Why is the sky blue?",
+                                          config=GenerationConfig(max_tokens=32)))
+
+    assert chunks == []
+    reports = [r for r in caplog.records if "streamed no tokens at all" in r.message]
+    assert len(reports) == 1
+    assert "gemini-2.5-flash-empty-stream" in reports[0].message
+    assert "max_tokens cap of 32" in reports[0].message
 
 
 def test_no_reasoning_signal_is_not_flagged():

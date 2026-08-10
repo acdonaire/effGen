@@ -656,6 +656,51 @@ def warn_reasoning_only_stream(
     logger.warning(message)
 
 
+def warn_empty_stream(
+    *,
+    model_name: str,
+    yielded_text: bool,
+    max_tokens: int | None,
+    tool_calls: Any = None,
+    logger: Any,
+) -> None:
+    """Report a stream the provider ended without sending a single chunk.
+
+    Some providers answer a request whose whole output budget went to internal
+    reasoning with an empty stream — no content, no tool call, no usage block and
+    no finish reason — so :func:`warn_reasoning_only_stream` has nothing to key
+    on and the caller receives an empty iterator that reads as "the model had
+    nothing to say". This states what happened and which lever to pull instead.
+    Fires at most once per model per process, sharing the reasoning-only guard.
+
+    Args:
+        model_name: The model that produced the stream.
+        yielded_text: Whether any visible token reached the caller.
+        max_tokens: The output cap in force, or ``None`` when none was set.
+        tool_calls: Native tool calls the stream declared; a turn spent making
+            one is complete without visible text.
+        logger: Logger the message is written to.
+    """
+    if yielded_text or tool_calls:
+        return
+    budget = (
+        f"a max_tokens cap of {max_tokens}" if max_tokens
+        else "the provider's default max_tokens"
+    )
+    warn_key = (model_name, "stream:empty")
+    if warn_key in _reasoning_only_warned:
+        return
+    _reasoning_only_warned.add(warn_key)
+    logger.warning(
+        f"Model '{model_name}' streamed no tokens at all under {budget}, and the "
+        f"provider reported no content, tool call or usage for the turn. A model "
+        f"that reasons before answering can spend the whole output budget before "
+        f"its first visible token. Raise max_tokens — e.g. "
+        f"agent.run(task, max_tokens=8192) — or use a model that answers without "
+        f"an extended reasoning chain."
+    )
+
+
 def apply_stop_sequences(text: str, stop_sequences: list[str] | None) -> str:
     """Truncate *text* at the earliest stop sequence it contains.
 

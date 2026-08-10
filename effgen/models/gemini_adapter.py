@@ -26,6 +26,7 @@ from effgen.models._adapter_utils import (
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
+    warn_empty_stream,
     warn_reasoning_only_stream,
 )
 from effgen.models._multimodal import (
@@ -1096,6 +1097,17 @@ class GeminiAdapter(FunctionCallingModel):
             tool_calls=_tool_calls,
             logger=logger,
         )
+        if _usage_metadata is None:
+            # A thinking model whose whole budget goes to its thoughts can end
+            # the stream with no chunk at all — no content, no usage, no finish
+            # reason — so the call above has nothing to key on.
+            warn_empty_stream(
+                model_name=self.model_name,
+                yielded_text=not _first_token,
+                max_tokens=getattr(gen_config, "max_output_tokens", None),
+                tool_calls=_tool_calls,
+                logger=logger,
+            )
 
         # Record real usage from the streamed usage_metadata (the last chunk
         # carries the cumulative totals) so cost/token tracking and the CLI's
