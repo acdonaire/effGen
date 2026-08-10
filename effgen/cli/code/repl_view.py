@@ -54,8 +54,8 @@ class CodeViewMixin:
         )
         self._banner_line(
             "Describe a change and press Enter.  End a line with \\ for multi-line.\n"
-            "Slash commands (type / for the menu): /help  /plan  /run  /test  /diff  "
-            "/apply  /undo  /context  /add  /model  /git  /exit"
+            "Slash commands (type / for the menu): /help  /plan  /review  /run  "
+            "/test  /diff  /apply  /undo  /context  /add  /model  /git  /exit"
         )
         if self._model_defaulted and "/" in (self.model_id or "") and ":" not in (self.model_id or ""):
             self._banner_line(

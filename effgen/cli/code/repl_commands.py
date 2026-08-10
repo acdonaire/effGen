@@ -25,6 +25,8 @@ from effgen.cli.code.render import print_diff
 _SLASH_COMMANDS: dict[str, str] = {
     "/help": "Show this help (or type just / for the menu)",
     "/plan": "Propose a change without writing it:  /plan add retries to fetch.py",
+    "/review": "Review, read-only, without writing or running anything:  "
+               "/review [uncommitted|staged|<rev>]",
     "/run": "Run a shell command in the workspace:  /run ls -la",
     "/test": "Run tests in the workspace:  /test [pytest args]",
     "/diff": "Show the edits staged by the last /plan (or the last turn's edits)",
@@ -46,7 +48,7 @@ _SLASH_COMMANDS: dict[str, str] = {
     "/clear": "Reset live context (memory + files) but keep the session on disk",
     "/compact": "Summarize the conversation so far to extend a long session",
     "/save": "Save this coding session to a file:  /save [name]",
-    "/session": "Show or name the resumable session id (used by `effgen sessions`)",
+    "/session": "Show, name or resume the session id:  /session [id]  (the same store as `effgen code --session-id`)",
     "/load": "Load a saved coding session:  /load [name|number]",
     "/doctor": "Run a quick environment check",
     "/exit": "Leave the coding agent (also: /quit, exit, quit)",
@@ -101,6 +103,7 @@ class CodeCommandsMixin:
             "/exit": lambda: "exit",
             "/quit": lambda: "exit",
             "/plan": lambda: self._cmd_plan(arg),
+            "/review": lambda: self._cmd_review(arg),
             "/run": lambda: self._cmd_run(arg),
             "/test": lambda: self._cmd_test(arg),
             "/diff": lambda: self._cmd_diff(),
@@ -167,6 +170,28 @@ class CodeCommandsMixin:
             )
         else:
             self._say("No edits were proposed.")
+
+    def _cmd_review(self, arg: str) -> None:
+        """Run one read-only turn over a diff, or over the files in context.
+
+        For that turn the agent holds only reading tools and the gate is in
+        ``plan`` mode; both are restored afterwards, including when the turn
+        raises, so the next turn can write again.
+        """
+        assert self.engine is not None
+        from effgen.cli.code.engine import REVIEW_TASK
+        from effgen.cli.code.project import review_subject
+
+        target = arg.split()[0] if arg.strip() else "uncommitted"
+        # The files pinned with /add are already inlined by the composed task,
+        # so the subject carries the diff alone and nothing is sent twice.
+        subject = review_subject(self.workspace, target)
+        if subject.error:
+            self._status("warning", subject.error)
+            return
+        self._say(subject.describe())
+        with self.engine.review_turn(subject):
+            self._do_turn(REVIEW_TASK)
 
     def _cmd_diff(self) -> None:
         """Show the staged edits, or the edits from the last turn."""
@@ -428,6 +453,7 @@ class CodeCommandsMixin:
             self._status("warning", f"'{norm}' is not readable as text; not added.")
             return
         self.context_files.append(norm)
+        self._save_coding_state()
         self._status("success", f"Added '{norm}' to context ({len(self.context_files)} file(s)).")
 
     def _cmd_drop(self, arg: str) -> None:
@@ -445,6 +471,7 @@ class CodeCommandsMixin:
             self._status("warning", f"'{rel}' is not in context.")
             return
         self.context_files.remove(match)
+        self._save_coding_state()
         self._status("success", f"Dropped '{match}' ({len(self.context_files)} file(s) left).")
 
     # ------------------------------------------------------------------
