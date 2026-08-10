@@ -16,9 +16,11 @@ The pieces:
   per-workspace undo journal (:class:`EditJournal`) behind ``--undo``.
 - :mod:`~effgen.cli.code.tools` — the ``coding`` preset's tools with the gate
   wired in front of their write/execute paths. The tool names and schemas the
-  model sees are unchanged.
-- :mod:`~effgen.cli.code.project` — repository detection and the bounded
-  workspace inventory (``.gitignore`` respected) the session starts from.
+  model sees are unchanged, and a read-only review set holds nothing that
+  writes, runs or executes.
+- :mod:`~effgen.cli.code.project` — repository detection, the bounded workspace
+  inventory (``.gitignore`` respected) the session starts from, and the diff or
+  file set a review reads.
 - :mod:`~effgen.cli.code.readiness` — the workspace/sandbox/git checks
   ``effgen doctor`` and the session's ``/doctor`` report.
 - :mod:`~effgen.cli.code.git_actions` — the one repository-changing action a
@@ -81,10 +83,19 @@ from .permissions import (
     PermissionMode,
     default_mode,
 )
-from .project import ProjectContext, RepoInfo, build_project_context, detect_repo, staged_diff
+from .project import (
+    ProjectContext,
+    RepoInfo,
+    ReviewSubject,
+    build_project_context,
+    detect_repo,
+    review_subject,
+    staged_diff,
+    working_diff,
+)
 from .readiness import ReadinessCheck, ReadinessReport, code_readiness
 from .repl import CodeREPL
-from .tools import build_code_tools
+from .tools import build_code_tools, build_review_tools
 
 __all__ = [
     "ACTION_KINDS",
@@ -107,11 +118,13 @@ __all__ = [
     "ReadinessCheck",
     "ReadinessReport",
     "RepoInfo",
+    "ReviewSubject",
     "UndoOutcome",
     "UnsafeGitAction",
     "apply_hunks",
     "build_code_tools",
     "build_project_context",
+    "build_review_tools",
     "code_readiness",
     "commit_paths",
     "default_mode",
@@ -120,12 +133,14 @@ __all__ = [
     "ensure_safe",
     "render_diff",
     "resolve_workspace",
+    "review_subject",
     "split_hunks",
     "staged_diff",
     "suggest_message",
     "undo_workspace",
     "unified_diff_text",
     "unsafe_shell_git",
+    "working_diff",
     "workspace_env",
     "workspace_execution_note",
 ]
