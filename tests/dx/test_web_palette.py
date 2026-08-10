@@ -72,6 +72,7 @@ DASHBOARD_PANELS = [
     "panel-latency-chart",
     "panel-by-model",
     "panel-by-status",
+    "panel-by-route",
     "panel-agent-runs",
     "panel-history",
     "panel-spans",

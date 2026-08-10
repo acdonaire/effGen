@@ -46,6 +46,7 @@
     <a href="#panel-latency-chart" data-panel-jump="panel-latency-chart">Latency</a>
     <a href="#panel-by-model" data-panel-jump="panel-by-model">By model</a>
     <a href="#panel-by-status" data-panel-jump="panel-by-status">Status codes</a>
+    <a href="#panel-by-route" data-panel-jump="panel-by-route">By route</a>
     <a href="#panel-agent-runs" data-panel-jump="panel-agent-runs">Recent runs</a>
     <a href="#panel-history" data-panel-jump="panel-history">History</a>
     <a href="#panel-spans" data-panel-jump="panel-spans">Spans</a>
@@ -130,22 +131,31 @@
       <h2>By Model</h2>
       <div class="table-wrapper">
         <table id="by-model-table">
+          <caption class="eff-sr-only">Calls, error rate, latency, tokens and cost per model and provider</caption>
           <thead>
             <tr>
-              <th scope="col">Model</th>
-              <th scope="col">Provider</th>
-              <th scope="col">Calls</th>
-              <th scope="col">Error rate</th>
-              <th scope="col">p95</th>
+              <th scope="col" data-sort="model">
+                <button type="button" class="sort-btn" data-sort="model">Model</button></th>
+              <th scope="col" data-sort="provider">
+                <button type="button" class="sort-btn" data-sort="provider">Provider</button></th>
+              <th scope="col" data-sort="calls" aria-sort="descending">
+                <button type="button" class="sort-btn" data-sort="calls">Calls</button></th>
+              <th scope="col" data-sort="error_rate">
+                <button type="button" class="sort-btn" data-sort="error_rate">Error rate</button></th>
+              <th scope="col" data-sort="p95_latency_s">
+                <button type="button" class="sort-btn" data-sort="p95_latency_s">p95</button></th>
+              <th scope="col">Outcome</th>
               <th scope="col">Tokens (in/out)</th>
-              <th scope="col">Cost</th>
+              <th scope="col" data-sort="cost_usd">
+                <button type="button" class="sort-btn" data-sort="cost_usd">Cost</button></th>
             </tr>
           </thead>
           <tbody id="by-model-tbody">
-            <tr><td colspan="7" class="empty-row">Loading…</td></tr>
+            <tr><td colspan="8" class="empty-row">Loading…</td></tr>
           </tbody>
         </table>
       </div>
+      <p class="panel-sub" id="by-model-unattributed" hidden></p>
     </section>
 
     <!-- Row 4: HTTP responses by status -->
@@ -156,11 +166,42 @@
       </div>
     </section>
 
+    <!-- Row 4b: responses by route, with a denominator per route -->
+    <section class="panel" id="panel-by-route" tabindex="-1">
+      <h2>Responses by Route</h2>
+      <p class="panel-sub">Requests, failures and the share of each route's traffic that failed.
+        Anything outside the recorded route list — the dashboard's own polling, and any
+        unrouted request — is counted as <code>other</code>, not as user traffic.</p>
+      <div class="table-wrapper">
+        <table id="by-route-table">
+          <caption class="eff-sr-only">HTTP requests, errors and error rate per route and method</caption>
+          <thead>
+            <tr>
+              <th scope="col" data-sort="route">
+                <button type="button" class="sort-btn" data-sort="route">Route</button></th>
+              <th scope="col">Method</th>
+              <th scope="col" data-sort="requests">
+                <button type="button" class="sort-btn" data-sort="requests">Requests</button></th>
+              <th scope="col" data-sort="errors">
+                <button type="button" class="sort-btn" data-sort="errors">Errors</button></th>
+              <th scope="col" data-sort="error_rate" aria-sort="descending">
+                <button type="button" class="sort-btn" data-sort="error_rate">Error rate</button></th>
+              <th scope="col">By class</th>
+            </tr>
+          </thead>
+          <tbody id="by-route-tbody">
+            <tr><td colspan="6" class="empty-row">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Row 5: recent agent runs -->
     <section class="panel" id="panel-agent-runs" tabindex="-1">
       <h2>Recent Agent Runs</h2>
       <div class="table-wrapper">
         <table id="runs-table">
+          <caption class="eff-sr-only">The most recent agent runs</caption>
           <thead>
             <tr>
               <th scope="col">Time</th>
@@ -199,6 +240,7 @@
       </div>
       <div class="table-wrapper">
         <table id="history-table">
+          <caption class="eff-sr-only">Stored runs, newest first</caption>
           <thead>
             <tr>
               <th scope="col">When</th>
@@ -218,6 +260,7 @@
       <h3 class="history-heading">Saved Sessions</h3>
       <div class="table-wrapper">
         <table id="history-sessions-table">
+          <caption class="eff-sr-only">Saved chat sessions</caption>
           <thead>
             <tr>
               <th scope="col">Session</th>
@@ -250,7 +293,7 @@
     <section class="panel" id="panel-waterfall" tabindex="-1">
       <h2>Run Timeline</h2>
       <p class="panel-sub">Spans grouped by run — bars positioned by start offset, width by duration.</p>
-      <div id="waterfall" class="waterfall" aria-label="Per-run span waterfall">
+      <div id="waterfall" class="waterfall" role="group" aria-label="Per-run span waterfall">
         <p class="empty-row" id="waterfall-empty">No runs recorded yet.</p>
       </div>
     </section>
@@ -322,6 +365,7 @@
       </div>
       <div class="table-wrapper">
         <table id="catalog-table">
+          <caption class="eff-sr-only">Model catalog: context window, output limit, price and capabilities</caption>
           <thead>
             <tr>
               <th scope="col">Provider</th>
@@ -352,6 +396,7 @@
       <h2>Prometheus Metrics (raw)</h2>
       <div class="table-wrapper">
         <table id="metrics-table">
+          <caption class="eff-sr-only">Raw Prometheus metric samples</caption>
           <thead><tr><th scope="col">Metric</th><th scope="col">Value</th></tr></thead>
           <tbody id="metrics-tbody">
             <tr><td colspan="2" class="empty-row">Loading…</td></tr>

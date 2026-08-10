@@ -45,22 +45,50 @@
   const runs = new Map();
   const seenSpans = new Set();
   const MAX_RUNS = 8;
+  // The last payload's rows, kept so a re-sort does not need a new fetch.
+  let byModelRows = [];
+  let byRouteRows = [];
 
   // ------------------------------------------------------------------
   // DOM helpers
   // ------------------------------------------------------------------
   function $(id) { return document.getElementById(id); }
 
+  // Several of these elements are polite live regions. Assigning an identical
+  // string still replaces the text node, and a replaced text node is what a
+  // screen reader announces — so an idle poll would re-read every card every
+  // five seconds. Write only when the value actually changed.
   function setText(id, text) {
     const el = $(id);
-    if (el) el.textContent = text;
+    if (!el) return;
+    const next = String(text);
+    if (el.textContent === next) return;
+    el.textContent = next;
+  }
+
+  // Same rule for a block rebuilt from markup: skip the write when the markup
+  // is byte-identical to what is already there.
+  function setHtml(el, html) {
+    if (!el) return false;
+    if (el.innerHTML === html) return false;
+    el.innerHTML = html;
+    return true;
+  }
+
+  // One polite live region for every announcement this page makes; the shared
+  // keyboard layer owns it. Without webui.js the page still works, silently.
+  function announce(message) {
+    if (webui && webui.announce) webui.announce(message);
   }
 
   function setStatus(online) {
     const dot = $("status-dot");
-    const txt = $("status-text");
-    if (dot) { dot.className = "status-dot " + (online ? "ok" : "err"); }
-    if (txt) { txt.textContent = online ? "Connected" : "Offline"; }
+    if (dot) {
+      const cls = "status-dot " + (online ? "ok" : "err");
+      if (dot.className !== cls) dot.className = cls;
+    }
+    // #status is a polite live region; only a real change is worth announcing.
+    setText("status-text", online ? "Connected" : "Offline");
   }
 
   function showAuthBanner() {
@@ -131,7 +159,7 @@
     return prefersLight ? "light" : "dark";
   }
 
-  function syncThemeButton(announce) {
+  function syncThemeButton(announceChange) {
     const theme = currentTheme();
     const icon = $("theme-icon");
     if (icon) icon.textContent = theme === "dark" ? "☾" : "☀";
@@ -140,7 +168,7 @@
       theme === "dark" ? "Dark theme active. Switch to light theme."
                        : "Light theme active. Switch to dark theme.");
     // A change the viewer made is announced; the initial sync stays silent.
-    if (announce) setText("theme-status", theme === "dark" ? "Dark theme" : "Light theme");
+    if (announceChange) setText("theme-status", theme === "dark" ? "Dark theme" : "Light theme");
   }
 
   // Set an explicit theme (overriding the OS scheme). Persisted only on a click.
@@ -350,24 +378,135 @@
     }
   }
 
+  // ------------------------------------------------------------------
+  // Sortable tables (W3C APG pattern: a button in the <th>, aria-sort on
+  // exactly one header at a time, moved rather than duplicated on change)
+  // ------------------------------------------------------------------
+  // Sort state lives outside the renderers so a five-second poll re-renders
+  // through the same view instead of resetting the user's choice.
+  const sortState = {
+    "by-model-table": { key: "calls", dir: -1 },
+    "by-route-table": { key: "error_rate", dir: -1 },
+  };
+
+  function sortRows(tableId, rows) {
+    const state = sortState[tableId];
+    if (!state) return rows.slice();
+    const { key, dir } = state;
+    return rows.slice().sort((a, b) => {
+      const av = a[key];
+      const bv = b[key];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }
+
+  // Reflect the current sort on the header cells and keep focus where it was.
+  function syncSortHeaders(tableId) {
+    const table = $(tableId);
+    const state = sortState[tableId];
+    if (!table || !state) return;
+    table.querySelectorAll("th[data-sort]").forEach((th) => {
+      if (th.getAttribute("data-sort") === state.key) {
+        th.setAttribute("aria-sort", state.dir < 0 ? "descending" : "ascending");
+      } else {
+        th.removeAttribute("aria-sort");
+      }
+    });
+  }
+
+  function bindSortHeaders(tableId, rerender) {
+    const table = $(tableId);
+    const state = sortState[tableId];
+    if (!table || !state) return;
+    table.querySelectorAll("button.sort-btn[data-sort]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.getAttribute("data-sort");
+        if (state.key === key) state.dir = -state.dir;
+        else { state.key = key; state.dir = key === "model" || key === "provider" || key === "route" ? 1 : -1; }
+        rerender();
+        syncSortHeaders(tableId);
+        announce(`Sorted by ${btn.textContent.trim()}, `
+          + (state.dir < 0 ? "descending" : "ascending"));
+        btn.focus({ preventScroll: true });
+      });
+    });
+    syncSortHeaders(tableId);
+  }
+
   function renderByModel(data) {
-    const rows = data.by_model || [];
+    if (data) byModelRows = data.by_model || [];
     const tbody = $("by-model-tbody");
     if (!tbody) return;
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-row">No model calls yet</td></tr>';
+    const note = $("by-model-unattributed");
+    if (note && data) {
+      const spare = data.unattributed_cost_usd;
+      if (typeof spare === "number" && spare > 0) {
+        note.textContent = "Plus " + fmtCost(spare)
+          + " recorded on runs that could not be matched to a row above.";
+        note.hidden = false;
+      } else {
+        note.hidden = true;
+      }
+    }
+    if (!byModelRows.length) {
+      setHtml(tbody, '<tr><td colspan="8" class="empty-row">No model calls yet</td></tr>');
       return;
     }
-    tbody.innerHTML = rows.map(r => `
+    setHtml(tbody, sortRows("by-model-table", byModelRows).map(r => `
       <tr>
         <td>${esc(r.model || "—")}</td>
         <td>${esc(r.provider || "—")}</td>
         <td class="num">${fmt(r.calls)}</td>
         <td class="num">${(r.error_rate != null ? (r.error_rate * 100).toFixed(1) + "%" : "—")}</td>
         <td class="num">${fmtSeconds(r.p95_latency_s)}</td>
+        <td>${outcomeCell(r)}</td>
         <td class="num">${fmt(r.input_tokens)} / ${fmt(r.output_tokens)}</td>
         <td class="num">${fmtCost(r.cost_usd)}</td>
-      </tr>`).join("");
+      </tr>`).join(""));
+  }
+
+  // The dominant failure class for a model, with the same remediation sentence
+  // the CLI prints for it — shown as a tooltip and, so it is not mouse-only, as
+  // text only a screen reader reads.
+  function outcomeCell(row) {
+    if (!row.top_error) return '<span class="outcome-ok">ok</span>';
+    const count = (row.outcomes && row.outcomes[row.top_error]) || row.errors || 0;
+    const hint = row.top_error_hint || "";
+    return `<span class="outcome-err"${hint ? ` title="${esc(hint)}"` : ""}>`
+      + `${esc(row.top_error)} · ${fmt(count)}</span>`
+      + (hint ? `<span class="eff-sr-only"> ${esc(hint)}</span>` : "");
+  }
+
+  function renderByRoute(data) {
+    if (data) byRouteRows = data.by_route || [];
+    const tbody = $("by-route-tbody");
+    if (!tbody) return;
+    if (!byRouteRows.length) {
+      setHtml(tbody, '<tr><td colspan="6" class="empty-row">No HTTP responses recorded yet</td></tr>');
+      return;
+    }
+    setHtml(tbody, sortRows("by-route-table", byRouteRows).map(r => {
+      const classes = {};
+      Object.keys(r.by_status || {}).forEach((code) => {
+        const cls = String(code).charAt(0) + "xx";
+        classes[cls] = (classes[cls] || 0) + r.by_status[code];
+      });
+      const breakdown = Object.keys(classes).sort()
+        .map((cls) => `${cls} ${fmt(classes[cls])}`).join(" · ") || "—";
+      return `
+      <tr>
+        <td class="cat-id">${esc(r.route || "—")}</td>
+        <td>${esc(r.method || "—")}</td>
+        <td class="num">${fmt(r.requests)}</td>
+        <td class="num">${fmt(r.errors)}</td>
+        <td class="num">${r.error_rate != null ? (r.error_rate * 100).toFixed(1) + "%" : "—"}</td>
+        <td>${esc(breakdown)}</td>
+      </tr>`;
+    }).join(""));
   }
 
   function renderByStatus(data) {
@@ -381,10 +520,27 @@
     }
     chips.innerHTML = codes.sort().map(code => {
       const cls = "s-" + (code.charAt(0) || "2") + "xx";
+      const count = byStatus[code];
+      // The glyphs read as one run of digits ("2004140134…") when the chips are
+      // spoken in order, and the color is the only thing stating the class. The
+      // visible cells stay as they are; a hidden sentence carries the meaning.
+      const spoken = `${code} ${statusClassLabel(code)} · `
+        + `${count} ${count === 1 ? "response" : "responses"}`;
       return `<span class="status-chip ${cls}">`
-        + `<span class="chip-code">${esc(code)}</span>`
-        + `<span class="chip-count">${fmt(byStatus[code])}</span></span>`;
+        + `<span class="chip-code" aria-hidden="true">${esc(code)}</span>`
+        + `<span class="chip-count" aria-hidden="true">${fmt(count)}</span>`
+        + `<span class="eff-sr-only">${esc(spoken)}</span></span>`;
     }).join("");
+  }
+
+  // Plain-language name for a status class, so the chip does not rely on color.
+  function statusClassLabel(code) {
+    const lead = String(code).charAt(0);
+    if (lead === "2") return "success";
+    if (lead === "3") return "redirect";
+    if (lead === "4") return "client error";
+    if (lead === "5") return "server error";
+    return "response";
   }
 
   function renderRuns(data) {
@@ -504,7 +660,12 @@
     } else {
       tbody.innerHTML = slice.map((r) => {
         const [pin, pout] = priceCells(r);
-        const check = (on) => on ? '<span class="cat-yes" aria-label="yes">✓</span>' : "";
+        // aria-label on a span with no role is ignored, so the check glyph had
+        // no accessible name at all: the cell has to carry real text.
+        const check = (on) => on
+          ? '<span class="cat-yes"><span class="eff-sr-only">yes</span>'
+            + '<span aria-hidden="true">✓</span></span>'
+          : '<span class="eff-sr-only">no</span>';
         return `<tr>
           <td>${esc(r.provider)}</td>
           <td class="cat-id">${esc(r.id)}</td>
@@ -759,7 +920,42 @@
     }
   }
 
+  // The run id of the disclosure button that currently holds focus, or null.
+  function focusedHistoryRunId() {
+    const active = document.activeElement;
+    if (!active || !active.closest || !active.closest("#history-tbody")) return null;
+    const index = active.getAttribute("data-run-index");
+    if (index == null) return null;
+    const run = historyRuns[Number(index)];
+    return (run && run.run_id) || null;
+  }
+
+  // Put focus back on the same run's button after a rebuild. When that run is no
+  // longer listed, focus moves to the panel heading rather than to <body>, so
+  // the reader stays in the section they were in.
+  function restoreHistoryFocus(runId) {
+    if (!runId) return;
+    const tbody = $("history-tbody");
+    if (!tbody) return;
+    const buttons = Array.from(tbody.querySelectorAll("button[data-run-index]"));
+    const match = buttons.find((btn) => {
+      const run = historyRuns[Number(btn.dataset.runIndex)];
+      return run && run.run_id === runId;
+    });
+    if (match) {
+      match.focus({ preventScroll: true });
+      return;
+    }
+    const panel = $("panel-history");
+    if (panel && panel.focus) panel.focus({ preventScroll: true });
+  }
+
   function renderHistory(data) {
+    // A poll rebuilds this table every five seconds. Note which run's disclosure
+    // button holds focus before the rows are replaced, and give focus back
+    // afterwards — otherwise a keyboard user is dropped to the top of the
+    // document mid-interaction. The topology graph does the same thing.
+    const focusedRunId = focusedHistoryRunId();
     historyPayload = data || {};
     historyRuns = data.runs || [];
     const sessions = data.sessions || [];
@@ -793,6 +989,7 @@
         });
       });
       syncRunDisclosure();
+      restoreHistoryFocus(focusedRunId);
     }
 
     const stbody = $("history-sessions-tbody");
@@ -862,9 +1059,9 @@
       rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("") +
       "</dl>" +
       exportBlock +
-      (run.task ? `<h4>Task</h4><pre class="run-text">${esc(run.task)}</pre>` : "") +
-      (run.output ? `<h4>Answer</h4><pre class="run-text">${esc(run.output)}</pre>` : "") +
-      (run.error ? `<h4>Error</h4><pre class="run-text run-error">${esc(run.error)}</pre>` : "");
+      (run.task ? `<h3>Task</h3><pre class="run-text">${esc(run.task)}</pre>` : "") +
+      (run.output ? `<h3>Answer</h3><pre class="run-text">${esc(run.output)}</pre>` : "") +
+      (run.error ? `<h3>Error</h3><pre class="run-text run-error">${esc(run.error)}</pre>` : "");
     box.hidden = false;
     const copyBtn = $("run-export-copy");
     if (copyBtn) {
@@ -1121,12 +1318,12 @@
       ["Duration", fmtSeconds(node.duration_s)],
     ];
     host.hidden = false;
-    host.innerHTML = `<h4>${esc(node.label)}</h4><dl class="run-detail">`
+    setHtml(host, `<h3>${esc(node.label)}</h3><dl class="run-detail">`
       + rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v == null ? "—" : v))}</dd>`).join("")
       + `</dl>`
-      + (node.task ? `<h4>Task</h4><pre class="run-text">${esc(node.task)}</pre>` : "")
-      + (node.output ? `<h4>Output</h4><pre class="run-text">${esc(node.output)}</pre>` : "")
-      + (node.error ? `<h4>Error</h4><pre class="run-text run-error">${esc(node.error)}</pre>` : "");
+      + (node.task ? `<h3>Task</h3><pre class="run-text">${esc(node.task)}</pre>` : "")
+      + (node.output ? `<h3>Output</h3><pre class="run-text">${esc(node.output)}</pre>` : "")
+      + (node.error ? `<h3>Error</h3><pre class="run-text run-error">${esc(node.error)}</pre>` : ""));
   }
 
   async function loadTopology() {
@@ -1207,6 +1404,7 @@
       ["panel-latency-chart", "Latency chart"],
       ["panel-by-model", "By model"],
       ["panel-by-status", "HTTP responses by status"],
+      ["panel-by-route", "Responses by route"],
       ["panel-agent-runs", "Recent agent runs"],
       ["panel-history", "History"],
       ["panel-spans", "Live span stream"],
@@ -1361,6 +1559,7 @@
       renderSLO(data);
       renderByModel(data);
       renderByStatus(data);
+      renderByRoute(data);
       renderRuns(data);
       renderMetrics(data);
       loadHistory();
@@ -1384,6 +1583,8 @@
     initHistory();
     initTopology();
     initKeyboard();
+    bindSortHeaders("by-model-table", () => renderByModel(null));
+    bindSortHeaders("by-route-table", () => renderByRoute(null));
 
     // Wire up buttons
     const refreshBtn = $("refresh-btn");
