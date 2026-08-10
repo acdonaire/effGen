@@ -26,6 +26,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _coding_cell(rec: Any) -> str:
+    """How a record's coding suitability reads in the ``models info`` table."""
+    suitability = rec.coding
+    if suitability.is_suitable:
+        return "suitable"
+    text = f"{suitability.verdict} — {suitability.reason}."
+    if suitability.fix:
+        text += f" {suitability.fix}"
+    if suitability.measured_on:
+        text += f" (measured {suitability.measured_on})"
+    return text
+
+
 def models_commands(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     """Model management commands.
 
@@ -172,6 +185,7 @@ def models_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                         "supports_audio": r.supports_audio,
                         "free_tier": r.free_tier, "deprecated": r.deprecated,
                         "is_priced": r.is_priced,
+                        "coding": r.coding.verdict,
                         "price_source": r.price_source,
                     }
                     for r in _records(prov)
@@ -450,6 +464,7 @@ def models_browse(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
                     "supports_audio": r.supports_audio,
                     "free_tier": r.free_tier, "deprecated": r.deprecated,
                     "is_priced": r.is_priced,
+                    "coding": r.coding.verdict,
                     "price_source": r.price_source,
                     "verified_on": r.verified_on or _verified_on(r.provider),
                 }
@@ -710,7 +725,7 @@ def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             "free_tier": rec.free_tier, "deprecated": rec.deprecated,
             "rpm": rec.rpm, "tpm": rec.tpm, "rpd": rec.rpd,
             "price_source": rec.price_source, "verified_on": rec.verified_on,
-            "notes": rec.notes,
+            "notes": rec.notes, "coding": rec.coding.to_dict(),
             "also_available": [
                 {
                     "provider": v.provider,
@@ -737,6 +752,7 @@ def models_info(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
         "Max output": f"{rec.max_output:,}" if rec.max_output else "—",
         "Price ($/1M in / out)": cli._price_cell(rec),
         "Tool calling": "yes" if rec.supports_tools else "no",
+        "Coding": _coding_cell(rec),
         "Vision": "yes" if rec.supports_vision else "no",
         "Audio": "yes" if rec.supports_audio else "no",
         "Free tier": "yes" if rec.free_tier else "no",

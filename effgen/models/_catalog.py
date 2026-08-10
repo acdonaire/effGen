@@ -96,6 +96,20 @@ class ModelRecord:
             self.display_name = self.id
 
     @property
+    def coding(self) -> Any:
+        """What to expect from this model on a coding run.
+
+        A derived property, not a field, so :func:`~dataclasses.asdict` — and
+        therefore every bundled catalog snapshot — is unchanged.
+
+        Returns:
+            :class:`effgen.models._coding.CodingSuitability`.
+        """
+        from ._coding import coding_suitability
+
+        return coding_suitability(self.id, self.provider)
+
+    @property
     def is_priced(self) -> bool:
         """True when this record carries usable cost information."""
         return (
