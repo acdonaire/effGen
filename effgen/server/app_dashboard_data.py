@@ -93,9 +93,11 @@ def _build_dashboard_data() -> dict[str, Any]:
 
     # --- HTTP responses by status code (from the request counter) ---
     by_status, http_client_errors, http_server_errors = _http_status_breakdown(samples)
+    by_status_detail = _http_status_detail(samples)
+    by_route = _http_route_breakdown(samples)
 
     # --- Per-model / per-provider breakdown ---
-    by_model = _model_breakdown(samples, recent_runs)
+    by_model, unattributed_cost_usd = _model_breakdown(samples, recent_runs)
 
     # --- Recent spans ---
     recent_spans = _get_recent_spans()
@@ -125,7 +127,15 @@ def _build_dashboard_data() -> dict[str, Any]:
         "slo": slo,
         "slos": slo,
         "by_model": by_model,
+        # Spend recorded for a run that could not be placed on a per-model row.
+        # Reported apart rather than spread across rows or duplicated, so the
+        # cost column always sums to money actually attributed.
+        "unattributed_cost_usd": unattributed_cost_usd,
         "by_status": by_status,
+        # ``by_status`` keeps its shape; these two carry the route and method the
+        # counter already records, plus a per-route denominator.
+        "by_status_detail": by_status_detail,
+        "by_route": by_route,
         "recent_runs": recent_runs,
         "recent_spans": recent_spans[:20],
         "spans": recent_spans[:20],
@@ -225,19 +235,149 @@ def _http_status_breakdown(
     return dict(sorted(by_status.items())), client_errors, server_errors
 
 
+def _http_status_class(status: str) -> str:
+    """Return the ``2xx``/``4xx``-style class of a status code."""
+    return f"{status[0]}xx" if status[:1].isdigit() else "other"
+
+
+def _http_status_detail(
+    samples: list[tuple[str, dict[str, str], float]],
+) -> list[dict[str, Any]]:
+    """Return one entry per (status, route, method) the request counter recorded.
+
+    ``by_status`` collapses every route behind a status code, so three 404s from
+    three different causes read as one number. This keeps the route and method
+    the counter already carries, so a bad model id on ``/v1/chat/completions``
+    and a probe of an unknown path stay separate.
+    """
+    acc: dict[tuple[str, str, str], int] = {}
+    for name, labels, value in samples:
+        if name != "effgen_http_requests_total":
+            continue
+        status = str(labels.get("status", "")).strip()
+        if not status:
+            continue
+        key = (status, str(labels.get("route", "other")), str(labels.get("method", "")))
+        acc[key] = acc.get(key, 0) + int(value)
+    return [
+        {
+            "status": status,
+            "class": _http_status_class(status),
+            "route": route,
+            "method": method,
+            "count": count,
+        }
+        for (status, route, method), count in sorted(acc.items())
+    ]
+
+
+def _http_route_breakdown(
+    samples: list[tuple[str, dict[str, str], float]],
+) -> list[dict[str, Any]]:
+    """Aggregate requests, errors and error rate per route and method.
+
+    The denominator is what a status count on its own cannot give: a route that
+    served eight requests and failed four is a different situation from a route
+    that failed four out of four hundred. Rows are ordered worst-first.
+    """
+    acc: dict[tuple[str, str], dict[str, Any]] = {}
+    for name, labels, value in samples:
+        if name != "effgen_http_requests_total":
+            continue
+        status = str(labels.get("status", "")).strip()
+        if not status:
+            continue
+        key = (str(labels.get("route", "other")), str(labels.get("method", "")))
+        row = acc.setdefault(
+            key,
+            {
+                "route": key[0],
+                "method": key[1],
+                "requests": 0,
+                "errors": 0,
+                "by_status": {},
+            },
+        )
+        count = int(value)
+        row["requests"] += count
+        row["by_status"][status] = row["by_status"].get(status, 0) + count
+        if status[:1] in ("4", "5"):
+            row["errors"] += count
+
+    rows: list[dict[str, Any]] = []
+    for row in acc.values():
+        requests = row["requests"]
+        rows.append(
+            {
+                **row,
+                "by_status": dict(sorted(row["by_status"].items())),
+                "error_rate": round(row["errors"] / requests, 4) if requests else 0.0,
+            }
+        )
+    rows.sort(key=lambda r: (-r["error_rate"], -r["requests"], r["route"], r["method"]))
+    return rows
+
+
+def _run_provider(run: dict[str, Any]) -> str | None:
+    """Return the provider a recorded run belongs to, or ``None`` if unstated."""
+    provider = run.get("provider")
+    if isinstance(provider, str) and provider.strip():
+        return provider.strip()
+    prefix, sep, rest = str(run.get("model", "")).partition(":")
+    if sep and prefix and rest:
+        return prefix
+    return None
+
+
+def _cost_by_row(
+    recent_runs: list[dict[str, Any]],
+    row_keys: set[tuple[str, str]],
+) -> tuple[dict[tuple[str, str], float], float]:
+    """Attribute each run's recorded spend to one ``(model, provider)`` row.
+
+    A run is placed by the provider it recorded, then by the ``provider:``
+    prefix on its model id, then — only when the model name identifies exactly
+    one row — by that name alone. Spend that still cannot be placed is returned
+    separately rather than spread across rows or counted on every row that
+    shares the model name.
+    """
+    rows_for_model: dict[str, list[tuple[str, str]]] = {}
+    for row_key in row_keys:
+        rows_for_model.setdefault(row_key[0], []).append(row_key)
+
+    cost: dict[tuple[str, str], float] = {}
+    unattributed = 0.0
+    for run in recent_runs:
+        amount = run.get("cost_usd")
+        if not isinstance(amount, int | float):
+            continue
+        amount = float(amount)
+        model = str(run.get("model", "")).split(":")[-1]
+        provider = _run_provider(run)
+        candidates = rows_for_model.get(model, [])
+        key: tuple[str, str] | None = None
+        if provider is not None and (model, provider) in row_keys:
+            key = (model, provider)
+        elif len(candidates) == 1:
+            key = candidates[0]
+        if key is None:
+            unattributed += amount
+        else:
+            cost[key] = cost.get(key, 0.0) + amount
+    return cost, unattributed
+
+
 def _model_breakdown(
     samples: list[tuple[str, dict[str, str], float]],
     recent_runs: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Aggregate calls, error rate, p95 latency, tokens and cost per model."""
-    # Cost per model comes from the real per-run cost ledger.
-    cost_by_model: dict[str, float] = {}
-    for run in recent_runs:
-        cost = run.get("cost_usd")
-        if isinstance(cost, int | float):
-            model = str(run.get("model", "")).split(":")[-1]
-            cost_by_model[model] = cost_by_model.get(model, 0.0) + float(cost)
+) -> tuple[list[dict[str, Any]], float]:
+    """Aggregate calls, outcomes, error rate, p95 latency, tokens and cost per model.
 
+    Returns the rows and the spend that could not be attributed to any of them.
+    Every figure is scoped to the row's ``(model, provider)`` pair, so one model
+    name served by two providers reports each provider's own latency tail and
+    each provider's own spend.
+    """
     agg: dict[tuple[str, str], dict[str, Any]] = {}
 
     def _row(model: str, provider: str) -> dict[str, Any]:
@@ -250,6 +390,7 @@ def _model_breakdown(
                 "errors": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "outcomes": {},
             }
         return agg[key]
 
@@ -260,7 +401,10 @@ def _model_breakdown(
         provider = labels.get("provider", "")
         row = _row(model, provider)
         row["calls"] += int(value)
-        if labels.get("outcome") not in (None, "", "ok"):
+        outcome = labels.get("outcome") or ""
+        if outcome:
+            row["outcomes"][outcome] = row["outcomes"].get(outcome, 0) + int(value)
+        if outcome not in ("", "ok"):
             row["errors"] += int(value)
 
     for name, labels, value in samples:
@@ -274,23 +418,53 @@ def _model_breakdown(
         elif labels.get("kind") == "output":
             row["output_tokens"] += int(value)
 
+    cost_by_row, unattributed = _cost_by_row(recent_runs, set(agg))
+
     rows: list[dict[str, Any]] = []
-    for (model, _provider), row in agg.items():
+    for (model, provider), row in agg.items():
         p95 = _histogram_quantile(
-            _bucket_bounds(samples, lambda lb, _m=model: lb.get("model") == _m),
+            _bucket_bounds(
+                samples,
+                lambda lb, _m=model, _p=provider: lb.get("model") == _m
+                and lb.get("provider", "") == _p,
+            ),
             0.95,
         )
         calls = row["calls"]
+        cost = cost_by_row.get((model, provider))
+        top_error = _top_error(row["outcomes"])
         rows.append(
             {
                 **row,
+                "outcomes": dict(sorted(row["outcomes"].items())),
+                "top_error": top_error,
+                "top_error_hint": _remediation_for(top_error),
                 "error_rate": round(row["errors"] / calls, 4) if calls else 0.0,
                 "p95_latency_s": round(p95, 4) if p95 is not None else None,
-                "cost_usd": round(cost_by_model[model], 6) if model in cost_by_model else None,
+                "cost_usd": round(cost, 6) if cost is not None else None,
             }
         )
     rows.sort(key=lambda r: r["calls"], reverse=True)
-    return rows
+    return rows, round(unattributed, 6)
+
+
+def _top_error(outcomes: dict[str, int]) -> str | None:
+    """Return the most frequent non-``ok`` outcome label, or ``None``."""
+    failures = {label: count for label, count in outcomes.items() if label != "ok"}
+    if not failures:
+        return None
+    return sorted(failures.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+
+def _remediation_for(outcome: str | None) -> str | None:
+    """Return the remediation sentence effGen already prints for *outcome*."""
+    if not outcome:
+        return None
+    try:
+        from effgen.models.errors import REMEDIATION_BY_CATEGORY
+    except Exception:  # noqa: BLE001 - the hint is optional context
+        return None
+    return REMEDIATION_BY_CATEGORY.get(outcome)
 
 
 _PROM_LINE_RE = re.compile(

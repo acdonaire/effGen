@@ -421,6 +421,102 @@ class TestDashboardDataBuilder:
         assert row["cost_usd"] == pytest.approx(0.0002)
         assert row["p95_latency_s"] is not None
 
+    def test_by_model_scopes_cost_and_latency_to_the_provider(self):
+        """One model name served by two providers keeps the two rows apart.
+
+        Cost is attributed to the provider that spent it (so the column sums to
+        the real total instead of doubling), and each row's p95 comes from that
+        provider's own observations.
+        """
+        from effgen.observability.metrics import record_model_call, reset_all
+        from effgen.observability.run_log import clear, record_run
+        from effgen.server.app import _build_dashboard_data
+
+        reset_all()
+        clear()
+        for _ in range(3):
+            record_model_call(provider="cerebras", model="shared-120b", outcome="ok", latency=8.0)
+        for _ in range(2):
+            record_model_call(provider="groq", model="shared-120b", outcome="ok", latency=0.3)
+        record_run(model="cerebras:shared-120b", provider="cerebras", cost_usd=0.75)
+        record_run(model="groq:shared-120b", provider="groq", cost_usd=0.25)
+        data = _build_dashboard_data()
+        reset_all()
+        clear()
+
+        rows = {r["provider"]: r for r in data["by_model"] if r["model"] == "shared-120b"}
+        assert set(rows) == {"cerebras", "groq"}
+        assert rows["cerebras"]["cost_usd"] == pytest.approx(0.75)
+        assert rows["groq"]["cost_usd"] == pytest.approx(0.25)
+        assert sum(r["cost_usd"] for r in rows.values()) == pytest.approx(1.0)
+        assert data["unattributed_cost_usd"] == pytest.approx(0.0)
+        assert rows["groq"]["p95_latency_s"] < 1.0 < rows["cerebras"]["p95_latency_s"]
+
+    def test_unattributable_cost_is_reported_apart(self):
+        """Spend on a model with no matching row is never spread over the rows."""
+        from effgen.observability.metrics import record_model_call, reset_all
+        from effgen.observability.run_log import clear, record_run
+        from effgen.server.app import _build_dashboard_data
+
+        reset_all()
+        clear()
+        record_model_call(provider="openai", model="known-model", outcome="ok", latency=0.4)
+        record_run(model="openai:known-model", provider="openai", cost_usd=0.01)
+        record_run(model="retired:vanished-model", provider="retired", cost_usd=0.05)
+        data = _build_dashboard_data()
+        reset_all()
+        clear()
+
+        row = next(r for r in data["by_model"] if r["model"] == "known-model")
+        assert row["cost_usd"] == pytest.approx(0.01)
+        assert data["unattributed_cost_usd"] == pytest.approx(0.05)
+
+    def test_by_model_row_names_its_failure_class(self):
+        """The recorded outcome label reaches the row with its remediation."""
+        from effgen.models.errors import REMEDIATION_BY_CATEGORY
+        from effgen.observability.metrics import record_model_call, reset_all
+        from effgen.observability.run_log import clear
+        from effgen.server.app import _build_dashboard_data
+
+        reset_all()
+        clear()
+        record_model_call(provider="openai", model="missing-model", outcome="ok", latency=0.2)
+        record_model_call(
+            provider="openai", model="missing-model", outcome="not_found", latency=0.2
+        )
+        record_model_call(
+            provider="openai", model="missing-model", outcome="not_found", latency=0.2
+        )
+        record_model_call(
+            provider="openai", model="missing-model", outcome="rate_limited", latency=0.2
+        )
+        data = _build_dashboard_data()
+        reset_all()
+        clear()
+
+        row = next(r for r in data["by_model"] if r["model"] == "missing-model")
+        assert row["outcomes"] == {"not_found": 2, "ok": 1, "rate_limited": 1}
+        assert row["top_error"] == "not_found"
+        assert row["top_error_hint"] == REMEDIATION_BY_CATEGORY["not_found"]
+        assert row["errors"] == 3
+
+    def test_by_model_row_without_failures_has_no_top_error(self):
+        from effgen.observability.metrics import record_model_call, reset_all
+        from effgen.observability.run_log import clear
+        from effgen.server.app import _build_dashboard_data
+
+        reset_all()
+        clear()
+        record_model_call(provider="openai", model="healthy-model", outcome="ok", latency=0.2)
+        data = _build_dashboard_data()
+        reset_all()
+        clear()
+
+        row = next(r for r in data["by_model"] if r["model"] == "healthy-model")
+        assert row["top_error"] is None
+        assert row["top_error_hint"] is None
+        assert row["outcomes"] == {"ok": 1}
+
     def test_by_status_breakdown_shape(self):
         from effgen.server.app import _build_dashboard_data
 
@@ -429,6 +525,41 @@ class TestDashboardDataBuilder:
         assert isinstance(data["by_status"], dict)
         assert "http_client_errors" in data["metrics"]
         assert "http_server_errors" in data["metrics"]
+
+    def test_by_status_unchanged_while_route_detail_is_added(self):
+        """``by_status`` keeps its exact shape; the route detail sits beside it."""
+        from effgen.observability.metrics import record_http_request, reset_all
+        from effgen.observability.run_log import clear
+        from effgen.server.app import _build_dashboard_data
+
+        reset_all()
+        clear()
+        for _ in range(4):
+            record_http_request(route="/v1/chat/completions", method="POST", status=200)
+        for _ in range(2):
+            record_http_request(route="/v1/chat/completions", method="POST", status=404)
+        record_http_request(route="other", method="GET", status=404)
+        record_http_request(route="/health", method="GET", status=200)
+        data = _build_dashboard_data()
+        reset_all()
+        clear()
+
+        assert data["by_status"] == {"200": 5, "404": 3}
+
+        detail = {(d["status"], d["route"], d["method"]): d["count"] for d in data["by_status_detail"]}
+        assert detail[("404", "/v1/chat/completions", "POST")] == 2
+        assert detail[("404", "other", "GET")] == 1
+        assert all(d["class"] == f"{d['status'][0]}xx" for d in data["by_status_detail"])
+
+        routes = {(r["route"], r["method"]): r for r in data["by_route"]}
+        chat = routes[("/v1/chat/completions", "POST")]
+        assert chat["requests"] == 6
+        assert chat["errors"] == 2
+        assert chat["error_rate"] == pytest.approx(2 / 6, abs=1e-4)
+        assert chat["by_status"] == {"200": 4, "404": 2}
+        assert routes[("/health", "GET")]["error_rate"] == 0.0
+        # Worst-first, so the failing route is the one an operator reads first.
+        assert data["by_route"][0]["error_rate"] >= data["by_route"][-1]["error_rate"]
 
     def test_version_present(self):
         from effgen import __version__
