@@ -198,6 +198,236 @@ def staged_diff(root: Path, *, max_chars: int = 20000) -> str:
     return text
 
 
+#: Character budget for a review subject (the diff plus any named files).
+MAX_REVIEW_CHARS = 60000
+
+#: ``--review`` with no target: everything not yet committed, staged or not.
+REVIEW_UNCOMMITTED = "uncommitted"
+
+#: ``--review staged``: the index only.
+REVIEW_STAGED = "staged"
+
+
+def _truncate(text: str, max_chars: int) -> tuple[str, int]:
+    """Return ``(text, cut_at)``, marking and counting anything left out."""
+    if len(text) <= max_chars:
+        return text, 0
+    dropped = len(text) - max_chars
+    kept = text[:max_chars]
+    marked = (
+        f"{kept}\n… (truncated at {max_chars:,} characters; "
+        f"{dropped:,} more not shown)"
+    )
+    return marked, max_chars
+
+
+def working_diff(root: Path, *, ref: str | None = None, max_chars: int = MAX_REVIEW_CHARS) -> str:
+    """Return the patch for *ref*, truncated to *max_chars*.
+
+    Args:
+        root: The repository to read, or any directory inside it.
+        ref: ``None`` means everything not yet committed — ``git diff HEAD``, so
+            staged and unstaged changes are read together, falling back to
+            ``git diff`` in a repository with no commit yet. Any other value is
+            passed to ``git diff`` as given, so a revision (``HEAD~3``) and a
+            range (``main...HEAD``) both work.
+        max_chars: Budget for the patch; the cut is marked and counted.
+
+    Returns:
+        The patch text. An empty string means there is no such change (or the
+        diff could not be read); use :func:`verify_rev` first to tell a bad
+        revision from an empty one.
+    """
+    root = Path(root)
+    if ref is None:
+        text = _git_read(root, ["diff", "HEAD"], timeout=20)
+        if text is None:
+            text = _git_read(root, ["diff"], timeout=20) or ""
+    else:
+        text = _git_read(root, ["diff", ref], timeout=20) or ""
+    return _truncate(text, max_chars)[0]
+
+
+def verify_rev(root: Path, ref: str) -> str | None:
+    """Return an error message when git does not recognize *ref*, else ``None``.
+
+    Run before :func:`working_diff` so a mistyped revision is reported as such
+    instead of reading as "nothing changed". A range (``main..HEAD``,
+    ``main...HEAD``) is checked side by side, because a range that resolves to
+    no commits is still a valid range and an empty diff is a real answer.
+    """
+    root = Path(root)
+    separator = "..." if "..." in ref else (".." if ".." in ref else "")
+    sides = ref.split(separator) if separator else [ref]
+    for side in sides:
+        # An omitted side (``main..``) means HEAD and needs no check.
+        name = side.strip()
+        if not name:
+            continue
+        if _git_read(root, ["rev-parse", "--verify", "--quiet", f"{name}^{{commit}}"]):
+            continue
+        return (
+            f"'{name}' is not a revision this repository knows. Pass a commit, "
+            "a branch, a range such as main...HEAD, 'staged', or omit the "
+            "target to review everything that is not committed."
+        )
+    return None
+
+
+@dataclass
+class ReviewSubject:
+    """What a read-only review run was asked to look at.
+
+    Built by :func:`review_subject` and handed to the model as context, so the
+    review never needs a shell to reach a diff. A non-empty :attr:`error` means
+    no subject could be assembled and names how to give one.
+    """
+
+    kind: str = ""
+    ref: str = ""
+    files: list[str] = field(default_factory=list)
+    text: str = ""
+    truncated_at: int = 0
+    line_count: int = 0
+    error: str = ""
+
+    def describe(self) -> str:
+        """One line naming what is being reviewed."""
+        if self.error:
+            return self.error
+        parts = []
+        if self.ref == REVIEW_UNCOMMITTED:
+            parts.append("uncommitted changes")
+        elif self.ref == REVIEW_STAGED:
+            parts.append("staged changes")
+        elif self.ref:
+            parts.append(f"diff of {self.ref}")
+        if self.files:
+            parts.append(f"{len(self.files)} file(s): {', '.join(self.files)}")
+        body = " · ".join(parts) or "nothing"
+        suffix = f" (truncated at {self.truncated_at:,} characters)" if self.truncated_at else ""
+        return f"Reviewing {body}, {self.line_count:,} line(s){suffix}"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the subject as a JSON-serializable dict (without its text)."""
+        return {
+            "kind": self.kind,
+            "ref": self.ref,
+            "files": list(self.files),
+            "line_count": self.line_count,
+            "truncated_at": self.truncated_at,
+        }
+
+
+def review_subject(
+    workspace: Path,
+    target: str | None = None,
+    files: Iterable[str] = (),
+    *,
+    max_chars: int = MAX_REVIEW_CHARS,
+) -> ReviewSubject:
+    """Assemble the diff and/or file set a review run reads.
+
+    Args:
+        workspace: The directory the run is confined to.
+        target: ``uncommitted``, ``staged``, or any revision/range git accepts.
+            ``None`` means no diff was asked for.
+        files: Workspace-relative paths to include in full. A path outside the
+            workspace, or one that is not a readable text file, is reported
+            rather than silently skipped.
+        max_chars: Budget for the assembled subject; the cut is marked and counted.
+
+    Returns:
+        A :class:`ReviewSubject`. A non-empty ``error`` means there is nothing to
+        review and says how to name a subject.
+    """
+    workspace = Path(workspace)
+    named = [str(f) for f in files]
+    repo = detect_repo(workspace) if target is not None else None
+
+    if target is not None and repo is None:
+        return ReviewSubject(error=(
+            f"{workspace} is not inside a git repository, so there is no diff to "
+            "review. Name the files instead (-f/--file PATH, repeatable), or run "
+            "the review from inside a repository."
+        ))
+
+    sections: list[str] = []
+    ref = ""
+    kind = ""
+    if repo is not None:
+        if target == REVIEW_STAGED:
+            ref = REVIEW_STAGED
+            patch = staged_diff(repo.root, max_chars=max_chars)
+            heading = "The staged changes (git diff --cached)"
+            empty = "nothing is staged"
+        elif target in (None, "", REVIEW_UNCOMMITTED):
+            ref = REVIEW_UNCOMMITTED
+            patch = working_diff(repo.root, max_chars=max_chars)
+            heading = "Everything not yet committed (git diff HEAD)"
+            empty = "everything is committed"
+        else:
+            bad = verify_rev(repo.root, target)
+            if bad:
+                return ReviewSubject(error=bad)
+            ref = target
+            patch = working_diff(repo.root, ref=target, max_chars=max_chars)
+            heading = f"The diff of {target} (git diff {target})"
+            empty = f"'{target}' covers no change"
+        if patch.strip():
+            kind = "diff"
+            sections.append(f"{heading}:\n\n{patch}")
+        elif not named:
+            return ReviewSubject(ref=ref, error=(
+                f"There is nothing to review in {repo.root}: {empty}. Make or "
+                "stage a change, pass a revision (--review HEAD~1), or name "
+                "files with -f/--file."
+            ))
+
+    included: list[str] = []
+    for rel in named:
+        try:
+            resolved = (workspace / rel).resolve()
+            resolved.relative_to(workspace.resolve())
+        except (ValueError, OSError):
+            return ReviewSubject(ref=ref, error=(
+                f"'{rel}' is outside the workspace {workspace}; a review reads "
+                "only files inside it."
+            ))
+        if is_credential_filename(resolved.name):
+            return ReviewSubject(ref=ref, error=(
+                f"'{rel}' reads as a credentials file, which is never opened. "
+                "Name a source file instead."
+            ))
+        try:
+            body = resolved.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return ReviewSubject(ref=ref, error=(
+                f"'{rel}' could not be read as text: {exc}"
+            ))
+        included.append(rel)
+        sections.append(f"=== {rel} ===\n{body}")
+    if included:
+        kind = "diff+files" if kind else "files"
+
+    if not sections:
+        return ReviewSubject(ref=ref, error=(
+            "Nothing to review. Pass --review with a target inside a git "
+            "repository, or name files with -f/--file PATH."
+        ))
+
+    joined = "\n\n".join(sections)
+    text, cut = _truncate(joined, max_chars)
+    return ReviewSubject(
+        kind=kind,
+        ref=ref,
+        files=included,
+        text=text,
+        truncated_at=cut,
+        line_count=joined.count("\n") + 1,
+    )
+
+
 def _repo_files(workspace: Path) -> list[str] | None:
     """List the workspace's files via git, honoring ``.gitignore``.
 
