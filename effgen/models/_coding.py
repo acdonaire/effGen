@@ -225,12 +225,14 @@ def coding_suitability(
 
 def _resolve(model_id: str, provider: str | None, model: Any) -> CodingSuitability:
     bare, resolved_provider = split_model_id(model_id, provider)
-    common = {"model_id": model_id, "provider": resolved_provider}
+
+    def suitability(**fields: Any) -> CodingSuitability:
+        """Build a result, filling in the two fields every branch shares."""
+        return CodingSuitability(model_id=model_id, provider=resolved_provider, **fields)
 
     entry = _from_table(bare, resolved_provider)
     if entry is not None:
-        return CodingSuitability(
-            **common,
+        return suitability(
             verdict=entry["verdict"],
             reason=entry["reason"],
             fix=entry.get("fix", ""),
@@ -244,8 +246,7 @@ def _resolve(model_id: str, provider: str | None, model: Any) -> CodingSuitabili
         if callable(probe):
             support = probe()
     if support == "none":
-        return CodingSuitability(
-            **common,
+        return suitability(
             verdict=UNSUITABLE,
             reason=(
                 "it receives no tool definitions — its chat template renders "
@@ -257,8 +258,7 @@ def _resolve(model_id: str, provider: str | None, model: Any) -> CodingSuitabili
 
     record = _catalog_record(bare, resolved_provider)
     if record is not None and not record.supports_tools:
-        return CodingSuitability(
-            **common,
+        return suitability(
             verdict=UNSUITABLE,
             reason=(
                 "the catalog records no tool calling for it, so it cannot "
@@ -273,8 +273,7 @@ def _resolve(model_id: str, provider: str | None, model: Any) -> CodingSuitabili
     # weights loaded locally.
     size = parameter_count_b(bare)
     if size is not None and size < SMALL_MODEL_B:
-        return CodingSuitability(
-            **common,
+        return suitability(
             verdict=LIMITED,
             reason=(
                 f"at about {size:g}B parameters it often answers a coding task "
@@ -289,15 +288,13 @@ def _resolve(model_id: str, provider: str | None, model: Any) -> CodingSuitabili
         )
 
     if record is not None and record.supports_tools:
-        return CodingSuitability(
-            **common,
+        return suitability(
             verdict=SUITABLE,
             reason="the catalog records tool calling for it",
             evidence="catalog",
         )
 
-    return CodingSuitability(
-        **common,
+    return suitability(
         verdict=UNKNOWN,
         reason=(
             "the catalog does not know this id, so how it handles the coding "
