@@ -39,6 +39,13 @@ from effgen.cli.monitor_format import (
 GPU_SAMPLE_INTERVAL_S = 5.0
 
 
+def _model_label(row: dict[str, Any], repeated: set[str]) -> str:
+    """The model name, qualified by provider only when the name repeats."""
+    name = str(row.get("model") or "—")
+    provider = str(row.get("provider") or "").strip()
+    return f"{name} ({provider})" if provider and name in repeated else name
+
+
 def _build_live_view(snapshot: dict[str, Any]) -> Any:
     """Assemble the full-screen layout for one snapshot."""
     from rich.console import Group
@@ -175,11 +182,19 @@ def _build_live_view(snapshot: dict[str, Any]) -> Any:
     if not by_model.get("available"):
         model_body: Any = Text("server unavailable — see Traffic", style="effgen.muted")
     elif model_rows:
+        # The live layout has no room for a Provider column, so a model name
+        # served by two providers would show as two rows with the same label and
+        # different numbers. Qualify only the names that repeat.
+        repeated = {
+            name
+            for name in {str(row.get("model") or "—") for row in model_rows}
+            if sum(1 for row in model_rows if str(row.get("model") or "—") == name) > 1
+        }
         model_body = _table(
             ["Model", "Calls", "Err", "p95", "Cost"],
             [
                 [
-                    str(row.get("model") or "—"),
+                    _model_label(row, repeated),
                     str(row.get("calls") or 0),
                     str(row.get("errors") or 0),
                     _fmt_seconds(row.get("p95_latency_s")),

@@ -271,6 +271,40 @@ def test_live_loop_is_bounded_by_count():
     )
 
 
+def test_live_per_model_rows_name_their_provider_when_the_model_repeats():
+    """The narrow live layout has no Provider column, so a repeated name is qualified.
+
+    One model name served by two providers carries different numbers per row;
+    two rows labelled identically would leave an operator unable to tell which
+    is which.
+    """
+    from effgen.ui.theme import get_console
+
+    snapshot = monitor.collect_snapshot(url="http://127.0.0.1:1", interval=2.0)
+    snapshot["by_model"] = {
+        "scope": "this server process since start",
+        "available": True,
+        "unavailable_reason": None,
+        "rows": [
+            {"model": "gpt-oss-120b", "provider": "cerebras", "calls": 4,
+             "errors": 1, "error_rate": 0.25, "p95_latency_s": 8.0, "cost_usd": 0.75},
+            {"model": "gpt-oss-120b", "provider": "groq", "calls": 2,
+             "errors": 0, "error_rate": 0.0, "p95_latency_s": 0.3, "cost_usd": 0.25},
+            {"model": "gpt-5-nano", "provider": "openai", "calls": 1,
+             "errors": 0, "error_rate": 0.0, "p95_latency_s": 0.4, "cost_usd": 0.01},
+        ],
+    }
+    console = get_console(file=io.StringIO(), force_terminal=True, width=160, height=40)
+    console.print(monitor._build_live_view(snapshot))
+    rendered = console.file.getvalue()
+
+    assert "gpt-oss-120b (cerebras)" in rendered
+    assert "gpt-oss-120b (groq)" in rendered
+    # A name that appears once is left alone.
+    assert "gpt-5-nano (openai)" not in rendered
+    assert "gpt-5-nano" in rendered
+
+
 def test_live_view_builds_for_a_snapshot_with_no_server():
     from effgen.ui.theme import get_console
 
