@@ -285,6 +285,48 @@
     return measure;
   }
 
+  /**
+   * Speak one short message through a single polite live region.
+   *
+   * A surface that needs to announce something — a finished race, a re-sorted
+   * table — routes it here instead of turning another element into a live
+   * region. The element is created once per page and reused.
+   *
+   * Repeating the message needs care: writing the same string is not a change,
+   * and a region that did not change is not read out. So a repeat empties the
+   * region and writes the text back on a later tick, which is a change the
+   * region does report. A pending repeat is dropped as soon as a different
+   * message arrives.
+   */
+  var announceRepeat = null;
+  function announce(message) {
+    if (typeof document === "undefined") return null;
+    var text = String(message == null ? "" : message);
+    var el = document.getElementById("eff-announce");
+    if (!el) {
+      el = document.createElement("p");
+      el.id = "eff-announce";
+      el.className = "eff-sr-only";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      document.body.appendChild(el);
+    }
+    if (announceRepeat !== null) {
+      clearTimeout(announceRepeat);
+      announceRepeat = null;
+    }
+    if (text && el.textContent === text) {
+      el.textContent = "";
+      announceRepeat = setTimeout(function () {
+        announceRepeat = null;
+        el.textContent = text;
+      }, 60);
+      return el;
+    }
+    el.textContent = text;
+    return el;
+  }
+
   function buildOverlay(id, titleText, bodyHtml) {
     var host = document.createElement("div");
     host.className = "eff-overlay";
@@ -317,7 +359,7 @@
     var palette = buildOverlay("eff-palette", "Command palette",
       '<div class="eff-palette-head">'
       + '<input id="eff-palette-input" type="text" role="combobox" autocomplete="off"'
-      + ' spellcheck="false" aria-expanded="true" aria-controls="eff-palette-list"'
+      + ' spellcheck="false" aria-expanded="false" aria-controls="eff-palette-list"'
       + ' aria-autocomplete="list" aria-label="Search commands, runs and models"'
       + ' placeholder="Search commands, runs and models…" />'
       + "</div>"
@@ -381,6 +423,8 @@
       // rather than emptied, so nothing points at a row that does not exist.
       if (activeIndex >= 0) input.setAttribute("aria-activedescendant", "eff-opt-" + activeIndex);
       else input.removeAttribute("aria-activedescendant");
+      // The listbox is only "expanded" while it holds something to choose from.
+      input.setAttribute("aria-expanded", results.length ? "true" : "false");
       status.textContent = results.length === 1
         ? "1 command" : results.length + " commands";
       var activeEl = list.querySelector(".eff-palette-option.is-active");
@@ -492,6 +536,7 @@
       onEscape: function (fn) { escapeHandlers.push(fn); },
       state: state,
       jumpTo: jumpTo,
+      announce: announce,
       /** Re-measure the sticky chrome after the page changes its header. */
       remeasure: remeasureChrome,
     };
@@ -509,6 +554,7 @@
     isTypingTarget: isTypingTarget,
     chord: chord,
     jumpTo: jumpTo,
+    announce: announce,
     trackStickyChrome: trackStickyChrome,
     init: init,
   };
