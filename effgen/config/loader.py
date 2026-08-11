@@ -13,6 +13,7 @@ Features:
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import re
@@ -267,12 +268,18 @@ class ConfigLoader:
             merge: Merge with existing config if True
             validate: Validate config after loading
 
+        Every failure names the file it came from, so a set of merged files
+        says which one is the problem.
+
         Returns:
             Loaded configuration
 
         Raises:
             FileNotFoundError: If config file doesn't exist
-            ValueError: If config is invalid
+            ValueError: The file is not a mapping of settings, is not valid
+                JSON, or has an extension this loader does not read.
+            yaml.YAMLError: The file is not parseable YAML. The parser's own
+                position mark carries the file name, the line and the column.
         """
         with self._lock:
             # Handle multiple config files
@@ -360,9 +367,22 @@ class ConfigLoader:
         # Support both single extensions (.yaml, .json) and double extensions (.yaml.example)
         file_name = path.name.lower()
         if file_name.endswith(('.yaml', '.yml', '.yaml.example', '.yml.example')):
-            data = yaml.safe_load(content)
+            # Environment variables are substituted before the parse, so the
+            # parser is handed text rather than the file. A named stream is what
+            # puts the file back into the parser's own position mark: without it
+            # a syntax error reports `in "<unicode string>"` and the user is not
+            # told which of the files they passed is the broken one.
+            stream = io.StringIO(content)
+            stream.name = str(path)
+            data = yaml.safe_load(stream)
         elif file_name.endswith(('.json', '.json.example')):
-            data = json.loads(content)
+            try:
+                data = json.loads(content)
+            except ValueError as exc:
+                # Both the standard library (``JSONDecodeError``) and json5,
+                # which replaces it when installed, report the position but not
+                # the file. The caller passed a path — name it.
+                raise ValueError(f"Config file {path} is not valid JSON: {exc}") from exc
         else:
             raise ValueError(f"Unsupported config file format: {path.suffix}")
 

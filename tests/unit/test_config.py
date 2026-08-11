@@ -67,3 +67,34 @@ class TestConfigLoader:
         config = loader.load_config(str(yaml_file))
         assert config["value"] is not None
         os.environ.pop("EFFGEN_TEST_VAR", None)
+
+    def test_unparseable_yaml_names_the_file(self, tmp_dir):
+        """A YAML syntax error reports the path, not an anonymous string."""
+        yaml_file = tmp_dir / "broken.yaml"
+        yaml_file.write_text("models:\n\tkey: 1\n")
+        loader = ConfigLoader()
+        with pytest.raises(Exception) as caught:
+            loader.load_config(str(yaml_file), validate=False)
+        message = str(caught.value)
+        assert str(yaml_file) in message
+        assert "<unicode string>" not in message
+
+    def test_unparseable_json_names_the_file(self, tmp_dir):
+        """An invalid JSON config reports the path and stays a ValueError."""
+        json_file = tmp_dir / "broken.json"
+        json_file.write_text("{not valid json,,,}")
+        loader = ConfigLoader()
+        with pytest.raises(ValueError) as caught:
+            loader.load_config(str(json_file), validate=False)
+        assert str(json_file) in str(caught.value)
+
+    def test_a_merged_set_names_which_file_is_broken(self, tmp_dir):
+        """Loading several files names the one that failed to parse."""
+        good = tmp_dir / "good.yaml"
+        good.write_text("name: test\n")
+        broken = tmp_dir / "second.yaml"
+        broken.write_text("models: [unclosed\n")
+        loader = ConfigLoader()
+        with pytest.raises(Exception) as caught:
+            loader.load_config([str(good), str(broken)], validate=False)
+        assert str(broken) in str(caught.value)
