@@ -250,6 +250,11 @@ def test_the_recorded_result_does_not_depend_on_the_installed_extras(ratchet, ba
 
 def test_a_baseline_recorded_with_other_flags_is_refused(ratchet, baseline, tmp_path, capsys):
     """Changing the flags without re-recording is an actionable exit 2."""
+    if ratchet.mypy_version() == "absent":
+        pytest.skip(
+            "the flag mismatch is reported after the mypy-presence check, so it "
+            "is only reachable where mypy is installed"
+        )
     skewed = dict(baseline)
     skewed["toolchain"] = dict(baseline["toolchain"])
     skewed["toolchain"]["mypy_args"] = ["--ignore-missing-imports"]

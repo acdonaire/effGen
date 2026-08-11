@@ -39,8 +39,14 @@ from pathlib import Path
 
 import pytest
 
-import effgen.models.transformers_engine as facade
-from effgen.models.transformers_engine import TransformersEngine
+# The facade imports torch at module scope, and a module-scope ImportError here
+# interrupts collection for the whole directory — so an install without the
+# local-inference extra could not run the unit lane at all. The layout these
+# cases describe is only meaningful where the engine can be imported.
+pytest.importorskip("torch", reason="the local Transformers engine needs torch")
+
+import effgen.models.transformers_engine as facade  # noqa: E402
+from effgen.models.transformers_engine import TransformersEngine  # noqa: E402
 
 PACKAGE = "effgen.models"
 FACADE = "transformers_engine"
