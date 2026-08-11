@@ -79,9 +79,16 @@ ALLOWED_NAMES = frozenset(
 ALLOWED_PREFIXES = ("PYTHON", "PYTEST_", "_PYTEST", "COV_CORE_", "COVERAGE_")
 
 #: Artifact caches, re-pointed at their real locations unless caches are dropped.
+#: ``HF_HUB_CACHE`` is where current huggingface_hub keeps downloaded weights and
+#: it takes precedence over ``HF_HOME``; a setup that points it at a shared store
+#: keeps nothing under ``$HF_HOME/hub``, so dropping it turns every cached model
+#: into a download the network guard then refuses.
 CACHE_NAMES = (
     "HF_HOME",
+    "HF_HUB_CACHE",
     "HUGGINGFACE_HUB_CACHE",
+    "HF_DATASETS_CACHE",
+    "HF_XET_CACHE",
     "TRANSFORMERS_CACHE",
     "SENTENCE_TRANSFORMERS_HOME",
     "TORCH_HOME",

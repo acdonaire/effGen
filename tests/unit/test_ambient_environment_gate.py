@@ -172,6 +172,40 @@ def test_the_interpreter_can_still_find_itself(name):
     assert hermetic._keeps(name) is True
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "HF_HOME",
+        "HF_HUB_CACHE",
+        "HF_DATASETS_CACHE",
+        "HF_XET_CACHE",
+        "TRANSFORMERS_CACHE",
+        "SENTENCE_TRANSFORMERS_HOME",
+        "TORCH_HOME",
+    ],
+)
+def test_a_download_cache_survives_the_scrub(name):
+    """A cache pointer is a place on disk, not a decision the suite reads.
+
+    Dropping one turns "this model is already downloaded" into a fetch, which
+    the scrub's own network guard then refuses — so every test that loads a
+    cached model fails on a machine whose cache is somewhere the default layout
+    does not cover.
+    """
+    assert name in hermetic.CACHE_NAMES
+
+
+def test_the_cache_variable_huggingface_actually_reads_is_covered():
+    """``HF_HUB_CACHE`` wins over ``HF_HOME``, so keeping only the latter is not enough."""
+    from huggingface_hub import constants
+
+    configured = constants.HF_HUB_CACHE
+    assert "HF_HUB_CACHE" in hermetic.CACHE_NAMES, (
+        f"huggingface_hub resolves its store to {configured}; the scrub has to "
+        "keep the variable that decided it"
+    )
+
+
 def test_the_scrub_is_inert_unless_it_is_asked_for(monkeypatch):
     monkeypatch.delenv(hermetic.ENABLE_VAR, raising=False)
     assert hermetic.requested() is False
