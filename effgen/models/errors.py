@@ -977,7 +977,31 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         return _NOT_FOUND
     if "timed out" in msg or "timeout" in msg:
         return _TIMEOUT
-    if any(k in msg for k in ("connection error", "service unavailable", "temporarily unavailable", "overloaded", "503", "502", "500")):
+    # A socket that went away mid-call. Only the adapters whose SDK raises a
+    # class named after the connection reach this by class name; the rest wrap
+    # the operating system's error in their own message, and "connection reset
+    # by peer" is not the phrase "connection error". Both are the same failure
+    # and both are worth another attempt, so both say transient rather than
+    # asking the caller to go and check the provider's status page.
+    if any(
+        k in msg
+        for k in (
+            "connection error",
+            "connection reset",
+            "connection aborted",
+            "connection refused",
+            "connection closed",
+            "broken pipe",
+            "server disconnected",
+            "remote end closed connection",
+            "service unavailable",
+            "temporarily unavailable",
+            "overloaded",
+            "503",
+            "502",
+            "500",
+        )
+    ):
         return _TRANSIENT
 
     return _UNKNOWN

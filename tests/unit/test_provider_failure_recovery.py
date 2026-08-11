@@ -24,6 +24,16 @@ def scrub_exception(exc):
     return impl(exc)
 
 
+def _chain_of(exc):
+    """Every exception reachable from *exc* through cause and context."""
+    seen, out, current = set(), [], exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        out.append(current)
+        current = current.__cause__ or current.__context__
+    return out
+
+
 def retry_after_seconds(exc):
     """The stated-delay reader under test, imported per call for the same reason."""
     from effgen.models.errors import retry_after_seconds as impl
@@ -96,6 +106,53 @@ class TestTheCredentialNeverReachesTheCaller:
         error = Stubborn("outer")
         scrub_exception(error)  # must not raise
         assert error.message == f"key={KEY}"
+
+    def test_the_boundary_actually_strips_what_it_wraps(self):
+        """The wrapper is not enough on its own — it has to do the redaction.
+
+        Checking only that the methods are wrapped leaves the wrapper free to
+        become a no-op: an adapter would still report the failure, with the key
+        the caller submitted quoted inside it.
+        """
+        from effgen.models.base import BaseModel, ModelType
+
+        class _QuotesTheKey(BaseModel):
+            def __init__(self) -> None:
+                super().__init__("probe", ModelType.OPENAI, context_length=8)
+
+            def load(self):
+                body = {"error": {"message": f"Incorrect API key provided: {KEY}"}}
+                raise _SdkError(f"Error code: 401 - {body}", body)
+
+            def generate(self, prompt, **kwargs):
+                self.load()
+
+            def generate_stream(self, prompt, **kwargs):
+                self.load()
+                yield ""
+
+            def unload(self):
+                return None
+
+            def count_tokens(self, text):
+                return 0
+
+            def get_context_length(self):
+                return 8
+
+        for call in (lambda m: m.load(), lambda m: m.generate("hi")):
+            model = _QuotesTheKey()
+            with pytest.raises(Exception) as caught:  # noqa: PT011 - any type
+                call(model)
+            leaked = [
+                link
+                for link in _chain_of(caught.value)
+                if KEY in str(link) or KEY in json.dumps(getattr(link, "body", {}))
+            ]
+            assert not leaked, (
+                "the boundary let the submitted credential through: "
+                f"{[type(link).__name__ for link in leaked]}"
+            )
 
     def test_every_adapter_call_is_wrapped_for_redaction(self):
         """The redaction sits at one boundary, so it cannot be forgotten."""
@@ -374,6 +431,48 @@ class TestReplicateFailureClassification:
         with pytest.raises(httpx.ConnectError):
             transport.handle_request(request)
         assert request.extensions["timeout"]["read"] == 1.0
+
+
+class TestASocketThatWentAwayIsTransient:
+    """A connection cut mid-call reports as transient on every adapter.
+
+    Only the SDKs that raise a class named after the connection are recognised
+    by class name. The adapters that wrap the operating system's error in their
+    own message reach the text heuristics, and "connection reset by peer" is
+    not the phrase "connection error" — so the same failure used to be reported
+    as unexpected on some providers and transient on others.
+    """
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Gemini generation failed [will_retry]: [Errno 104] Connection reset by peer.",
+            "HuggingFace Inference request failed [will_retry]: Connection aborted.",
+            "Replicate request failed: ('Connection aborted.', ConnectionResetError(104))",
+            "Together request failed: Server disconnected without sending a response.",
+            "request failed: Remote end closed connection without response",
+            "write failed: Broken pipe",
+            "openai call failed: Connection refused",
+        ],
+    )
+    def test_a_severed_connection_is_transient_and_retryable(self, message):
+        verdict = classify_provider_error(RuntimeError(message))
+        assert verdict.category == "transient", message
+        assert verdict.should_retry
+
+    def test_a_rejected_credential_is_still_auth(self):
+        """The new phrases must not steal a failure that belongs elsewhere."""
+        verdict = classify_provider_error(
+            RuntimeError("auth error: invalid api key; the connection was closed")
+        )
+        assert verdict.category == "auth"
+        assert not verdict.should_retry
+
+    def test_a_stated_rate_limit_is_still_a_rate_limit(self):
+        verdict = classify_provider_error(
+            RuntimeError("Rate limit reached; the connection was closed. Try again in 2.5s")
+        )
+        assert verdict.category == "rate_limited"
 
 
 class TestTheStatedRetryDelayIsCarried:
