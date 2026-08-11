@@ -316,6 +316,10 @@ def scenario_provider_registry_middleware_identity() -> ContentionReport:
 
 _PRICE = 0.001
 
+#: Credential handed to an adapter that is only used to fold numbers. It keeps
+#: these scenarios independent of whatever the machine has in its environment.
+_OFFLINE_KEY = "offline-scenario-no-call-is-made"
+
 
 @contextmanager
 def _no_configured_budget() -> Iterator[None]:
@@ -340,7 +344,10 @@ def scenario_adapter_totals_non_streaming() -> ContentionReport:
     from effgen.models.openai_adapter import OpenAIAdapter
 
     workers, per_worker = 16, 200 * _scale()
-    adapter = OpenAIAdapter(model_name="gpt-5-nano")
+    # The scenario folds numbers onto the adapter and never calls the service,
+    # but the constructor requires a credential, so one is supplied here rather
+    # than read from whatever the machine happens to have set.
+    adapter = OpenAIAdapter(model_name="gpt-5-nano", api_key=_OFFLINE_KEY)
     adapter.total_cost = 0.0
     report = ContentionReport("adapter_totals_non_streaming", workers, per_worker)
 
@@ -368,7 +375,7 @@ def scenario_adapter_totals_streaming() -> ContentionReport:
     from effgen.models.openai_adapter import OpenAIAdapter
 
     workers, per_worker = 16, 200 * _scale()
-    adapter = OpenAIAdapter(model_name="gpt-5-nano")
+    adapter = OpenAIAdapter(model_name="gpt-5-nano", api_key=_OFFLINE_KEY)
     adapter.total_cost = 0.0
     adapter.total_tokens = 0
     report = ContentionReport("adapter_totals_streaming", workers, per_worker)
