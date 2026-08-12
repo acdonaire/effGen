@@ -73,6 +73,23 @@ def test_batch_bad_output_format_fails_before_model(tmp_path, capsys):
     assert ".jsonl" in text and ".csv" in text and ".json" in text
 
 
+def _one_json_document(captured):
+    """Parse the single document ``--json`` leaves on stdout.
+
+    The contract is that stdout carries the result document and nothing else, so
+    when parsing fails the useful information is what landed beside it. Reporting
+    both streams turns a bare decode error into the name of whatever wrote there.
+    """
+    try:
+        return json.loads(captured.out)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"--json must leave exactly one document on stdout, but parsing failed: {exc}\n"
+            f"--- stdout ---\n{captured.out[-2000:]}\n"
+            f"--- stderr ---\n{captured.err[-2000:]}"
+        ) from exc
+
+
 def test_batch_bad_output_format_json_error_object(tmp_path, capsys):
     src = tmp_path / "in.jsonl"
     src.write_text('{"query": "hi"}\n', encoding="utf-8")
@@ -81,7 +98,7 @@ def test_batch_bad_output_format_json_error_object(tmp_path, capsys):
     cli = _main.CLIInterface()
     cli.console = None
     code = _main._handle_batch_command(args, cli)
-    payload = json.loads(capsys.readouterr().out)
+    payload = _one_json_document(capsys.readouterr())
     assert code == 1
     assert payload["success"] is False
     assert "Unsupported --output format" in payload["error"]["message"]
@@ -121,7 +138,7 @@ def test_batch_all_rows_missing_query_text_json_error(tmp_path, monkeypatch, cap
     cli = _main.CLIInterface()
     cli.console = None
     code = _main._handle_batch_command(args, cli)
-    payload = json.loads(capsys.readouterr().out)
+    payload = _one_json_document(capsys.readouterr())
     assert code == 1
     assert payload["success"] is False
     assert "Fields present: id, note" in payload["error"]["message"]
