@@ -25,6 +25,7 @@ from effgen.cli import _main
 from effgen.cli.code.engine import CodeEngine
 from effgen.cli.code.permissions import PermissionMode
 from effgen.cli.code.repl import CodeREPL
+from effgen.cli.progress import _CI_ENV_VARS
 from effgen.core.agent_response import AgentResponse, StreamEvent
 from effgen.memory.short_term import ShortTermMemory
 
@@ -205,8 +206,14 @@ def test_answer_deltas_reach_a_real_terminal_before_the_turn_ends(tmp_path):
         "PYTHONPATH": REPO_ROOT, "FORCE_COLOR": "1",
     })
     env.pop("NO_COLOR", None)
-    env.pop("CI", None)
     env.pop("EFFGEN_NO_ANIM", None)
+    # The child must see an animating surface, and animation is switched off by any of
+    # the CI markers -- not by ``CI`` alone. Clearing them from the product's own list
+    # keeps this in step: a runner that sets only ``GITHUB_ACTIONS`` would otherwise
+    # take the blocking branch and the timing assertion below would report streaming
+    # that never had a chance to happen.
+    for marker in _CI_ENV_VARS:
+        env.pop(marker, None)
     proc = subprocess.Popen(
         [sys.executable, "-c", child],
         stdin=secondary, stdout=secondary, stderr=secondary,
