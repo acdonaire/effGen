@@ -217,13 +217,17 @@ def test_the_shared_objects_are_shared_not_copied() -> None:
     ``_history_dir`` decides where a session's readline history and ``/save``
     snapshots land. Two equal-but-separate definitions would send ``effgen chat``
     and ``effgen code`` to different directories while every equality check kept
-    passing, so both binders are checked against the same object.
+    passing, so every binder is checked against the same object -- including
+    ``chat_view``, which resolves the directory again when it lists saved
+    sessions.
     """
+    import effgen.cli.chat_view as chat_view
     import effgen.cli.code.repl as code_repl
     import effgen.cli.code.repl_session as code_repl_session
 
     assert chat_mod._history_dir is chat_session._history_dir
     assert chat_mod._SLASH_COMMANDS is chat_commands._SLASH_COMMANDS
+    assert chat_view._history_dir is chat_session._history_dir
     assert code_repl._history_dir is chat_session._history_dir
     assert code_repl_session._history_dir is chat_session._history_dir
 
