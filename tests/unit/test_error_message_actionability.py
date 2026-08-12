@@ -385,3 +385,66 @@ def test_pass_through_messages_are_actionable() -> None:
         f"{len(unactionable)} failure messages report a symptom with nothing "
         f"to do about it:\n{report}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The tool result surface
+# ---------------------------------------------------------------------------
+#
+# A tool reports its failure in ``ToolResult.error`` rather than by raising, so
+# neither group above reaches it — and a rejected call is the failure a caller
+# meets most often. The registry is walked and every tool is called with no
+# arguments at all, which is the shape a caller reaches by omitting one.
+
+
+def _tool_refusals() -> list[tuple[str, str]]:
+    """Return ``(tool name, refusal)`` for every tool that rejects an empty call."""
+    import asyncio
+
+    from effgen.tools import get_registry
+
+    registry = get_registry()
+    refusals: list[tuple[str, str]] = []
+    for name in sorted(registry.list_tools()):
+        try:
+            tool = registry.get_tool_sync(name)
+            result = asyncio.run(asyncio.wait_for(tool.execute(), timeout=20))
+        except Exception:  # noqa: BLE001 - a tool needing an absent SDK is not this gate's subject
+            continue
+        if not result.success and result.error:
+            refusals.append((name, result.error))
+    return refusals
+
+
+def test_a_tool_rejecting_an_empty_call_says_what_to_pass() -> None:
+    """Every tool refusal names the symptom and then what the call should pass."""
+    refusals = _tool_refusals()
+    assert len(refusals) >= 40, (
+        f"only {len(refusals)} tools refused an empty call; the registry walk is "
+        "not reaching the built-in tools"
+    )
+    unactionable = [(name, text) for name, text in refusals if not is_actionable(text)]
+    report = "\n".join(f"  {name}  {text[:140]}" for name, text in unactionable)
+    assert not unactionable, (
+        f"{len(unactionable)} tool refusals report a symptom with nothing to do "
+        f"about it:\n{report}"
+    )
+
+
+def test_a_tool_refusal_names_the_accepted_values_of_an_enum() -> None:
+    """A rejected selector says which values the tool accepts."""
+    import asyncio
+
+    from effgen.tools import get_registry
+
+    tool = get_registry().get_tool_sync("datetime")
+    result = asyncio.run(tool.execute())
+    assert not result.success
+    assert "Accepted values for 'operation'" in result.error, result.error
+    accepted = next(
+        (p.enum for p in tool.metadata.parameters if p.name == "operation" and p.enum),
+        None,
+    )
+    assert accepted, "the datetime tool no longer declares an operation enum"
+    for value in accepted[:3]:
+        assert str(value) in result.error, f"{value} missing from {result.error}"

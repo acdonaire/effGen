@@ -8,12 +8,15 @@ ensuring consistent interfaces for tool metadata, parameter validation, and exec
 from __future__ import annotations
 
 import json
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any
+
+from effgen.errors import with_next_step
 
 
 def _redact_error(text: str) -> str:
@@ -522,6 +525,45 @@ class BaseTool(ABC):
         """
         pass
 
+    def _validation_next_step(self, error: str) -> str:
+        """Say what the call should have passed, read off this tool's own schema.
+
+        A rejected call is the most common failure a caller reaches, and the
+        rejection on its own ("Parameter 'operation' is required") names the
+        symptom without saying what would have been accepted. The guidance is
+        derived from the declared parameters rather than written per tool, so it
+        stays accurate as a tool's schema changes.
+
+        Args:
+            error: The validation message, whose quoted parameter name selects
+                the specification the guidance is built from.
+
+        Returns:
+            One sentence naming the accepted values for the rejected parameter
+            when it declares an enum, and otherwise the parameters this tool
+            requires with their types. Empty when the tool declares neither.
+        """
+        specs = {p.name: p for p in self._metadata.parameters if p.model_facing}
+        match = re.search(r"'([^']+)'", error or "")
+        offender = specs.get((match.group(1) if match else "").split("[")[0])
+
+        if offender is not None and offender.enum:
+            values = ", ".join(str(v) for v in offender.enum[:12])
+            if len(offender.enum) > 12:
+                values += ", …"
+            return f"Accepted values for '{offender.name}': {values}."
+
+        required = [p for p in specs.values() if p.required]
+        if required:
+            named = ", ".join(f"{p.name} ({p.type.value})" for p in required[:6])
+            if len(required) > 6:
+                named += ", …"
+            return f"Pass the parameters '{self.name}' requires: {named}."
+
+        if offender is not None:
+            return f"Pass '{offender.name}' as {offender.type.value}."
+        return ""
+
     def _coerce_parameters(self, kwargs: dict) -> dict:
         """Coerce LLM-supplied parameter values to their declared types.
 
@@ -594,7 +636,12 @@ class BaseTool(ABC):
                 return ToolResult(
                     success=False,
                     output=None,
-                    error=_redact_error(f"Parameter validation failed: {error}"),
+                    error=_redact_error(
+                        with_next_step(
+                            f"Parameter validation failed: {error}",
+                            self._validation_next_step(error or ""),
+                        )
+                    ),
                     execution_time=time.time() - start_time
                 )
 
