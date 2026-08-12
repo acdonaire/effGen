@@ -19,7 +19,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from dotenv import load_dotenv
+
+from effgen._env import load_env
 
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
@@ -28,7 +29,10 @@ from dotenv import load_dotenv
 _REPO_ROOT = Path(__file__).parent.parent.parent
 _FIXTURES_DIR = _REPO_ROOT / "tests/fixtures/multimodal"
 
-load_dotenv(_REPO_ROOT / ".env")
+# The documented search path, so a snippet runs against the same keys the CLI
+# finds: reading only the repository's own file misses a key configured a level
+# up and silently sends the run to a different provider.
+load_env()
 
 
 def _extract_python_block(doc_path: Path) -> str:
@@ -88,7 +92,7 @@ def _load_vision_model():
         m = OpenAIAdapter(model_name="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
     else:
         from effgen.models.gemini_adapter import GeminiAdapter
-        m = GeminiAdapter(model_name="gemini-2.0-flash", api_key=os.getenv("GOOGLE_API_KEY"))
+        m = GeminiAdapter(model_name="gemini-3.1-flash-lite", api_key=os.getenv("GOOGLE_API_KEY"))
     m.load()
     return m
 
@@ -101,7 +105,7 @@ def _load_audio_model():
         m = OpenAIAdapter(model_name="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
     else:
         from effgen.models.gemini_adapter import GeminiAdapter
-        m = GeminiAdapter(model_name="gemini-2.0-flash", api_key=os.getenv("GOOGLE_API_KEY"))
+        m = GeminiAdapter(model_name="gemini-3.1-flash-lite", api_key=os.getenv("GOOGLE_API_KEY"))
     m.load()
     return m
 
