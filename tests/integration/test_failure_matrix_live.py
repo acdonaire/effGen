@@ -128,6 +128,18 @@ def _classify(exc: Exception):
     return classify_provider_error(exc)
 
 
+def _skip_if_rate_limited(exc: Exception, provider: str) -> None:
+    """Skip when the provider throttled the call instead of answering it.
+
+    A rate limit is the provider's decision and its own row in this matrix; a
+    cell that needs a served answer cannot assert anything once the quota is
+    spent, so it reports the throttle rather than a failure of the behaviour
+    under test.
+    """
+    if _classify(exc).category == "rate_limited":
+        pytest.skip(f"{provider} rate limited this call: {str(exc)[:200]}")
+
+
 def _no_credential_anywhere(exc: BaseException, secret: str) -> bool:
     """Whether *secret* survives anywhere in the chain the caller can read."""
     seen: set[int] = set()
@@ -201,9 +213,13 @@ def test_a_truncated_answer_declares_itself(provider):
     """A cut-off answer comes back flagged, not as a complete one."""
     key = _require_key(provider)
     adapter = _adapter(provider, api_key=key)
-    result = adapter.generate(
-        "Write a detailed five paragraph essay about the ocean.", max_tokens=16
-    )
+    try:
+        result = adapter.generate(
+            "Write a detailed five paragraph essay about the ocean.", max_tokens=16
+        )
+    except Exception as exc:  # noqa: BLE001 - a throttle is not a truncation
+        _skip_if_rate_limited(exc, provider)
+        raise
     assert result.finish_reason == "length", (
         f"{provider} reported {result.finish_reason!r} for a 16-token cap"
     )
