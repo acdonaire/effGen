@@ -44,7 +44,7 @@ from effgen.core.messages import Message, Role
 from effgen.presets import create_agent
 
 # Create multimodal agent
-model = load_model("gemini-2.0-flash", provider="gemini")
+model = load_model("gemini-3.1-flash-lite", provider="gemini")
 agent = create_agent("multimodal", model)
 
 # Image Q&A

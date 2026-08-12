@@ -200,7 +200,7 @@ No adapter silently downcasts an image to `"[image not supported]"`. If a model 
 from effgen import load_model
 from effgen.presets import create_agent
 
-model = load_model("gemini-2.0-flash", provider="gemini")
+model = load_model("gemini-3.1-flash-lite", provider="gemini")
 agent = create_agent("multimodal", model)
 ```
 

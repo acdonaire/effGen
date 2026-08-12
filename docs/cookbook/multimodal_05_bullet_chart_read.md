@@ -89,7 +89,7 @@ if os.getenv("OPENAI_API_KEY"):
     model = OpenAIAdapter(model_name="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
 elif os.getenv("GOOGLE_API_KEY"):
     from effgen.models.gemini_adapter import GeminiAdapter
-    model = GeminiAdapter(model_name="gemini-2.0-flash", api_key=os.getenv("GOOGLE_API_KEY"))
+    model = GeminiAdapter(model_name="gemini-3.1-flash-lite", api_key=os.getenv("GOOGLE_API_KEY"))
 else:
     raise EnvironmentError("Set OPENAI_API_KEY or GOOGLE_API_KEY.")
 

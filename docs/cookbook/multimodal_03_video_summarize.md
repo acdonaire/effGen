@@ -64,7 +64,7 @@ if os.getenv("OPENAI_API_KEY"):
 elif os.getenv("GOOGLE_API_KEY"):
     from effgen.models.gemini_adapter import GeminiAdapter
     model = GeminiAdapter(
-        model_name="gemini-2.0-flash",
+        model_name="gemini-3.1-flash-lite",
         api_key=os.getenv("GOOGLE_API_KEY"),
     )
 else:
