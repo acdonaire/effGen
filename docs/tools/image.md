@@ -125,12 +125,11 @@ When `dest` is omitted, `saved_to` is `null` and `bytes_b64` contains the base64
 Generate natural-language captions and descriptions for images using a vision LLM.
 
 **Backend:** Auto-selects the cheapest available vision-capable provider:
-1. `gemini/gemini-2.5-flash-lite` (set `GOOGLE_API_KEY`)
+1. `gemini/gemini-3.1-flash-lite` (set `GOOGLE_API_KEY`)
 2. `openai/gpt-4o-mini` (set `OPENAI_API_KEY`)
-3. `gemini/gemini-2.0-flash-lite`
-4. `gemini/gemini-2.0-flash`
-5. `openai/gpt-4.1-mini`
-6. `gemini/gemini-2.5-flash`
+3. `gemini/gemini-2.5-flash-lite`
+4. `openai/gpt-4.1-mini`
+5. `gemini/gemini-2.5-flash`
 
 ### Installation
 
