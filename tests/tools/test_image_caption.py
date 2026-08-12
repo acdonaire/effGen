@@ -116,9 +116,9 @@ def test_pick_provider_override_uses_default_model():
         provider, model, chosen_adapter = _pick_vision_provider(provider_name="gemini")
 
     assert provider == "gemini"
-    assert model == "gemini-2.5-flash-lite"
+    assert model == "gemini-3.1-flash-lite"
     assert chosen_adapter is adapter_cls
-    assert calls[0] == ("gemini", "gemini-2.5-flash-lite")
+    assert calls[0] == ("gemini", "gemini-3.1-flash-lite")
 
 
 def test_forced_provider_missing_key_raises_clean_error():
@@ -238,11 +238,28 @@ def _has_vision_key() -> bool:
     return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
 
 
+def _caption(tool, **kwargs) -> dict:
+    """Run one captioning call, reporting a spent free-tier quota as a skip.
+
+    Every vision provider here throttles on a daily budget. Once that budget is
+    gone there is no caption to assert on, and the throttle says nothing about
+    the captioning path.
+    """
+    from effgen.models.errors import classify_provider_error
+
+    try:
+        return run(tool._execute(**kwargs))
+    except Exception as exc:  # noqa: BLE001 - a throttle is not a caption defect
+        if classify_provider_error(exc).category == "rate_limited":
+            pytest.skip(f"vision provider rate limited this call: {str(exc)[:200]}")
+        raise
+
+
 @pytest.mark.skipif(not _has_vision_key(), reason="No vision provider API key configured")
 def test_live_caption(sample_png_path: str):
     from effgen.tools.builtin.image_caption import ImageCaptionTool
     tool = ImageCaptionTool()
-    result = run(tool._execute(operation="caption", image_path=sample_png_path))
+    result = _caption(tool, operation="caption", image_path=sample_png_path)
     assert result["success"] is True
     assert isinstance(result["caption"], str)
     assert len(result["caption"]) > 5
@@ -254,7 +271,7 @@ def test_live_caption(sample_png_path: str):
 def test_live_describe(sample_png_path: str):
     from effgen.tools.builtin.image_caption import ImageCaptionTool
     tool = ImageCaptionTool()
-    result = run(tool._execute(operation="describe", image_path=sample_png_path, detail="low"))
+    result = _caption(tool, operation="describe", image_path=sample_png_path, detail="low")
     assert result["success"] is True
     assert len(result["caption"]) > 10
 
@@ -263,6 +280,6 @@ def test_live_describe(sample_png_path: str):
 def test_live_caption_from_bytes(sample_png_bytes: bytes):
     from effgen.tools.builtin.image_caption import ImageCaptionTool
     tool = ImageCaptionTool()
-    result = run(tool._execute(operation="caption", image_bytes=sample_png_bytes))
+    result = _caption(tool, operation="caption", image_bytes=sample_png_bytes)
     assert result["success"] is True
     assert isinstance(result["caption"], str)

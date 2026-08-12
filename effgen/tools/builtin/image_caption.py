@@ -6,7 +6,7 @@ Uses the ProviderRegistry to discover vision-capable providers
 
 Supported providers (auto-detected when API keys are present):
   - OpenAI       : gpt-4o, gpt-4o-mini, gpt-4.1, gpt-4.1-mini
-  - Google Gemini: gemini-2.0-flash, gemini-2.5-flash (all support vision)
+  - Google Gemini: gemini-3.1-flash-lite, gemini-2.5-flash (all support vision)
   - Replicate    : llava / moondream variants
 
 Operations
@@ -43,10 +43,9 @@ logger = logging.getLogger(__name__)
 
 _VISION_PROVIDER_PREFERENCE: list[tuple[str, str]] = [
     # (provider_name, model_id) — cheap, stable vision models first
-    ("gemini", "gemini-2.5-flash-lite"),
+    ("gemini", "gemini-3.1-flash-lite"),
     ("openai", "gpt-4o-mini"),
-    ("gemini", "gemini-2.0-flash-lite"),
-    ("gemini", "gemini-2.0-flash"),
+    ("gemini", "gemini-2.5-flash-lite"),
     ("openai", "gpt-4.1-mini"),
     ("openai", "gpt-4o"),
     ("openai", "gpt-4.1"),
@@ -442,7 +441,7 @@ class ImageCaptionTool(BaseTool):
     Automatically selects the best available vision-capable provider via the
     effGen model router. Requires at least one of:
       - OPENAI_API_KEY   (gpt-4o-mini)
-      - GOOGLE_API_KEY   (gemini-2.0-flash)
+      - GOOGLE_API_KEY   (gemini-3.1-flash-lite)
 
     Accepts image file paths OR raw bytes.
 

@@ -173,8 +173,8 @@ def _reason_over_text(transcript: str, prompt: str) -> str:
     """Call a cheap LLM to reason over a transcript with the given prompt."""
     # Try Gemini Flash-Lite first, then OpenAI mini
     _providers = [
+        ("gemini", "gemini-3.1-flash-lite"),
         ("gemini", "gemini-2.5-flash-lite"),
-        ("gemini", "gemini-2.0-flash-lite"),
         ("openai", "gpt-4o-mini"),
     ]
     for provider, model_id in _providers:
