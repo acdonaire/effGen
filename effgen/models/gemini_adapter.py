@@ -54,6 +54,7 @@ from effgen.models.errors import (
 )
 from effgen.models.gemini_files import FileRef
 from effgen.models.gemini_models import (
+    GEMINI_DEFAULT_MODEL,
     GEMINI_MODEL_ALIASES,
     GEMINI_MODELS,
 )
@@ -157,7 +158,7 @@ class GeminiAdapter(FunctionCallingModel):
 
     def __init__(
         self,
-        model_name: str = "gemini-2.0-flash",
+        model_name: str = GEMINI_DEFAULT_MODEL,
         api_key: str | None = None,
         safety_settings: list[dict[str, Any]] | None = None,
         timeout: float = 60.0,
