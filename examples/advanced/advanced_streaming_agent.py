@@ -10,7 +10,7 @@ Tests:
   - T2: No-tool streaming (direct answer)
   - T3: Multi-tool streaming (Calculator + DateTimeTool)
   - T4: Stop sequence handling
-  - T5: Error handling — graceful completion
+  - T5: Error handling — the stream still completes
   - T6: Callback accumulation (token reconstruction)
 
 Recommended models:
@@ -251,7 +251,7 @@ def run_streaming_tests(model_name: str):
 
     # T5: Error during stream (use a tool name that doesn't exist)
     passed, detail = run_test(
-        agent, tracker, "T5", "Error handling — graceful completion",
+        agent, tracker, "T5", "Error handling — the stream still completes",
         "What is the square root of 49?",
         {
             "tokens_generated": lambda t: len(t.all_tokens) > 0,

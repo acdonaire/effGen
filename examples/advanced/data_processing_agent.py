@@ -397,7 +397,7 @@ def run_regression(model, model_name):
 
     # Error recovery
     results.append(run_test(
-        agent, "REG-P7", "Error recovery: graceful",
+        agent, "REG-P7", "Error recovery: explains instead of crashing",
         "Calculate the square root of -1. If the calculator can't handle it, explain mathematically.",
         check_fn=lambda out, resp: len(out) > 10,
     ))
