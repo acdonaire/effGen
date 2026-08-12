@@ -26,7 +26,7 @@
     <stop offset="100%" stop-color="transparent" stop-opacity="0"/>
   </radialGradient>
 
-  <!-- ══════ GRID GRADIENTS (applied to paths, works correctly) ══════ -->
+  <!-- ══════ GRID GRADIENTS (applied to paths) ══════ -->
   <linearGradient id="gV" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%"   stop-color="#4ECDC4" stop-opacity="0"/>
     <stop offset="50%"  stop-color="#4ECDC4" stop-opacity="0.04"/>
@@ -268,7 +268,7 @@
      LAYER 3  ─  perspective grid (vanishing point 640,100)
      ═══════════════════════════════════════════════════════════ -->
 <g clip-path="url(#main)">
-  <!-- vertical rays — drawn as closed paths so gV gradient renders properly -->
+  <!-- vertical rays — drawn as closed paths so the gV gradient applies -->
   <!-- Each is a thin triangle: vanish-point → bottom-left-edge → bottom-right-edge -->
   <path d="M640,200 L-2,400   L62,400  Z" fill="url(#gV)" opacity=".7"/>
   <path d="M640,200 L62,400   L142,400 Z" fill="url(#gV)" opacity=".7"/>

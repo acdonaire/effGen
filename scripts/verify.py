@@ -2,8 +2,8 @@
 """
 effGen Framework Verification Script
 
-This comprehensive validation script verifies all components of the effGen
-framework are properly installed, configured, and functional.
+This validation script verifies that every component of the effGen framework
+is installed, configured, and functional.
 
 Usage:
     python verify_framework.py [--verbose] [--skip-optional]

@@ -3,9 +3,8 @@
 ################################################################################
 # effGen Verification Script
 #
-# This script verifies that effGen framework is properly installed and
-# functional. It performs comprehensive checks on all components with beautiful
-# CLI output.
+# This script verifies that the effGen framework is installed and functional.
+# It checks every component and prints the results as a formatted CLI report.
 #
 # Usage:
 #   ./setup/verify.sh [OPTIONS]
@@ -188,7 +187,7 @@ display_summary() {
     if [ $failed -eq 0 ]; then
         echo -e "${GREEN}${BOLD}✓ ALL VERIFICATIONS PASSED!${NC}"
         echo ""
-        echo -e "${GREEN}effGen framework is properly installed and functional.${NC}"
+        echo -e "${GREEN}effGen framework is installed and functional.${NC}"
     else
         echo -e "${RED}${BOLD}✗ SOME VERIFICATIONS FAILED!${NC}"
         echo ""
