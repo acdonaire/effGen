@@ -139,7 +139,7 @@ def test_trace_renders_steps():
     assert "calculator" in out
 
 
-def test_trace_with_no_steps_is_graceful():
+def test_trace_with_no_steps_reports_no_steps():
     r = AgentResponse(output="hi", success=True, execution_trace=[])
     buf = io.StringIO()
     console = get_console(file=buf, width=80)

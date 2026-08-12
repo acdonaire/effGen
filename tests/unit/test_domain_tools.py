@@ -546,7 +546,7 @@ def test_slack_draft_plain():
     assert out["sent"] is False
 
 
-def test_notification_graceful_without_plyer():
+def test_notification_succeeds_without_plyer():
     # Whether plyer is installed or not, this tool must succeed and
     # report shown={True|False} without raising.
     out = _ok(_run(NotificationTool().execute(

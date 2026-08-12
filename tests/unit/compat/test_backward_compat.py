@@ -39,7 +39,7 @@ def test_documented_imports_resolve():
     assert Agent(config=cfg) is not None
 
 
-# ----------------------------------------------------- additive aliases (Phases 16/21/23)
+# ------------------------------------------------------------- additive aliases
 def test_configloader_load_alias_matches_load_config():
     from effgen import ConfigLoader
 

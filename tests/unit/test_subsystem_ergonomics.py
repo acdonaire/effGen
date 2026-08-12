@@ -1,7 +1,7 @@
 """Ergonomics of public subsystem constructors and method names.
 
 These cover the "obvious call works" contract for memory / eval / config /
-rag / prompts: bare constructors are populated (not traps) and the intuitive
+rag / prompts: bare constructors are populated (not traps) and the expected
 method/argument names exist as additive aliases.
 """
 
