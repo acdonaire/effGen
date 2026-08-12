@@ -40,6 +40,7 @@ _RETRY_STATUS_BY_CATEGORY: dict[str, str] = {
     "fatal": RETRY_NON_RETRYABLE,
     "rate_limited": RETRY_RATE_LIMITED,
     "transient": RETRY_WILL_RETRY,
+    "unreachable": RETRY_WILL_RETRY,
     "timeout": RETRY_WILL_RETRY,
     "unknown": RETRY_WILL_RETRY,
 }
@@ -51,6 +52,7 @@ REMEDIATION_BY_CATEGORY: dict[str, str] = {
     "rate_limited": "Rate limited — lower concurrency or configure a rate limit; the client backs off and retries.",
     "timeout": "Request timed out — increase the adapter timeout or retry.",
     "transient": "Transient provider error — retry shortly; check the provider status page if it persists.",
+    "unreachable": "Nothing answered at that endpoint — check the server is running and the base_url, host and port are right.",
     "invalid_request": "Request rejected as invalid — check parameters, prompt size, and any JSON schema.",
     "not_loaded": "The model is not loaded — call load() on the adapter first, or build it with load_model(), which loads it for you.",
     "resource_exhausted": "The device ran out of memory — the same request will fail again until less is asked of it or more memory is free.",
@@ -599,6 +601,47 @@ class ProviderTransientError(Exception):
         )
 
 
+class BackendUnreachableError(Exception):
+    """Raised when nothing answered at the endpoint the run was sent to.
+
+    A task that ran and failed is a result the caller can read; a backend that
+    was never reached produced no result at all, so a run that ends this way
+    raises whatever ``AgentConfig.raise_on_error`` says. A dead server would
+    otherwise be indistinguishable from a model that could not solve the task,
+    which lets a whole batch complete "successfully" against nothing.
+
+    Attributes:
+        provider:   Provider or adapter name (e.g. ``"openai_compatible"``).
+        model_name: The model that was requested.
+        endpoint:   The URL that did not answer, when one is known.
+        message:    Human-readable cause.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        model_name: str = "",
+        message: str = "",
+        endpoint: str = "",
+    ) -> None:
+        self.provider = provider
+        self.model_name = model_name
+        self.endpoint = endpoint
+        self.message = scrub_provider_message(message)
+        self.error_context = error_context_dict(
+            provider, model_name, "request", "unreachable"
+        )
+        where = f" at {endpoint}" if endpoint else ""
+        suffix = f" (model={model_name!r})" if model_name else ""
+        body = quote_for_message(self.message) if self.message else "no response"
+        super().__init__(
+            with_next_step(
+                f"{provider}{where} did not answer{suffix}: {body}",
+                self.error_context["remediation"],
+            )
+        )
+
+
 class AllCandidatesExhaustedError(Exception):
     """Raised when all failover hops have been exhausted without a successful response.
 
@@ -768,6 +811,11 @@ _AUTH = ErrorClass("auth", auth=True, fatal=True)
 _NOT_FOUND = ErrorClass("not_found", not_found=True)
 _RATE_LIMITED = ErrorClass("rate_limited", rate_limited=True, retryable=True)
 _TRANSIENT = ErrorClass("transient", retryable=True)
+# Nothing answered at all: the connection was refused, the name did not
+# resolve, or there was no route. Distinct from "transient", where the server
+# did answer and answered badly — a run that never reached a backend produced
+# no result, and the agent surface raises rather than reporting one.
+_UNREACHABLE = ErrorClass("unreachable", retryable=True)
 _TIMEOUT = ErrorClass("timeout", retryable=True)
 _REFUSAL = ErrorClass("refusal", refusal=True)
 _INVALID = ErrorClass("invalid_request", fatal=True)
@@ -784,6 +832,7 @@ _ERROR_CLASS_BY_CATEGORY: dict[str, ErrorClass] = {
     "not_found": _NOT_FOUND,
     "rate_limited": _RATE_LIMITED,
     "transient": _TRANSIENT,
+    "unreachable": _UNREACHABLE,
     "timeout": _TIMEOUT,
     "refusal": _REFUSAL,
     "invalid_request": _INVALID,
@@ -792,6 +841,43 @@ _ERROR_CLASS_BY_CATEGORY: dict[str, ErrorClass] = {
     "fatal": _FATAL,
     "unknown": _UNKNOWN,
 }
+
+
+def chained_message(exc: BaseException, limit: int = 5) -> str:
+    """Return *exc*'s message joined with those of the errors that caused it.
+
+    Provider SDKs wrap a socket failure in their own class and shorten the
+    message to something generic — the OpenAI client reports "Connection
+    error." for a refused port, a DNS failure and a dead route alike. The
+    reason survives on ``__cause__``, so classification reads the chain rather
+    than only the outermost text.
+    """
+    parts: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and len(parts) < limit and id(current) not in seen:
+        seen.add(id(current))
+        parts.append(str(current))
+        current = current.__cause__ or current.__context__
+    return " | ".join(parts).lower()
+
+
+# Wording for a backend that never answered: the port was closed, the host
+# name did not resolve, or there was no route to it. A socket that opened and
+# then dropped ("connection reset") is not here — that server was reachable and
+# the call is worth retrying against it as a transient fault.
+UNREACHABLE_SIGNALS = (
+    "connection refused",
+    "failed to establish a new connection",
+    "max retries exceeded with url",
+    "name or service not known",
+    "nodename nor servname",
+    "temporary failure in name resolution",
+    "no route to host",
+    "network is unreachable",
+    "cannot connect to host",
+    "all connection attempts failed",
+)
 
 
 # Wording the local runtimes (torch, vLLM, llama.cpp, MLX) use when the device
@@ -928,7 +1014,14 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         return _NOT_FOUND
     if "timeout" in name or "timedout" in name:
         return _TIMEOUT
+    if "connectionrefused" in name:
+        return _UNREACHABLE
     if any(k in name for k in ("connection", "serviceunavailable", "internalserver", "apistatus", "overloaded")):
+        # An SDK's generic connection error still names the underlying cause in
+        # its message, so a refused port or an unresolvable host is reported as
+        # unreachable rather than as a transient fault worth chasing.
+        if any(k in chained_message(exc) for k in UNREACHABLE_SIGNALS):
+            return _UNREACHABLE
         return _TRANSIENT
     if any(k in name for k in ("badrequest", "invalidrequest", "unprocessable", "validation")):
         return _INVALID
@@ -977,6 +1070,11 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         return _NOT_FOUND
     if "timed out" in msg or "timeout" in msg:
         return _TIMEOUT
+    # Nothing was listening, or the host could not be found. Retrying may still
+    # help once the server is up, but the caller's problem is the endpoint, not
+    # the provider's health.
+    if any(k in chained_message(exc) for k in UNREACHABLE_SIGNALS):
+        return _UNREACHABLE
     # A socket that went away mid-call. Only the adapters whose SDK raises a
     # class named after the connection reach this by class name; the rest wrap
     # the operating system's error in their own message, and "connection reset

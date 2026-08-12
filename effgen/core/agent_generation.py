@@ -23,6 +23,7 @@ from ..models._adapter_utils import (
 from ..models.base import BaseModel, GenerationConfig
 from ..models.errors import (
     REMEDIATION_BY_CATEGORY,
+    BackendUnreachableError,
     InvalidRequestError,
     ModelAuthError,
     ModelNotFoundError,
@@ -922,6 +923,8 @@ class AgentGenerationMixin:
             return ModelRefusalError(message, model)
         if category == "invalid_request":
             return InvalidRequestError(provider, model, message)
+        if category == "unreachable":
+            return BackendUnreachableError(provider, model, message)
         return RuntimeError(f"{detail.get('type', 'Error')}: {message}")
 
     def _generate_speculative(self, prompt: str, **kwargs) -> dict[str, Any] | None:

@@ -190,7 +190,7 @@ def _handle_batch_command(args, cli) -> int:
                 config_kwargs['system_prompt'] = system_prompt
             config = AgentConfig(
                 name="batch-agent", model=model, max_iterations=5,
-                guardrails=guardrails, **config_kwargs,
+                guardrails=guardrails, raise_on_error=False, **config_kwargs,
             )
             agent = Agent(config)
 

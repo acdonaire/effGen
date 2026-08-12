@@ -76,7 +76,10 @@ def _handle_resume_command(args, cli) -> int:
             from effgen.presets import create_agent as _create_preset_agent
             agent = _create_preset_agent(args.preset, chosen_model)
         else:
-            cfg = AgentConfig(name=cp.agent_name, model=chosen_model, tools=[])
+            cfg = AgentConfig(
+                name=cp.agent_name, model=chosen_model, tools=[],
+                raise_on_error=False,
+            )
             agent = Agent(cfg)
     except Exception as e:  # noqa: BLE001 - surface a clean error, no stack trace
         cli.print(f"Error: could not load model '{chosen_model}' to resume: {e}")

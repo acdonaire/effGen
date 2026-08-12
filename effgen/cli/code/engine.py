@@ -491,6 +491,8 @@ class CodeEngine:
         preset = get_preset(CODE_PRESET)
         config = AgentConfig(
             name="code-agent",
+            # A failed turn is reported in the session, not as a traceback.
+            raise_on_error=False,
             model=self.model,
             provider=self.provider,
             tools=(

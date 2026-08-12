@@ -158,6 +158,7 @@ def _handle_compare_command(args, cli) -> int:
                     }
                     if temperature is not None:
                         config_kwargs["temperature"] = temperature
+                    config_kwargs.setdefault("raise_on_error", False)
                     config = AgentConfig(**config_kwargs)
                     agent = Agent(config)
                 agents[model_name] = agent
@@ -186,6 +187,7 @@ def _handle_compare_command(args, cli) -> int:
                     from effgen.core.agent import Agent, AgentConfig
                     judge_agent = Agent(AgentConfig(
                         name=f"judge-{judge_model}",
+                        raise_on_error=False,
                         model=load_model(judge_model),
                         max_iterations=1,
                     ))

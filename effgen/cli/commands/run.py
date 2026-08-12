@@ -379,6 +379,7 @@ def interactive_wizard(cli: "CLIInterface", args: Any) -> int | None:
 
         agent_config = AgentConfig(
             name="interactive-agent",
+            raise_on_error=False,
             model=model_id,
             tools=selected_tools,
             temperature=temperature,
@@ -707,6 +708,7 @@ def run_agent(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             # Create agent configuration
             agent_config = AgentConfig(
                 name=args.name or "cli-agent",
+                raise_on_error=False,
                 model=run_model,
                 provider=provider,
                 tools=tools,

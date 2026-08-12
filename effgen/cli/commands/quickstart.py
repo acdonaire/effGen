@@ -361,6 +361,7 @@ def _handle_quickstart_command(args, cli: "CLIInterface") -> int:
 
         agent_config = _main.AgentConfig(
             name="quickstart-agent",
+            raise_on_error=False,
             model=model_id,
             provider=provider,
             tools=tools,

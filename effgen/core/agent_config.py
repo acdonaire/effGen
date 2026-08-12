@@ -86,10 +86,14 @@ class AgentConfig:
             Ignored when ``model`` is already a loaded model instance.
         api_key: Credential for that endpoint. A local server that checks
             nothing needs none.
-        raise_on_error: When True, run() raises the typed error on failure
-            instead of returning an AgentResponse with success=False. The same
-            failure raises regardless of which internal path (direct or tool
-            loop) produced it.
+        raise_on_error: When True — the default since 1.0.0 — run() raises the
+            typed error on failure instead of returning an AgentResponse with
+            success=False. The same failure raises regardless of which internal
+            path (direct or tool loop) produced it. Set False to inspect
+            ``response.success`` and ``response.metadata["reason"]`` yourself,
+            which is what the CLI does so it can render a failure as a panel.
+            A backend that never answered raises either way: that run produced
+            no result to inspect.
     """
     name: str = field(default="", kw_only=True)
     model: BaseModel | str
@@ -122,7 +126,10 @@ class AgentConfig:
     provider: str | None = None
     base_url: str | None = None
     api_key: str | None = None
-    raise_on_error: bool = False
+    # True since 1.0.0: a failed run raises rather than returning a
+    # plausible-looking string with success=False, which callers that read
+    # .output without checking .success never noticed.
+    raise_on_error: bool = True
     system_prompt_template: str | None = None
     verbose_tools: bool | None = None
     fallback_chain: dict[str, list] | None = None

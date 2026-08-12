@@ -280,6 +280,8 @@ def register_convenience_routes(cli: "CLIInterface", app: Any) -> None:
                         logger.debug("Failed to load tool %s: %s", name, tool_err)
                 agent_instance = _main.Agent(_main.AgentConfig(
                     name="api-agent",
+                    # The route turns a failed run into a JSON error body itself.
+                    raise_on_error=False,
                     model=model_id,
                     tools=tools,
                     temperature=request.temperature,
@@ -393,7 +395,7 @@ def register_convenience_routes(cli: "CLIInterface", app: Any) -> None:
                             pass
                     agent_instance = _main.Agent(_main.AgentConfig(
                         name="ws-agent", model=model_id, tools=tools,
-                        enable_streaming=True,
+                        enable_streaming=True, raise_on_error=False,
                     ))
                 await ws.send_json({"type": "start", "task": task})
                 try:

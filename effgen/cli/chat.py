@@ -219,6 +219,9 @@ class ChatREPL(
             config_kwargs["system_prompt"] = self.system_prompt
         elif self._preset_system_prompt:
             config_kwargs["system_prompt"] = self._preset_system_prompt
+        # The chat loop prints a failed turn and stays open, so it reads the
+        # response rather than letting run() raise out of the REPL.
+        config_kwargs.setdefault("raise_on_error", False)
         config = AgentConfig(**config_kwargs)
         # Attach the persistent session only on the FIRST build, so its saved
         # turns are loaded into memory exactly once. On a /model or /tools rebuild

@@ -48,6 +48,18 @@ if TYPE_CHECKING:
 # structured-log consumer watching ``effgen.core.agent`` reads one stream for
 # the whole run.
 logger = logging.getLogger("effgen.core.agent")
+
+
+def _never_reached_the_backend(response: Any) -> bool:
+    """True when the run failed because nothing answered at the endpoint.
+
+    Reads the classified category the generation path already attached, so the
+    decision matches how the rest of effGen labels the same failure rather than
+    re-matching the provider's wording here.
+    """
+    metadata = getattr(response, "metadata", None) or {}
+    detail = metadata.get("error")
+    return isinstance(detail, dict) and detail.get("category") == "unreachable"
 _slog = get_structured_logger("effgen.core.agent")
 _obs_log = _get_obs_logger("effgen.core.agent")
 
@@ -422,6 +434,14 @@ class AgentOrchestrationMixin:
                     except Exception as _e:
                         logger.warning("Failed to save final checkpoint: %s", _e)
 
+                # A backend that never answered produced no result to report, so
+                # it raises whatever raise_on_error says. Reporting it as a
+                # failed run lets a dead server read like a model that could not
+                # solve the task, which is how a whole batch completes against
+                # nothing and looks healthy in the summary.
+                if not response.success and _never_reached_the_backend(response):
+                    raise self._reconstruct_error(response.metadata)
+
                 # raise_on_error contract: surface a typed error on any failure
                 # instead of returning success=False (same on both run paths).
                 if not response.success and self.config.raise_on_error:
@@ -433,8 +453,13 @@ class AgentOrchestrationMixin:
 
             except Exception as e:
                 # When raise_on_error is set, propagate the typed error rather
-                # than swallowing it into a success=False response.
-                if self.config.raise_on_error:
+                # than swallowing it into a success=False response. A backend
+                # that was never reached propagates either way — that run has no
+                # result to swallow it into.
+                if (
+                    self.config.raise_on_error
+                    or classify_provider_error(e).category == "unreachable"
+                ):
                     prom_metrics.errors.inc(labels=labels)
                     set_span_error(e)
                     self._record_provider_metrics(

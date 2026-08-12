@@ -109,6 +109,7 @@ def _handle_workflow_command(args, cli: "CLIInterface") -> int:
                     return create_agent(preset, model=model)
                 config = AgentConfig(
                     name=agent_field or nd['id'],
+                    raise_on_error=False,
                     model=model,
                     max_iterations=nd.get('max_iterations', 5),
                 )

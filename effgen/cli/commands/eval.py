@@ -138,6 +138,8 @@ def _handle_eval_command(args, cli) -> int:
             config_kwargs: dict = {"name": "eval-agent", "model": model, "max_iterations": 10}
             if temperature is not None:
                 config_kwargs["temperature"] = temperature
+            # A case that fails is a scored result, not an aborted suite.
+            config_kwargs.setdefault("raise_on_error", False)
             config = AgentConfig(**config_kwargs)
             agent = Agent(config)
 
