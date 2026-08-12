@@ -19,9 +19,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from .agent_config import AgentMode
+from .tool_call_record import ToolCall, ToolCallList, coerce_tool_calls
 
 if TYPE_CHECKING:
     from .router import RoutingDecision
+
+__all__ = ["AgentResponse", "StreamEvent", "ToolCall", "ToolCallList"]
 
 
 @dataclass
@@ -64,7 +67,12 @@ class AgentResponse:
         success: Whether execution succeeded
         mode: Execution mode used
         iterations: Number of iterations performed
-        tool_calls: Number of tool calls made
+        tool_calls: The tool calls the run made, as
+            :class:`~effgen.core.tool_call_record.ToolCall` records — which tool,
+            with what arguments, what came back, how long it took and whether it
+            failed. Iterate it for the calls; it also compares and casts as the
+            number of calls, so ``tool_calls == 2`` and ``tool_calls > 0`` read
+            as they always did. :attr:`tool_call_count` says the number plainly.
         tokens_used: Total tokens consumed
         execution_time: Time taken in seconds
         execution_trace: Full execution trace
@@ -123,7 +131,7 @@ class AgentResponse:
     success: bool = True
     mode: AgentMode = AgentMode.SINGLE
     iterations: int = 0
-    tool_calls: int = 0
+    tool_calls: ToolCallList = field(default_factory=ToolCallList)
     tokens_used: int = 0
     execution_time: float = 0.0
     execution_trace: list[dict[str, Any]] = field(default_factory=list)
@@ -136,6 +144,24 @@ class AgentResponse:
     model: str | None = None
     provider: str | None = None
     started_at: str | None = None
+
+    def __post_init__(self) -> None:
+        """Accept a count or records for ``tool_calls`` and store records.
+
+        Every path that builds a response, including a saved run read back and
+        the many that report only a count, arrives here, so the field a caller
+        sees is always the same type.
+        """
+        self.tool_calls = coerce_tool_calls(self.tool_calls)
+
+    @property
+    def tool_call_count(self) -> int:
+        """How many tool calls the run made.
+
+        The same number ``tool_calls`` compares as; named for code that wants
+        to say so plainly.
+        """
+        return self.tool_calls.count
 
     def __str__(self) -> str:
         """The answer text — so ``print(result)`` shows the answer, not a repr.
@@ -230,7 +256,10 @@ class AgentResponse:
             "success": self.success,
             "mode": self.mode.value,
             "iterations": self.iterations,
-            "tool_calls": self.tool_calls,
+            # The count stays an int under its original key so a reader of a
+            # saved run keeps working; the calls themselves are alongside it.
+            "tool_calls": self.tool_calls.count,
+            "tool_call_details": self.tool_calls.to_list(),
             "tokens_used": self.tokens_used,
             "execution_time": round(self.execution_time, 2),
             "execution_trace": self.execution_trace,

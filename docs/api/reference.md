@@ -28,14 +28,31 @@ Run a task synchronously. Returns `AgentResponse` with:
 - `output: str` — Final response text
 - `success: bool` — Whether execution succeeded
 - `iterations: int` — ReAct iterations performed
-- `tool_calls: int` — Number of tool invocations
+- `tool_calls: ToolCallList` — The tool calls the run made
+- `tool_call_count: int` — How many calls that was
 - `tokens_used: int` — Total tokens consumed
 - `execution_time: float` — Wall-clock seconds
 - `execution_trace: List[Dict]` — Full ReAct trace
 
-`tool_calls` here is a count. The calls themselves are reported by the model
-adapter in `GenerationResult.metadata["tool_calls"]`, in one shape for every
-provider — see [Tool calls](../models/tool-calls.md).
+`tool_calls` carries a `ToolCall` record per call — `name`, `arguments`,
+`result`, `duration`, `error` and the `iteration` it was made on — so you can
+see *which* call went wrong, not only that one did:
+
+```python
+for call in result.tool_calls:
+    print(call.name, call.arguments, "->", call.error or call.result)
+
+failed = result.tool_calls.failed          # only the calls that errored
+searches = result.tool_calls.by_name("web_search")
+```
+
+It also compares and casts as the count, so `result.tool_calls == 2` and
+`result.tool_calls > 0` read as they did before 1.0.0. `to_dict()` keeps the
+count under `tool_calls` and puts the records in `tool_call_details`.
+
+The same calls are also reported by the model adapter in
+`GenerationResult.metadata["tool_calls"]`, in one shape for every provider —
+see [Tool calls](../models/tool-calls.md).
 
 #### `agent.stream(task, mode=AgentMode.AUTO) -> Iterator[str]`
 

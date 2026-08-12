@@ -38,6 +38,7 @@ from .agent_tool_execution import AgentToolExecutionMixin
 from .agent_tool_loop import NativeToolLoop
 from .execution_tracker import EventType, ExecutionEvent
 from .router import RoutingDecision, RoutingStrategy
+from .tool_call_record import ToolCallList
 
 logger = logging.getLogger(__name__)
 _slog = get_structured_logger(__name__)
@@ -415,7 +416,7 @@ class AgentReActMixin(
                     success=success,
                     mode=AgentMode.SINGLE,
                     iterations=_iterations,
-                    tool_calls=_tool_calls,
+                    tool_calls=ToolCallList(list(guards.calls), count=_tool_calls),
                     tokens_used=_tokens_used,
                     metadata=meta,
                 )
@@ -582,7 +583,13 @@ class AgentReActMixin(
                             logger.debug("Failed to set tool span status", exc_info=True)
                     tool_elapsed = time.time() - tool_start
                     tool_calls += 1
-                    guards.record_execution(action)
+                    guards.record_execution(
+                        action,
+                        arguments=action_input,
+                        result=tool_result,
+                        duration=tool_elapsed,
+                        iteration=iterations,
+                    )
                     cur_observation = tool_result
 
                     # Metrics for tool execution

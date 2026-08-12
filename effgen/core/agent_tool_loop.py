@@ -26,6 +26,7 @@ from .agent_runtime import (
     NUDGE_HAVE_RESULTS,
     written_call_only,
 )
+from .tool_call_record import ToolCall, truncate_result
 
 #: Prefix :meth:`Agent._execute_tool` puts on a failed dispatch. A failed call is
 #: not evidence of a repeated result, so the result-based short circuit skips it.
@@ -102,6 +103,9 @@ class NativeToolLoop:
     written_call_turns: int = 0
     #: Tools this run actually dispatched.
     executed_tools: set[str] = field(default_factory=set)
+    #: One record per dispatched call, in call order — what
+    #: ``AgentResponse.tool_calls`` reports back to the caller.
+    calls: "list[ToolCall]" = field(default_factory=list)
 
     # ------------------------------------------------------------------
     # Offering tools
@@ -164,9 +168,40 @@ class NativeToolLoop:
         """Remember the call *check* describes as dispatched."""
         self.previous_actions.append(check.pair)
 
-    def record_execution(self, action: str) -> None:
-        """Remember that *action* actually ran in this turn."""
+    def record_execution(
+        self,
+        action: str,
+        *,
+        arguments: Any = None,
+        result: Any = None,
+        duration: float | None = None,
+        error: str | None = None,
+        iteration: int | None = None,
+    ) -> ToolCall:
+        """Remember that *action* actually ran, and what it did.
+
+        The detail becomes one entry in :attr:`calls`, which is what
+        ``AgentResponse.tool_calls`` reports. A dispatch that failed is still a
+        call the run made, so it is recorded with its *error* rather than
+        dropped.
+
+        Returns:
+            The record appended, so a caller can amend it in place.
+        """
         self.executed_tools.add(action)
+        text = truncate_result(result)
+        if error is None and isinstance(text, str) and text.startswith(TOOL_ERROR_PREFIX):
+            error = text
+        call = ToolCall(
+            name=action,
+            arguments=arguments,
+            result=text,
+            duration=duration,
+            error=error,
+            iteration=iteration,
+        )
+        self.calls.append(call)
+        return call
 
     # ------------------------------------------------------------------
     # Result repeats

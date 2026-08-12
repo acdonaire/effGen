@@ -482,7 +482,10 @@ class AgentNativeStreamMixin:
                     if name in self.tools:
                         observation = self._execute_tool(name, json.dumps(args))
                         tool_calls += 1
-                        guards.record_execution(name)
+                        guards.record_execution(
+                            name, arguments=args, result=observation,
+                            iteration=iterations,
+                        )
                         scratchpad += (
                             f"\nAction: {name}"
                             f"\nAction Input: {json.dumps(args)}"
@@ -572,7 +575,10 @@ class AgentNativeStreamMixin:
 
             observation = self._execute_tool(action, action_input)
             tool_calls += 1
-            guards.record_execution(action)
+            guards.record_execution(
+                action, arguments=action_input, result=observation,
+                iteration=iterations,
+            )
             scratchpad += (
                 f"\nAction: {action}"
                 f"\nAction Input: {action_input}"

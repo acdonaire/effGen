@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from ..models._adapter_utils import default_max_output_tokens
@@ -23,6 +24,7 @@ from .agent_runtime import (
     sanitize_final_answer,
     written_call_only,
 )
+from .tool_call_record import ToolCall, ToolCallList, truncate_result
 
 # The native paths log to the ReAct stream they stand in for.
 logger = logging.getLogger("effgen.core.agent_react")
@@ -123,6 +125,7 @@ class AgentNativeToolsMixin:
 
         # Execute local tool calls and stitch their results into a follow-up
         executed_tools: set[str] = set()
+        calls: list[ToolCall] = []
         if local_calls and function_specs:
             observations: list[str] = []
             for call in local_calls:
@@ -135,9 +138,15 @@ class AgentNativeToolsMixin:
                     fn_args = {}
 
                 if fn_name in self.tools:
+                    call_start = time.time()
                     obs = self._execute_tool(fn_name, json.dumps(fn_args))
                     tool_calls_made += 1
                     executed_tools.add(fn_name)
+                    calls.append(ToolCall(
+                        name=fn_name, arguments=fn_args,
+                        result=truncate_result(obs),
+                        duration=time.time() - call_start, iteration=1,
+                    ))
                     observations.append(f"[{fn_name}({fn_args})] → {obs}")
 
             if observations and not result.text:
@@ -151,7 +160,7 @@ class AgentNativeToolsMixin:
                         success=True,
                         mode=AgentMode.SINGLE,
                         iterations=2,
-                        tool_calls=tool_calls_made,
+                        tool_calls=ToolCallList(calls, count=tool_calls_made),
                         tokens_used=result.tokens_used + followup_result.tokens_used,
                         metadata=result.metadata,
                     )
@@ -159,7 +168,7 @@ class AgentNativeToolsMixin:
                     logger.debug("Native tool follow-up assembly failed; using prior result", exc_info=True)
 
         if not result.text and (result.metadata or {}).get("reasoning_only"):
-            return self._reasoning_only_native_response(result, tool_calls_made)
+            return self._reasoning_only_native_response(result, tool_calls_made, calls)
 
         answer = sanitize_final_answer(result.text) or ""
         # Sanitizing a tagged call can leave its arguments behind as a bare JSON
@@ -176,7 +185,7 @@ class AgentNativeToolsMixin:
                 written,
                 result.text,
                 iterations=1,
-                tool_calls=tool_calls_made,
+                tool_calls=ToolCallList(calls, count=tool_calls_made),
                 tokens_used=result.tokens_used,
                 tool_ran=written in executed_tools,
             )
@@ -187,13 +196,14 @@ class AgentNativeToolsMixin:
             success=bool(result.text),
             mode=AgentMode.SINGLE,
             iterations=1,
-            tool_calls=tool_calls_made,
+            tool_calls=ToolCallList(calls, count=tool_calls_made),
             tokens_used=result.tokens_used,
             metadata=meta,
         )
 
     def _reasoning_only_native_response(
         self, result: Any, tool_calls_made: int,
+        calls: "list[ToolCall] | None" = None,
     ) -> AgentResponse:
         """Failure response for a native-tool turn that produced only reasoning.
 
@@ -218,7 +228,7 @@ class AgentNativeToolsMixin:
             success=False,
             mode=AgentMode.SINGLE,
             iterations=1,
-            tool_calls=tool_calls_made,
+            tool_calls=ToolCallList(calls or [], count=tool_calls_made),
             tokens_used=result.tokens_used,
             metadata={"reason": "generation_failed", "error": detail},
         )
@@ -319,6 +329,7 @@ class AgentNativeToolsMixin:
         local_tc = result.metadata.get("tool_calls") or []
         observations: list[str] = []
         executed_tools: set[str] = set()
+        calls: list[ToolCall] = []
         for tc in local_tc:
             # Adapters report a call as {"function": {"name", "arguments"}};
             # an adapter that also carries top-level keys is read the same way.
@@ -331,8 +342,14 @@ class AgentNativeToolsMixin:
                 except (json.JSONDecodeError, TypeError):
                     fn_args = {"__raw_input__": fn_args}
             if fn_name in self.tools and not isinstance(self.tools[fn_name], GeminiNativeTool):
+                call_start = time.time()
                 obs = self._execute_tool(fn_name, json.dumps(fn_args) if isinstance(fn_args, dict) else fn_args)
                 executed_tools.add(fn_name)
+                calls.append(ToolCall(
+                    name=fn_name, arguments=fn_args,
+                    result=truncate_result(obs),
+                    duration=time.time() - call_start, iteration=1,
+                ))
                 observations.append(f"[{fn_name}({fn_args})] → {obs}")
 
         # The adapter also encodes each call as a <tool_call> block in the
@@ -360,7 +377,7 @@ class AgentNativeToolsMixin:
                         success=True,
                         mode=AgentMode.SINGLE,
                         iterations=2,
-                        tool_calls=tool_calls_made,
+                        tool_calls=ToolCallList(calls, count=tool_calls_made),
                         tokens_used=result.tokens_used + followup_result.tokens_used,
                         metadata=followup_meta,
                     )
@@ -368,7 +385,7 @@ class AgentNativeToolsMixin:
                 logger.debug("Native tool follow-up assembly failed; using prior result", exc_info=True)
 
         if not result.text and (result.metadata or {}).get("reasoning_only"):
-            return self._reasoning_only_native_response(result, tool_calls_made)
+            return self._reasoning_only_native_response(result, tool_calls_made, calls)
 
         # Sanitizing a tagged call can leave its arguments behind as a bare JSON
         # fragment, so the text as the model wrote it is scanned as well.
@@ -384,7 +401,7 @@ class AgentNativeToolsMixin:
                 written,
                 result.text,
                 iterations=1,
-                tool_calls=tool_calls_made,
+                tool_calls=ToolCallList(calls, count=tool_calls_made),
                 tokens_used=result.tokens_used,
                 tool_ran=written in executed_tools,
             )
@@ -398,7 +415,7 @@ class AgentNativeToolsMixin:
             success=bool(answer),
             mode=AgentMode.SINGLE,
             iterations=1,
-            tool_calls=tool_calls_made,
+            tool_calls=ToolCallList(calls, count=tool_calls_made),
             tokens_used=result.tokens_used,
             metadata=meta,
         )
