@@ -390,6 +390,10 @@ def tool(
         requires_approval: Gate the tool behind the agent's approval callback.
         cost_estimate: A short note on what one call costs.
         timeout_seconds: Seconds one call may run before it is stopped.
+
+    Returns:
+        The ``FunctionTool`` built from the decorated function when used bare,
+        and otherwise the decorator that builds it.
     """
 
     def wrap(f: Callable[..., Any]) -> FunctionTool:

@@ -123,21 +123,46 @@ def _mentions(doc: str, name: str) -> bool:
 
 
 def _prose(doc: str) -> str:
-    """Return *doc* without its sample code, which illustrates but does not document."""
+    """Return *doc* without its sample code, which illustrates but does not document.
+
+    Three shapes of sample code are dropped: a block under an ``Example:``
+    heading, a doctest prompt, and a literal block opened by ``::`` — the last
+    because a signature written inside one carries an arrow that would otherwise
+    read as a documented result.
+
+    Args:
+        doc: The docstring to read.
+
+    Returns:
+        The docstring's remaining lines, joined, with sample code removed.
+    """
     kept: list[str] = []
     heading_indent: int | None = None
+    literal_indent: int | None = None
     for line in doc.splitlines():
         stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
         if _EXAMPLE_HEADING.match(line):
-            heading_indent = len(line) - len(line.lstrip())
+            heading_indent = indent
             continue
         if heading_indent is not None:
             if not stripped:
                 continue
-            if len(line) - len(line.lstrip()) > heading_indent:
+            if indent > heading_indent:
                 continue
             heading_indent = None
+        if literal_indent is not None:
+            if not stripped:
+                continue
+            if indent > literal_indent:
+                continue
+            literal_indent = None
         if stripped.startswith((">>>", "...")):
+            continue
+        if stripped.endswith("::"):
+            # A reST literal block: everything indented under this line is code.
+            literal_indent = indent
+            kept.append(line)
             continue
         kept.append(line)
     return "\n".join(kept)
