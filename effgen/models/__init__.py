@@ -109,6 +109,7 @@ from effgen.models.latency_tracker import LatencyTracker
 from effgen.models.lazy import LazyModel
 from effgen.models.model_loader import ModelLoader, load_model
 from effgen.models.openai_adapter import OpenAIAdapter
+from effgen.models.openai_compatible_adapter import OpenAICompatibleAdapter
 from effgen.models.openai_schema import to_openai_schema
 from effgen.models.pool import ModelPool, PoolConfig
 from effgen.models.registry import ProviderRegistry, list_models, list_providers, lookup
@@ -197,6 +198,7 @@ __all__ = [
 
     # API adapters
     "OpenAIAdapter",
+    "OpenAICompatibleAdapter",
     "AnthropicAdapter",
     "GeminiAdapter",
     "CerebrasAdapter",

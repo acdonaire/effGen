@@ -47,6 +47,7 @@ _BUILTIN_ADAPTER_MODULES = (
     "effgen.models.groq_adapter",
     "effgen.models.hf_inference_adapter",
     "effgen.models.openai_adapter",
+    "effgen.models.openai_compatible_adapter",
     "effgen.models.replicate_adapter",
     "effgen.models.together_adapter",
 )

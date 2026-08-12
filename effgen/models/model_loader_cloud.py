@@ -22,8 +22,17 @@ if TYPE_CHECKING:
     from effgen.models.anthropic_adapter import AnthropicAdapter
     from effgen.models.gemini_adapter import GeminiAdapter
     from effgen.models.openai_adapter import OpenAIAdapter
+    from effgen.models.openai_compatible_adapter import OpenAICompatibleAdapter
 
 logger = logging.getLogger("effgen.models.model_loader")
+
+# Loader kwargs that configure a local engine and mean nothing to a remote API.
+# Dropped before an adapter is constructed so a caller can pass one loader
+# call's worth of options without the cloud path rejecting them.
+_LOCAL_ONLY_KWARGS = (
+    "apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization",
+    "trust_remote_code", "quantization", "device", "torch_dtype",
+)
 
 
 # Cerebras import is deferred to avoid hard dependency when cerebras extra is absent.
@@ -115,10 +124,42 @@ class ModelLoaderCloudMixin:
         params = config or {}
         params.update(kwargs)
         # Drop kwargs only meaningful for local/HF engines
-        for k in ("apply_chat_template", "tensor_parallel_size", "gpu_memory_utilization", "trust_remote_code", "quantization", "device", "torch_dtype"):
+        for k in _LOCAL_ONLY_KWARGS:
             params.pop(k, None)
 
         return OpenAIAdapter(model_name=model_name, **params)
+
+    def _load_openai_compatible_model(
+        self,
+        model_name: str,
+        config: dict[str, Any] | None = None,
+        **kwargs
+    ) -> "OpenAICompatibleAdapter":
+        """
+        Load a model served over the OpenAI protocol at a caller-supplied URL.
+
+        Args:
+            model_name: The id the server serves the model under
+            config: Optional configuration
+            **kwargs: Additional parameters, including ``base_url`` and
+                ``api_key``
+
+        Returns:
+            OpenAICompatibleAdapter instance
+        """
+        from effgen.models.openai_compatible_adapter import OpenAICompatibleAdapter
+
+        params = config or {}
+        params.update(kwargs)
+        # Drop kwargs only meaningful for local/HF engines
+        for k in _LOCAL_ONLY_KWARGS:
+            params.pop(k, None)
+
+        logger.info(
+            "Loading model %r over the OpenAI protocol from %s",
+            model_name, params.get("base_url") or "the configured endpoint",
+        )
+        return OpenAICompatibleAdapter(model_name=model_name, **params)
 
     def _load_anthropic_model(
         self,

@@ -11,6 +11,7 @@ Supports:
 - Cost tracking via CostTracker
 - OpenAI automatic prompt caching (cached_input_tokens surfaced)
 - Structured outputs v2 (strict JSON schema + ModelRefusalError)
+- A ``base_url`` for any server speaking the OpenAI protocol
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from effgen.models._adapter_utils import (
     reasoning_delta_text,
     warn_reasoning_only_stream,
 )
+from effgen.models._base_url import describe_endpoint, resolve_base_url
 from effgen.models._multimodal import (
     require_audio_support,
     require_video_support,
@@ -157,6 +159,13 @@ class OpenAIAdapter(FunctionCallingModel):
     Attributes:
         model_name: OpenAI model identifier
         api_key: OpenAI API key (reads from OPENAI_API_KEY env if not supplied)
+        base_url: Base URL of the endpoint to call. Defaults to OpenAI's own
+            API; set it to talk to any server speaking the OpenAI protocol
+            (vLLM, SGLang, TGI, llama.cpp, Ollama, LM Studio, a gateway or a
+            corporate proxy). Falls back to ``EFFGEN_BASE_URL``,
+            ``OPENAI_BASE_URL`` then ``OPENAI_API_BASE``. For a self-hosted
+            server prefer :class:`~effgen.models.openai_compatible_adapter.OpenAICompatibleAdapter`,
+            which additionally drops the OpenAI catalog defaults and pricing.
         organization_id: OpenAI organization ID (optional)
         max_retries: Maximum retry attempts for failed requests
         timeout: Request timeout in seconds
@@ -165,6 +174,11 @@ class OpenAIAdapter(FunctionCallingModel):
     #: Provider label used for metrics/error reporting (see Agent._model_provider).
     _provider = "openai"
 
+    #: Whether the bundled OpenAI catalog describes this endpoint's model ids.
+    #: False for a self-hosted server, whose ids are its own (see
+    #: :class:`~effgen.models.openai_compatible_adapter.OpenAICompatibleAdapter`).
+    _catalog_backed = True
+
     def __init__(
         self,
         model_name: str = "gpt-4o-mini",
@@ -172,19 +186,24 @@ class OpenAIAdapter(FunctionCallingModel):
         organization_id: str | None = None,
         max_retries: int = 3,
         timeout: int = 60,
+        base_url: str | None = None,
+        context_length: int | None = None,
         **kwargs: Any,
     ) -> None:
-        if model_name not in OPENAI_MODELS:
+        self.base_url = base_url or resolve_base_url()
+        if self._catalog_backed and model_name not in OPENAI_MODELS and not self.base_url:
             # Informational fallback, not an actionable warning — a valid new
             # or hot-swapped model id just isn't in the bundled catalog yet.
             # Surfaced at INFO so it shows with --verbose without making a
             # normal, successful run/chat turn look broken by default.
+            # A custom base_url serves its own ids, which this catalog never
+            # lists, so the message would be noise there.
             logger.info(
                 f"Model '{model_name}' is not in the OpenAI registry. "
                 f"Using conservative defaults (context=128k, pricing fallback). "
                 f"Call OpenAIAdapter.list_models() for registered ids."
             )
-        context = get_context_length(model_name)
+        context = context_length if context_length is not None else get_context_length(model_name)
         super().__init__(
             model_name=model_name,
             model_type=ModelType.OPENAI,
@@ -226,13 +245,19 @@ class OpenAIAdapter(FunctionCallingModel):
                 "OpenAI package is not installed. Install it with: pip install openai"
             ) from e
 
+        endpoint = describe_endpoint(self.base_url)
         try:
-            logger.info(f"Initializing OpenAI client for model '{self.model_name}'...")
+            logger.info(
+                f"Initializing OpenAI client for model '{self.model_name}' "
+                f"against {endpoint}..."
+            )
             client_kwargs: dict[str, Any] = {
                 "api_key": self.api_key,
                 "timeout": self.timeout,
                 "max_retries": self.max_retries,
             }
+            if self.base_url:
+                client_kwargs["base_url"] = self.base_url
             if self.organization_id:
                 client_kwargs["organization"] = self.organization_id
             client_kwargs.update(self.additional_kwargs)
@@ -255,12 +280,17 @@ class OpenAIAdapter(FunctionCallingModel):
                 "supports_sampling_params": self._supports_sampling_params,
                 "supports_functions": True,
                 "supports_streaming": True,
+                "base_url": self.base_url,
             }
-            logger.info(f"OpenAI client initialized for '{self.model_name}'")
+            logger.info(
+                f"OpenAI client initialized for '{self.model_name}' against {endpoint}"
+            )
 
         except Exception as e:
-            logger.error(f"Failed to initialize OpenAI client: {e}")
-            raise RuntimeError(f"OpenAI initialization failed: {e}") from e
+            logger.error(f"Failed to initialize OpenAI client for {endpoint}: {e}")
+            raise RuntimeError(
+                f"OpenAI initialization failed for {endpoint}: {e}"
+            ) from e
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -574,10 +604,13 @@ class OpenAIAdapter(FunctionCallingModel):
 
         Returns ``None`` when the catalog publishes no rate for this model, so
         the call reports no price rather than a fabricated ``$0`` or a
-        placeholder rate.
+        placeholder rate. A server the caller runs itself has no published rate
+        at all, so its calls always report no price.
         """
         from effgen.models._cost import pricing_status
 
+        if not self._catalog_backed:
+            return None
         if pricing_status("openai", self.model_name) == "unpriced":
             return None
         input_price, cached_price, output_price = get_pricing(self.model_name)

@@ -223,6 +223,14 @@ class Agent(
             load_kwargs: dict[str, Any] = {}
             if config.provider:
                 load_kwargs["provider"] = config.provider
+            # A base_url names an OpenAI-protocol server, so it both selects
+            # the compatible adapter (unless a provider was named explicitly)
+            # and tells it where to call.
+            if config.base_url:
+                load_kwargs["base_url"] = config.base_url
+                load_kwargs.setdefault("provider", "openai_compatible")
+            if config.api_key:
+                load_kwargs["api_key"] = config.api_key
             try:
                 logger.debug(f"Loading model: {self.model_name}")
                 self.model = self.model_loader.load_model(

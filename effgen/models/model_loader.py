@@ -197,6 +197,8 @@ def load_model(
     gpu_memory_utilization: float | None = None,
     apply_chat_template: bool = True,
     provider: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
     **kwargs: Any
 ) -> BaseModel:
     """Convenience function to quickly load a model.
@@ -206,6 +208,10 @@ def load_model(
     HuggingFace Inference API — to run the same repo **locally** on your GPU,
     pass ``engine="transformers"`` (or ``"vllm"``) with a bare model id instead
     of the ``hf:`` prefix.
+
+    ``base_url`` points effGen at any server speaking the OpenAI protocol —
+    vLLM, SGLang, TGI, llama.cpp, Ollama, LM Studio, a gateway or a corporate
+    proxy — instead of loading a second copy of the weights in this process.
 
     Args:
         model_name: Model identifier
@@ -221,7 +227,18 @@ def load_model(
                             instruction-tuned models (default: True, vLLM only).
                             This ensures proper formatting for models like Qwen-Instruct.
         provider: Route to this remote provider instead of a local engine; the
-            same choice a ``"provider:model"`` prefix makes.
+            same choice a ``"provider:model"`` prefix makes. Use
+            ``"openai_compatible"`` for a server of your own speaking the
+            OpenAI protocol.
+        base_url: Endpoint for the OpenAI protocol, e.g.
+            ``"http://127.0.0.1:8000/v1"``. Giving one routes the call to the
+            OpenAI-compatible adapter whatever ``provider`` says, since the
+            model ids, context window and pricing are then the server's.
+            Falls back to ``EFFGEN_BASE_URL``, ``OPENAI_BASE_URL`` or
+            ``OPENAI_API_BASE`` when ``provider="openai_compatible"`` is asked
+            for without one.
+        api_key: Credential for the endpoint. A local server that checks
+            nothing needs none; effGen sends a placeholder.
         **kwargs: Additional parameters (e.g., quantization="4bit", trust_remote_code=True)
 
     Returns:
@@ -247,6 +264,13 @@ def load_model(
 
         >>> # Fail instead of falling back to CPU when the GPU can't hold the model
         >>> model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="transformers", require_gpu=True)
+
+        >>> # Talk to a model you already serve, instead of loading it again
+        >>> model = load_model(
+        ...     "Qwen/Qwen2.5-7B-Instruct",
+        ...     provider="openai_compatible",
+        ...     base_url="http://127.0.0.1:8000/v1",
+        ... )
     """
     # Pass tensor_parallel_size to kwargs if specified
     if tensor_parallel_size is not None:
@@ -261,6 +285,16 @@ def load_model(
 
     if provider is not None:
         kwargs["provider"] = provider
+
+    # A base_url names an OpenAI-protocol server, which is a routing decision
+    # as much as an adapter argument: with no provider named, it is the whole
+    # instruction, so it selects the compatible adapter rather than falling
+    # through to a local download of the model id.
+    if base_url is not None:
+        kwargs["base_url"] = base_url
+        kwargs.setdefault("provider", "openai_compatible")
+    if api_key is not None:
+        kwargs["api_key"] = api_key
 
     loader = ModelLoader(force_engine=engine)
     return loader.load_model(model_name, engine_config, **kwargs)

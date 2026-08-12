@@ -25,6 +25,25 @@ from effgen.models.model_loader_cloud import (
 logger = logging.getLogger("effgen.models.model_loader")
 
 
+def _wants_compatible_endpoint(
+    engine_config: dict[str, Any] | None,
+    kwargs: dict[str, Any],
+) -> bool:
+    """Whether this call names an endpoint other than the provider's own.
+
+    An explicit ``base_url`` in either place counts. The environment fallback
+    does not: ``OPENAI_BASE_URL`` is often set machine-wide for an unrelated
+    proxy, and silently rerouting a plain ``provider="openai"`` call because of
+    it would be a surprise. Ask for ``provider="openai_compatible"`` to pick up
+    the environment.
+    """
+    for source in (engine_config or {}, kwargs):
+        value = source.get("base_url")
+        if value and str(value).strip():
+            return True
+    return False
+
+
 class ModelLoaderRoutingMixin:
     """Model-id and prefix routing to a provider adapter or local engine."""
 
@@ -64,10 +83,21 @@ class ModelLoaderRoutingMixin:
         # HuggingFace download.  Normalize common aliases (google -> gemini).
         if provider is not None:
             _known = {
-                "openai", "anthropic", "gemini", "cerebras", "groq",
-                "together", "fireworks", "replicate", "hf", "hf_inference",
+                "openai", "openai_compatible", "anthropic", "gemini", "cerebras",
+                "groq", "together", "fireworks", "replicate", "hf", "hf_inference",
             }
-            _aliases = {"google": "gemini", "huggingface": "hf", "claude": "anthropic"}
+            _aliases = {
+                "google": "gemini", "huggingface": "hf", "claude": "anthropic",
+                # The protocol, not the company: every spelling people reach for
+                # when they mean "an OpenAI-protocol server at my own URL".
+                "openai-compatible": "openai_compatible",
+                "openai_compat": "openai_compatible",
+                "oai_compatible": "openai_compatible",
+                "compatible": "openai_compatible",
+                "server": "openai_compatible",
+                "vllm_server": "openai_compatible",
+                "local_server": "openai_compatible",
+            }
             _p = str(provider).strip().lower()
             _p = _aliases.get(_p, _p)
             if _p not in _known:
@@ -190,6 +220,18 @@ class ModelLoaderRoutingMixin:
             except Exception:
                 logger.debug("Bare-id provider routing lookup failed", exc_info=True)
 
+        # A base_url means the OpenAI protocol against someone else's server,
+        # so provider="openai" with one routes to the compatible adapter: its
+        # ids, context window and pricing are the server's, not OpenAI's.
+        if provider == "openai" and _wants_compatible_endpoint(engine_config, kwargs):
+            provider = "openai_compatible"
+
+        if provider == "openai_compatible":
+            model = self._load_openai_compatible_model(model_name, engine_config, **kwargs)
+            model.load()
+            self._validate_model(model)
+            self.loaded_models[model_name] = model
+            return model
         if provider == "openai":
             model = self._load_openai_model(model_name, engine_config, **kwargs)
             model.load()

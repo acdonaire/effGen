@@ -79,6 +79,13 @@ class AgentConfig:
             "openai", "cerebras"). Equivalent to the "provider:model" prefix
             and the CLI ``--provider`` flag; resolves bare ids that exist on
             multiple providers.
+        base_url: Endpoint for a server speaking the OpenAI protocol (vLLM,
+            SGLang, TGI, llama.cpp, Ollama, LM Studio, a gateway). Giving one
+            makes a string ``model`` load through the OpenAI-compatible adapter
+            against that URL instead of loading the weights in this process.
+            Ignored when ``model`` is already a loaded model instance.
+        api_key: Credential for that endpoint. A local server that checks
+            nothing needs none.
         raise_on_error: When True, run() raises the typed error on failure
             instead of returning an AgentResponse with success=False. The same
             failure raises regardless of which internal path (direct or tool
@@ -113,6 +120,8 @@ class AgentConfig:
     model_config: dict[str, Any] | None = None
     require_model: bool = True
     provider: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
     raise_on_error: bool = False
     system_prompt_template: str | None = None
     verbose_tools: bool | None = None
