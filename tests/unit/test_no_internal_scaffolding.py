@@ -10,12 +10,17 @@ text file and fails on two classes of text:
 * internal tracking IDs (e.g. ``VF5``, ``GA4``, ``RA-N3``, ``SEC1``, ``FN-2``,
   ``Audit-2 #x``) and per-finding IDs (e.g. ``E1-1``, ``E11-3``),
 * internal milestone references (``Phase 7``, ``Phase-7``, ``Phase_7``,
-  ``build plan``, ``stabilization sprint``) — the separator between ``Phase``
-  and its number may be a space, hyphen, or underscore,
+  ``Phases 16/21/23``, ``build plan``, ``stabilization sprint``) — the
+  separator between ``Phase`` and its number may be a space, hyphen, or
+  underscore, and the singular and plural forms are both matched,
 * author/process breadcrumbs (``this phase``, ``as per audit``,
   ``fixed in phase``, ``builder/verifier added``),
-* leftover debugging (``breakpoint()`` / ``pdb.set_trace()``),
-* unresolved placeholder markers (``TODO`` / ``FIXME`` / ``XXX`` / ``HACK``).
+* names of internal planning artifacts (``findings report``, ``phase brief``,
+  ``zero-ignore``, ``ask-before-commit``, ``AUDIT_REPORT``),
+* leftover debugging (``breakpoint()`` / ``pdb.set_trace()`` /
+  ``ipdb.set_trace()`` / ``import pdb`` / a JavaScript ``debugger;``),
+* unresolved placeholder markers (``TODO`` / ``FIXME`` / ``XXX`` / ``HACK`` /
+  ``TBD``) and hand-written ship blockers (``DO NOT SHIP``, ``NOTE TO SELF``).
 
 **(b) Editorializing self-praise** — the code describing its *own* behavior with
 approving adjectives/adverbs. State what the code does, not how good it is at it:
@@ -23,15 +28,29 @@ say "reports the failure with a typed error", not "fails honestly"; say
 "degrades to plain output when rich is absent", not "degrades gracefully". The
 gated vocabulary is the set that is essentially always editorializing when it
 describes the software's behavior: ``honest``/``honestly``/``honesty``,
-``gracefully``, ``delightful``/``delightfully``, ``beautifully``,
-``elegant``/``elegantly``, ``robustly``, ``seamless``/``seamlessly``,
-``effortless``/``effortlessly``, ``magically``, ``blazing``/``blazingly``,
-``production-grade``, ``production-ready``, ``world-class``,
-``battle-tested``, ``bulletproof``, ``state-of-the-art``,
+``graceful``/``gracefully``, ``delightful``/``delightfully``,
+``beautiful``/``beautifully``, ``elegant``/``elegantly``, ``robustly``,
+``seamless``/``seamlessly``, ``effortless``/``effortlessly``, ``magically``,
+``blazing``/``blazingly``, ``production-grade``, ``production-ready``,
+``world-class``, ``battle-tested``, ``bulletproof``, ``state-of-the-art``,
 ``flawless``/``flawlessly``, ``rock-solid``, ``industrial-strength``,
 ``enterprise-grade``, ``military-grade``, ``best-in-class``, ``turnkey``,
 ``lightning-fast``, ``hassle-free``, ``painless``/``painlessly``, ``sleek``,
-``gorgeous``, ``stunning``.
+``gorgeous``, ``stunning``, ``pristine``, ``polished``, ``slick``,
+``snappy``, ``buttery``/``butter-smooth``, ``silky``, ``supercharged``,
+``intuitive``/``intuitively``, ``awesome``, ``amazing``, ``incredible``,
+``superb``, ``impeccable``, ``exquisite``, ``masterful``, ``unparalleled``,
+``top-notch``, ``game-changing``, ``revolutionary``, ``craftsmanship``,
+``next-gen``, ``a joy to use``, and ``a breeze``.
+
+Two entries carry a narrow carve-out for a genuine technical use:
+
+* ``graceful`` is gated except in ``graceful shutdown`` — the standard name
+  for the ASGI/uvicorn lifecycle in which in-flight requests finish before
+  the process exits, which is what ``effgen.api.middleware`` implements;
+* ``beautiful`` would otherwise fire on ``BeautifulSoup``, the HTML parser,
+  because a CamelCase hump is split into words before matching. The two
+  modules that import it are allowlisted on that literal.
 
 ``cleanly``/``properly``/``correctly`` are deliberately *not* machine-gated:
 they carry a large volume of plainly factual technical uses ("imports cleanly",
@@ -135,9 +154,10 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     # internal milestone / planning references. The separator between "Phase"
     # and the number may be a space, hyphen, or underscore ("Phase 7",
     # "Phase-7", "Phase_7") — an earlier hyphenated breadcrumb slipped past the
-    # space-only form.
+    # space-only form. The plural is matched too: a comment citing a range or a
+    # list ("Phases 16/21/23") is the same breadcrumb.
     "milestone-reference": re.compile(
-        r"\bPhase[ _-]?\d+\b|\bbuild[ _-]?plan\b|stabilization sprint", re.IGNORECASE
+        r"\bPhases?[ _-]?\d+\b|\bbuild[ _-]?plan\b|stabilization sprint", re.IGNORECASE
     ),
     # author/process breadcrumbs. The role words (builder/verifier/explorer)
     # are only flagged next to a process verb — "the verifier" is also the
@@ -149,10 +169,23 @@ PATTERNS: dict[str, re.Pattern[str]] = {
         r"\b(?:builder|verifier|explorer) (?:added|fixed|confirmed|noted|reported)\b",
         re.IGNORECASE,
     ),
-    # leftover debugging
-    "debug-leftover": re.compile(r"breakpoint\(\)|pdb\.set_trace\("),
-    # unresolved placeholder markers
-    "placeholder-marker": re.compile(r"\b(?:TODO|FIXME|XXX|HACK)\b"),
+    # Names of internal planning artifacts. These describe how the project is
+    # built, never what it does, so there is no legitimate shipped use.
+    "planning-artifact": re.compile(
+        r"\bfindings? report\b|\bphase brief\b|\bexplorer report\b|"
+        r"\bzero[ -]ignore\b|\bask[ -]before[ -]commit\b|AUDIT_REPORT",
+        re.IGNORECASE,
+    ),
+    # leftover debugging, in Python and in the bundled JavaScript
+    "debug-leftover": re.compile(
+        r"breakpoint\(\)|(?:pdb|ipdb|pytest)\.set_trace\(|"
+        r"^\s*import +i?pdb\b|(?<![\w.])debugger\s*;",
+        re.MULTILINE,
+    ),
+    # unresolved placeholder markers and hand-written ship blockers
+    "placeholder-marker": re.compile(
+        r"\b(?:TODO|FIXME|XXX|HACK|TBD)\b|\bDO NOT SHIP\b|\bNOTE TO SELF\b"
+    ),
 }
 
 # ── forbidden patterns: (b) editorializing self-praise ────────────────────────
@@ -160,9 +193,12 @@ PATTERNS: dict[str, re.Pattern[str]] = {
 # See the module docstring for why cleanly/properly/correctly are excluded.
 EDITORIALIZING_PATTERNS: dict[str, re.Pattern[str]] = {
     "praise-honest": re.compile(r"\bhonest(?:ly|y)?\b", re.IGNORECASE),
-    "praise-gracefully": re.compile(r"\bgracefully\b", re.IGNORECASE),
+    # "graceful shutdown" is the standard name for the ASGI lifecycle where
+    # in-flight requests finish before the process exits, so it is carved out;
+    # every other use of the word is the code praising itself.
+    "praise-graceful": re.compile(r"\bgraceful(?:ly)?\b(?!\s+shutdown)", re.IGNORECASE),
     "praise-delightful": re.compile(r"\bdelightful(?:ly)?\b", re.IGNORECASE),
-    "praise-beautifully": re.compile(r"\bbeautifully\b", re.IGNORECASE),
+    "praise-beautiful": re.compile(r"\bbeautiful(?:ly)?\b", re.IGNORECASE),
     "praise-elegant": re.compile(r"\belegant(?:ly)?\b", re.IGNORECASE),
     "praise-robustly": re.compile(r"\brobustly\b", re.IGNORECASE),
     "praise-seamless": re.compile(r"\bseamless(?:ly)?\b", re.IGNORECASE),
@@ -189,6 +225,32 @@ EDITORIALIZING_PATTERNS: dict[str, re.Pattern[str]] = {
     "praise-sleek": re.compile(r"\bsleek\b", re.IGNORECASE),
     "praise-gorgeous": re.compile(r"\bgorgeous\b", re.IGNORECASE),
     "praise-stunning": re.compile(r"\bstunning\b", re.IGNORECASE),
+    "praise-pristine": re.compile(r"\bpristine\b", re.IGNORECASE),
+    "praise-polished": re.compile(r"\bpolished\b", re.IGNORECASE),
+    "praise-slick": re.compile(r"\bslick\b", re.IGNORECASE),
+    "praise-snappy": re.compile(r"\bsnappy\b", re.IGNORECASE),
+    "praise-buttery": re.compile(r"\bbuttery\b|\bbutter[ -]smooth\b", re.IGNORECASE),
+    "praise-silky": re.compile(r"\bsilky\b", re.IGNORECASE),
+    "praise-supercharged": re.compile(r"\bsuper[ -]?charg(?:ed|es|ing)\b", re.IGNORECASE),
+    "praise-intuitive": re.compile(r"\bintuitive(?:ly)?\b", re.IGNORECASE),
+    # Unqualified superlatives about the software's quality.
+    "praise-awesome": re.compile(r"\bawesome\b", re.IGNORECASE),
+    "praise-amazing": re.compile(r"\bamazing(?:ly)?\b", re.IGNORECASE),
+    "praise-incredible": re.compile(r"\bincredibl[ey]\b", re.IGNORECASE),
+    "praise-superb": re.compile(r"\bsuperb\b", re.IGNORECASE),
+    "praise-impeccable": re.compile(r"\bimpeccabl[ey]\b", re.IGNORECASE),
+    "praise-exquisite": re.compile(r"\bexquisite(?:ly)?\b", re.IGNORECASE),
+    "praise-masterful": re.compile(r"\bmasterful(?:ly)?\b", re.IGNORECASE),
+    "praise-unparalleled": re.compile(r"\bunparalleled\b", re.IGNORECASE),
+    "praise-top-notch": re.compile(r"\btop[ -]notch\b", re.IGNORECASE),
+    "praise-game-changing": re.compile(r"\bgame[ -]chang(?:er|ing)\b", re.IGNORECASE),
+    "praise-revolutionary": re.compile(r"\brevolutionar(?:y|ily)\b", re.IGNORECASE),
+    "praise-craftsmanship": re.compile(r"\bcraftsmanship\b", re.IGNORECASE),
+    # Short marketing form only: "next generation of <hardware>" is ordinary
+    # prose and appears in recorded example output.
+    "praise-next-gen": re.compile(r"\bnext[ -]gen\b", re.IGNORECASE),
+    "praise-joy-to-use": re.compile(r"\ba joy to\b", re.IGNORECASE),
+    "praise-a-breeze": re.compile(r"\ba breeze\b", re.IGNORECASE),
 }
 
 # ── documented allowlist of legitimate occurrences ────────────────────────────
@@ -221,6 +283,11 @@ EDITORIALIZING_ALLOWLIST: list[tuple[str, str]] = [
         "effgen/prompts/library/domains/data/etl_plan_v1.py",
         "You are a senior data engineer.",
     ),
+    # ``BeautifulSoup`` is the name of the HTML parser these two modules import.
+    # Identifier splitting turns the CamelCase hump into "Beautiful Soup", so
+    # the gated adjective matches a third-party library name.
+    ("effgen/rag/ingest.py", "BeautifulSoup"),
+    ("effgen/tools/builtin/url_fetch.py", "BeautifulSoup"),
 ]
 
 
@@ -274,6 +341,24 @@ def find_editorializing(rel_path: str, text: str) -> list[tuple[int, str, str]]:
     return _scan(rel_path, text, EDITORIALIZING_PATTERNS, EDITORIALIZING_ALLOWLIST)
 
 
+def _is_scanned_path(rel: str) -> bool:
+    """Whether a tracked path is one this gate reads.
+
+    A file is matched on *any* of its dotted suffixes and on a variant name
+    prefix, so the forms that park a real file type behind another word — a
+    parked workflow (``release.yml.disabled``), a per-target image
+    (``Dockerfile.sandbox``) — are scanned as what they are.
+    """
+    if not rel or rel in _SKIP_FILES or rel.startswith(_SKIP_DIR_PREFIXES):
+        return False
+    name = rel.rsplit("/", 1)[-1]
+    return (
+        any(s in _SOURCE_SUFFIXES for s in Path(rel).suffixes)
+        or name in _SOURCE_NAMES
+        or name.startswith(_SOURCE_NAME_PREFIXES)
+    )
+
+
 def _tracked_source_files() -> list[str]:
     try:
         out = subprocess.run(
@@ -282,23 +367,7 @@ def _tracked_source_files() -> list[str]:
         ).stdout
     except (OSError, subprocess.CalledProcessError):
         pytest.skip("git not available / not a git checkout")
-    files: list[str] = []
-    for rel in out.splitlines():
-        if not rel or rel in _SKIP_FILES:
-            continue
-        if rel.startswith(_SKIP_DIR_PREFIXES):
-            continue
-        name = rel.rsplit("/", 1)[-1]
-        # Every dotted suffix is considered, not just the last one, so a file
-        # parked behind a trailing marker (``release.yml.disabled``) is scanned
-        # as the kind of file it is.
-        if (
-            any(s in _SOURCE_SUFFIXES for s in Path(rel).suffixes)
-            or name in _SOURCE_NAMES
-            or name.startswith(_SOURCE_NAME_PREFIXES)
-        ):
-            files.append(rel)
-    return files
+    return [rel for rel in out.splitlines() if _is_scanned_path(rel)]
 
 
 def test_tracked_source_has_no_internal_scaffolding():
@@ -336,19 +405,65 @@ def test_tracked_source_has_no_editorializing_self_praise():
     )
 
 
-def test_detector_catches_planted_violation():
-    """The jargon detector must actually fire — a no-op gate would pass forever."""
-    samples = [
+# ── proof corpus ──────────────────────────────────────────────────────────────
+# One entry per pattern, so a pattern cannot be added without a line proving it
+# fires. ``test_every_pattern_carries_a_proof_sample`` asserts the mapping stays
+# exhaustive in both directions.
+JARGON_SAMPLES: dict[str, list[str]] = {
+    "internal-tracking-id": [
         "this is the VF5 regression case",
         "the E11-3 per-finding case",
         "fixes Audit-2 #42",
+        "GA4 covered the catalog refresh",
+        "RA-N3 and SEC1 and FN-2 all landed",
+    ],
+    "milestone-reference": [
         "see Phase 7 of the build plan",
+        "a Phase-35 breadcrumb",
+        "the Phase_18 guard",
+        "additive aliases (Phases 16/21/23)",
+        "carried over from the stabilization sprint",
+    ],
+    "process-breadcrumb": [
         "as per audit, this phase reworked it",
+        "as per the report, the retry budget was raised",
+        "the report asked for a clearer error here",
+        "builder added the fallback path",
+        "the verifier confirmed this on three families",
+    ],
+    "planning-artifact": [
+        "see the findings report for the full list",
+        "the phase brief asked for a --json flag",
+        "carried by the explorer report",
+        "the zero-ignore policy applies here",
+        "held until the ask-before-commit gate",
+        "recorded in AUDIT_REPORT_6",
+    ],
+    "debug-leftover": [
         "    breakpoint()  # debug",
+        "    pdb.set_trace()",
+        "    ipdb.set_trace()",
+        "import pdb",
+        "  debugger;",
+    ],
+    "placeholder-marker": [
         "x = 1  # TODO clean this up",
-    ]
-    for sample in samples:
-        assert find_violations("some/source.py", sample), sample
+        "# FIXME: revisit the timeout",
+        "# HACK around the SDK bug",
+        "# XXX not sure about this",
+        "retry budget: TBD",
+        "# DO NOT SHIP",
+        "# NOTE TO SELF: rewrite this",
+    ],
+}
+
+
+def test_detector_catches_planted_violation():
+    """The jargon detector must actually fire — a no-op gate would pass forever."""
+    for name, samples in JARGON_SAMPLES.items():
+        for sample in samples:
+            hits = find_violations("some/source.py", sample)
+            assert any(n == name for _, n, _ in hits), (name, sample)
 
 
 def test_detector_catches_hyphenated_and_underscored_phase():
@@ -389,24 +504,27 @@ def test_detector_catches_report_and_role_breadcrumbs():
 def test_detector_catches_gated_words_inside_identifiers():
     """A gated word hidden in a snake_case or CamelCase name must still fire."""
     snake = [
-        ("def test_init_with_string_model_fails_gracefully(self):", "praise-gracefully"),
+        ("def test_init_with_string_model_fails_gracefully(self):", "praise-graceful"),
         ("def test_empty_workflow_is_honest_failure():", "praise-honest"),
-        ("def test_renders_beautifully_in_notebook():", "praise-beautifully"),
+        ("def test_renders_beautifully_in_notebook():", "praise-beautiful"),
         ("production_ready = True", "praise-production-ready"),
+        ("def test_trace_with_no_steps_is_graceful():", "praise-graceful"),
     ]
     camel = [
         ("class TestPublicCodeExecutorHonesty:", "praise-honest"),
         ("class SeamlessMigrationHelper:", "praise-seamless"),
+        ("soup = BeautifulSoup(html)", "praise-beautiful"),
+        ("class PristineStdoutGuard:", "praise-pristine"),
     ]
     for sample, expected in snake + camel:
         hits = find_editorializing("some/source.py", sample)
         assert any(n == expected for _, n, _ in hits), sample
 
     # Process jargon hidden in an identifier is caught the same way.
-    assert any(
-        n == "milestone-reference"
-        for _, n, _ in find_violations("s.py", "def test_phase_7_regression():")
-    )
+    for jargon in ("def test_phase_7_regression():", "def test_phases_16_regression():"):
+        assert any(
+            n == "milestone-reference" for _, n, _ in find_violations("s.py", jargon)
+        ), jargon
 
     # A word that merely *contains* a gated stem is not split, so it stays clean.
     for ok in ("dishonest_input = True", "class Blazer:", "the production environment"):
@@ -449,65 +567,237 @@ def test_scan_covers_scripts_that_sit_beside_bundled_data():
     assert "examples/data/arc_easy_test.txt" not in scanned
 
 
-def test_detector_catches_planted_editorializing():
-    """The editorializing detector must actually fire on each gated word."""
-    samples = [
+PRAISE_SAMPLES: dict[str, list[str]] = {
+    "praise-honest": [
         "# fails honestly with a typed error",
         "the honesty of the cost label",
-        "degrades gracefully when rich is absent",
-        "a delightful first-run experience",
-        "renders beautifully in the notebook",
-        "an elegant fallback path",
-        "handles arbitrary input robustly",
-    ]
-    for sample in samples:
-        assert find_editorializing("some/source.py", sample), sample
-    # Plainly-factual descriptions must NOT trip the editorializing gate.
-    for ok in ("routes to the correct adapter", "the model imports cleanly", "properly typed"):
-        assert not find_editorializing("some/source.py", ok), ok
+        "an honest 400",
+    ],
+    "praise-delightful": ["a delightful first-run experience", "starts up delightfully"],
+    "praise-elegant": ["an elegant fallback path", "resolves elegantly"],
+    "praise-robustly": ["handles arbitrary input robustly"],
+    "praise-seamless": ["a seamless upgrade", "swaps seamlessly"],
+    "praise-effortless": ["scales effortlessly", "an effortless setup"],
+    "praise-magically": ["the cache magically warms"],
+    "praise-blazing": ["blazing throughput", "blazingly fast startup"],
+    "praise-production-grade": ["a production-grade pipeline", "production grade RAG"],
+    "praise-production-ready": ["a production-ready chart", "production ready adapter"],
+    "praise-world-class": ["world-class ergonomics", "world class tracing"],
+    "praise-battle-tested": ["battle-tested retries", "battle tested sandbox"],
+    "praise-bulletproof": ["bulletproof auth", "bullet-proof parsing"],
+    "praise-state-of-the-art": ["state-of-the-art routing", "state of the art reranking"],
+    "praise-flawless": ["flawless recovery", "replays flawlessly"],
+    "praise-rock-solid": ["rock-solid checkpoints", "rock solid streaming"],
+    "praise-industrial-strength": ["industrial-strength queueing"],
+    "praise-enterprise-grade": ["enterprise-grade RBAC", "enterprise grade audit log"],
+    "praise-military-grade": ["military-grade encryption"],
+    "praise-best-in-class": ["best-in-class latency", "best in class recall"],
+    "praise-turnkey": ["a turnkey deployment", "turn-key onboarding"],
+    "praise-lightning-fast": ["lightning-fast cold starts"],
+    "praise-hassle-free": ["hassle-free upgrades"],
+    "praise-painless": ["a painless migration", "migrates painlessly"],
+    "praise-sleek": ["a sleek dashboard"],
+    "praise-gorgeous": ["gorgeous trace rendering"],
+    "praise-stunning": ["a stunning topology view"],
+    "praise-pristine": ["keeps stdout pristine"],
+    "praise-polished": ["a polished REPL"],
+    "praise-slick": ["a slick palette picker"],
+    "praise-snappy": ["snappy cold starts"],
+    "praise-buttery": ["buttery scrolling", "butter-smooth streaming"],
+    "praise-silky": ["silky redraws"],
+    "praise-supercharged": ["supercharged retrieval", "super-charged batching"],
+    "praise-intuitive": ["an intuitive API", "reads intuitively"],
+    "praise-awesome": ["an awesome dashboard"],
+    "praise-amazing": ["amazing throughput", "amazingly small"],
+    "praise-incredible": ["incredible recall", "incredibly fast"],
+    "praise-superb": ["superb ergonomics"],
+    "praise-impeccable": ["impeccable defaults", "impeccably typed"],
+    "praise-exquisite": ["exquisite trace output"],
+    "praise-masterful": ["masterful orchestration"],
+    "praise-unparalleled": ["unparalleled coverage"],
+    "praise-top-notch": ["top-notch errors", "top notch docs"],
+    "praise-game-changing": ["a game-changing router", "a game changer"],
+    "praise-revolutionary": ["a revolutionary sandbox"],
+    "praise-craftsmanship": ["the craftsmanship of the CLI"],
+    "praise-next-gen": ["a next-gen planner", "next gen tooling"],
+    "praise-joy-to-use": ["a joy to operate"],
+    "praise-a-breeze": ["upgrades are a breeze"],
+    "praise-graceful": ["a graceful fallback", "degrades gracefully"],
+    "praise-beautiful": ["a beautiful report", "renders beautifully"],
+}
+
+# Prose that must stay clean: factual technical writing, terms of art, and words
+# that merely share a stem with a gated one.
+PRAISE_NON_SAMPLES: tuple[str, ...] = (
+    "routes to the correct adapter",
+    "the model imports cleanly",
+    "properly typed",
+    "the production environment variable",
+    "class Blazer:",
+    "artwork classification",
+    "the enterprise directory endpoint",
+    "flaws = validate(config)",
+    "installs the bleeding-edge main branch",
+    "in-flight requests finish before a graceful shutdown",
+    "def _install_graceful_shutdown(app, timeout):",
+    "power the next generation of laptops",
+    "a phased rollout of the new router",
+    "the joystick axis is ignored",
+    "polish = compute_polish_ratio(x)",
+    "supercharger = None",
+    "dishonest_input = True",
+    "first-class functions are supported",
+)
 
 
-def test_detector_catches_promotional_vocabulary():
-    """Every promotional word carries its own pattern, in both spellings."""
-    expected = {
-        "praise-seamless": ["a seamless upgrade", "swaps seamlessly"],
-        "praise-effortless": ["scales effortlessly", "an effortless setup"],
-        "praise-magically": ["the cache magically warms"],
-        "praise-blazing": ["blazing throughput", "blazingly fast startup"],
-        "praise-production-grade": ["a production-grade pipeline", "production grade RAG"],
-        "praise-production-ready": ["a production-ready chart", "production ready adapter"],
-        "praise-world-class": ["world-class ergonomics", "world class tracing"],
-        "praise-battle-tested": ["battle-tested retries", "battle tested sandbox"],
-        "praise-bulletproof": ["bulletproof auth", "bullet-proof parsing"],
-        "praise-state-of-the-art": ["state-of-the-art routing", "state of the art reranking"],
-        "praise-flawless": ["flawless recovery", "replays flawlessly"],
-        "praise-rock-solid": ["rock-solid checkpoints", "rock solid streaming"],
-        "praise-industrial-strength": ["industrial-strength queueing"],
-        "praise-enterprise-grade": ["enterprise-grade RBAC", "enterprise grade audit log"],
-        "praise-military-grade": ["military-grade encryption"],
-        "praise-best-in-class": ["best-in-class latency", "best in class recall"],
-        "praise-turnkey": ["a turnkey deployment", "turn-key onboarding"],
-        "praise-lightning-fast": ["lightning-fast cold starts"],
-        "praise-hassle-free": ["hassle-free upgrades"],
-        "praise-painless": ["a painless migration", "migrates painlessly"],
-        "praise-sleek": ["a sleek dashboard"],
-        "praise-gorgeous": ["gorgeous trace rendering"],
-        "praise-stunning": ["a stunning topology view"],
-    }
-    for name, samples in expected.items():
+def test_detector_catches_planted_editorializing():
+    """The editorializing detector must actually fire on each gated word."""
+    for name, samples in PRAISE_SAMPLES.items():
         for sample in samples:
             hits = find_editorializing("some/source.py", sample)
             assert any(n == name for _, n, _ in hits), (name, sample)
-    # Ordinary technical prose that merely shares a word stem must stay clean.
-    for ok in (
-        "the production environment variable",
-        "class Blazer:",
-        "artwork classification",
-        "the enterprise directory endpoint",
-        "flaws = validate(config)",
-        "installs the bleeding-edge main branch",
-    ):
+    for ok in PRAISE_NON_SAMPLES:
         assert not find_editorializing("some/source.py", ok), ok
+
+
+def test_every_pattern_carries_a_proof_sample():
+    """No pattern may ship without a line proving it fires, and vice versa.
+
+    This is what keeps the gate from drifting into a no-op: adding a pattern
+    without a sample fails here, and deleting a pattern while leaving its sample
+    behind fails here too.
+    """
+    assert set(JARGON_SAMPLES) == set(PATTERNS), (
+        "JARGON_SAMPLES and PATTERNS disagree: "
+        f"unproven={sorted(set(PATTERNS) - set(JARGON_SAMPLES))}, "
+        f"orphaned={sorted(set(JARGON_SAMPLES) - set(PATTERNS))}"
+    )
+    assert set(PRAISE_SAMPLES) == set(EDITORIALIZING_PATTERNS), (
+        "PRAISE_SAMPLES and EDITORIALIZING_PATTERNS disagree: "
+        f"unproven={sorted(set(EDITORIALIZING_PATTERNS) - set(PRAISE_SAMPLES))}, "
+        f"orphaned={sorted(set(PRAISE_SAMPLES) - set(EDITORIALIZING_PATTERNS))}"
+    )
+    for name, samples in {**JARGON_SAMPLES, **PRAISE_SAMPLES}.items():
+        assert samples, f"{name} has no proof sample"
+
+
+def test_gated_vocabulary_covers_the_house_style_list():
+    """Every word the house style forbids must have a live pattern.
+
+    Spelled out as literal prose rather than as pattern names so that renaming
+    or dropping a pattern cannot quietly shrink what the gate covers.
+    """
+    must_be_caught = [
+        # process jargon
+        "see Phase 12", "Phases 3-5 landed", "the build plan says", "build_plan/",
+        "this phase reworked it", "as per the report", "fixed in phase 4",
+        "the builder added a fallback", "finding E3-2", "E4-1 regression",
+        "TODO", "FIXME", "XXX", "HACK", "breakpoint()", "pdb.set_trace()",
+        # self-praise
+        "fails honestly", "an honest error", "the honesty of it",
+        "degrades gracefully", "a graceful fallback",
+        "a delightful CLI", "renders beautifully", "a beautiful report",
+        "an elegant design", "resolves elegantly", "handles it robustly",
+        "a seamless upgrade", "swaps seamlessly", "effortless setup",
+        "scales effortlessly", "magically resolved", "blazing fast",
+        "blazingly quick", "production-grade RAG", "production-ready server",
+        "world-class docs", "battle-tested retries", "bulletproof parsing",
+        "state-of-the-art routing",
+    ]
+    for sample in must_be_caught:
+        assert find_violations("s.py", sample) or find_editorializing("s.py", sample), sample
+
+    # Deliberately NOT machine-gated (documented in the module docstring): the
+    # filler adverbs and "first-class", which a regex cannot separate from their
+    # very common factual uses. Asserted so the exclusion stays a choice.
+    for excluded in (
+        "imports cleanly", "routes correctly", "properly configured",
+        "first-class functions", "the bleeding-edge branch",
+    ):
+        assert not find_editorializing("s.py", excluded), excluded
+
+
+def test_allowlist_entries_are_live_and_load_bearing():
+    """Every allowlist entry must name a real line that would otherwise fail.
+
+    A stale entry (file or line gone) or a redundant one (the line does not
+    actually trip a pattern) is a hole in the gate, so both fail here.
+    """
+    tracked = set(_tracked_source_files())
+    for allowlist, finder, label in (
+        (ALLOWLIST, find_violations, "ALLOWLIST"),
+        (EDITORIALIZING_ALLOWLIST, find_editorializing, "EDITORIALIZING_ALLOWLIST"),
+    ):
+        for path, needle in allowlist:
+            if label == "EDITORIALIZING_ALLOWLIST":
+                assert path not in _EDITORIALIZING_EXEMPT_FILES, (
+                    f"{label}: {path} is already exempt; the entry is dead"
+                )
+            elif path in _EDITORIALIZING_EXEMPT_FILES:
+                pass  # jargon is still scanned on the exempt release narrative
+            assert path in tracked or path in _SKIP_FILES, (
+                f"{label}: {path} is not a scanned tracked file any more"
+            )
+            text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="ignore")
+            matching = [ln for ln in text.splitlines() if needle in ln]
+            assert matching, f"{label}: no line in {path} contains {needle!r} any more"
+            # Without the entry the line must fail, or the entry excuses nothing.
+            assert any(
+                finder("some/other.py", ln) for ln in matching
+            ), f"{label}: {path} / {needle!r} excuses nothing — remove it"
+
+
+def test_scan_set_is_broad_and_did_not_silently_collapse():
+    """A scan that quietly stops seeing files would pass forever.
+
+    Pins the floor on how much the gate looks at: the total, and at least one
+    file under every top-level tree that holds authored text.
+    """
+    scanned = _tracked_source_files()
+    assert len(scanned) > 900, f"scan set shrank to {len(scanned)} files"
+    for prefix in (
+        "effgen/", "tests/", "docs/", "examples/", "scripts/", "deploy/",
+        ".github/workflows/", "assets/", "clients/",
+    ):
+        assert any(r.startswith(prefix) for r in scanned), prefix
+    # Every suffix and exact name the scanner claims to cover is either present
+    # in the tree or accepted by the matcher for a path of that kind.
+    for suffix in _SOURCE_SUFFIXES:
+        assert _is_scanned_path(f"pkg/sample{suffix}"), suffix
+    for name in _SOURCE_NAMES:
+        assert _is_scanned_path(f"pkg/{name}"), name
+    for prefix in _SOURCE_NAME_PREFIXES:
+        assert _is_scanned_path(f"pkg/{prefix}variant"), prefix
+
+
+def test_every_scanned_file_kind_is_actually_read():
+    """Planting a violation in a file of each scanned kind must be detected.
+
+    Suffixes with no tracked file today (``.rst``, ``.pyi``, ``.jsonl``-free
+    configs) are proven at the path level: the scanner accepts the path, and the
+    detector fires on the planted line for it.
+    """
+    planted_jargon = "# see Phase 9 of the build plan"
+    planted_praise = "# a production-ready, seamless experience"
+    kinds = (
+        [f"pkg/sample{s}" for s in sorted(_SOURCE_SUFFIXES)]
+        + [f"pkg/{n}" for n in sorted(_SOURCE_NAMES)]
+        + [f"pkg/{p}variant" for p in _SOURCE_NAME_PREFIXES]
+    )
+    for rel in kinds:
+        assert _is_scanned_path(rel), rel
+        assert find_violations(rel, planted_jargon), rel
+        assert find_editorializing(rel, planted_praise), rel
+
+
+def test_skipped_trees_are_the_documented_ones_only():
+    """The skip list must stay small and explicit."""
+    assert _SKIP_DIR_PREFIXES == ("build_plan/", "website/")
+    assert _SKIP_FILES == {"tests/unit/test_no_internal_scaffolding.py"}
+    assert _EDITORIALIZING_EXEMPT_FILES == {"CHANGELOG.md", "NEWS.md"}
+    # The exempt release narrative is still scanned for process jargon.
+    for rel in _EDITORIALIZING_EXEMPT_FILES:
+        assert _is_scanned_path(rel), rel
 
 
 def test_editorializing_allowlist_is_scoped_to_its_file():
