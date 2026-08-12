@@ -348,7 +348,11 @@ class NewsTool(BaseTool):
             return await self._top_headlines(api_key, category, region, max_results)
         else:
             if not query:
-                raise ValueError("operation='search' requires 'query'")
+                raise ValueError(
+                    "operation='search' requires 'query'. "
+                    "Pass query with the search terms, or use "
+                    "operation='headlines' for the unfiltered feed."
+                )
             return await self._search(api_key, query, sources, category, max_results)
 
     async def _top_headlines(

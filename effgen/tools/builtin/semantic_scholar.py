@@ -231,7 +231,11 @@ class SemanticScholarTool(BaseTool):
         op = operation.lower()
         if op == "search":
             if not query:
-                raise ValueError("operation='search' requires 'query'")
+                raise ValueError(
+                    "operation='search' requires 'query'. "
+                    "Pass query with the search terms, or use operation='paper' "
+                    "with a paper id."
+                )
             return await self._search(query, max_results)
         if op == "paper":
             if not paper_id:

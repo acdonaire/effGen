@@ -233,7 +233,11 @@ class ArXivTool(BaseTool):
         op = operation.lower()
         if op == "search":
             if not query:
-                raise ValueError("operation='search' requires 'query'")
+                raise ValueError(
+                    "operation='search' requires 'query'. "
+                    "Pass query with the search terms, or use operation='get' "
+                    "with an arXiv id."
+                )
             return await self._search(query, max_results)
         if op == "fetch":
             if not arxiv_id:
