@@ -192,7 +192,7 @@ class AgentToolExecutionMixin:
             try:
                 result = tool.execute(**input_dict)
 
-                # Handle async results (coroutines) cleanly
+                # Await a coroutine result before using it
                 if asyncio.iscoroutine(result):
                     result = self._run_coroutine_sync(result)
 

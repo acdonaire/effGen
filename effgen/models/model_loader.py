@@ -108,7 +108,7 @@ class ModelLoader(ModelLoaderRoutingMixin, ModelLoaderCloudMixin, ModelLoaderLoc
 
     def _validate_model(self, model: BaseModel) -> None:
         """
-        Validate that the model is properly loaded and functional.
+        Validate that the model is loaded and can generate.
 
         Args:
             model: Model instance to validate

@@ -54,7 +54,7 @@ from typing import Any
 from .redact import get_redactor
 
 # ---------------------------------------------------------------------------
-# Optional OTel import — graceful no-op when not installed
+# Optional OTel import — the span helpers no-op when it is absent
 # ---------------------------------------------------------------------------
 try:
     from opentelemetry import trace as _otel_trace

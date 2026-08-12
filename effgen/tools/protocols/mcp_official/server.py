@@ -336,7 +336,7 @@ class EffGenMCPServer:
         This is the main entry point for Claude Desktop and other
         STDIO-based MCP clients.
         """
-        # Keep stdout pristine for the JSON-RPC stream.
+        # Keep stdout carrying nothing but the JSON-RPC stream.
         self._route_logs_to_stderr()
         try:
             with contextlib.redirect_stdout(sys.stderr):

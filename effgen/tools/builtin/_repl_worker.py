@@ -286,7 +286,7 @@ def _send(obj: dict) -> None:
 def _restricted_builtins(allowed_imports: set[str]) -> dict:
     """Build a restricted ``__builtins__`` mapping for user code.
 
-    Uses the pristine, pre-guard ``getattr`` reference to read every name off
+    Uses the unpatched, pre-guard ``getattr`` reference to read every name off
     ``builtins`` (so introspecting dunder builtins like ``__build_class__``
     never trips the reflection guard); the four reflection entries
     (``getattr``/``setattr``/``delattr``/``hasattr``) still resolve to
