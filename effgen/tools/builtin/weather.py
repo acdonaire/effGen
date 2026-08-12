@@ -425,7 +425,11 @@ class WeatherTool(BaseTool):
                     return {
                         "success": False,
                         "data": {},
-                        "error": "Provide either lat+lon or a location name.",
+                        "error": (
+                            "The call named no place to report on. Pass "
+                            "location as a place name, or lat and lon as "
+                            "decimal degrees."
+                        ),
                     }
                 lat, lon, display_name = await asyncio.get_event_loop().run_in_executor(
                     None, self._geocode, location

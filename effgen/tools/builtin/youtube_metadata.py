@@ -316,7 +316,11 @@ class YouTubeMetadataTool(BaseTool):
         try:
             if op == "metadata":
                 if not video_id:
-                    raise ValueError("'video_id' is required for operation='metadata'")
+                    raise ValueError(
+                        "'video_id' is required for operation='metadata'. "
+                        "Pass video_id, or the full watch URL, which the tool "
+                        "reads the id from."
+                    )
                 try:
                     vid = _extract_video_id(video_id)
                 except ValueError as exc:
@@ -333,7 +337,10 @@ class YouTubeMetadataTool(BaseTool):
 
             else:  # channel
                 if not channel_url:
-                    raise ValueError("'channel_url' is required for operation='channel'")
+                    raise ValueError(
+                        "'channel_url' is required for operation='channel'. "
+                        "Pass channel_url as the channel's page address."
+                    )
                 videos = await asyncio.to_thread(_channel_sync, channel_url, max_videos)
                 return {
                     "success": True,

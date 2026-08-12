@@ -231,7 +231,11 @@ class GeocodeTool(BaseTool):
                     return {
                         "success": False,
                         "data": {},
-                        "error": "address is required for operation='geocode'.",
+                        "error": (
+                            "address is required for operation='geocode'. "
+                            "Pass address as the place to look up, or use "
+                            "operation='reverse' with lat and lon."
+                        ),
                     }
                 results = await loop.run_in_executor(None, self._geocode, address, limit)
                 if not results:
@@ -260,7 +264,11 @@ class GeocodeTool(BaseTool):
                     return {
                         "success": False,
                         "data": {},
-                        "error": "lat and lon are required for operation='reverse'.",
+                        "error": (
+                            "lat and lon are required for operation='reverse'. "
+                            "Pass both as decimal degrees, or use "
+                            "operation='geocode' with an address."
+                        ),
                     }
                 result = await loop.run_in_executor(None, self._reverse, lat, lon)
                 return {

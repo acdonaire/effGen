@@ -311,7 +311,11 @@ class MapsTool(BaseTool):
                     return {
                         "success": False,
                         "data": {},
-                        "error": "lat and lon are required for operation='render'.",
+                        "error": (
+                            "lat and lon are required for operation='render'. "
+                            "Pass both as decimal degrees; the geocode tool "
+                            "resolves a place name to a pair."
+                        ),
                     }
                 if markers is None:
                     markers = [{"lat": lat, "lon": lon}]
