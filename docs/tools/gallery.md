@@ -9,17 +9,19 @@ Quick-reference for every built-in tool in effGen. Each entry has a one-line des
 > this page.
 >
 > On failure `.output` is `None` and `.error` carries the reason, so every
-> snippet that calls a network service checks `.success` before reading
-> `.output`:
+> snippet whose call can fail for a reason outside the snippet — it reaches a
+> network service, or it names a file you have to supply — checks `.success`
+> before reading `.output`:
 >
 > ```python
 > if not result.success:
 >     raise SystemExit(result.error)
 > ```
 >
-> An upstream 5xx, a rate limit, a missing credential or an unreachable host
-> then prints the message the tool produced instead of raising on `None`. The
-> offline snippets leave the check out to stay short; the same two lines apply
+> An upstream 5xx, a rate limit, a missing credential, an unreachable host or a
+> path that does not exist on your machine then prints the message the tool
+> produced instead of raising `TypeError` on `None`. The snippets that build
+> their own input leave the check out to stay short; the same two lines apply
 > to any tool.
 
 ---
@@ -388,6 +390,8 @@ import asyncio
 from effgen.tools.builtin.data_analysis import DataFrameTool
 
 result = asyncio.run(DataFrameTool().execute(operation="head", file_path="/tmp/data.csv"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["columns"])  # ['name', 'score']
 print(result.output["data"])     # first rows as a list of dicts
 ```
@@ -704,6 +708,8 @@ from effgen.tools.builtin.audio_transcribe import AudioTranscribeTool
 result = asyncio.run(AudioTranscribeTool().execute(
     operation="transcribe", audio_path="/tmp/clip.mp3", model_size="base"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["text"])
 ```
 
@@ -722,6 +728,8 @@ import asyncio
 from effgen.tools.builtin.image_info import ImageInfoTool
 
 result = asyncio.run(ImageInfoTool().execute(operation="info", image_path="/tmp/photo.jpg"))
+if not result.success:
+    raise SystemExit(result.error)
 data = result.output["data"]
 print(data["width"], data["height"], data["format"], data["mode"])  # e.g. 400 300 JPEG RGB
 ```
@@ -753,6 +761,8 @@ import asyncio
 from effgen.tools.builtin.pdf import PDFTool
 
 result = asyncio.run(PDFTool().execute(operation="text", path="/tmp/paper.pdf"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["text"][:500])
 # Also: metadata, tables, extract_images
 ```
@@ -765,6 +775,8 @@ import asyncio
 from effgen.tools.builtin.docx import DOCXTool
 
 result = asyncio.run(DOCXTool().execute(operation="text", path="/tmp/report.docx"))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["text"])
 # Also: paragraphs, tables, metadata
 ```
@@ -778,11 +790,15 @@ from effgen.tools.builtin.excel import ExcelTool
 
 tool = ExcelTool()
 sheets = asyncio.run(tool.execute(operation="sheets", path="/tmp/data.xlsx"))
+if not sheets.success:
+    raise SystemExit(sheets.error)
 print(sheets.output["sheets"])  # ['Sheet1']
 
 result = asyncio.run(tool.execute(
     operation="read_sheet", path="/tmp/data.xlsx", sheet_name="Sheet1"
 ))
+if not result.success:
+    raise SystemExit(result.error)
 print(result.output["rows"][:3])  # header row first, e.g. [['name', 'score'], ...]
 ```
 

@@ -294,11 +294,25 @@ CREDENTIALED_REMOTE = [
     "DiscordWebhookTool",
 ]
 
+# Headings whose example names a file the reader has to supply. The path in the
+# snippet does not exist on a reader's machine, so running it as written is a
+# failure outside the snippet exactly as an outage is: the tool reports the
+# missing path and the read of ``.output`` would discard that report.
+READER_SUPPLIED_PATH = [
+    "DataFrameTool",
+    "AudioTranscribeTool",
+    "ImageInfoTool",
+    "PDFTool",
+    "DOCXTool",
+    "ExcelTool",
+]
+
 _REMOTE = frozenset(NETWORK) | frozenset(CREDENTIALED_REMOTE)
+_MUST_GUARD = _REMOTE | frozenset(READER_SUPPLIED_PATH)
 
 
 def test_network_snippets_check_success_before_reading_output():
-    """A network snippet reports the tool's error instead of raising on ``None``.
+    """A snippet reports the tool's error instead of raising on ``None``.
 
     Every snippet that reaches a remote service can fail for a reason outside
     the reader's control — a 5xx, a rate limit, no route to the host, a
@@ -308,12 +322,17 @@ def test_network_snippets_check_success_before_reading_output():
     ``result.success`` and exits with ``result.error``. Needing a credential
     does not exempt a snippet: the host it calls is just as remote.
 
-    Offline snippets are exempt: they fail only when the reader's own machine
-    or arguments are wrong, and the traceback already says so.
+    A snippet that names a file the reader supplies is checked for the same
+    reason. ``/tmp/report.docx`` is not on the reader's machine, so the
+    documented call fails there, and the tool's message names the path while
+    the ``TypeError`` does not.
+
+    Snippets that build their own input are exempt: they fail only when the
+    reader's own machine or arguments are wrong, and the traceback says so.
     """
     problems: list[str] = []
     for heading, code in _gallery_snippets():
-        if heading not in _REMOTE:
+        if heading not in _MUST_GUARD:
             continue
         tree = ast.parse(code)
         for name in sorted(_result_names(tree)):
