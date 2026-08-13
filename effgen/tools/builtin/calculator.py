@@ -260,13 +260,17 @@ class Calculator(BaseTool):
                 result = self._evaluate_expression(expression)
             elif operation == "convert_units":
                 if not from_unit or not to_unit:
-                    raise ValueError("Both from_unit and to_unit required for conversion")
+                    raise ValueError("Both from_unit and to_unit are required for a conversion. Pass both, "
+                    "e.g. from_unit='km', to_unit='mi'.")
                 value = self._evaluate_expression(expression)
                 result = self._convert_units(value, from_unit, to_unit)
             elif operation == "statistics":
                 result = self._calculate_statistics(expression)
             else:
-                raise ValueError(f"Unknown operation: {operation}")
+                raise ValueError(
+                    f"Unknown operation '{operation}'. Use one of: "
+                    "calculate, convert_units, statistics."
+                )
 
             # Format result
             if precision is not None and isinstance(result, int | float):
@@ -283,7 +287,10 @@ class Calculator(BaseTool):
         except Exception as e:
             # Log at debug level for expected calculation errors
             logger.debug(f"Calculator error: {e}")
-            raise ValueError(f"Calculation failed: {str(e)}")
+            raise ValueError(
+                f"Calculation failed: {e}. Check the expression for balanced "
+                "brackets, a supported function and no stray characters."
+            )
 
     def _evaluate_expression(self, expression: str) -> int | float:
         """
@@ -393,12 +400,19 @@ class Calculator(BaseTool):
         if isinstance(node, ast.Constant):  # Numbers and constants
             if isinstance(node.value, int | float):
                 return node.value
-            raise ValueError(f"Unsupported constant type: {type(node.value)}")
+            raise ValueError(
+                f"Unsupported constant {type(node.value).__name__} in the "
+                "expression. Use numbers only — text and None cannot be "
+                "evaluated."
+            )
 
         elif isinstance(node, ast.BinOp):  # Binary operation
             op_type = type(node.op)
             if op_type not in self.OPERATORS:
-                raise ValueError(f"Unsupported operator: {op_type.__name__}")
+                raise ValueError(
+                    f"Unsupported operator {op_type.__name__}. Use + - * / "
+                    "// % ** or a comparison."
+                )
             left = self._eval_node(node.left)
             right = self._eval_node(node.right)
             return self.OPERATORS[op_type](left, right)
@@ -406,17 +420,26 @@ class Calculator(BaseTool):
         elif isinstance(node, ast.UnaryOp):  # Unary operation
             op_type = type(node.op)
             if op_type not in self.OPERATORS:
-                raise ValueError(f"Unsupported operator: {op_type.__name__}")
+                raise ValueError(
+                    f"Unsupported operator {op_type.__name__}. Use + - * / "
+                    "// % ** or a comparison."
+                )
             operand = self._eval_node(node.operand)
             return self.OPERATORS[op_type](operand)
 
         elif isinstance(node, ast.Call):  # Function call
             if not isinstance(node.func, ast.Name):
-                raise ValueError("Only simple function calls are supported")
+                raise ValueError(
+                    "Only a direct function call is supported, e.g. sqrt(16). "
+                    "Compute a nested or dynamic call as separate steps."
+                )
 
             func_name = node.func.id.lower()
             if func_name not in self.FUNCTIONS:
-                raise ValueError(f"Unknown function: {func_name}")
+                raise ValueError(
+                    f"Unknown function '{func_name}'. Use one of: "
+                    f"{', '.join(sorted(self.FUNCTIONS))}."
+                )
 
             # Evaluate arguments
             args = [self._eval_node(arg) for arg in node.args]
@@ -425,7 +448,11 @@ class Calculator(BaseTool):
             try:
                 return self.FUNCTIONS[func_name](*args)
             except Exception as e:
-                raise ValueError(f"Function {func_name} error: {e}")
+                raise ValueError(
+                    f"Function '{func_name}' failed: {e}. Check its argument "
+                    "is in range — sqrt and log reject negatives, and "
+                    "asin/acos take -1 to 1."
+                )
 
         elif isinstance(node, ast.List):  # List literal [1, 2, 3]
             return [self._eval_node(elem) for elem in node.elts]
@@ -434,7 +461,8 @@ class Calculator(BaseTool):
             return tuple(self._eval_node(elem) for elem in node.elts)
 
         else:
-            raise ValueError(f"Unsupported expression type: {type(node).__name__}")
+            raise ValueError(f"Unsupported expression element {type(node).__name__}. Use numbers, "
+            "operators, brackets and the supported functions only.")
 
     def _convert_units(
         self, value: int | float, from_unit: str, to_unit: str
@@ -461,7 +489,8 @@ class Calculator(BaseTool):
                 break
 
         if not category:
-            raise ValueError(f"Cannot convert from '{from_unit}' to '{to_unit}'")
+            raise ValueError(f"Cannot convert from '{from_unit}' to '{to_unit}': they measure "
+            "different quantities. Convert within one family, e.g. km to mi.")
 
         # Special handling for temperature
         if category == "temperature":
@@ -485,7 +514,7 @@ class Calculator(BaseTool):
         elif from_unit == "k":
             celsius = value - 273.15
         else:
-            raise ValueError(f"Unknown temperature unit: {from_unit}")
+            raise ValueError(f"Unknown temperature unit '{from_unit}'. Use c, f or k.")
 
         # Convert from Celsius to target
         if to_unit == "c":
@@ -495,7 +524,7 @@ class Calculator(BaseTool):
         elif to_unit == "k":
             return celsius + 273.15
         else:
-            raise ValueError(f"Unknown temperature unit: {to_unit}")
+            raise ValueError(f"Unknown temperature unit '{to_unit}'. Use c, f or k.")
 
     def _calculate_statistics(self, expression: str) -> dict[str, float]:
         """
@@ -511,10 +540,10 @@ class Calculator(BaseTool):
         try:
             numbers = [float(x.strip()) for x in expression.split(",")]
         except ValueError as e:
-            raise ValueError(f"Invalid number format: {e}")
+            raise ValueError(f"Invalid number format: {e}. Pass numbers as digits, e.g. [1, 2.5, 3].")
 
         if not numbers:
-            raise ValueError("No numbers provided")
+            raise ValueError("No numbers provided. Pass a non-empty list, e.g. numbers=[1, 2, 3].")
 
         # Calculate statistics
         n = len(numbers)
