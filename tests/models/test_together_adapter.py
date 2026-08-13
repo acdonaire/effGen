@@ -260,7 +260,10 @@ class TestTogetherAdapterLoad:
         mock_together.assert_called_once_with(
             api_key="test-key",
             timeout=adapter.timeout,
-            max_retries=adapter.max_retries,
+            # The SDK's own retry is off: the adapter runs the backoff, and a
+            # second layer underneath multiplies the upstream requests one
+            # client request becomes rather than sharing the budget.
+            max_retries=0,
         )
 
     def test_load_missing_key_raises(self):

@@ -22,10 +22,12 @@ from typing import TYPE_CHECKING, Any
 
 from effgen.models._adapter_utils import (
     annotate_reasoning_only,
+    apply_tool_request,
     estimate_tokens,
     extract_reasoning_text,
     extract_reasoning_tokens,
     normalize_finish_reason,
+    normalize_tools_call_args,
     not_loaded_error,
     provider_runtime_error,
     reasoning_delta_text,
@@ -99,6 +101,43 @@ def _is_request_too_large(message: str, message_lower: str) -> bool:
     )
 
 
+def _parse_failed_generation_json_call(message: str) -> dict[str, Any] | None:
+    """Read a ``{"name": ..., "arguments": {...}}`` call out of an error body.
+
+    The gpt-oss families emit their call as a bare JSON object rather than in
+    the ``<function=…>`` wrapper, which is the shape Groq quotes back in
+    ``failed_generation`` when it refuses the completion. Without this the whole
+    turn fails on a call the model did make and the text of it is right there in
+    the error.
+    """
+    from effgen.core.structured_output import _extract_balanced
+
+    search_from = 0
+    while True:
+        start = message.find("{", search_from)
+        if start == -1:
+            return None
+        blob = _extract_balanced(message[start:])
+        if blob is not None:
+            try:
+                data = json.loads(blob)
+            except (json.JSONDecodeError, TypeError):
+                data = None
+            if isinstance(data, dict):
+                name = data.get("name") or data.get("function")
+                arguments = data.get("arguments")
+                if arguments is None:
+                    arguments = data.get("parameters")
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        arguments = {"__raw_input__": arguments}
+                if isinstance(name, str) and name and isinstance(arguments, dict):
+                    return tool_call_entry(name, arguments)
+        search_from = start + 1
+
+
 def _parse_failed_generation_tool_call(message: str) -> dict[str, Any] | None:
     """Extract a tool call from Groq's ``tool_use_failed`` failed_generation text.
 
@@ -117,7 +156,7 @@ def _parse_failed_generation_tool_call(message: str) -> dict[str, Any] | None:
         re.DOTALL,
     )
     if not match:
-        return None
+        return _parse_failed_generation_json_call(message)
 
     name = match.group(1)
     raw_args = match.group(2).strip()
@@ -171,7 +210,9 @@ class GroqAdapter(BaseModel):
             Defaults to ``"llama-3.1-8b-instant"``.
         api_key: Groq API key. If omitted, reads ``GROQ_API_KEY``
             from the environment.
-        max_retries: Maximum number of SDK retry attempts.
+        max_retries: Total attempts this adapter makes for one call. The
+            provider SDK's own retry is switched off, so this is the whole
+            budget rather than a multiplier on it.
         timeout: Per-request timeout in seconds.
         enable_rate_limiting: Wire built-in
             :class:`~effgen.models._rate_limit.RateLimitCoordinator`.
@@ -201,7 +242,7 @@ class GroqAdapter(BaseModel):
         self,
         model_name: str = GROQ_DEFAULT_MODEL,
         api_key: str | None = None,
-        max_retries: int = 3,
+        max_retries: int = 6,
         timeout: int = 60,
         enable_rate_limiting: bool = True,
         enable_cost_tracking: bool = True,
@@ -287,7 +328,13 @@ class GroqAdapter(BaseModel):
         self._client = Groq(
             api_key=self._api_key or os.getenv("GROQ_API_KEY"),
             timeout=self.timeout,
-            max_retries=self.max_retries,
+            # The SDK's own retry is switched off: the loop in ``_do_generate``
+            # runs its own backoff and honours the delay Groq states, so a
+            # second retry layer underneath does not share that budget — it
+            # multiplies it, turning one client request into a dozen upstream
+            # requests on a rate limit. Matches CerebrasAdapter and the Gemini
+            # SDK's ``attempts=1``.
+            max_retries=0,
         )
         self._is_loaded = True
 
@@ -538,19 +585,14 @@ class GroqAdapter(BaseModel):
             request_params["reasoning_format"] = _REASONING_FORMAT
 
         info = GROQ_MODELS.get(self.model_name, {})
-        if tools and info.get("supports_native_tools", False):
-            openai_tools = []
-            for t in tools:
-                if isinstance(t, dict):
-                    openai_tools.append(t if "type" in t else {"type": "function", "function": t})
-                else:
-                    openai_tools.append({"type": "function", "function": t.metadata.to_json_schema()})
-            request_params["tools"] = openai_tools
-            request_params["tool_choice"] = "auto"
+        apply_tool_request(request_params, tools, info)
 
         request_params.update(kwargs)
 
-        _MAX_RETRIES = 6
+        # The whole retry budget for this call: the SDK's own retry is off, so
+        # the caller's ``max_retries`` is the number of upstream requests one
+        # client request can become, not a multiplier on it.
+        _MAX_RETRIES = max(1, int(self.max_retries))
         _last_exc: Exception | None = None
         for _attempt in range(1, _MAX_RETRIES + 1):
             try:
@@ -622,7 +664,14 @@ class GroqAdapter(BaseModel):
                     continue
 
                 failed_tool_call = _parse_failed_generation_tool_call(msg)
-                if tools and "tool_use_failed" in msg_lower and failed_tool_call is not None:
+                # Not gated on ``tools``: the ReAct path describes its tools in
+                # the prompt and sends no ``tools`` array, so Groq applies
+                # ``tool_choice: "none"`` and rejects the whole completion when
+                # a gpt-oss model calls a tool anyway. That is exactly the turn
+                # this recovery exists for, and it was the one turn the guard
+                # kept it from reaching. A parseable failed_generation is a
+                # usable tool call whether or not the request advertised tools.
+                if "tool_use_failed" in msg_lower and failed_tool_call is not None:
                     # Recovered, not actionable — the call still succeeds via
                     # failed_generation. INFO (not WARNING) so a successful
                     # turn emits no WARNING line by default; --verbose shows it.
@@ -664,6 +713,20 @@ class GroqAdapter(BaseModel):
                     )
 
                 logger.error("Groq API call failed: %s", exc)
+                if "tool_use_failed" in msg_lower:
+                    # The recovery above could not read the call. Say what the
+                    # model did and which mode answers it, rather than leaving
+                    # a bare "invalid_request" that names neither.
+                    raise provider_runtime_error(
+                        "groq", self.model_name, "generate", exc,
+                        message=(
+                            f"Groq generation failed: {self.model_name} called a tool "
+                            "in a request that advertised none, and the call it wrote "
+                            "could not be read back. This model calls tools through the "
+                            "API rather than from a prompt description, so run it with "
+                            'tool_calling_mode="auto" (or "native") instead of "react"'
+                        ),
+                    ) from exc
                 raise provider_runtime_error("groq", self.model_name, "generate", exc, message="Groq generation failed") from exc
         else:
             assert _last_exc is not None
@@ -755,22 +818,27 @@ class GroqAdapter(BaseModel):
         self,
         prompt: str,
         tools: list[dict[str, Any]],
-        messages: list[dict[str, Any]] | None = None,
         config: GenerationConfig | None = None,
+        messages: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate with native tool calling (OpenAI function-calling format).
 
+        ``config`` is the third parameter on every adapter. It was ``messages``
+        here until 1.0.0, so a positional conversation is still read correctly:
+        the two are told apart by type, never by position.
+
         Args:
             prompt: User prompt text (ignored when *messages* is provided).
             tools: List of OpenAI-format tool dicts or effGen BaseTool objects.
-            messages: Optional full conversation history (overrides *prompt*).
             config: Optional generation config.
+            messages: Optional full conversation history (overrides *prompt*).
             **kwargs: Extra parameters forwarded to the provider SDK.
 
         Returns:
             GenerationResult whose ``metadata["tool_calls"]`` contains parsed calls.
         """
+        config, messages = normalize_tools_call_args(config, messages)
         if not self._is_loaded or self._client is None:
             raise not_loaded_error("groq", self.model_name, "generate_with_tools")
         if config is None:
@@ -841,7 +909,15 @@ class GroqAdapter(BaseModel):
         if self._is_reasoning_model:
             request_params["reasoning_format"] = _REASONING_FORMAT
 
+        # The same shaping the non-streaming path applies: the catalog gate and
+        # ``tool_choice`` are one decision, so a streamed turn sends the same
+        # request a non-streamed one would. A caller passing ``tools=`` as a raw
+        # keyword used to reach the provider ungated and without ``tool_choice``.
+        _stream_tools = kwargs.pop("tools", None)
         request_params.update(kwargs)
+        apply_tool_request(
+            request_params, _stream_tools, GROQ_MODELS.get(self.model_name, {})
+        )
 
         clear_stream_tool_calls(self)
         self._last_stream_finish_reason: str | None = None

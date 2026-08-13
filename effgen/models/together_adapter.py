@@ -22,10 +22,12 @@ from typing import TYPE_CHECKING, Any
 from effgen.models._adapter_utils import (
     DIRECT_CALL_REASONING_MAX_TOKENS,
     annotate_reasoning_only,
+    apply_tool_request,
     estimate_tokens,
     extract_reasoning_text,
     extract_reasoning_tokens,
     normalize_finish_reason,
+    normalize_tools_call_args,
     not_loaded_error,
     provider_runtime_error,
     reasoning_delta_text,
@@ -99,7 +101,9 @@ class TogetherAdapter(BaseModel):
             Defaults to ``"Qwen/Qwen3.5-9B"``.
         api_key: Together API key. If omitted, reads ``TOGETHER_API_KEY``
             from the environment.
-        max_retries: Maximum number of SDK retry attempts.
+        max_retries: Total attempts this adapter makes for one call. The
+            provider SDK's own retry is switched off, so this is the whole
+            budget rather than a multiplier on it.
         timeout: Per-request timeout in seconds.
         enable_rate_limiting: Wire built-in
             :class:`~effgen.models._rate_limit.RateLimitCoordinator`.
@@ -216,7 +220,11 @@ class TogetherAdapter(BaseModel):
         self._client = Together(
             api_key=self._api_key or os.getenv("TOGETHER_API_KEY"),
             timeout=self.timeout,
-            max_retries=self.max_retries,
+            # Switched off for the same reason as Groq and Cerebras: the loop
+            # in ``_do_generate`` already backs off and honours the stated
+            # delay, and a second layer underneath multiplies the attempts
+            # rather than sharing the budget.
+            max_retries=0,
         )
         self._is_loaded = True
 
@@ -424,15 +432,7 @@ class TogetherAdapter(BaseModel):
             request_params["frequency_penalty"] = config.frequency_penalty
 
         info = TOGETHER_MODELS.get(self.model_name, {})
-        if tools and info.get("supports_native_tools", False):
-            openai_tools = []
-            for t in tools:
-                if isinstance(t, dict):
-                    openai_tools.append(t if "type" in t else {"type": "function", "function": t})
-                else:
-                    openai_tools.append({"type": "function", "function": t.metadata.to_json_schema()})
-            request_params["tools"] = openai_tools
-            request_params["tool_choice"] = "auto"
+        apply_tool_request(request_params, tools, info)
 
         request_params.update(kwargs)
 
@@ -598,22 +598,27 @@ class TogetherAdapter(BaseModel):
         self,
         prompt: str,
         tools: list[dict[str, Any]],
-        messages: list[dict[str, Any]] | None = None,
         config: GenerationConfig | None = None,
+        messages: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate with native tool calling (OpenAI function-calling format).
 
+        ``config`` is the third parameter on every adapter. It was ``messages``
+        here until 1.0.0, so a positional conversation is still read correctly:
+        the two are told apart by type, never by position.
+
         Args:
             prompt: User prompt text (ignored when *messages* is provided).
             tools: List of OpenAI-format tool dicts or effGen BaseTool objects.
-            messages: Optional full conversation history (overrides *prompt*).
             config: Optional generation config.
+            messages: Optional full conversation history (overrides *prompt*).
             **kwargs: Extra parameters forwarded to the provider SDK.
 
         Returns:
             GenerationResult whose ``metadata["tool_calls"]`` contains parsed calls.
         """
+        config, messages = normalize_tools_call_args(config, messages)
         if not self._is_loaded or self._client is None:
             raise not_loaded_error("together", self.model_name, "generate_with_tools")
         if config is None:
@@ -688,7 +693,15 @@ class TogetherAdapter(BaseModel):
         if config.frequency_penalty:
             request_params["frequency_penalty"] = config.frequency_penalty
 
+        # The same shaping the non-streaming path applies: the catalog gate and
+        # ``tool_choice`` are one decision, so a streamed turn sends the same
+        # request a non-streamed one would. A caller passing ``tools=`` as a raw
+        # keyword used to reach the provider ungated and without ``tool_choice``.
+        _stream_tools = kwargs.pop("tools", None)
         request_params.update(kwargs)
+        apply_tool_request(
+            request_params, _stream_tools, TOGETHER_MODELS.get(self.model_name, {})
+        )
 
         clear_stream_tool_calls(self)
         self._last_stream_finish_reason: str | None = None

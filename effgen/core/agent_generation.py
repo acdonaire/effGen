@@ -19,6 +19,7 @@ from ..models._adapter_utils import (
     apply_stop_sequences,
     default_max_output_tokens,
     needs_reasoning_headroom,
+    normalize_stop_sequences,
 )
 from ..models.base import BaseModel, GenerationConfig
 from ..models.errors import (
@@ -34,7 +35,13 @@ from ..models.errors import (
 )
 from ..observability import get_logger as _get_obs_logger
 from ..observability.spans import ModelAttrs
-from ..observability.tracing import mark_span_error, start_model_call
+from ..observability.tracing import (
+    mark_span_error,
+    start_model_call,
+)
+from ..observability.tracing import (
+    stamp_call_cost as _stamp_call_cost,
+)
 from ..utils.structured_logging import (
     get_structured_logger,
 )
@@ -371,7 +378,14 @@ class AgentGenerationMixin:
                 else default_max_output_tokens(current_model)
             )
 
-            requested_stop_sequences = kwargs.get('stop_sequences', default_stop_sequences)
+            # A bare string is the shape the OpenAI API accepts, so a caller
+            # writes ``run(task, stop_sequences="END")``. Normalized here as
+            # well as in GenerationConfig, because the local-trim list below is
+            # built from this value directly and ``list("END")`` is three
+            # single-character sequences.
+            requested_stop_sequences = normalize_stop_sequences(
+                kwargs.get('stop_sequences', default_stop_sequences)
+            )
             # A model that streams its reasoning chain and its answer through one
             # token stream matches stop sequences against the chain as well, so
             # sending them can end generation before the first visible token.
@@ -514,6 +528,24 @@ class AgentGenerationMixin:
                         )
                         nonretryable_logged = True
                         break  # stop retrying this model; outer loop may failover
+                    if err_class.rate_limited:
+                        # A rate limit is the one failure where retrying harder
+                        # makes it worse: the quota is already spent, and every
+                        # extra request spends it further. It has also already
+                        # been through the layer that knows the delay the
+                        # provider stated — the adapter's own backoff, or the
+                        # SDK's where the adapter has none. Retrying here as
+                        # well multiplies the attempts instead of sharing the
+                        # budget, and it is what turned one client request into
+                        # twelve upstream requests and a twenty-second wait at a
+                        # stated two-second delay. The caller gets the typed
+                        # rate-limit error with the provider's own retry-after.
+                        logger.warning(
+                            "Rate limited on '%s'; not retrying at the agent layer "
+                            "(the provider's stated delay was already honoured): %s",
+                            getattr(current_model, "model_name", "?"), e,
+                        )
+                        break
                     if attempt < max_retries - 1:
                         logger.warning(
                             f"Generation error on attempt {attempt + 1}/{max_retries} "
@@ -1073,6 +1105,7 @@ class AgentGenerationMixin:
                         ModelAttrs.INPUT_TOKENS, int(_meta.get("prompt_tokens", 0) or 0)
                     )
                     _mspan.set_attribute(ModelAttrs.OUTPUT_TOKENS, int(tokens_used or 0))
+                    _stamp_call_cost(_mspan, _meta)
                 except Exception:  # noqa: BLE001 - telemetry is best-effort
                     logger.debug("Failed to set model span token attributes", exc_info=True)
 

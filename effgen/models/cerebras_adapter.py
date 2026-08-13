@@ -90,7 +90,9 @@ class CerebrasAdapter(BaseModel):
             Defaults to ``"gpt-oss-120b"``.
         api_key: Cerebras API key. If omitted, reads ``CEREBRAS_API_KEY``
             from the environment.
-        max_retries: Maximum number of SDK retry attempts.
+        max_retries: Total attempts this adapter makes for one call. The
+            provider SDK's own retry is switched off, so this is the whole
+            budget rather than a multiplier on it.
         timeout: Per-request timeout in seconds.
         enable_rate_limiting: If ``True`` (default), acquire / record calls
             via the built-in :class:`~effgen.models._rate_limit.RateLimitCoordinator`.
@@ -145,6 +147,10 @@ class CerebrasAdapter(BaseModel):
             model_type=_CerebrasModelType(),  # type: ignore[arg-type]
             context_length=info.get("context", 128_000),
         )
+        # Both Cerebras models bill reasoning tokens before any visible text.
+        # The flag earns them the larger default budget from
+        # default_max_output_tokens(), so a first call is not spent thinking.
+        self._is_reasoning_model = bool(info.get("reasoning", False))
         self._api_key = api_key
         self.max_retries = max_retries
         self.timeout = timeout
