@@ -103,6 +103,26 @@ REVIEW_TASK = (
 
 #: What a read-only run reports when the loop had no answer to hand back but the
 #: last thing it read. Returning that would present the file as the review.
+#: What the run reports when every action it took failed and nothing was
+#: written. The model's own paragraph travels under ``partial_output``.
+_ALL_ACTIONS_FAILED = (
+    "The turn changed nothing: every action it took returned an error. What the "
+    "model wrote about it is reported as partial progress, not as a result. "
+    "Read the action log for the failures, then re-run with the cause fixed."
+)
+
+
+def _every_action_failed(actions: list[Any]) -> bool:
+    """True when the turn ran at least one action and none of them succeeded.
+
+    Only *allowed* actions count: an action the gate withheld, declined or
+    refused never ran, so a turn that proposed edits under ``plan`` mode has
+    nothing to have failed and is not this case.
+    """
+    ran = [a for a in actions if a.decision == "allowed"]
+    return bool(ran) and all(a.outcome == "error" for a in ran)
+
+
 REVIEW_NO_ANSWER = (
     "The model did not produce a review. The run ended with the last thing it "
     "read rather than with an answer, and that is not a review. Re-run it, "
@@ -725,6 +745,31 @@ class CodeEngine:
                 "retryable": True,
             }
 
+        actions = list(self.gate.actions)
+        if success and _every_action_failed(actions) and not self.gate.files_written:
+            # Every action the turn decided on came back an error and nothing
+            # was written, yet the model wrote a paragraph about it. The
+            # paragraph is truthful and there is nothing in the text to
+            # distinguish it from an answer — but a turn whose every action
+            # failed and which changed nothing did not do what it was asked, so
+            # it is reported as the partial outcome the iteration cap uses
+            # rather than as a completed success.
+            failed = actions[-1]
+            success = False
+            partial = True
+            partial_output = answer
+            reason = "all_actions_failed"
+            answer = _ALL_ACTIONS_FAILED
+            error = error or {
+                "type": "NoActionSucceeded",
+                "category": "all_actions_failed",
+                "message": _ALL_ACTIONS_FAILED,
+                "failed_actions": len(actions),
+                "last_action": failed.summary,
+                "last_error": failed.detail or failed.reason,
+                "retryable": True,
+            }
+
         return CodeRunResult(
             task=task,
             answer=answer,
@@ -745,7 +790,7 @@ class CodeEngine:
             duration_s=float(getattr(response, "execution_time", 0.0) or 0.0),
             partial=partial,
             partial_output=partial_output,
-            actions=list(self.gate.actions),
+            actions=actions,
             files_written=self.gate.files_written,
             diffs=list(self.gate.edits),
             error=error,

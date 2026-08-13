@@ -296,7 +296,7 @@ every mode, including when the model tries to reach them through the shell.
 | `/undo [n]` | Reverse the last applied edit(s) |
 | `/run <cmd>` `/test [args]` | Run a command or the test suite in the workspace |
 | `/context` `/add <file>` `/drop <file>` | Manage the files the agent sees, with a size estimate |
-| `/clear` `/reset` `/compact` | Reset live context, clear memory, or summarize a long session |
+| `/clear` `/reset` `/compact` | Reset live context, clear memory, or summarize a long session. `/compact` summarizes only — it runs with the tools detached, so it cannot touch the workspace |
 | `/mode [ask\|auto-edit\|yes\|plan]` | Show or change the permission mode |
 | `/model <id>` | Hot-swap the model, carrying the conversation |
 | `/git [...]` | Repository status/diff/log, staged diff, confirmed commit |

@@ -445,3 +445,116 @@ def test_piped_stdin_does_not_launch_the_repl(monkeypatch, tmp_path):
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     code_cmd.run_code_command(cli, args)
     assert launched["repl"] is False
+
+
+# ---------------------------------------------------------------------------
+# /git is framed like every other read-only view
+# ---------------------------------------------------------------------------
+#
+# Every other read-only view opens with a header — "Files in context",
+# "Session cost", "Last turn — reasoning trace", "Coding tools". /git printed
+# the bare porcelain line inside a repository, and git's own lower-case stderr
+# outside one, with no hint that 'staged' and 'commit' exist.
+
+
+class TestGitViewIsFramed:
+    def test_a_repository_view_has_a_header_and_names_the_other_operations(
+        self, tmp_path, monkeypatch
+    ):
+        import subprocess
+
+        repl, ws = _make_repl(tmp_path)
+        subprocess.run(["git", "init", "-q"], cwd=ws, check=True)
+        out, err = _capture(repl, repl._cmd_git, "status")
+        text = " ".join((out + err).split())
+        assert "Git — status" in text
+        assert "staged" in text and "commit" in text
+
+    def test_outside_a_repository_the_session_speaks_not_git(self, tmp_path):
+        repl, ws = _make_repl(tmp_path)
+        (ws / "app.py").write_text("x = 1\n")
+        out, err = _capture(repl, repl._cmd_git, "status")
+        # Wrapped by the console, so compare on normalized whitespace.
+        text = " ".join((out + err).split())
+        # git's own sentence is replaced by one naming the workspace and a way out.
+        assert "fatal: not a git repository" not in text
+        assert "is not a git repository" in text
+        assert "git init" in text
+
+    def test_a_genuine_git_failure_keeps_gits_own_text(self):
+        """The friendlier wording is for the common case only.
+
+        When git itself is the problem its message is what the reader needs, so
+        the match is on the sentence rather than on an empty stderr — which is
+        what made the fallback unreachable.
+        """
+        from effgen.cli.code.repl_session import _is_not_a_repository
+
+        assert _is_not_a_repository(
+            "fatal: not a git repository (or any of the parent directories): .git"
+        )
+        assert not _is_not_a_repository("fatal: bad revision 'HEAD'")
+        assert not _is_not_a_repository("")
+
+
+# ---------------------------------------------------------------------------
+# /compact summarizes; it does not act
+# ---------------------------------------------------------------------------
+#
+# /compact is described as "Summarize the conversation so far". It handed its
+# prompt to the same agent in AgentMode.AUTO, which drives the whole tool loop,
+# so the model was free to call file_operations, code_executor, python_repl and
+# bash while it was supposed to be writing a summary — and on a real pty session
+# it did exactly that, writing app.py and leaving it empty. The permission gate
+# was not re-entered for the new turn either, so the writes travelled on
+# whatever mode the session was already in.
+
+
+class TestCompactCannotModifyTheWorkspace:
+    def test_the_summarization_turn_runs_with_no_tools(self, tmp_path):
+        repl, ws = _make_repl(tmp_path, answer="a summary")
+        agent = repl.engine._agent
+        assert agent.tools, "the session's agent normally holds the coding tools"
+
+        seen: list = []
+        original = agent.run
+
+        def record(prompt, **kwargs):
+            seen.append(dict(agent.tools))
+            return original(prompt, **kwargs)
+
+        agent.run = record
+        repl.agent.short_term_memory.add_user_message("write app.py")
+        repl.agent.short_term_memory.add_assistant_message("done")
+
+        _capture(repl, repl._cmd_compact, "")
+
+        assert seen, "the summarization turn never ran"
+        assert seen[0] == {}, "the summarization turn still had tools attached"
+
+    def test_the_tools_come_back_after_the_summary(self, tmp_path):
+        repl, ws = _make_repl(tmp_path, answer="a summary")
+        agent = repl.engine._agent
+        before = dict(agent.tools)
+        repl.agent.short_term_memory.add_user_message("write app.py")
+        repl.agent.short_term_memory.add_assistant_message("done")
+
+        _capture(repl, repl._cmd_compact, "")
+
+        assert dict(agent.tools) == before
+
+    def test_the_tools_come_back_even_when_the_turn_raises(self, tmp_path):
+        repl, ws = _make_repl(tmp_path)
+        agent = repl.engine._agent
+        before = dict(agent.tools)
+
+        def boom(prompt, **kwargs):
+            raise RuntimeError("provider is down")
+
+        agent.run = boom
+        repl.agent.short_term_memory.add_user_message("write app.py")
+        repl.agent.short_term_memory.add_assistant_message("done")
+
+        _capture(repl, repl._cmd_compact, "")
+
+        assert dict(agent.tools) == before

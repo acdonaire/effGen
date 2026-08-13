@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -158,6 +160,7 @@ class CodeSessionMixin:
                 "edits after confirming."
             )
             return
+        self.cli.print_header(f"Git — {op}")
         try:
             result = asyncio.run(GitTool().execute(operation=op, cwd=str(self.workspace)))
         except Exception as e:  # noqa: BLE001
@@ -167,15 +170,32 @@ class CodeSessionMixin:
         if isinstance(output, dict):
             body = str(output.get("stdout") or "")
             if int(output.get("returncode", 0) or 0) != 0 and not body.strip():
-                self._status(
-                    "warning",
-                    (output.get("stderr") or "").strip()
-                    or "Not a git repository (or git is unavailable)."
-                )
+                stderr = (output.get("stderr") or "").strip()
+                # Match the message, not an empty stderr: real git always writes
+                # a sentence here, so the friendlier wording below was
+                # unreachable. The common case gets the session's own voice; a
+                # genuine git failure keeps git's text, which is what a reader
+                # needs when git itself is the problem.
+                if _is_not_a_repository(stderr):
+                    self._status(
+                        "warning",
+                        f"{self.workspace} is not a git repository, so there is "
+                        "nothing to show. Run 'git init' there, or open the "
+                        "session in a repository."
+                    )
+                else:
+                    self._status(
+                        "warning", stderr or "git is unavailable."
+                    )
                 return
         else:
             body = str(output or "")
         self._say(body.rstrip() or "(no output)")
+        self._say(
+            "  'staged' pulls the staged diff into the conversation; "
+            "'commit' records this session's edits after confirming.",
+            style="effgen.muted",
+        )
 
     def _git_staged(self) -> None:
         """Show the staged patch and add it to the conversation as context."""
@@ -258,7 +278,15 @@ class CodeSessionMixin:
         self._status("success", note)
 
     def _cmd_compact(self, arg: str) -> None:
-        """Summarize the conversation so far and replace memory with the summary."""
+        """Summarize the conversation so far and replace memory with the summary.
+
+        The summarization turn runs with the tools detached. ``/compact`` is
+        described to the user as "summarize", and with the tool loop live it
+        could — and on a real session did — execute code and write a file while
+        it was supposed to be writing a summary, on whatever permission mode the
+        session happened to be in. Nothing in the summary needs a tool: the whole
+        transcript is in the prompt.
+        """
         history = self._dump_history()
         if len(history) < 2:
             self._say("Not enough conversation to compact yet.")
@@ -271,10 +299,8 @@ class CodeSessionMixin:
             f"left to do.{extra}\n\n{transcript}"
         )
         try:
-            with workspace_env(self.workspace):
-                from effgen.core.agent import AgentMode
-
-                response = self.agent.run(prompt, mode=AgentMode.AUTO)
+            with workspace_env(self.workspace), _tools_detached(self.agent):
+                response = self.agent.run(prompt)
             summary = response.output or ""
         except Exception as e:  # noqa: BLE001
             self._status("error", f"Could not compact: {e}")
@@ -659,3 +685,40 @@ class CodeSessionMixin:
             _handle_doctor_command(_DoctorArgs())
         except Exception as e:  # noqa: BLE001
             self._status("error", f"doctor failed: {e}")
+
+
+def _is_not_a_repository(stderr: str) -> bool:
+    """Whether git's own message says the directory is not a repository.
+
+    Git phrases it as ``fatal: not a git repository (or any of the parent
+    directories): .git``. Matched on the sentence rather than on an empty
+    stderr, which never happens and which is why the session's own wording for
+    this case used to be unreachable.
+    """
+    lowered = (stderr or "").lower()
+    return "not a git repository" in lowered or "not a working tree" in lowered
+
+
+@contextmanager
+def _tools_detached(agent: Any) -> "Iterator[None]":
+    """Run a turn on *agent* with no tools attached, then put them back.
+
+    Used by ``/compact``: a command described as "summarize" must not be able to
+    modify the workspace while it summarizes. With no tools the agent takes its
+    direct-inference path, so there is no loop to dispatch a call from — the
+    guarantee is structural rather than a permission check that a later turn
+    boundary could reopen.
+
+    Args:
+        agent: The agent whose tools are detached for the duration.
+
+    Yields:
+        None, with the agent holding no tools.
+    """
+    saved = getattr(agent, "tools", None)
+    try:
+        agent.tools = {}
+        yield
+    finally:
+        if saved is not None:
+            agent.tools = saved

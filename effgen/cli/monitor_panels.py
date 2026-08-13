@@ -123,6 +123,7 @@ def _render_traffic_table(panel: dict[str, Any], console: Any) -> None:
 
 def _render_by_model_table(panel: dict[str, Any], console: Any) -> None:
     if not panel.get("available"):
+        _unavailable(console, "Per-model", panel)
         return
     rows = [
         [

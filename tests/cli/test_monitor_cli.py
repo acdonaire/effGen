@@ -224,6 +224,20 @@ def test_piped_output_is_a_static_snapshot_with_no_cursor_control(capsys):
     assert "Traffic — unavailable" in out
 
 
+def test_every_documented_panel_appears_when_the_server_is_unreachable(capsys):
+    """A panel that has no data still says so; it never simply disappears.
+
+    A reader scanning ``--once`` output cannot distinguish an omitted panel from
+    one that does not exist, so each of the five keeps its title and states the
+    reason it is empty.
+    """
+    assert monitor.run_monitor_command(_args(url="http://127.0.0.1:1")) == 0
+    out = capsys.readouterr().out
+    for title in ("Activity", "Traffic", "Per-model", "Spend", "GPU"):
+        assert title in out, f"{title} panel is missing from the static snapshot"
+    assert "Per-model — unavailable" in out
+
+
 def test_no_color_forces_the_static_path(monkeypatch, capsys):
     monkeypatch.setenv("NO_COLOR", "1")
     assert monitor.run_monitor_command(_args(url="http://127.0.0.1:1")) == 0
