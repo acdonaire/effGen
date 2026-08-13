@@ -111,6 +111,41 @@ can never leave a truncated session that fails to load later.
 To cap unbounded growth, schedule `effgen sessions cleanup --days N` (e.g. from
 cron) or call `SessionManager(...).cleanup(older_than_days=N)`.
 
+### One agent, many conversations
+
+`session_id=` on the constructor binds a conversation to the agent for its
+whole life. A server handling many users wants the opposite: one agent, and the
+conversation named per call. Pass `session=` to `run()`:
+
+```python
+from effgen import Agent, AgentConfig
+
+agent = Agent(AgentConfig(model="gpt-5-nano", provider="openai"))
+
+agent.run("My dog is named Pixel.", session="user-123")
+agent.run("My cat is named Mote.",  session="user-456")
+
+print(agent.run("What is my pet's name?", session="user-123").output)  # -> Pixel
+print(agent.run("What is my pet's name?", session="user-456").output)  # -> Mote
+```
+
+The run builds its prompt from that conversation's history and appends the turn
+to it. The two conversations never see each other, and the agent's own memory is
+untouched and restored when the call ends — including when the run fails.
+
+A `Session` object works as well as an id, which is what you want when the
+conversation is already in hand:
+
+```python
+from effgen.core.session import Session
+
+session = Session.load_or_create("user-123")
+response = agent.run("and how old is he?", session=session)
+```
+
+Without `session=`, `run()` behaves exactly as before and uses the agent's own
+memory.
+
 ## Checkpoints & resume
 
 A checkpoint snapshots an in-progress run (scratchpad, iteration, memory, the
