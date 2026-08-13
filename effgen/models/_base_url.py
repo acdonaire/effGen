@@ -34,17 +34,36 @@ def resolve_base_url(explicit: str | None = None) -> str | None:
     Returns:
         The URL with any trailing slash removed, or None when neither an
         argument nor any of :data:`BASE_URL_ENV_VARS` supplies one.
+
+    Raises:
+        ValueError: The URL carries no ``http://`` or ``https://`` scheme. The
+            message names where the value came from, because a URL taken from
+            the environment is the case where the caller is least likely to
+            know it was applied at all.
     """
     candidate = explicit
+    source = "the base_url argument"
     if not candidate:
         for var in BASE_URL_ENV_VARS:
             value = os.getenv(var)
             if value and value.strip():
                 candidate = value
+                source = f"the {var} environment variable"
                 break
     if not candidate or not candidate.strip():
         return None
-    return candidate.strip().rstrip("/")
+    url = candidate.strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        # Without this the HTTP client raises "Connection error" several
+        # retries later, and the remediation it carries points at the
+        # provider's status page — the wrong place entirely when the address
+        # came from this machine's own environment.
+        raise ValueError(
+            f"The endpoint URL from {source} is missing an http:// or "
+            f"https:// scheme: {url!r}. Give the full URL, for example "
+            f"http://{url}."
+        )
+    return url
 
 
 def describe_endpoint(base_url: str | None) -> str:

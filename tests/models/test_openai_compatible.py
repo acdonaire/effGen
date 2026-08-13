@@ -155,6 +155,26 @@ class TestEndpointResolution:
     def test_a_trailing_slash_is_removed(self):
         assert resolve_base_url("http://host:8000/v1/") == "http://host:8000/v1"
 
+    def test_a_url_without_a_scheme_is_refused(self):
+        with pytest.raises(ValueError, match="http://"):
+            resolve_base_url("127.0.0.1:8100/v1")
+
+    def test_the_refusal_names_the_variable_the_url_came_from(self, monkeypatch):
+        """A URL applied from the environment is the one the caller never chose.
+
+        Left to the HTTP client this surfaces as "Connection error" several
+        retries later, carrying advice to check the provider's status page —
+        so the message has to say which variable redirected the call.
+        """
+        for var in BASE_URL_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("OPENAI_API_BASE", "localhost:11434/v1")
+        with pytest.raises(ValueError, match="OPENAI_API_BASE"):
+            resolve_base_url()
+
+    def test_an_https_url_is_accepted(self):
+        assert resolve_base_url("https://gateway.example/v1") == "https://gateway.example/v1"
+
 
 class TestAdapterConstruction:
     """What the adapter assumes when the catalog cannot answer."""
@@ -267,6 +287,20 @@ class TestGeneration:
         )
         with pytest.raises((RuntimeError, OSError, ConnectionError)):
             model.generate("hello")
+
+    def test_an_unreachable_endpoint_is_named_in_the_error(self):
+        """The stock advice is to check the provider's status page.
+
+        That is the wrong page when the request went to a server the caller
+        runs, so the address it went to has to appear in the message.
+        """
+        dead = "http://127.0.0.1:1/v1"
+        model = load_model(
+            SERVED_MODEL, base_url=dead, max_retries=0, timeout=5,
+        )
+        with pytest.raises(RuntimeError) as excinfo:
+            model.generate("hello")
+        assert dead in str(excinfo.value)
 
 
 class TestAgentIntegration:

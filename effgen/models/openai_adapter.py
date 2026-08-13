@@ -426,7 +426,7 @@ class OpenAIAdapter(FunctionCallingModel):
             return response.text or ""
         except Exception as exc:
             logger.error("Whisper transcription failed: %s", exc)
-            raise provider_runtime_error("openai", "whisper-1", "transcribe", exc, message="OpenAI audio transcription failed") from exc
+            raise provider_runtime_error("openai", "whisper-1", "transcribe", exc, message="OpenAI audio transcription failed", endpoint=self.base_url) from exc
 
     def transcribe_audio(
         self,
@@ -481,7 +481,7 @@ class OpenAIAdapter(FunctionCallingModel):
                 transcripts.append(resp.text or "")
             except Exception as exc:
                 logger.error("Whisper transcription failed: %s", exc)
-                raise provider_runtime_error("openai", model, "transcribe", exc, message="OpenAI audio transcription failed") from exc
+                raise provider_runtime_error("openai", model, "transcribe", exc, message="OpenAI audio transcription failed", endpoint=self.base_url) from exc
 
         return " ".join(transcripts).strip()
 
@@ -721,7 +721,7 @@ class OpenAIAdapter(FunctionCallingModel):
                 raise ModelAuthError("openai", self.model_name, msg) from e
             if error_has_status(e, 404) or "model_not_found" in msg.lower():
                 raise model_not_found_error("openai", self.model_name, msg) from e
-            raise provider_runtime_error("openai", self.model_name, "generate", e, message="OpenAI generation failed") from e
+            raise provider_runtime_error("openai", self.model_name, "generate", e, message="OpenAI generation failed", endpoint=self.base_url) from e
 
         choice = response.choices[0]
         generated_text = choice.message.content or ""
@@ -855,7 +855,7 @@ class OpenAIAdapter(FunctionCallingModel):
                         yield chunk.choices[0].delta.content
         except Exception as e:
             logger.error(f"OpenAI streaming failed: {e}")
-            raise provider_runtime_error("openai", self.model_name, "stream", e, message="OpenAI streaming failed") from e
+            raise provider_runtime_error("openai", self.model_name, "stream", e, message="OpenAI streaming failed", endpoint=self.base_url) from e
 
         self._last_stream_finish_reason = _finish_reason
         _streamed_calls = stream_tool_call_entries(_tool_calls_buf)
@@ -944,7 +944,7 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI structured call failed: {e}")
-            raise provider_runtime_error("openai", self.model_name, "structured", e, message="OpenAI structured generation failed") from e
+            raise provider_runtime_error("openai", self.model_name, "structured", e, message="OpenAI structured generation failed", endpoint=self.base_url) from e
 
         choice = response.choices[0]
         message = choice.message
@@ -1028,7 +1028,7 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI API call with system prompt failed: {e}")
-            raise provider_runtime_error("openai", self.model_name, "generate", e, message="OpenAI generation with system prompt failed") from e
+            raise provider_runtime_error("openai", self.model_name, "generate", e, message="OpenAI generation with system prompt failed", endpoint=self.base_url) from e
 
         choice = response.choices[0]
         generated_text = choice.message.content or ""
@@ -1117,7 +1117,7 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI API call with tools failed: {e}")
-            raise provider_runtime_error("openai", self.model_name, "generate_with_tools", e, message="OpenAI generation with tools failed") from e
+            raise provider_runtime_error("openai", self.model_name, "generate_with_tools", e, message="OpenAI generation with tools failed", endpoint=self.base_url) from e
 
         choice = response.choices[0]
         message = choice.message
@@ -1254,7 +1254,7 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.responses.create(**params)
         except Exception as e:
             logger.error(f"OpenAI Responses API call failed: {e}")
-            raise provider_runtime_error("openai", self.model_name, "generate_with_tools", e, message="OpenAI native tool generation failed") from e
+            raise provider_runtime_error("openai", self.model_name, "generate_with_tools", e, message="OpenAI native tool generation failed", endpoint=self.base_url) from e
 
         # Extract the output text from the response
         output_text = ""
@@ -1459,7 +1459,7 @@ class OpenAIAdapter(FunctionCallingModel):
             response = self.client.chat.completions.create(**request_params)
         except Exception as e:
             logger.error(f"OpenAI chat failed: {e}")
-            raise provider_runtime_error("openai", self.model_name, "chat", e, message="OpenAI chat failed") from e
+            raise provider_runtime_error("openai", self.model_name, "chat", e, message="OpenAI chat failed", endpoint=self.base_url) from e
 
         choice = response.choices[0]
         message = choice.message

@@ -819,6 +819,7 @@ def provider_runtime_error(
     exc: Exception,
     *,
     message: str | None = None,
+    endpoint: str | None = None,
 ) -> RuntimeError:
     """Build a consistent, **redacted** :class:`RuntimeError` for a provider failure.
 
@@ -837,6 +838,10 @@ def provider_runtime_error(
         request_type: What was attempted, such as ``generate`` or ``stream``.
         exc: The SDK exception to classify and redact.
         message: A message to use instead of the redacted cause.
+        endpoint: The URL the call was sent to, when that is not the
+            provider's own. Named in the remediation, because the stock advice
+            to check the provider's status page is the wrong advice when the
+            request went to a server the caller runs.
 
     Returns:
         The error to raise, carrying ``.error_context``.
@@ -882,6 +887,12 @@ def provider_runtime_error(
     device_hint = device_memory_hint(str(exc))
     if device_hint:
         remediation = remediation + device_hint
+
+    # The request went somewhere other than the provider's own API, so say
+    # where. Otherwise a self-hosted server that is down reads as an outage at
+    # the provider whose protocol it speaks.
+    if endpoint:
+        remediation = f"{remediation} The call was sent to {endpoint}."
 
     err = RuntimeError(
         f"{head} [{ctx['retry_status']}]: {cause}. {remediation}"
