@@ -17,7 +17,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_install_matrix_common.sh"
 
 print_header "vLLM CUDA 12.4"
-require_python_310
+require_python_311
 build_wheel
 create_venv
 # vLLM ships its own pinned torch+cuda wheels; install the extra first and let it

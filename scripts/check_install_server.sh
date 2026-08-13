@@ -14,7 +14,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_install_matrix_common.sh"
 
 print_header "server"
-require_python_310
+require_python_311
 build_wheel
 create_venv
 install_wheel "[server]"

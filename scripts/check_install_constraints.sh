@@ -23,7 +23,7 @@ CUDA_LINE="${CUDA_LINE:-cu124}"
 CONSTRAINTS="${CONSTRAINTS:-constraints-${CUDA_LINE}.txt}"
 
 print_header "torch-preservation constraints (${CUDA_LINE})"
-require_python_310
+require_python_311
 if ! command -v nvidia-smi >/dev/null 2>&1; then
     warn "nvidia-smi not found — CUDA assertions will be skipped, only version preservation is checked."
     HAVE_GPU=0

@@ -32,7 +32,7 @@ warn()   { printf "${C_YELLOW}[warn ]${C_NC} %s\n" "$*"; }
 fail()   { printf "${C_RED}[fail ]${C_NC} %s\n" "$*" >&2; }
 
 # Python interpreter used to BUILD the wheel and CREATE venvs. Override with
-# MATRIX_PYTHON=/path/to/python3.11. Must be >= 3.10.
+# MATRIX_PYTHON=/path/to/python3.11. Must be >= 3.11.
 MATRIX_PYTHON="${MATRIX_PYTHON:-python3}"
 
 # Where to keep the scratch env + built wheel. Defaults to a fresh mktemp dir
@@ -53,9 +53,9 @@ cleanup_matrix() {
 }
 trap cleanup_matrix EXIT
 
-require_python_310() {
-    if ! "${MATRIX_PYTHON}" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3,10) else 1)'; then
-        fail "${MATRIX_PYTHON} is < 3.10; set MATRIX_PYTHON to a 3.10+ interpreter."
+require_python_311() {
+    if ! "${MATRIX_PYTHON}" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3,11) else 1)'; then
+        fail "${MATRIX_PYTHON} is < 3.11; set MATRIX_PYTHON to a 3.11+ interpreter."
         exit 2
     fi
 }
@@ -70,7 +70,26 @@ build_wheel() {
     log "Building effGen wheel from ${REPO_ROOT} ..."
     mkdir -p "${WHEEL_DIR}"
     "${MATRIX_PYTHON}" -m pip install --quiet --upgrade build >/dev/null 2>&1 || true
-    ( cd "${REPO_ROOT}" && "${MATRIX_PYTHON}" -m build --wheel --outdir "${WHEEL_DIR}" ) \
+
+    # Build from a private copy of the tracked tree, never from the repository
+    # itself. `python -m build --wheel` runs the backend in-tree and writes an
+    # intermediate build/ directory next to the sources, so two of these checks
+    # running at once — cpu and server, say — race each other and one dies on a
+    # missing PKG-INFO that has nothing to do with whether the wheel is good.
+    # The copy takes tracked files AND new files git does not ignore, i.e. what
+    # the next commit will contain: plain `ls-files` omits an uncommitted
+    # module, and a package that imports it eagerly then half-loads.
+    local build_src="${MATRIX_WORKDIR}/src"
+    if git -C "${REPO_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
+        mkdir -p "${build_src}"
+        git -C "${REPO_ROOT}" ls-files --cached --others --exclude-standard -z \
+            | tar -c -C "${REPO_ROOT}" --null -T - -f - \
+            | tar -x -C "${build_src}" || { fail "could not copy the tree"; exit 1; }
+    else
+        build_src="${REPO_ROOT}"
+    fi
+
+    ( cd "${build_src}" && "${MATRIX_PYTHON}" -m build --wheel --outdir "${WHEEL_DIR}" ) \
         >"${MATRIX_WORKDIR}/build.log" 2>&1 || {
             fail "wheel build failed; see ${MATRIX_WORKDIR}/build.log"; tail -20 "${MATRIX_WORKDIR}/build.log"; exit 1; }
     EFFGEN_WHEEL="$(ls -1 "${WHEEL_DIR}"/effgen-*.whl | head -1)"

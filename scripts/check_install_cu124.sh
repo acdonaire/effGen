@@ -13,7 +13,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_install_matrix_common.sh"
 
 print_header "CUDA 12.4 local"
-require_python_310
+require_python_311
 if ! command -v nvidia-smi >/dev/null 2>&1; then
     warn "nvidia-smi not found — this lane validates a GPU install; running anyway but inference may fail."
 fi
