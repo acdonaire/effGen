@@ -367,6 +367,24 @@ def test_tools_list_json(capsys):
     assert {"name", "category", "description"} <= set(data[0])
 
 
+def test_an_unmatched_category_is_not_reported_as_an_empty_registry(capsys):
+    """"No tools registered" describes the registry, not the filter.
+
+    The same command without the filter lists every tool one line later, so
+    the two messages contradicted each other and sent the reader looking for a
+    broken install.
+    """
+    args = SimpleNamespace(output_json=False, category="no-such-category")
+    code = _cli()._tools_list(args)
+    out = capsys.readouterr().out
+
+    assert code == 0, "an empty result is not an error"
+    assert "No tools registered" not in out
+    assert "no-such-category" in out
+    # The valid values are what the reader needs next.
+    assert "computation" in out
+
+
 # --------------------------------------------------------------------------- #
 # Doctor system report
 # --------------------------------------------------------------------------- #

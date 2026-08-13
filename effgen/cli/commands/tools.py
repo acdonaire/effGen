@@ -68,13 +68,20 @@ def tools_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
             logger.debug(f"Error getting metadata for {name}: {e}")
             return None
 
+    registered = len(tools)
+    known_categories: list[str] = []
     if category_filter:
         kept = []
         for name in tools:
             m = _meta(name)
-            if m and m.category.value == category_filter:
+            if m is None:
+                continue
+            if m.category.value not in known_categories:
+                known_categories.append(m.category.value)
+            if m.category.value == category_filter:
                 kept.append(name)
         tools = kept
+        known_categories.sort()
 
     # JSON output — machine-readable, no decorative header/table.
     if getattr(args, "output_json", False):
@@ -95,7 +102,16 @@ def tools_list(cli: "CLIInterface", args: argparse.Namespace) -> int | None:
     cli.print_header("Available Tools")
 
     if not tools:
-        cli.print_warning("No tools registered")
+        # An empty registry and a filter that matched nothing are different
+        # problems. Reporting the first for the second sends the reader after a
+        # broken install when the registry is full one line further down.
+        if category_filter and registered:
+            cli.print_warning(
+                f"No tools in category '{category_filter}'. "
+                f"Available categories: {', '.join(known_categories)}."
+            )
+        else:
+            cli.print_warning("No tools registered")
         return 0
 
     if cli.console:
@@ -137,9 +153,9 @@ def example_input(cli: "CLIInterface", metadata: Any, tool: Any = None) -> dict:
     # Prefer a curated example (drop the illustrative 'output' field).
     for ex in metadata.examples or []:
         if isinstance(ex, dict):
-            example = {k: v for k, v in ex.items() if k != "output"}
-            if example:
-                return example
+            curated = {k: v for k, v in ex.items() if k != "output"}
+            if curated:
+                return curated
     # Otherwise synthesize from required parameters.
     from effgen.tools.base_tool import ParameterType
 
