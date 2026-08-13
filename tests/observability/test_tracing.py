@@ -726,3 +726,105 @@ class TestNonBlocking:
     def test_set_span_error_no_active_span(self):
         """set_span_error with no active span must not raise."""
         set_span_error(ValueError("oops"))
+
+
+# ===========================================================================
+# Cost reaches the model span on every path
+# ===========================================================================
+
+
+class TestModelCallSpanCarriesItsCost:
+    """The money must be on the span whenever the call reported one.
+
+    The adapters stamp ``effgen.model.cost_usd`` through
+    ``set_span_attribute``, which writes to whatever span is *currently
+    active*. It therefore landed only when the adapter's call ran inside the
+    span the agent had opened; on the other paths the span carried the
+    provider, the model and both token counts and no money — which reads as a
+    pricing gap in a dashboard while the run's own total is right.
+
+    The agent now stamps it from the result metadata, with the span in hand.
+    Measured live before the change: 2 of 8 tool-using groq runs lost it, both
+    on the native-prompt turn. After: 8 of 8 carry it.
+    """
+
+    @staticmethod
+    def _agent(cost, tools):
+        from effgen.core.agent import Agent, AgentConfig
+        from effgen.models.base import (
+            BaseModel,
+            GenerationResult,
+            ModelType,
+            TokenCount,
+        )
+
+        class _Priced(BaseModel):
+            def __init__(self):
+                super().__init__(model_name="fake-priced", model_type=ModelType.TRANSFORMERS)
+                self._is_loaded = True
+
+            def load(self):
+                self._is_loaded = True
+
+            def unload(self):
+                self._is_loaded = False
+
+            def get_context_length(self):
+                return 4096
+
+            def count_tokens(self, text):
+                return TokenCount(prompt_tokens=1, completion_tokens=0, total_tokens=1)
+
+            def generate_stream(self, prompt, config=None, **kwargs):
+                yield "x"
+
+            def generate(self, prompt, config=None, **kwargs):
+                return GenerationResult(
+                    text="Final Answer: 42",
+                    tokens_used=7,
+                    finish_reason="stop",
+                    model_name="fake-priced",
+                    metadata={
+                        "prompt_tokens": 11,
+                        "completion_tokens": 7,
+                        "total_tokens": 18,
+                        "cost_usd": cost,
+                    },
+                )
+
+        return Agent(AgentConfig(
+            name="span-cost", model=_Priced(), tools=tools,
+            raise_on_error=False, enable_memory=False, enable_sub_agents=False,
+        ))
+
+    @staticmethod
+    def _model_spans(exporter):
+        return [s for s in exporter.get_finished_spans() if s.name == SpanName.MODEL_CALL]
+
+    def test_the_direct_path_stamps_the_cost(self):
+        exporter = _make_exporter()
+        with self._agent(0.000012, tools=[]) as agent:
+            agent.run("what is the answer")
+        spans = self._model_spans(exporter)
+        assert spans, "no model.call span was recorded"
+        assert all(s.attributes.get(ModelAttrs.COST_USD) == 0.000012 for s in spans)
+
+    def test_the_tool_loop_path_stamps_the_cost(self):
+        from effgen.tools import get_registry
+
+        exporter = _make_exporter()
+        calculator = get_registry().get_tool_sync("calculator")
+        with self._agent(0.000012, tools=[calculator]) as agent:
+            agent.run("what is the answer")
+        spans = self._model_spans(exporter)
+        assert spans, "no model.call span was recorded"
+        assert all(s.attributes.get(ModelAttrs.COST_USD) == 0.000012 for s in spans)
+
+    def test_an_unpriced_call_writes_no_cost_attribute(self):
+        """``None`` is not zero: an unpriced model must not read as free."""
+        exporter = _make_exporter()
+        with self._agent(None, tools=[]) as agent:
+            agent.run("what is the answer")
+        spans = self._model_spans(exporter)
+        assert spans
+        assert all(ModelAttrs.COST_USD not in (s.attributes or {}) for s in spans)

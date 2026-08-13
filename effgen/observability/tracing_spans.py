@@ -404,6 +404,32 @@ def set_span_error(span_or_exc: Any, exc: Exception | None = None) -> None:
         pass
 
 
+def stamp_call_cost(span: Any, metadata: dict[str, Any] | None) -> None:
+    """Put one model call's cost on *span*, from the result's own metadata.
+
+    The adapters stamp this too, but through :func:`set_span_attribute`, which
+    writes to whatever span is *currently active* — so the attribute landed only
+    when the adapter's call ran inside the span the agent had opened. On the
+    other paths the span carried the provider, the model and both token counts
+    and no money, which reads as a pricing gap rather than a telemetry one.
+
+    Called with the span in hand, this does not depend on context propagation.
+    Writing the same value twice is harmless; an unpriced model reports ``None``
+    and no attribute is written, keeping "free" distinct from "no price".
+
+    Args:
+        span: The model-call span to annotate.
+        metadata: The metadata the call returned; ``cost_usd`` is read from it.
+    """
+    cost = (metadata or {}).get("cost_usd")
+    if cost is None:
+        return
+    try:
+        span.set_attribute(ModelAttrs.COST_USD, float(cost))
+    except Exception:  # noqa: BLE001 - OTel telemetry is best-effort
+        pass
+
+
 def set_span_attribute(key: str, value: Any) -> None:
     """Set an attribute on the currently active span.  Non-blocking."""
     if not _OTEL_AVAILABLE:
