@@ -15,13 +15,18 @@ Features:
 
 Example:
     Basic validation:
-        >>> from effgen.utils.validators import validate_model_name, validate_path
-        >>> validate_model_name("gpt-4")  # Returns True
-        >>> validate_path("/path/to/file")  # Validates path exists
+        >>> from effgen.utils.validators import validate_json_schema, validate_model_name
+        >>> validate_model_name("gpt-4")
+        True
+        >>> validate_model_name("")
+        Traceback (most recent call last):
+        ...
+        effgen.utils.validators.ValidationError: Model name must be a non-empty string...
 
     Schema validation:
         >>> schema = {"type": "object", "properties": {"name": {"type": "string"}}}
         >>> validate_json_schema({"name": "test"}, schema)
+        True
 
     Custom validators:
         >>> @require_type(str, int)
