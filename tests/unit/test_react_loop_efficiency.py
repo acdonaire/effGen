@@ -441,3 +441,75 @@ def test_an_explicit_iteration_cap_of_zero_is_honored():
 
     assert model.calls == 0
     assert not response.success
+
+
+# ---------------------------------------------------------------------------
+# A recovery that could not obtain an answer says so
+# ---------------------------------------------------------------------------
+#
+# The two loop fallbacks used to return the tool observation itself as the
+# answer with success=True. For a retrieval tool that is a passage dump
+# presented as if the model had written it — the same thing the iteration cap
+# stopped doing — and a caller keyed on .success could not tell the difference.
+# reason also read "final_answer" although no model wrote one.
+
+
+def _retrieval_loop_agent(*, script=None):
+    """An agent whose retrieval tool keeps returning the same passage.
+
+    The model asks for it, is nudged to synthesize with the tools withdrawn,
+    and asks again — the shape the report measured on the smallest local
+    models and on groq's 8B.
+    """
+    model = _ScriptedModel(script or [_read_action("calc.py")])
+    return Agent(config=AgentConfig(
+        raise_on_error=False,  # these assert the failure response, not the raise
+        name="retrieval-loop-test", model=model,
+        tools=[_FileReadTool(context_retrieval=True)],
+        max_iterations=4, tool_calling_mode="react",
+    ))
+
+
+class TestUnsynthesizedRetrievalIsNotASuccess:
+    def test_it_reports_a_failure_carrying_the_observation(self):
+        resp = _retrieval_loop_agent().run("Review calc.py and report any risk.")
+
+        assert resp.success is False, "a passage is not an answer"
+        assert resp.metadata.get("partial") is True
+        # The observation travels beside the result, not as the result.
+        assert FILE_BODY.split()[0] in " ".join(
+            (resp.metadata.get("partial_output") or "").split()
+        )
+        assert resp.output != resp.metadata.get("partial_output")
+
+    def test_the_outcome_is_typed_and_names_the_repeated_tool(self):
+        resp = _retrieval_loop_agent().run("Review calc.py and report any risk.")
+
+        error = resp.metadata.get("error") or {}
+        assert error.get("type") == "UnsynthesizedToolResult"
+        assert error.get("repeated_tool") == "file_operations"
+        assert error.get("retryable") is False
+        assert "file_operations" in (resp.output or "")
+
+    def test_reason_says_what_ended_the_run_not_final_answer(self):
+        resp = _retrieval_loop_agent().run("Review calc.py and report any risk.")
+
+        assert resp.metadata.get("reason") in (
+            "repeated_tool_result", "loop_detected",
+        ), resp.metadata.get("reason")
+        assert resp.metadata.get("reason") != "final_answer"
+
+    def test_a_computed_result_that_repeats_is_still_a_success(self):
+        """The case the change must not break.
+
+        A calculator returning the same number twice is a confident answer, not
+        an unsynthesized passage, so it stays a success — with ``reason`` now
+        naming the fallback instead of claiming a final answer.
+        """
+        model = _ScriptedModel([_calc_action("15^2"), _calc_action("15^2")])
+        resp = _make_agent(model).run("Explain step by step and compute 15 squared")
+
+        assert resp.success is True
+        assert resp.metadata.get("partial") is True
+        assert resp.metadata.get("reason") == "loop_detected"
+        assert "225" in (resp.output or "")

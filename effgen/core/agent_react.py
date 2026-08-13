@@ -22,6 +22,9 @@ from typing import Any
 from ..observability import get_logger as _get_obs_logger
 from ..observability.spans import ModelAttrs, ToolAttrs
 from ..observability.tracing import (
+    stamp_call_cost as _stamp_call_cost,
+)
+from ..observability.tracing import (
     start_agent_iteration,
     start_model_call,
     start_tool_call,
@@ -287,6 +290,7 @@ class AgentReActMixin(
                         if _cached:
                             _mspan.set_attribute(ModelAttrs.CACHED_TOKENS, int(_cached))
                         _mspan.set_attribute(ModelAttrs.OUTCOME, "ok" if response.get("finish_reason") != "error" else "error")
+                        _stamp_call_cost(_mspan, _meta)
                     except Exception:
                         logger.debug("Failed to set model span attributes", exc_info=True)
                 iter_tokens = response.get("tokens_used", 0)
@@ -534,9 +538,25 @@ class AgentReActMixin(
                             f"\nObservation: {NUDGE_HAVE_RESULTS}"
                         )
                         continue
+                    if partial and self._is_context_retrieval_tool(action):
+                        return self._unsynthesized_recovery_response(
+                            partial,
+                            action=action,
+                            reason="loop_detected",
+                            iterations=iterations,
+                            tool_calls=tool_calls,
+                            tokens_used=tokens_used,
+                            calls=guards.calls,
+                            debug_trace=debug_trace,
+                        )
                     if partial:
+                        # A tool whose output is a computed result, not
+                        # retrieved context: repeating it is a confident answer
+                        # and stays a success. ``reason`` says what ended the
+                        # run rather than claiming the model wrote one.
                         return _build_response(
                             partial,
+                            reason="loop_detected",
                             answer_source="loop_detected",
                             repeated_action=action,
                             partial=True,
@@ -648,16 +668,26 @@ class AgentReActMixin(
                             "result; returning it as the final answer",
                             action,
                         )
-                        extra = (
-                            {"partial": True}
-                            if self._is_context_retrieval_tool(action)
-                            else {}
-                        )
+                        if self._is_context_retrieval_tool(action):
+                            return self._unsynthesized_recovery_response(
+                                tool_result,
+                                action=action,
+                                reason="repeated_tool_result",
+                                iterations=iterations,
+                                tool_calls=tool_calls,
+                                tokens_used=tokens_used,
+                                calls=guards.calls,
+                                debug_trace=debug_trace,
+                            )
+                        # A compute tool reproducing its result is a confident
+                        # answer, so it stays a success — with ``reason`` saying
+                        # what ended the run rather than claiming the model
+                        # wrote a final answer.
                         return _build_response(
                             tool_result,
                             _tool_calls=tool_calls,
+                            reason="repeated_tool_result",
                             answer_source="repeated_tool_result",
-                            **extra,
                         )
                     guards.record_result(action, tool_result)
 
@@ -859,6 +889,107 @@ class AgentReActMixin(
             tokens_used=tokens_used,
             metadata=meta,
         )
+
+    def _unsynthesized_recovery_response(
+        self,
+        observation: str,
+        *,
+        action: str | None,
+        reason: str,
+        iterations: int,
+        tool_calls: int,
+        tokens_used: int,
+        calls: Any,
+        debug_trace: Any = None,
+    ) -> AgentResponse:
+        """Report a recovery that could not obtain an answer, without inventing one.
+
+        A retrieval tool that reproduces an identical result, and a model that
+        will not synthesize from it even when tools are withdrawn, leaves the run
+        with context and no answer. Returning that context as ``output`` with
+        ``success=True`` presents a retrieved passage as if the model had written
+        it — the same thing the iteration cap stopped doing — and a caller keyed
+        on ``.success`` cannot tell the difference.
+
+        So this mirrors the cap: ``success=False``, the observation beside the
+        result as ``metadata["partial_output"]``, a typed ``metadata["error"]``
+        naming the repeated tool, and ``reason`` saying what actually ended the
+        run rather than ``final_answer``.
+
+        A *compute* tool repeating its result is not this case — a calculator
+        returning the same number twice is a confident answer — and does not
+        reach here.
+
+        Args:
+            observation: The recovered tool output.
+            action: The tool that repeated, or ``None`` when unnamed.
+            reason: ``"repeated_tool_result"`` or ``"loop_detected"``.
+            iterations: Iterations run.
+            tool_calls: Tool calls made.
+            tokens_used: Tokens consumed.
+            calls: The recorded tool calls.
+            debug_trace: The debug trace, when one is being collected.
+
+        Returns:
+            The failure response, carrying the recovered context.
+        """
+        detail = self._repeated_tool_detail(action, reason)
+        meta: dict[str, Any] = {
+            "reason": reason,
+            "error": detail,
+            "answer_source": reason,
+            "repeated_action": action,
+            "partial": True,
+            "partial_output": observation,
+            "tool_calling_strategy": self._tool_calling_strategy.name,
+        }
+        logger.info(
+            "[Loop efficiency] '%s' repeated its result and the model would not "
+            "synthesize; reporting the outcome with the observation under "
+            "partial_output",
+            action,
+        )
+        if debug_trace is not None:
+            debug_trace.total_tokens = tokens_used
+            debug_trace.final_answer = None
+            debug_trace.success = False
+            meta["debug_trace"] = debug_trace
+        return AgentResponse(
+            output=detail["message"],
+            success=False,
+            mode=AgentMode.SINGLE,
+            iterations=iterations,
+            tool_calls=ToolCallList(list(calls), total=tool_calls),
+            tokens_used=tokens_used,
+            metadata=meta,
+        )
+
+    def _repeated_tool_detail(self, action: str | None, reason: str) -> dict[str, Any]:
+        """Return the typed outcome for a retrieval loop that produced no answer."""
+        model_id = (
+            getattr(self.model, "model_name", None) or self.model_name or "the model"
+        )
+        action = action or "the tool"
+        what = (
+            "kept asking for the same information"
+            if reason == "loop_detected"
+            else "returned the same result again"
+        )
+        return {
+            "type": "UnsynthesizedToolResult",
+            "category": reason,
+            "provider": self._model_provider(self.model),
+            "model": model_id,
+            "repeated_tool": action,
+            "message": (
+                f"'{model_id}' did not write an answer: the '{action}' tool "
+                f"{what}, and the model would not synthesize from it even with "
+                "the tools withdrawn. What was retrieved is reported as partial "
+                "progress — context, not an answer. Try a larger model, or raise "
+                "max_tokens if the model is spending its budget before writing."
+            ),
+            "retryable": False,
+        }
 
     def _iteration_cap_detail(self, cap: int, progress: str | None) -> dict[str, Any]:
         """Return the typed outcome for a run that stopped at its iteration cap.
