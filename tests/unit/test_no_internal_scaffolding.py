@@ -816,3 +816,50 @@ def test_allowlist_excuses_legitimate_lines():
     )
     # ...but the same text elsewhere is flagged.
     assert find_violations("effgen/elsewhere.py", "mask = 'XXX-XX-XXXX'")
+
+
+def test_no_test_module_lets_the_repo_dotenv_override_the_environment():
+    """``load_dotenv`` is always called with an explicit ``override=``.
+
+    python-dotenv defaults to ``override=False``, but the argument is easy to
+    leave off while meaning it, and one module that omits it lets the
+    repository ``.env`` win over a key the operator exported on purpose — a run
+    aimed at one account then silently bills another.
+
+    Read from the syntax tree, not by pattern: the path argument is usually a
+    ``Path(...)`` expression, and a text scan stops at its closing bracket
+    before ever reaching the keyword.
+    """
+    import ast
+
+    root = Path(__file__).resolve().parents[2]
+    tracked = subprocess.run(
+        ["git", "ls-files", "tests/"], cwd=root,
+        capture_output=True, text=True, check=True,
+    ).stdout.split()
+
+    offenders = []
+    for name in tracked:
+        if not name.endswith(".py"):
+            continue
+        try:
+            tree = ast.parse((root / name).read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            called = getattr(func, "id", None) or getattr(func, "attr", None)
+            if called != "load_dotenv":
+                continue
+            # A bare call is the search walk, which takes no path to override.
+            if not node.args and not node.keywords:
+                continue
+            if not any(kw.arg == "override" for kw in node.keywords):
+                offenders.append(f"{name}:{node.lineno}")
+
+    assert not offenders, (
+        "load_dotenv without an explicit override= (use override=False):\n  "
+        + "\n  ".join(offenders)
+    )

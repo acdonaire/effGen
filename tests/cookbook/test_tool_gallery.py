@@ -32,7 +32,10 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 _GALLERY = _REPO_ROOT / "docs/tools/gallery.md"
 _AUDIO_FIXTURE = _REPO_ROOT / "tests/fixtures/multimodal/sample_audio.mp3"
 
-load_dotenv(_REPO_ROOT / ".env")
+# override=False, like every other module that reads this file: without it the
+# repository .env wins over a key the operator deliberately exported, so a run
+# aimed at one account silently goes to another.
+load_dotenv(_REPO_ROOT / ".env", override=False)
 
 
 # ---------------------------------------------------------------------------
