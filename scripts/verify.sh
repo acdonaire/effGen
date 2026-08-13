@@ -73,9 +73,19 @@ line_delay() { delay "$ANIM_DELAY"; }
 section_delay() { delay "$(echo "$ANIM_DELAY * 3" | bc -l 2>/dev/null || echo 0.3)"; }
 phase_delay() { delay "$(echo "$ANIM_DELAY * 5" | bc -l 2>/dev/null || echo 0.5)"; }
 
+# Wipe the screen, but only when there is a screen that can be wiped. Without a
+# TERM to describe the terminal, `clear` fails with "TERM environment variable
+# not set." and, under `set -e`, ends the run — which is what a CI runner, a
+# piped install and `nohup` all get.
+clear_screen() {
+    if [ -t 1 ] && [ -n "${TERM:-}" ] && [ "${TERM}" != "dumb" ]; then
+        clear || true
+    fi
+}
+
 print_banner() {
     if [ "$QUICK_MODE" = false ]; then
-        clear
+        clear_screen
     fi
     echo ""
     section_delay
@@ -248,7 +258,7 @@ done
 
 main() {
     if [ "$QUICK_MODE" = false ]; then
-        clear
+        clear_screen
     fi
     print_banner
 

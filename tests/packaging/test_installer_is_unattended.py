@@ -9,6 +9,7 @@ that is not a failure. This has reached a release candidate before.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -29,6 +30,15 @@ INSTALLER_SCRIPTS = (
 #: test; it has to appear close enough above the prompt to be guarding it.
 TERMINAL_CHECK = re.compile(r"-t\s+0")
 GUARD_WINDOW_LINES = 12
+
+#: Commands that need a terminal to describe itself. `clear` writes "TERM
+#: environment variable not set." and exits non-zero when TERM is absent, which
+#: under `set -e` ends the run on the line it appears. A CI runner, a piped
+#: install and `nohup` all arrive with no TERM.
+NEEDS_A_TERMINAL = re.compile(r"^[^#]*\b(clear|tput|stty|reset|tabs)\b\s*(\||;|&|$)")
+
+#: The guarded wrapper each installer script defines for exactly this.
+TERMINAL_SAFE_CALL = "clear_screen"
 
 #: Reading a prompt. Matches `read -p`, and `read` with the prompt on the line
 #: before it, while ignoring commented-out lines and `while read` loops that
@@ -135,4 +145,51 @@ def test_the_model_download_helper_never_redirects_the_shared_cache():
     assert not redirects, (
         f"download_models.py passes {sorted(set(redirects))}, which overrides "
         "HF_HUB_CACHE and puts a second copy of every model on disk"
+    )
+
+
+@pytest.mark.parametrize("script", _scripts(), ids=lambda p: p.name)
+def test_nothing_needs_a_terminal_to_describe_itself(script: Path):
+    """A bare `clear` ends an unattended install on the line it appears.
+
+    The scripts define ``clear_screen``, which checks for a terminal and a TERM
+    before wiping anything; calling ``clear`` directly bypasses that.
+    """
+    lines = script.read_text().splitlines()
+    unguarded = []
+    for number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith(("#", "clear_screen()", "clear_screen ")):
+            continue
+        if TERMINAL_SAFE_CALL in line:
+            continue
+        if NEEDS_A_TERMINAL.search(line) and "|| true" not in line:
+            unguarded.append(f"{script.name}:{number}: {stripped}")
+
+    assert not unguarded, (
+        "These need a terminal that may not exist. Without TERM they fail, and "
+        "under `set -e` the install ends there:\n  " + "\n  ".join(unguarded) +
+        f"\nCall {TERMINAL_SAFE_CALL} instead, which checks first."
+    )
+
+
+@pytest.mark.parametrize(
+    "entry", ["install.sh", "scripts/install_effgen.sh", "scripts/verify.sh"],
+)
+def test_the_entry_point_parses_and_shows_help_without_a_terminal(entry: str):
+    """The most basic unattended run: no TERM, no stdin, --help.
+
+    Reaching help proves the script gets past its banner, which is where the
+    terminal assumptions live.
+    """
+    path = REPO / entry
+    if not path.exists():
+        pytest.skip(f"{entry} is not in this tree")
+    env = {k: v for k, v in os.environ.items() if k != "TERM"}
+    result = subprocess.run(
+        ["bash", str(path), "--help"], capture_output=True, text=True,
+        timeout=120, stdin=subprocess.DEVNULL, cwd=str(REPO), env=env,
+    )
+    assert "TERM environment variable not set" not in (result.stdout + result.stderr), (
+        f"{entry} needs a TERM to print its own help"
     )

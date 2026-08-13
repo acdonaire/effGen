@@ -61,8 +61,12 @@ YES_TO_ALL=false
 ################################################################################
 
 print_banner() {
-    if [ "$QUICK_MODE" = false ]; then
-        clear
+    # Wiping the screen only makes sense on a terminal that can be wiped.
+    # Without a TERM to describe it, `clear` fails with "TERM environment
+    # variable not set." and, under `set -e`, ends the install on its very
+    # first line — which is what a CI runner and a piped install both get.
+    if [ "$QUICK_MODE" = false ] && [ -t 1 ] && [ -n "${TERM:-}" ] && [ "${TERM}" != "dumb" ]; then
+        clear || true
     fi
     echo ""
     echo -e "${CYAN}${BOLD}+================================================================+${NC}"
