@@ -416,7 +416,7 @@ class AgentReActMixin(
                     success=success,
                     mode=AgentMode.SINGLE,
                     iterations=_iterations,
-                    tool_calls=ToolCallList(list(guards.calls), count=_tool_calls),
+                    tool_calls=ToolCallList(list(guards.calls), total=_tool_calls),
                     tokens_used=_tokens_used,
                     metadata=meta,
                 )
@@ -753,7 +753,7 @@ class AgentReActMixin(
             success=False,
             mode=AgentMode.SINGLE,
             iterations=iterations,
-            tool_calls=tool_calls,
+            tool_calls=ToolCallList(total=tool_calls),
             tokens_used=tokens_used,
             metadata=meta,
         )
@@ -855,7 +855,7 @@ class AgentReActMixin(
             success=False,
             mode=AgentMode.SINGLE,
             iterations=iterations,
-            tool_calls=tool_calls,
+            tool_calls=ToolCallList(total=tool_calls),
             tokens_used=tokens_used,
             metadata=meta,
         )

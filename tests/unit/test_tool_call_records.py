@@ -87,15 +87,15 @@ class TestTheCountContract:
         assert int(_calls()) == 2
 
     def test_counts_from_several_runs_still_sum(self):
-        assert sum([ToolCallList(count=2), ToolCallList(count=3)]) == 5
+        assert sum([ToolCallList(total=2), ToolCallList(total=3)]) == 5
 
     def test_a_path_reporting_only_a_count_still_reports_it(self):
         counted = coerce_tool_calls(3)
         assert counted == 3
-        assert counted.count == 3
+        assert counted.total == 3
 
     def test_the_count_matches_the_records_when_they_were_captured(self):
-        assert _calls().count == len(_calls())
+        assert _calls().total == len(_calls())
 
 
 class TestOnTheResponse:

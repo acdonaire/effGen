@@ -123,8 +123,13 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
         """
         if self.client is None:
             self.load()
+        client = self.client
+        if client is None:
+            # load() reports why it could not build a client; an id listing is
+            # not worth raising a second error over.
+            return []
         try:
-            listing = self.client.models.list()
+            listing = client.models.list()
         except Exception as e:
             logger.debug(f"Endpoint {self.base_url} does not list its models: {e}")
             return []

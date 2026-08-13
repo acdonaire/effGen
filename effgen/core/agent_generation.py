@@ -80,6 +80,7 @@ from .agent_runtime import (  # noqa: E402
     _infer_provider_from_model,
     sanitize_final_answer,
 )
+from .tool_call_record import ToolCallList  # noqa: E402
 
 
 class AgentGenerationMixin:
@@ -266,9 +267,11 @@ class AgentGenerationMixin:
         )
         short_circuit = chain.before_model_call(ctx)
         if short_circuit is not None:
-            return chain.after_model_call(ctx, short_circuit)
+            answered: dict[str, Any] = chain.after_model_call(ctx, short_circuit)
+            return answered
         result = self._generate_instrumented(ctx.prompt, **ctx.kwargs)
-        return chain.after_model_call(ctx, result)
+        final: dict[str, Any] = chain.after_model_call(ctx, result)
+        return final
 
     def _generate_instrumented(self, prompt: Any, **kwargs) -> dict[str, Any]:
         """
@@ -911,7 +914,7 @@ class AgentGenerationMixin:
             success=False,
             mode=AgentMode.SINGLE,
             iterations=iterations,
-            tool_calls=tool_calls,
+            tool_calls=ToolCallList(total=tool_calls),
             tokens_used=tokens,
             metadata=meta,
         )
@@ -1093,7 +1096,7 @@ class AgentGenerationMixin:
                 success=True,
                 mode=AgentMode.SINGLE,
                 iterations=1,
-                tool_calls=0,
+                tool_calls=ToolCallList(),
                 tokens_used=tokens_used,
                 metadata={"reason": "final_answer", "multimodal_inputs": inputs is not None},
             )
@@ -1106,7 +1109,7 @@ class AgentGenerationMixin:
                 success=False,
                 mode=AgentMode.SINGLE,
                 iterations=1,
-                tool_calls=0,
+                tool_calls=ToolCallList(),
                 tokens_used=0,
                 metadata={"reason": "generation_failed", "error": detail},
             )

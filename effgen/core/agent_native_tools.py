@@ -105,7 +105,7 @@ class AgentNativeToolsMixin:
                 success=False,
                 mode=AgentMode.SINGLE,
                 iterations=1,
-                tool_calls=0,
+                tool_calls=ToolCallList(),
                 tokens_used=0,
                 metadata={"reason": "generation_failed", "error": detail},
             )
@@ -160,7 +160,7 @@ class AgentNativeToolsMixin:
                         success=True,
                         mode=AgentMode.SINGLE,
                         iterations=2,
-                        tool_calls=ToolCallList(calls, count=tool_calls_made),
+                        tool_calls=ToolCallList(calls, total=tool_calls_made),
                         tokens_used=result.tokens_used + followup_result.tokens_used,
                         metadata=result.metadata,
                     )
@@ -185,7 +185,7 @@ class AgentNativeToolsMixin:
                 written,
                 result.text,
                 iterations=1,
-                tool_calls=ToolCallList(calls, count=tool_calls_made),
+                tool_calls=ToolCallList(calls, total=tool_calls_made),
                 tokens_used=result.tokens_used,
                 tool_ran=written in executed_tools,
             )
@@ -196,7 +196,7 @@ class AgentNativeToolsMixin:
             success=bool(result.text),
             mode=AgentMode.SINGLE,
             iterations=1,
-            tool_calls=ToolCallList(calls, count=tool_calls_made),
+            tool_calls=ToolCallList(calls, total=tool_calls_made),
             tokens_used=result.tokens_used,
             metadata=meta,
         )
@@ -228,7 +228,7 @@ class AgentNativeToolsMixin:
             success=False,
             mode=AgentMode.SINGLE,
             iterations=1,
-            tool_calls=ToolCallList(calls or [], count=tool_calls_made),
+            tool_calls=ToolCallList(calls or [], total=tool_calls_made),
             tokens_used=result.tokens_used,
             metadata={"reason": "generation_failed", "error": detail},
         )
@@ -318,7 +318,7 @@ class AgentNativeToolsMixin:
                 success=False,
                 mode=AgentMode.SINGLE,
                 iterations=1,
-                tool_calls=0,
+                tool_calls=ToolCallList(),
                 tokens_used=0,
                 metadata={"reason": "generation_failed", "error": detail},
             )
@@ -377,7 +377,7 @@ class AgentNativeToolsMixin:
                         success=True,
                         mode=AgentMode.SINGLE,
                         iterations=2,
-                        tool_calls=ToolCallList(calls, count=tool_calls_made),
+                        tool_calls=ToolCallList(calls, total=tool_calls_made),
                         tokens_used=result.tokens_used + followup_result.tokens_used,
                         metadata=followup_meta,
                     )
@@ -401,7 +401,7 @@ class AgentNativeToolsMixin:
                 written,
                 result.text,
                 iterations=1,
-                tool_calls=ToolCallList(calls, count=tool_calls_made),
+                tool_calls=ToolCallList(calls, total=tool_calls_made),
                 tokens_used=result.tokens_used,
                 tool_ran=written in executed_tools,
             )
@@ -415,7 +415,7 @@ class AgentNativeToolsMixin:
             success=bool(answer),
             mode=AgentMode.SINGLE,
             iterations=1,
-            tool_calls=ToolCallList(calls, count=tool_calls_made),
+            tool_calls=ToolCallList(calls, total=tool_calls_made),
             tokens_used=result.tokens_used,
             metadata=meta,
         )

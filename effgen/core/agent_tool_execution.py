@@ -48,9 +48,11 @@ class AgentToolExecutionMixin:
         )
         short_circuit = chain.before_tool_call(ctx)
         if short_circuit is not None:
-            return chain.after_tool_call(ctx, short_circuit)
+            answered: str = chain.after_tool_call(ctx, short_circuit)
+            return answered
         result = self._execute_tool_guarded(ctx.tool_name, ctx.tool_input)
-        return chain.after_tool_call(ctx, result)
+        final: str = chain.after_tool_call(ctx, result)
+        return final
 
     def _middleware_chain(self):
         """Return the middleware in force, per-call ones included.

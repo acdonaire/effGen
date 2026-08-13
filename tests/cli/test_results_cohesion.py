@@ -164,4 +164,8 @@ def test_cost_non_tty_has_no_ansi(monkeypatch):
 def test_public_surface_anchor_unchanged():
     import effgen
 
-    assert len(effgen.__all__) == 206
+    # 1.0.0 added 13 names: the OpenAI-compatible adapter and its
+    # BackendUnreachableError, the middleware surface, the tool-call records,
+    # and the compaction strategies. Growing this number is a deliberate act —
+    # update it in the same commit that widens the surface, and say why.
+    assert len(effgen.__all__) == 219

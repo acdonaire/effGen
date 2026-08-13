@@ -14,10 +14,12 @@ on the same object::
     assert result.tool_calls == 2        # still compares like the old count
     if result.tool_calls > 0: ...
 
-:attr:`ToolCallList.count` is the authoritative number of calls the run made.
+:attr:`ToolCallList.total` is the authoritative number of calls the run made.
 It equals ``len()`` whenever the records were captured, and exceeds it only on
-a path that reported a count without them — reading ``count`` rather than
-``len()`` is therefore the safe way to ask "how many".
+a path that reported a number without them — reading ``total`` rather than
+``len()`` is therefore the safe way to ask "how many". It is spelled ``total``
+rather than ``count`` because ``list.count(value)`` is a method this class
+inherits and must keep working.
 """
 
 from __future__ import annotations
@@ -97,71 +99,68 @@ class ToolCallList(list):
     keeps working; code that iterates now gets the calls.
 
     Attributes:
-        count: Calls the run made. Equals ``len(self)`` when the records were
+        total: Calls the run made. Equals ``len(self)`` when the records were
             captured, and is larger only on a path that counted without them.
+            Named ``total`` and not ``count`` so that ``list.count(value)``,
+            which this class inherits, is not shadowed by an integer.
     """
 
-    def __init__(self, records: "list[ToolCall] | None" = None, count: int | None = None) -> None:
+    def __init__(self, records: "list[ToolCall] | None" = None, total: int | None = None) -> None:
         """
         Args:
             records: The captured calls, in the order they were made.
-            count: How many calls the run made. Defaults to the number of
+            total: How many calls the run made. Defaults to the number of
                 records, and is only given separately by a path that counted
                 calls without recording them.
         """
         super().__init__(records or [])
-        self.count = len(self) if count is None else int(count)
+        self.total: int = len(self) if total is None else int(total)
 
     # ------------------------------------------------------------------
     # Number-like behaviour, so the pre-1.0 integer contract still holds
     # ------------------------------------------------------------------
     def __int__(self) -> int:
-        return self.count
+        return self.total
 
     def __index__(self) -> int:
-        return self.count
+        return self.total
 
     def __bool__(self) -> bool:
-        return self.count > 0
+        return self.total > 0
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, bool):
             return bool(self) is other
         if isinstance(other, int):
-            return self.count == other
-        return list(self) == other
+            return self.total == other
+        return bool(list(self) == other)
 
     def __ne__(self, other: Any) -> bool:
         return not self.__eq__(other)
 
     def __lt__(self, other: Any) -> bool:
-        return self.count < other if isinstance(other, int) else list(self) < other
+        return self.total < other if isinstance(other, int) else bool(list(self) < other)
 
     def __le__(self, other: Any) -> bool:
-        return self.count <= other if isinstance(other, int) else list(self) <= other
+        return self.total <= other if isinstance(other, int) else bool(list(self) <= other)
 
     def __gt__(self, other: Any) -> bool:
-        return self.count > other if isinstance(other, int) else list(self) > other
+        return self.total > other if isinstance(other, int) else bool(list(self) > other)
 
     def __ge__(self, other: Any) -> bool:
-        return self.count >= other if isinstance(other, int) else list(self) >= other
+        return self.total >= other if isinstance(other, int) else bool(list(self) >= other)
 
     def __add__(self, other: Any) -> Any:
         if isinstance(other, int):
-            return self.count + other
+            return self.total + other
         return ToolCallList(list(self) + list(other))
 
     __radd__ = __add__
 
-    def __hash__(self) -> int:
-        # Lists are unhashable, but this one stands in for an integer in
-        # existing code — sums, dict keys and sets over counts keep working.
-        return hash(self.count)
-
     def __repr__(self) -> str:
         if not len(self):
-            return f"ToolCallList(count={self.count})"
-        return f"ToolCallList({[c.name for c in self]!r}, count={self.count})"
+            return f"ToolCallList(total={self.total})"
+        return f"ToolCallList({[c.name for c in self]!r}, total={self.total})"
 
     # ------------------------------------------------------------------
     # Reading the calls
@@ -196,9 +195,9 @@ def coerce_tool_calls(value: Any) -> ToolCallList:
     if value is None:
         return ToolCallList()
     if isinstance(value, bool):
-        return ToolCallList(count=int(value))
+        return ToolCallList(total=int(value))
     if isinstance(value, int):
-        return ToolCallList(count=value)
+        return ToolCallList(total=value)
     if isinstance(value, list | tuple):
         records = [
             item if isinstance(item, ToolCall)

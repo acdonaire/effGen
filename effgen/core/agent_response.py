@@ -161,7 +161,7 @@ class AgentResponse:
         The same number ``tool_calls`` compares as; named for code that wants
         to say so plainly.
         """
-        return self.tool_calls.count
+        return self.tool_calls.total
 
     def __str__(self) -> str:
         """The answer text — so ``print(result)`` shows the answer, not a repr.
@@ -258,7 +258,7 @@ class AgentResponse:
             "iterations": self.iterations,
             # The count stays an int under its original key so a reader of a
             # saved run keeps working; the calls themselves are alongside it.
-            "tool_calls": self.tool_calls.count,
+            "tool_calls": self.tool_calls.total,
             "tool_call_details": self.tool_calls.to_list(),
             "tokens_used": self.tokens_used,
             "execution_time": round(self.execution_time, 2),

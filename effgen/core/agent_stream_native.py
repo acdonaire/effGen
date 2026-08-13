@@ -64,6 +64,7 @@ from .agent_runtime import (
     unknown_tool_observation,
 )
 from .agent_tool_loop import NativeToolLoop
+from .tool_call_record import ToolCallList
 
 logger = logging.getLogger(__name__)
 
@@ -839,7 +840,7 @@ class AgentNativeStreamMixin:
             success=success,
             mode=AgentMode.SINGLE,
             iterations=iterations,
-            tool_calls=tool_calls,
+            tool_calls=ToolCallList(total=tool_calls),
             tokens_used=int(usage.get("total_tokens") or 0),
             execution_time=time.perf_counter() - started,
             metadata=metadata,

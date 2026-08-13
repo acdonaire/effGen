@@ -47,8 +47,11 @@ searches = result.tool_calls.by_name("web_search")
 ```
 
 It also compares and casts as the count, so `result.tool_calls == 2` and
-`result.tool_calls > 0` read as they did before 1.0.0. `to_dict()` keeps the
-count under `tool_calls` and puts the records in `tool_call_details`.
+`result.tool_calls > 0` read as they did before 1.0.0, and
+`result.tool_calls.total` states the number outright — spelled `total` rather
+than `count` so the inherited `list.count(value)` keeps working. `to_dict()`
+keeps the number under `tool_calls` and puts the records in
+`tool_call_details`.
 
 The same calls are also reported by the model adapter in
 `GenerationResult.metadata["tool_calls"]`, in one shape for every provider —

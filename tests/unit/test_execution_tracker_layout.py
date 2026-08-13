@@ -138,7 +138,11 @@ ALLOWED_IMPORTS: dict[str, set[str]] = {
 }
 
 #: The public-surface anchor, and the module ``effgen.ExecutionStatus`` means.
-TOP_LEVEL_API_SIZE = 206
+#: 1.0.0 took this from 206 to 219: the OpenAI-compatible adapter and its
+#: BackendUnreachableError, the middleware surface, the tool-call records, and
+#: the compaction strategies. Growing it is a deliberate act — move the number
+#: in the same commit that widens the surface.
+TOP_LEVEL_API_SIZE = 219
 SANDBOX_STATUS_MODULE = "effgen.execution.sandbox"
 
 #: No module in the split may grow past this.

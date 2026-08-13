@@ -286,7 +286,7 @@ class LoggingMiddleware(AgentMiddleware):
         """Log how the run ended, and return it unchanged."""
         self.log.log(
             self.level, "run end: success=%s tool_calls=%s",
-            response.success, response.tool_calls.count,
+            response.success, response.tool_calls.total,
         )
         return response
 

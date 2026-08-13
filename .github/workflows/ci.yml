@@ -169,8 +169,8 @@ jobs:
           case "${{ matrix.method }}" in
             editable) pip install -e . ;;
             plain)    pip install . ;;
-            wheel)    pip install build && python -m build --wheel -n . && pip install dist/*.whl ;;
-            sdist)    pip install build && python -m build --sdist  -n . && pip install dist/*.tar.gz ;;
+            wheel)    pip install build && python -m build --wheel . && pip install dist/*.whl ;;
+            sdist)    pip install build && python -m build --sdist  . && pip install dist/*.tar.gz ;;
           esac
 
       - name: The package imports and its public surface is whole
@@ -212,7 +212,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest
-          python -m pytest -q tests/packaging/test_installer_is_unattended.py
+          # --noconftest and -c /dev/null: this gate reads shell scripts and
+          # needs neither the package nor the project's pytest plugins, so it
+          # runs before anything is installed. Loading either would fail here
+          # for reasons that have nothing to do with the installer.
+          python -m pytest -q --noconftest -c /dev/null -p no:cacheprovider \
+            tests/packaging/test_installer_is_unattended.py
 
       - name: Run it with stdin closed, twice
         # The second run is the regression: the first builds the environment,
