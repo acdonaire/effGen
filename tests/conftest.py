@@ -16,7 +16,7 @@ import pytest
 # reads them.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tests._harness import hermetic, lane_timing  # noqa: E402
+from tests._harness import hermetic, lane_timing, optional_deps  # noqa: E402
 
 # Remove the ambient state of this machine when the run asked for it. This happens
 # before the .env load and before the temporary cost/run directories below, so what
@@ -47,6 +47,40 @@ def _collect_secret_values() -> tuple[str, ...]:
             values.append(val)
     # Sort longest-first so substrings don't shadow longer matches
     return tuple(sorted(set(values), key=len, reverse=True))
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_makereport(item, call):
+    """Report an absent optional dependency as a skip rather than a failure.
+
+    A contributor who installs ``.[dev]`` sees ~94 red tests on a correct
+    checkout, all of them a tool whose optional extra was never installed. The
+    library behaves correctly in every one — it raises a typed, actionable
+    ``ImportError`` naming the extra — so the failure says only that the feature
+    is not installed, which is a reason to skip.
+
+    The rule is kept narrow on purpose (see ``tests/_harness/optional_deps.py``):
+    only a package the project itself declares in an *optional* extra qualifies,
+    and only the two shapes that mean "not installed". An environment with the
+    extras present converts nothing.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    if report.when not in ("setup", "call") or not report.failed:
+        return
+    missing = optional_deps.absent_optional_dependency(str(report.longrepr))
+    if missing is None:
+        return
+    report.outcome = "skipped"
+    report.longrepr = (
+        str(item.fspath),
+        item.location[1] or 0,
+        (
+            f"Skipped: optional dependency '{missing}' is not installed "
+            f"(pip install '{missing}' or the extra that carries it)"
+        ),
+    )
+    report.wasxfail = None
 
 
 def pytest_exception_interact(node, call, report):

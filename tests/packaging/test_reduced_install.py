@@ -221,6 +221,35 @@ def test_no_command_fails_on_a_character_the_stream_cannot_encode(cells, cell_id
     assert not offenders, f"{cell_id}: commands reported an encoding failure:\n{offenders}"
 
 
+@pytest.mark.parametrize("cell_id", ["ascii", "no-rich-ascii"])
+def test_no_command_is_turned_into_a_failure_by_the_stream(cells, cell_id):
+    """The stronger assertion: not merely no traceback, but no new failure.
+
+    Sixteen commands used to exit 1 on a hard-ascii console — a literal em dash
+    in a header, table title or placeholder, a ``…`` truncation marker in
+    ``runs list`` and inside ``top --json``'s payload, a ``·`` in ``presets``
+    and a ``≤`` in a prompt template's constraint text. The listing and results
+    headers now fold at the print boundary the way the ``run``/``chat``
+    presentation strings always did, so an ASCII console gets a stand-in rather
+    than an error.
+
+    A command that fails on a UTF-8 stream too is not this — ``config show``
+    with no file is a usage error either way — so the comparison is against the
+    full cell, and what is asserted is that the *stream* costs nothing.
+    """
+    reference = {row["cmd"]: row["rc"] for row in cells["full"]}
+    caused_by_the_stream = [
+        f"  effgen {row['cmd']}: rc {reference.get(row['cmd'])} on utf-8 -> "
+        f"{row['rc']} on ascii: {row['tail']}"
+        for row in cells[cell_id]
+        if row["rc"] != 0 and reference.get(row["cmd"], row["rc"]) == 0
+    ]
+    assert not caused_by_the_stream, (
+        f"{cell_id}: an ASCII-only stream turned a working command into a "
+        "failure:\n" + "\n".join(caused_by_the_stream)
+    )
+
+
 @pytest.mark.parametrize("cell_id", [cell for cell in ALL_CELLS if cell != "full"])
 def test_exit_codes_match_the_full_install(cells, cell_id):
     reference = {row["cmd"]: row["rc"] for row in cells["full"]}
