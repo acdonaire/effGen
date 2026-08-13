@@ -337,12 +337,12 @@ def test_model_router_policy_constructor_routes(monkeypatch):
 # Capability enum presence
 # ---------------------------------------------------------------------------
 
-def test_all_9_providers_have_capabilities():
+def test_every_provider_declares_its_capabilities():
     """Every registered provider must declare at least one capability."""
     ProviderRegistry.register_builtins()
 
     providers = ProviderRegistry.list_providers()
-    assert len(providers) == 9, f"Expected 9 providers, got {len(providers)}: {providers}"
+    assert len(providers) == 10, f"Expected 10 providers, got {len(providers)}: {providers}"
     expected = {
         "anthropic": {
             Capability.chat,
@@ -382,6 +382,15 @@ def test_all_9_providers_have_capabilities():
             Capability.json_schema,
         },
         "hf": {Capability.chat, Capability.streaming, Capability.audio_input},
+        # A protocol rather than a service: what the endpoint behind it can do
+        # is the server's business, so only the four every implementation of
+        # the protocol supports are claimed.
+        "openai_compatible": {
+            Capability.chat,
+            Capability.streaming,
+            Capability.tools,
+            Capability.json_schema,
+        },
         "openai": {
             Capability.chat,
             Capability.streaming,
