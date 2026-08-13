@@ -293,20 +293,32 @@ class ConfigLoader:
                 for cfg in configs:
                     merged.update(cfg)
 
+                sources = [self._resolve_path(p) for p in config_path]
                 if merge:
                     self.config.update(merged)
                 else:
                     self.config = merged
-                    self._config_files = [self._resolve_path(p) for p in config_path]
             else:
                 # Single config file
                 loaded = self._load_single_config(config_path)
 
+                sources = [self._resolve_path(config_path)]
                 if merge:
                     self.config.update(loaded)
                 else:
                     self.config = loaded
-                    self._config_files = [self._resolve_path(config_path)]
+
+            # Record what was read either way. This is a list of the files
+            # behind the current settings, not a record of how they were
+            # combined: a merged load used to leave it empty, which left
+            # reload() with nothing to reload and a validation failure unable
+            # to name the file it came from.
+            if merge:
+                for source in sources:
+                    if source not in self._config_files:
+                        self._config_files.append(source)
+            else:
+                self._config_files = sources
 
             # Validate if requested
             if validate:
@@ -559,21 +571,47 @@ class ConfigLoader:
             True if valid
 
         Raises:
-            ValueError: If configuration is invalid
+            ValidationError: If the configuration is invalid. It derives from
+                ``ValueError``, which this method has always documented.
         """
-        from .validator import ConfigValidator
+        from .validator import ConfigValidator, ValidationError
 
         validator = ConfigValidator()
+        # Every validator reads its own section out of the whole document.
+        # Handing one the *contents* of its section instead made it look for
+        # ``config["models"]["models"]``, find nothing, and pass an empty set —
+        # which is how this gate came to accept anything at all.
+        document = self.config.to_dict()
 
-        # Validate different config sections
-        if "models" in self.config:
-            validator.validate_models(self.config["models"])
+        errors: list[str] = []
+        warnings: list[str] = []
+        for present, validate in (
+            ("models" in self.config, validator.validate_models),
+            ("tools" in self.config, validator.validate_tools),
+            (
+                "prompts" in self.config or "system_prompts" in self.config,
+                validator.validate_prompts,
+            ),
+        ):
+            if not present:
+                continue
+            outcome = validate(document)
+            errors.extend(outcome.errors)
+            warnings.extend(outcome.warnings)
 
-        if "tools" in self.config:
-            validator.validate_tools(self.config["tools"])
+        for warning in warnings:
+            logger.warning("Configuration: %s", warning)
 
-        if "prompts" in self.config or "system_prompts" in self.config:
-            validator.validate_prompts(self.config.to_dict())
+        if errors:
+            # Name the files the settings came from. A message that only says
+            # "configuration is invalid" leaves the reader to work out which of
+            # the files in a directory holds the offending key.
+            source = ", ".join(str(p) for p in self._config_files)
+            where = f" in {source}" if source else ""
+            raise ValidationError(
+                f"Configuration is invalid{where} ({len(errors)} problem(s))",
+                errors,
+            )
 
         logger.info("Configuration validation passed")
         return True

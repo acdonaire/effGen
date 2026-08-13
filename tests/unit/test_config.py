@@ -1,6 +1,7 @@
 """Unit tests for configuration system."""
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -98,3 +99,64 @@ class TestConfigLoader:
         with pytest.raises(Exception) as caught:
             loader.load_config([str(good), str(broken)], validate=False)
         assert str(broken) in str(caught.value)
+
+
+class TestValidationIsAGate:
+    """``load_config(validate=True)`` used to accept anything.
+
+    Each validator's result was discarded and the section's *contents* were
+    passed where the whole document was expected, so the validator looked for
+    ``config["models"]["models"]``, found nothing, and validated an empty set.
+    """
+
+    def test_an_invalid_document_is_refused(self, tmp_dir):
+        bad = tmp_dir / "bad.yaml"
+        bad.write_text("models:\n  broken:\n    no_type_field: 1\n")
+        loader = ConfigLoader()
+        with pytest.raises(ValueError) as caught:
+            loader.load_config(str(bad), validate=True)
+        assert "type" in str(caught.value)
+
+    def test_the_refusal_lists_every_problem(self, tmp_dir):
+        bad = tmp_dir / "bad.yaml"
+        bad.write_text(
+            "models:\n  one:\n    no_type: 1\n  two:\n    also_no_type: 2\n"
+        )
+        loader = ConfigLoader()
+        with pytest.raises(ValueError) as caught:
+            loader.load_config(str(bad), validate=True)
+        assert len(getattr(caught.value, "errors", [])) == 2
+
+    def test_the_refusal_names_the_file(self, tmp_dir):
+        bad = tmp_dir / "bad.yaml"
+        bad.write_text("models:\n  broken:\n    no_type_field: 1\n")
+        loader = ConfigLoader()
+        with pytest.raises(ValueError) as caught:
+            loader.load_config(str(bad), validate=True)
+        assert str(bad) in str(caught.value)
+
+    def test_a_valid_document_is_accepted(self, tmp_dir):
+        good = tmp_dir / "good.yaml"
+        good.write_text("models:\n  m1:\n    type: openai\n    model_name: gpt-4o-mini\n")
+        loader = ConfigLoader()
+        loader.load_config(str(good), validate=True)
+        assert loader.validate_config() is True
+
+    @pytest.mark.parametrize(
+        "name",
+        ["config.yaml", "models.yaml", "tools.yaml", "prompts.yaml", "api_keys.yaml"],
+    )
+    def test_every_shipped_config_passes_its_own_gate(self, name):
+        """A gate effGen's own configuration cannot pass is not a usable gate."""
+        shipped = Path(__file__).resolve().parents[2] / "configs" / name
+        if not shipped.exists():
+            pytest.skip(f"{name} is not shipped in this tree")
+        ConfigLoader().load_config(str(shipped), validate=True)
+
+    def test_a_merged_load_records_the_files_it_read(self, tmp_dir):
+        """Merging used to leave the file list empty, so reload() had nothing."""
+        one = tmp_dir / "one.yaml"
+        one.write_text("models:\n  m1:\n    type: openai\n    model_name: a\n")
+        loader = ConfigLoader()
+        loader.load_config(str(one), validate=True)
+        assert [p.name for p in loader._config_files] == ["one.yaml"]

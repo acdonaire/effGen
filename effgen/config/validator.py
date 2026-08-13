@@ -36,8 +36,13 @@ JSONSCHEMA_AVAILABLE = _importlib_util.find_spec("jsonschema") is not None
 logger = logging.getLogger(__name__)
 
 
-class ValidationError(Exception):
-    """Configuration validation error."""
+class ValidationError(ValueError):
+    """Configuration validation error.
+
+    Derives from :class:`ValueError` because that is what the loader's
+    ``validate_config`` has always documented itself as raising; code catching
+    either name keeps working.
+    """
 
     def __init__(self, message: str, errors: list[str] | None = None) -> None:
         """
@@ -81,6 +86,24 @@ class ValidationResult:
     def add_warning(self, warning: str) -> None:
         """Add a warning."""
         self.warnings.append(warning)
+
+
+#: Sections that only a tool-registry document (configs/tools.yaml) carries.
+#: Their presence is what separates it from the application config, which uses
+#: the same ``tools:`` key for feature switches.
+_TOOL_REGISTRY_MARKERS = ("mcp_servers", "custom_tools", "tool_selection")
+
+
+def _is_tool_registry(document: dict[str, Any]) -> bool:
+    """Whether *document* is a tool registry rather than an application config.
+
+    Args:
+        document: The whole configuration document.
+
+    Returns:
+        True when the document carries a section only a tool registry has.
+    """
+    return any(marker in document for marker in _TOOL_REGISTRY_MARKERS)
 
 
 def _document(config: Any, label: str, result: ValidationResult) -> dict[str, Any]:
@@ -341,11 +364,24 @@ class ConfigValidator:
             for error in schema_errors:
                 result.add_error(f"Schema validation: {error}")
 
-        # Validate built-in tools
+        # Validate built-in tools.
+        #
+        # A `tools:` section has two shapes in the configs effGen ships, and
+        # both are correct. In a tool registry (configs/tools.yaml) each entry
+        # is one tool's settings, so a non-mapping entry is a mistake. In the
+        # application config (configs/config.yaml) the same key holds feature
+        # switches — `enable_web_search: true`, `sandbox_timeout: 30` — where a
+        # scalar is exactly right. Which document this is decides which rule
+        # applies; judging by the entries alone would reject one of the two
+        # files effGen itself ships.
         tools = _section(tools_config, "tools", result)
+        registry = _is_tool_registry(tools_config)
         for tool_name, tool_config in tools.items():
             if not isinstance(tool_config, dict):
-                result.add_error(f"Tool '{tool_name}' config must be a dictionary")
+                if registry:
+                    result.add_error(
+                        f"Tool '{tool_name}' config must be a dictionary"
+                    )
                 continue
 
             # Check enabled flag

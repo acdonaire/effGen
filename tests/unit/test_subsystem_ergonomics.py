@@ -55,7 +55,9 @@ def test_config_loader_load_alias(tmp_path):
     from effgen.config import ConfigLoader
 
     cfg = tmp_path / "c.yaml"
-    cfg.write_text("models:\n  demo:\n    name: demo\n")
+    # A model entry needs a `type`; load_config validates by default, and this
+    # test is about load() forwarding, not about a document being rejected.
+    cfg.write_text("models:\n  demo:\n    type: openai\n    model_name: demo\n")
     loader = ConfigLoader()
     assert hasattr(loader, "load")
     # load() forwards to load_config()
