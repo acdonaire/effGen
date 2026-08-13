@@ -14,6 +14,7 @@ from effgen.cli._main import (
 )
 from effgen.core.session import Session, SessionManager
 from effgen.observability import run_log
+from tests._harness.offline_assets import assert_self_contained
 
 MARKUP_TEXT = "check [bold]v2[/bold] and [REDACTED] ref [1]"
 
@@ -361,7 +362,7 @@ def test_runs_show_card_writes_a_labeled_summary_card(tmp_path, capsys):
     # The card states the limits of what stored history holds.
     assert "truncated answer and no step trace" in html
     # Self-contained: nothing is fetched when the file is opened.
-    assert "http://" not in html and "https://" not in html
+    assert_self_contained(html, "the run card")
     assert "Summary card written to" in capsys.readouterr().out
 
 

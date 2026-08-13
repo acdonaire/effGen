@@ -33,6 +33,7 @@ from effgen.eval.battle import (
     fmt_cost,
     run_battle,
 )
+from tests._harness.offline_assets import assert_self_contained
 
 NODE = shutil.which("node")
 STATIC_DIR = Path(__file__).parents[2] / "effgen" / "playground" / "static"
@@ -417,7 +418,7 @@ class TestBattleCommand:
         )
         assert proc.returncode == 0, proc.stderr
         html = out.read_text(encoding="utf-8")
-        assert "http://" not in html and "https://" not in html, "no external host"
+        assert_self_contained(html, "the battle report")
         assert "//" not in _asset_refs(html), "no protocol-relative asset"
         assert "Model Battle" in html
         assert "Verdict" in html or "Fastest" in html
@@ -480,7 +481,7 @@ class TestBattleReport:
         assert "model not found" in html, "a failed contender is named, not hidden"
         assert "unpriced" in html, "an unpriced model is not shown as $0"
         assert "gemini:flash" in html, "the judge is named so the pick can be weighed"
-        assert "http://" not in html and "https://" not in html
+        assert_self_contained(html, "the comparison report")
 
     def test_comparison_report_shows_what_each_model_answered(self):
         from effgen.ui.report_html import build_html_report
