@@ -376,6 +376,10 @@ class TestNativeToolFollowUp:
             name="test-agent", model=model,
             tools=[GeminiCodeExecutionTool(), vault_lookup],
             tool_calling_mode="native",
+            # One case here asserts the *failure response* rather than the
+            # raise. ``raise_on_error`` defaults to True as of 1.0.0, so a run
+            # that fails raises before the assertion can read it.
+            raise_on_error=False,
         ))
         return agent, calls
 

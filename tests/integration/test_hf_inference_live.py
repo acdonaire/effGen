@@ -12,6 +12,15 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
 load_dotenv(Path.home() / ".effgen" / ".env", override=False)
 
 
+# A stalled provider socket must surface as effGen's own typed timeout, not as a
+# pytest-timeout kill that dumps every thread stack into the log. The adapter's
+# default per-request timeout is 120s and pytest's cap is also 120s, so the two
+# fire together and the kill wins; a shorter per-request timeout here lets the
+# adapter report first. Observed against a throttled account whose last requests
+# hung on an SSL read with no server-side close.
+_LIVE_TIMEOUT_S = 45.0
+
+
 def _has_key() -> bool:
     return bool(os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY"))
 
@@ -60,7 +69,7 @@ class TestHFInferenceLive:
     def test_generate_qwen25_7b(self):
         from effgen.models.hf_inference_adapter import HFInferenceAdapter
 
-        adapter = HFInferenceAdapter("Qwen/Qwen2.5-7B-Instruct")
+        adapter = HFInferenceAdapter("Qwen/Qwen2.5-7B-Instruct", timeout=_LIVE_TIMEOUT_S)
         adapter.load()
         try:
             result = _call_or_skip_hf_quota(
@@ -79,7 +88,7 @@ class TestHFInferenceLive:
 
         # HF Router catalog uses the canonical "meta-llama/Llama-3.1-8B-Instruct"
         # path (not the older "Meta-Llama-3.1-8B-Instruct" alias).
-        adapter = HFInferenceAdapter("meta-llama/Llama-3.1-8B-Instruct")
+        adapter = HFInferenceAdapter("meta-llama/Llama-3.1-8B-Instruct", timeout=_LIVE_TIMEOUT_S)
         adapter.load()
         try:
             result = _call_or_skip_hf_quota(
@@ -103,7 +112,7 @@ class TestHFInferenceLive:
     def test_generate_stream_yields_multiple_chunks(self):
         from effgen.models.hf_inference_adapter import HFInferenceAdapter
 
-        adapter = HFInferenceAdapter("Qwen/Qwen2.5-7B-Instruct")
+        adapter = HFInferenceAdapter("Qwen/Qwen2.5-7B-Instruct", timeout=_LIVE_TIMEOUT_S)
         adapter.load()
         try:
             chunks = _call_or_skip_hf_quota(
@@ -118,7 +127,7 @@ class TestHFInferenceLive:
     def test_generate_qwen25_72b(self):
         from effgen.models.hf_inference_adapter import HFInferenceAdapter
 
-        adapter = HFInferenceAdapter("Qwen/Qwen2.5-72B-Instruct")
+        adapter = HFInferenceAdapter("Qwen/Qwen2.5-72B-Instruct", timeout=_LIVE_TIMEOUT_S)
         adapter.load()
         try:
             result = _call_or_skip_hf_quota(
@@ -133,7 +142,7 @@ class TestHFInferenceLive:
     def test_native_tools_qwen(self):
         from effgen.models.hf_inference_adapter import HFInferenceAdapter
 
-        adapter = HFInferenceAdapter("Qwen/Qwen2.5-7B-Instruct")
+        adapter = HFInferenceAdapter("Qwen/Qwen2.5-7B-Instruct", timeout=_LIVE_TIMEOUT_S)
         adapter.load()
         try:
             tool = {
@@ -206,7 +215,7 @@ class TestHFInferenceLive:
     def test_generate_llama_3_3_70b(self):
         from effgen.models.hf_inference_adapter import HFInferenceAdapter
 
-        adapter = HFInferenceAdapter("meta-llama/Llama-3.3-70B-Instruct")
+        adapter = HFInferenceAdapter("meta-llama/Llama-3.3-70B-Instruct", timeout=_LIVE_TIMEOUT_S)
         adapter.load()
         try:
             try:
