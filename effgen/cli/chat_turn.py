@@ -7,9 +7,12 @@ callers use.
 A turn takes one of two paths. With no tools attached the model's answer is
 streamed straight through, which reads best live, and the turn is written to the
 persistent session here once its tokens, cost and latency are known. Once a tool
-is attached the turn runs through ``agent.run()`` under the live-status spinner;
-that path persists the turn itself and reports exact per-turn accounting, which
-the footer uses in preference to the difference between two model counters.
+is attached the turn streams too, when the model's tool calls travel on a path
+that can be dispatched mid-stream — the status line while it thinks and calls
+tools, the answer written as it arrives — falling back to a blocking
+``agent.run()`` under the live-status spinner otherwise. Either way that path
+persists the turn itself and reports exact per-turn accounting, which the footer
+uses in preference to the difference between two model counters.
 
 A turn that raises is reported and the session continues. A turn stopped with
 Ctrl-C keeps what it had reached and is not persisted.
@@ -25,6 +28,13 @@ from effgen.cli import progress as _progress
 
 class ChatTurnMixin:
     """The turn half of :class:`~effgen.cli.chat.ChatREPL`."""
+
+    #: Per-turn accounting the footer prefers over the difference between two
+    #: model counters, and the answer this turn already wrote to the terminal.
+    #: Declared here because the composed class reads them.
+    _turn_response_tokens: int = 0
+    _turn_response_cost: float = 0.0
+    _streamed_answer: str = ""
 
     def _snapshot(self) -> tuple[int, float]:
         m = getattr(self.agent, "model", None)
@@ -148,7 +158,16 @@ class ChatTurnMixin:
         question into sub-agents, which costs several extra model calls and
         answers from a synthesis step rather than from the tool result.
         """
-        if self.animate and self.console:
+        streamed = ""
+        if self.animate and self.console and self._can_stream_tool_turn():
+            response = self._stream_tool_turn(user_input)
+            if response is not None:
+                streamed = self._streamed_answer
+        else:
+            response = None
+        if response is not None:
+            pass
+        elif self.animate and self.console:
             reasoning = _progress.is_reasoning_agent(self.agent)
             with _progress.LiveStatus(
                 self.console,
@@ -183,6 +202,11 @@ class ChatTurnMixin:
             if progress:
                 self._show_progress(progress)
             sys.stdout.flush()
+        elif streamed and streamed.strip() == (answer or "").strip():
+            # The answer is already on screen, written as it arrived. Printing
+            # it again would show it twice.
+            if progress:
+                self._show_progress(progress)
         else:
             self._show_answer(answer)
             if progress:
@@ -195,6 +219,75 @@ class ChatTurnMixin:
             reason = meta.get("reason", "failed")
             self.cli.print_warning(f"(turn did not fully succeed: {reason})")
         return answer
+
+    # ------------------------------------------------------------------
+    # Streaming a tool turn
+    # ------------------------------------------------------------------
+    def _can_stream_tool_turn(self) -> bool:
+        """True when this turn's tool calls travel on a path that can stream.
+
+        A model whose adapter records the calls it streams can dispatch them
+        mid-stream, so the answer is written as it arrives. A model that emits
+        its calls as text in the prompt (a local chat template) cannot: the call
+        syntax would reach the terminal before anything knows it is a call, so
+        those turns keep the blocking path.
+        """
+        probe = getattr(self.agent, "_can_stream_native_tools", None)
+        try:
+            return bool(probe and probe())
+        except Exception:  # noqa: BLE001 - a capability probe never breaks a turn
+            return False
+
+    def _stream_tool_turn(self, user_input: str):
+        """Stream a tool-using turn, handing the terminal between two regions.
+
+        Only one live region may own the terminal, so the status line runs while
+        the model is thinking and dispatching tools, and the answer region takes
+        over from the first answer delta. A tool call after the answer has begun
+        closes the region — leaving what was printed — and hands back to the
+        status line until the answer resumes. The same handoff the coding
+        session uses.
+
+        Returns:
+            The turn's response, or ``None`` when the stream produced none,
+            which tells the caller to run the turn the blocking way.
+        """
+        self._streamed_answer = ""
+        status = _progress.LiveStatus(
+            self.console,
+            model_label=_progress.short_model_label(self.model_id),
+            reasoning=_progress.is_reasoning_agent(self.agent),
+            tracker=getattr(self.agent, "execution_tracker", None),
+            hint="Ctrl-C to cancel",
+        )
+        answer = _progress.LiveAnswer(self.console)
+        status.__enter__()
+        status_open = True
+        try:
+            for event in self.agent.stream(user_input, include_events=True):
+                if event.kind == "answer" and event.text:
+                    if status_open:
+                        status.__exit__(None, None, None)
+                        status_open = False
+                    if not answer.is_open:
+                        answer.open()
+                    answer.push(event.text)
+                elif event.kind in ("tool_call", "thought", "observation"):
+                    if answer.is_open:
+                        answer.close()
+                        status.__enter__()
+                        status_open = True
+        finally:
+            answer.close()
+            if status_open:
+                status.__exit__(None, None, None)
+        response = getattr(self.agent, "last_stream_response", None)
+        if response is None:
+            # The turn runs again the blocking way, so nothing is claimed to be
+            # on screen already and its answer prints normally.
+            return None
+        self._streamed_answer = answer.text
+        return response
 
     def _count_tokens(self, text: str) -> int:
         try:
