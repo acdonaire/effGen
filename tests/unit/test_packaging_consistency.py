@@ -12,12 +12,8 @@ the 0.3.0 packaging pass removed:
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
-
-try:  # stdlib on 3.11+, backport on 3.10
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib  # type: ignore[no-redef]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"

@@ -12,7 +12,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -150,7 +150,7 @@ class A2AMessage:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     context: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -170,7 +170,7 @@ class A2AMessage:
             parts=[MessagePart.from_dict(part) for part in data.get("parts", [])],
             context=data.get("context", {}),
             metadata=data.get("metadata", {}),
-            timestamp=data.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            timestamp=data.get("timestamp", datetime.now(UTC).isoformat()),
         )
 
     def add_text(self, text: str, metadata: dict[str, Any] | None = None) -> None:
@@ -254,7 +254,7 @@ class Artifact:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     mimeType: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -281,7 +281,7 @@ class Artifact:
             content=data["content"],
             mimeType=data.get("mimeType"),
             metadata=data.get("metadata", {}),
-            created=data.get("created", datetime.now(timezone.utc).isoformat()),
+            created=data.get("created", datetime.now(UTC).isoformat()),
         )
 
 
@@ -309,8 +309,8 @@ class Task:
     progress: float = 0.0
     error: A2AError | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     completed: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -346,8 +346,8 @@ class Task:
             progress=data.get("progress", 0.0),
             error=error,
             metadata=data.get("metadata", {}),
-            created=data.get("created", datetime.now(timezone.utc).isoformat()),
-            updated=data.get("updated", datetime.now(timezone.utc).isoformat()),
+            created=data.get("created", datetime.now(UTC).isoformat()),
+            updated=data.get("updated", datetime.now(UTC).isoformat()),
             completed=data.get("completed"),
         )
 
@@ -359,7 +359,7 @@ class Task:
             state: New task state
         """
         self.state = state
-        self.updated = datetime.now(timezone.utc).isoformat()
+        self.updated = datetime.now(UTC).isoformat()
         if state == TaskState.COMPLETED:
             self.completed = self.updated
             self.progress = 1.0
@@ -372,7 +372,7 @@ class Task:
             progress: Progress value (0.0 to 1.0)
         """
         self.progress = max(0.0, min(1.0, progress))
-        self.updated = datetime.now(timezone.utc).isoformat()
+        self.updated = datetime.now(UTC).isoformat()
 
     def add_artifact(self, artifact: Artifact) -> None:
         """
@@ -382,7 +382,7 @@ class Task:
             artifact: Artifact to add
         """
         self.artifacts.append(artifact)
-        self.updated = datetime.now(timezone.utc).isoformat()
+        self.updated = datetime.now(UTC).isoformat()
 
     def set_error(self, error: A2AError) -> None:
         """

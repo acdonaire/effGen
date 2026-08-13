@@ -12,7 +12,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any
 
@@ -132,14 +132,14 @@ class OAuth2AuthHandler(AuthHandler):
             # Store expiry if provided
             if "expires_in" in data:
                 from datetime import timedelta
-                self._token_expiry = datetime.now(timezone.utc) + timedelta(seconds=data["expires_in"])
+                self._token_expiry = datetime.now(UTC) + timedelta(seconds=data["expires_in"])
             return self._token
 
     async def apply_auth(self, headers: dict[str, str]) -> dict[str, str]:
         """Apply OAuth2 authentication."""
         # Check if token needs refresh
         if not self._token or (
-            self._token_expiry and datetime.now(timezone.utc) >= self._token_expiry
+            self._token_expiry and datetime.now(UTC) >= self._token_expiry
         ):
             await self._fetch_token()
 

@@ -206,9 +206,18 @@ Two effGen safety nets make a mismatch easy to diagnose rather than mysterious:
 
 ## Supported Python versions
 
-`effgen` officially supports Python **3.10, 3.11, 3.12, 3.13**. Python 3.14
-is best-effort — several upstream packages (torch, bitsandbytes) do not yet
-ship cp314 wheels.
+`effgen` officially supports Python **3.11, 3.12, 3.13**.
+
+**Python 3.14**: the base install, the CLI and every provider extra work — all
+ten documented installation routes were verified on 3.14.6. The `all` extra
+does not install, because it pulls `vllm`, which pulls `numba`, which declares
+`>=3.10,<3.14`. Until that lifts upstream, install the extras you need by name
+on 3.14 rather than `effgen[all]`, or use 3.13 for a full install.
+
+3.10 was dropped for 1.0.0. It reached the point where holding it back cost
+more than it bought: several `pyupgrade` rewrites and a few runtime branches
+existed only to keep 3.10 working, and `tomllib`, `asyncio.timeout`,
+`datetime.UTC` and the `TimeoutError` unification are all stdlib from 3.11.
 
 ## Verifying your install
 

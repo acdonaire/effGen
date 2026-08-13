@@ -270,13 +270,13 @@ check_prerequisites() {
         local py_major=$(echo $py_version | cut -d. -f1)
         local py_minor=$(echo $py_version | cut -d. -f2)
 
-        if [ "$py_major" -ge 3 ] && [ "$py_minor" -ge 10 ]; then
+        if [ "$py_major" -ge 3 ] && [ "$py_minor" -ge 11 ]; then
             print_success "Python $py_version found"
         else
             if [ "$has_conda" = true ]; then
                 print_warning "System Python is $py_version — conda will create a 3.11 environment"
             else
-                print_error "Python 3.10+ required (found $py_version)"
+                print_error "Python 3.11+ required (found $py_version)"
                 has_errors=true
             fi
         fi

@@ -120,7 +120,7 @@ against our annotations. Two rules follow from that:
 ### The linter's target version tracks the supported Python floor
 
 `[tool.ruff] target-version` in `pyproject.toml` equals the `requires-python`
-floor, currently 3.10. Several pyupgrade rules are gated behind the target and
+floor, currently 3.11. Several pyupgrade rules are gated behind the target and
 rewrite code that the floor cannot run — `UP017` (`datetime.UTC`), `UP041` (the
 bare `TimeoutError` alias) and `UP042` (`enum.StrEnum`) need 3.11, and `UP047`
 (PEP 695 type parameters) needs 3.12. They are therefore off because of the

@@ -158,7 +158,7 @@ def build_baseline(counts: Counter[str], target: str) -> dict[str, Any]:
             "mypy": mypy_version(),
             "target": target,
             "mypy_args": MYPY_ARGS,
-            "config": "pyproject.toml [tool.mypy] (python_version = 3.10)",
+            "config": "pyproject.toml [tool.mypy] (python_version = 3.11)",
         },
         "totals": {"errors": sum(counts.values()), "identities": len(counts)},
         "by_code": dict(sorted(by_code.items(), key=lambda kv: (-kv[1], kv[0]))),

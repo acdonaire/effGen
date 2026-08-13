@@ -30,12 +30,12 @@ build:
 # these stay aligned with pyproject so the recipe cannot silently drift again.
 requirements:
   host:
-    - python >=3.10
+    - python >=3.11
     - pip
     - setuptools >=69.0.0
     - wheel >=0.42.0
   run:
-    - python >=3.10
+    - python >=3.11
     - pytorch >=2.0.0
     - transformers >=4.35.0
     - accelerate >=0.24.0

@@ -5,7 +5,7 @@ Avoids real network calls by mocking `requests` and `socket` primitives.
 from __future__ import annotations
 
 import socket
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 from effgen.utils.health import HealthChecker, HealthCheckResult
@@ -100,7 +100,7 @@ class TestCheckDNS:
 
 class TestCheckSSL:
     def _fake_cert(self, days_from_now: int) -> dict:
-        expiry = datetime.now(timezone.utc) + timedelta(days=days_from_now)
+        expiry = datetime.now(UTC) + timedelta(days=days_from_now)
         return {"notAfter": expiry.strftime("%b %d %H:%M:%S %Y GMT")}
 
     def test_passes_when_far_from_expiry(self):

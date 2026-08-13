@@ -20,7 +20,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from effgen.cli.monitor_format import (
@@ -381,7 +381,7 @@ def collect_snapshot(
     key = resolve_api_key(api_key)
     traffic, by_model, reachable = _collect_server(server_url, key)
     return {
-        "ts": datetime.now(timezone.utc).strftime(  # noqa: UP017 - `timezone.utc` needed for py3.10 support
+        "ts": datetime.now(UTC).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         ),
         "header": {

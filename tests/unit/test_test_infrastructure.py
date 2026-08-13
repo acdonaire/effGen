@@ -13,14 +13,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-
-try:
-    import tomllib  # py3.11+
-except ModuleNotFoundError:  # pragma: no cover - py3.10 fallback
-    import tomli as tomllib  # type: ignore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "scripts"

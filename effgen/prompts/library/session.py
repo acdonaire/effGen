@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -90,7 +90,7 @@ class PlaygroundSession:
         """
         if path is None:
             _SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
             safe = re.sub(r"[^a-zA-Z0-9._-]", "_", self.prompt_name) or "session"
             path = _SESSIONS_DIR / f"{ts}_{safe}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,4 +128,4 @@ class PlaygroundSession:
 # ------------------------------------------------------------------
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

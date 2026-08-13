@@ -48,7 +48,7 @@ import json
 import logging
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .redact import get_redactor
@@ -235,7 +235,7 @@ class StructuredFormatter(logging.Formatter):
 
         # Core fields
         record_dict: dict[str, Any] = {
-            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(
                 timespec="microseconds"
             ),
             "level": record.levelname,

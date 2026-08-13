@@ -12,12 +12,8 @@ list so the two never drift:
 
 from __future__ import annotations
 
+import tomllib  # type: ignore[no-redef]
 from pathlib import Path
-
-try:  # stdlib on 3.11+, backport on 3.10
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib  # type: ignore[no-redef]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -38,7 +34,7 @@ HEADER = """\
 #
 # For the full optional stack use the extras instead:
 #     pip install -e ".[all]" -c requirements-all-lock.txt
-# Python version: >=3.10
+# Python version: >=3.11
 # ==============================================================================
 
 """

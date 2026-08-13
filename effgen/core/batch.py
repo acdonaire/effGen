@@ -548,7 +548,7 @@ class BatchRunner:
                         self.agent.run, query, **run_kwargs,
                     )
                 return resp
-            except asyncio.TimeoutError:  # noqa: UP041 - distinct class on py3.10
+            except TimeoutError:
                 last_exc = TimeoutError(
                     f"Query timed out after {config.timeout_per_item}s: {query[:80]}"
                 )

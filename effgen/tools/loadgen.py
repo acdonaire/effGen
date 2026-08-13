@@ -347,11 +347,9 @@ class LoadGenerator:
                 )
                 response = str(raw)[:120]
                 success = True
-            except (asyncio.TimeoutError, TimeoutError):  # noqa: UP041
-                # On 3.11+ these are the same object; on 3.10 asyncio.wait_for
-                # raises the distinct asyncio.TimeoutError, so catch both. The
-                # UP041 autofix (collapse to TimeoutError) would drop the 3.10
-                # case, so it is intentionally suppressed here.
+            except TimeoutError:
+                # asyncio.TimeoutError is an alias of the builtin from 3.11 on,
+                # which is the declared floor, so one name covers both.
                 error_msg = f"TimeoutError after {self.config.request_timeout}s"
                 error_category = "timeout"
             except Exception as exc:

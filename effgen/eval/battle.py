@@ -26,7 +26,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -466,7 +466,7 @@ def run_battle(
         prompt=prompt,
         contenders=contenders,
         wall_s=time.perf_counter() - started,
-        generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )
     result.verdict = _measured_verdict(contenders)
     if judge:

@@ -56,10 +56,8 @@ def _load_ratchet():
 
 
 def _read_pyproject() -> dict:
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - the 3.10 lane
-        import tomli as tomllib
+    import tomllib
+
     return tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
 

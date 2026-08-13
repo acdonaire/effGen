@@ -68,7 +68,7 @@ suites.
 
 | Marker | Selects | CI job |
 |---|---|---|
-| `unit` | pure unit tests | `test-unit` (matrix: 3.10–3.13) |
+| `unit` | pure unit tests | `test-unit` (matrix: 3.11–3.13) |
 | `integration` | cross-module, no network/GPU | `test-integration` |
 | `live` | real provider API calls (needs keys) | live-providers (opt-in) |
 | `api` | needs a provider key set | live-providers (opt-in) |
@@ -263,7 +263,7 @@ these passes for its lane.
 | `scripts/check_install_server.sh` | `[server]` | server boots, probes 200, auth on by default |
 
 Common knobs (see `scripts/_install_matrix_common.sh`):
-`MATRIX_PYTHON` (interpreter, ≥3.10), `MATRIX_WHEEL` (reuse a pre-built wheel),
+`MATRIX_PYTHON` (interpreter, ≥3.11), `MATRIX_WHEEL` (reuse a pre-built wheel),
 `MATRIX_KEEP=1` (keep the scratch dir for debugging).
 
 ## GPU shard runner

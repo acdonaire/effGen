@@ -17,14 +17,10 @@ from __future__ import annotations
 
 import ast
 import datetime as _datetime
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-try:  # Python 3.11+
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - exercised on 3.10
-    import tomli as tomllib  # type: ignore[no-redef]
 
 TESTS_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = TESTS_ROOT.parent

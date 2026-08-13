@@ -173,7 +173,7 @@ class RequestQueue:
                         return None
                 try:
                     await asyncio.wait_for(self._cond.wait(), timeout=remaining)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     return None
 
     def _pop_next_locked(self) -> QueuedRequest | None:

@@ -30,19 +30,19 @@ __author__ = "effGen Team"
 __license__ = "Apache-2.0"
 
 # Fail early and clearly on an unsupported interpreter. pip already refuses to
-# install on < 3.10 (requires-python in pyproject.toml), but a source checkout
-# run via PYTHONPATH skips that gate — and effGen's submodules use 3.10+ syntax,
+# install on < 3.11 (requires-python in pyproject.toml), but a source checkout
+# run via PYTHONPATH skips that gate — and effGen's submodules use 3.11+ syntax,
 # so without this guard the user would hit a cryptic SyntaxError instead. Keep
-# this block free of any 3.10-only syntax so it runs on the wrong interpreter.
+# this block free of any 3.11-only syntax so it runs on the wrong interpreter.
 import os as _os
 import sys as _sys
 from importlib import import_module as _import_module
 from typing import TYPE_CHECKING, Any
 
-if _sys.version_info < (3, 10):  # noqa: UP036 — intentional guard for source-checkout runs on < 3.10
+if _sys.version_info < (3, 11):  # noqa: UP036 — intentional guard for source-checkout runs on < 3.11
     raise RuntimeError(
-        "effGen requires Python 3.10 or newer, but you are running "
-        "{}.{}.{}. Please upgrade your interpreter (e.g. create a Python 3.11 "
+        "effGen requires Python 3.11 or newer, but you are running "
+        "{}.{}.{}. Please upgrade your interpreter (e.g. create a Python 3.12 "
         "environment) and reinstall effGen.".format(*_sys.version_info[:3])
     )
 

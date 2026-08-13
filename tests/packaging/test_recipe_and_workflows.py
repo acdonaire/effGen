@@ -18,14 +18,10 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-
-try:  # py3.11+
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - py3.10
-    tomllib = None  # type: ignore[assignment]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RECIPE = REPO_ROOT / "conda-recipe" / "meta.yaml"
@@ -45,7 +41,6 @@ def _package_version() -> str:
 
 
 def _pyproject_core_dep_names() -> set[str]:
-    assert tomllib is not None, "tomllib/tomli required to parse pyproject"
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     names = set()
     for spec in data["project"]["dependencies"]:

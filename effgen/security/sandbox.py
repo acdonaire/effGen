@@ -427,7 +427,7 @@ class DockerSandbox(SandboxBase):
                 )
                 exit_code = proc.returncode
                 timed_out = False
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 try:
                     proc.kill()
                     await proc.wait()
@@ -652,7 +652,7 @@ class SubprocessSandbox(SandboxBase):
                 timed_out = _killed_at_deadline(exit_code, elapsed, config.timeout)
                 if timed_out and not stderr_b:
                     stderr_b = b"Execution timed out"
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 try:
                     proc.kill()
                     await proc.wait()
@@ -1006,7 +1006,7 @@ class OffSandbox(SandboxBase):
                 timed_out = _killed_at_deadline(exit_code, elapsed, config.timeout)
                 if timed_out and not stderr_b:
                     stderr_b = b"Execution timed out"
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.wait()
                 stdout_b, stderr_b = b"", b"Execution timed out"

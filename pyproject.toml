@@ -12,7 +12,7 @@ name = "effgen"
 dynamic = ["version"]
 description = "A comprehensive framework for building agents with Small Language Models"
 readme = "README_PYPI.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [
     {name = "Gaurav Srivastava", email = "gks@vt.edu"}
@@ -32,7 +32,6 @@ classifiers = [
     "Intended Audience :: Education",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -541,7 +540,7 @@ effgen = [
 # Black - Code Formatter
 [tool.black]
 line-length = 100
-target-version = ['py310', 'py311', 'py312', 'py313']
+target-version = ['py311', 'py312', 'py313']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -583,7 +582,7 @@ known_third_party = [
 
 # mypy - Type Checker
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
@@ -723,7 +722,7 @@ directory = "htmlcov"
 
 # Pylint - Linter
 [tool.pylint.main]
-py-version = "3.10"
+py-version = "3.11"
 ignore = ["CVS", "migrations", "tests"]
 jobs = 0  # Auto-detect CPUs
 

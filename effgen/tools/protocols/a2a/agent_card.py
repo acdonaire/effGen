@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -159,8 +159,8 @@ class AgentCard:
     endpoint: EndpointConfig
     authSchemes: list[AuthScheme] = field(default_factory=lambda: [AuthScheme.NONE])
     metadata: dict[str, Any] = field(default_factory=dict)
-    created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     deprecated: bool = False
     tags: list[str] = field(default_factory=list)
 
@@ -208,8 +208,8 @@ class AgentCard:
                 AuthScheme(scheme) for scheme in data.get("authSchemes", ["none"])
             ],
             metadata=data.get("metadata", {}),
-            created=data.get("created", datetime.now(timezone.utc).isoformat()),
-            updated=data.get("updated", datetime.now(timezone.utc).isoformat()),
+            created=data.get("created", datetime.now(UTC).isoformat()),
+            updated=data.get("updated", datetime.now(UTC).isoformat()),
             deprecated=data.get("deprecated", False),
             tags=data.get("tags", []),
         )
@@ -326,7 +326,7 @@ class AgentCard:
 
     def update_timestamp(self) -> None:
         """Update the 'updated' timestamp to current UTC time."""
-        self.updated = datetime.now(timezone.utc).isoformat()
+        self.updated = datetime.now(UTC).isoformat()
 
     def add_capability(self, capability: Capability) -> None:
         """

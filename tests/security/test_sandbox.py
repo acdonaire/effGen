@@ -47,7 +47,7 @@ from effgen.security.sandbox import (
 
 
 def _run(coro):
-    """Run a coroutine in a fresh event loop (3.10–3.13 safe)."""
+    """Run a coroutine in a fresh event loop (3.11–3.13 safe)."""
     return asyncio.run(coro)
 
 

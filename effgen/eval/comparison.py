@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .evaluator import AgentEvaluator, ScoringMode, SuiteResults
@@ -369,7 +369,7 @@ class ModelComparison:
             rationale[suite_name] = _recommendation_rationale(best, candidates, optimize)
         matrix.recommendations = recommendations
         matrix.recommendation_rationale = rationale
-        matrix.generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        matrix.generated_at = datetime.now(UTC).isoformat(timespec="seconds")
         # Name what graded the answers, so a reader knows whether the scores
         # came from a model with a stake in them.
         if self.scoring == ScoringMode.LLM_JUDGE:

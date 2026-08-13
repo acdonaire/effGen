@@ -12,7 +12,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import wraps
 from typing import Any
 
@@ -350,7 +350,7 @@ class ACPServer:
     def _update_manifest(self) -> None:
         """Update manifest with current capabilities."""
         self.manifest.capabilities = self.registry.list_capabilities()
-        self.manifest.updated = datetime.now(timezone.utc).isoformat()
+        self.manifest.updated = datetime.now(UTC).isoformat()
 
     def register_capability(
         self,
@@ -570,7 +570,7 @@ class ACPServer:
             )
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RuntimeError(f"Execution timed out after {self.config.task_timeout}s")
 
     async def _execute_async(self, request: ACPRequest) -> TaskInfo:
@@ -616,7 +616,7 @@ class ACPServer:
                         result=result,
                     )
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     error = self.protocol.create_error(
                         code="TIMEOUT",
                         message=f"Task timed out after {self.config.task_timeout}s",

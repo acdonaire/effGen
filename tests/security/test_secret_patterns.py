@@ -13,14 +13,10 @@ import json
 import shutil
 import subprocess
 import textwrap
+import tomllib
 from pathlib import Path
 
 import pytest
-
-try:  # tomllib is stdlib on Python 3.11+; fall back to the tomli backport on 3.10
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - exercised only on Python 3.10
-    import tomli as tomllib
 
 # ---------------------------------------------------------------------------
 # Helpers

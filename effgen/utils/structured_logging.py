@@ -36,7 +36,7 @@ import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ class EffGenJSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         """Render *record* as one JSON line with the active run-context fields."""
         data: dict[str, Any] = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

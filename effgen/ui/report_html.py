@@ -48,7 +48,7 @@ captured earlier can be rendered later without re-running any model.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -237,7 +237,7 @@ def build_html_report(
             f"Unknown report kind '{resolved}'. Choose one of: {', '.join(REPORT_KINDS)}."
         )
     _require_kind_data(data, resolved)
-    stamp = generated_at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    stamp = generated_at or datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     title, subtitle, body = _BODY_RENDERERS[resolved](data)
     return _page(
         title=title, subtitle=subtitle, command=command, generated_at=stamp, body=body,

@@ -12,7 +12,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -71,7 +71,7 @@ class ACPError:
     message: str
     severity: ErrorSeverity = ErrorSeverity.ERROR
     details: dict[str, Any] | None = None
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -93,7 +93,7 @@ class ACPError:
             message=data["message"],
             severity=ErrorSeverity(data.get("severity", "error")),
             details=data.get("details"),
-            timestamp=data.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            timestamp=data.get("timestamp", datetime.now(UTC).isoformat()),
         )
 
 
@@ -212,8 +212,8 @@ class AgentManifest:
     description: str
     capabilities: list[CapabilityDefinition] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
-    created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -241,8 +241,8 @@ class AgentManifest:
                 for cap in data.get("capabilities", [])
             ],
             metadata=data.get("metadata", {}),
-            created=data.get("created", datetime.now(timezone.utc).isoformat()),
-            updated=data.get("updated", datetime.now(timezone.utc).isoformat()),
+            created=data.get("created", datetime.now(UTC).isoformat()),
+            updated=data.get("updated", datetime.now(UTC).isoformat()),
         )
 
     def to_json(self, indent: int | None = 2) -> str:
@@ -279,7 +279,7 @@ class AgentManifest:
         """
         if not self.get_capability(capability.name):
             self.capabilities.append(capability)
-            self.updated = datetime.now(timezone.utc).isoformat()
+            self.updated = datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -335,8 +335,8 @@ class CapabilityToken:
         expiry = datetime.fromisoformat(self.expires)
         # Normalise: if expiry is naive, treat as UTC
         if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) < expiry
+            expiry = expiry.replace(tzinfo=UTC)
+        return datetime.now(UTC) < expiry
 
     def has_capability(self, capability: str) -> bool:
         """
@@ -373,7 +373,7 @@ class ACPRequest:
     requestType: RequestType = RequestType.SYNCHRONOUS
     context: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -403,7 +403,7 @@ class ACPRequest:
             requestType=RequestType(data.get("requestType", "synchronous")),
             context=data.get("context", {}),
             metadata=data.get("metadata", {}),
-            timestamp=data.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            timestamp=data.get("timestamp", datetime.now(UTC).isoformat()),
         )
 
 
@@ -425,7 +425,7 @@ class ACPResponse:
     output: dict[str, Any] | None = None
     error: ACPError | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -455,7 +455,7 @@ class ACPResponse:
             output=data.get("output"),
             error=error,
             metadata=data.get("metadata", {}),
-            timestamp=data.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            timestamp=data.get("timestamp", datetime.now(UTC).isoformat()),
         )
 
 
@@ -481,8 +481,8 @@ class TaskInfo:
     progress: float = 0.0
     result: dict[str, Any] | None = None
     error: ACPError | None = None
-    created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     completed: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -517,29 +517,29 @@ class TaskInfo:
             progress=data.get("progress", 0.0),
             result=data.get("result"),
             error=error,
-            created=data.get("created", datetime.now(timezone.utc).isoformat()),
-            updated=data.get("updated", datetime.now(timezone.utc).isoformat()),
+            created=data.get("created", datetime.now(UTC).isoformat()),
+            updated=data.get("updated", datetime.now(UTC).isoformat()),
             completed=data.get("completed"),
         )
 
     def update_progress(self, progress: float) -> None:
         """Update task progress."""
         self.progress = max(0.0, min(1.0, progress))
-        self.updated = datetime.now(timezone.utc).isoformat()
+        self.updated = datetime.now(UTC).isoformat()
 
     def complete(self, result: dict[str, Any]) -> None:
         """Mark task as completed."""
         self.status = TaskStatus.COMPLETED
         self.result = result
         self.progress = 1.0
-        self.completed = datetime.now(timezone.utc).isoformat()
+        self.completed = datetime.now(UTC).isoformat()
         self.updated = self.completed
 
     def fail(self, error: ACPError) -> None:
         """Mark task as failed."""
         self.status = TaskStatus.FAILED
         self.error = error
-        self.completed = datetime.now(timezone.utc).isoformat()
+        self.completed = datetime.now(UTC).isoformat()
         self.updated = self.completed
 
 
@@ -674,7 +674,7 @@ class ACPProtocolHandler:
 
         if status:
             task.status = status
-            task.updated = datetime.now(timezone.utc).isoformat()
+            task.updated = datetime.now(UTC).isoformat()
         if progress is not None:
             task.update_progress(progress)
         if result:

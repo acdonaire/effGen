@@ -22,7 +22,7 @@ import ssl
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class HealthCheckResult:
     passed: bool
     message: str
     response_time_ms: float = 0.0
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class HealthChecker:
@@ -189,8 +189,8 @@ class HealthChecker:
             expires = datetime.strptime(expires_str, "%b %d %H:%M:%S %Y %Z")
             # strptime with %Z returns naive datetime; treat as UTC
             if expires.tzinfo is None:
-                expires = expires.replace(tzinfo=timezone.utc)
-            days_left = (expires - datetime.now(timezone.utc)).days
+                expires = expires.replace(tzinfo=UTC)
+            days_left = (expires - datetime.now(UTC)).days
             passed = days_left > warn_days
 
             return HealthCheckResult(

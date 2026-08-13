@@ -127,11 +127,11 @@ class AgentPool:
                 if end is not None:
                     remaining = end - time.time()
                     if remaining <= 0:
-                        raise asyncio.TimeoutError("AgentPool.acquire timed out")
+                        raise TimeoutError("AgentPool.acquire timed out")
                 try:
                     await asyncio.wait_for(self._cond.wait(), timeout=remaining)
-                except asyncio.TimeoutError:
-                    raise asyncio.TimeoutError("AgentPool.acquire timed out")
+                except TimeoutError:
+                    raise TimeoutError("AgentPool.acquire timed out")
 
     async def release(self, pa: PooledAgent) -> None:
         """Return *pa* to the pool (an unhealthy surplus agent is destroyed)."""

@@ -231,7 +231,7 @@ pip install -e ".[dev]"`}
       <ApiTable
         headers={['Requirement', 'Minimum', 'Recommended']}
         rows={[
-          ['Python', '3.10+', '3.11+'],
+          ['Python', '3.11+', '3.12+'],
           ['RAM', '8GB', '16GB+'],
           ['GPU VRAM', '4GB (for 3B models)', '16GB+ (for 7B+ models)'],
           ['CUDA', '11.8+ (optional)', '12.1+'],

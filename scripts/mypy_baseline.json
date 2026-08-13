@@ -11,15 +11,15 @@
       "--show-error-codes",
       "--no-color-output"
     ],
-    "config": "pyproject.toml [tool.mypy] (python_version = 3.10)"
+    "config": "pyproject.toml [tool.mypy] (python_version = 3.11)"
   },
   "totals": {
-    "errors": 1899,
-    "identities": 864
+    "errors": 1887,
+    "identities": 858
   },
   "by_code": {
-    "attr-defined": 1223,
-    "arg-type": 139,
+    "attr-defined": 1215,
+    "arg-type": 137,
     "no-any-return": 134,
     "assignment": 100,
     "union-attr": 62,
@@ -32,10 +32,9 @@
     "dict-item": 10,
     "return-value": 10,
     "name-defined": 6,
-    "call-arg": 5,
+    "call-arg": 4,
     "exit-return": 4,
-    "method-assign": 1,
-    "no-redef": 1
+    "method-assign": 1
   },
   "identities": {
     "effgen/api/middleware.py|no-any-return|Returning Any from function declared to return \"str\"": 1,
@@ -214,7 +213,6 @@
     "effgen/cli/commands/examples.py|union-attr|Item \"None\" of \"Loader | Any | None\" has no attribute \"exec_module\"": 1,
     "effgen/cli/commands/examples.py|union-attr|Item \"None\" of \"ModuleSpec | None\" has no attribute \"loader\"": 1,
     "effgen/cli/commands/models.py|union-attr|Item \"None\" of \"Any | None\" has no attribute \"print\"": 6,
-    "effgen/cli/commands/plugin.py|call-arg|Too many arguments for \"joinpath\" of \"Traversable\"": 1,
     "effgen/cli/commands/prompts.py|arg-type|Argument 1 to \"cmd_render\" has incompatible type \"Any | None\"; expected \"str\"": 1,
     "effgen/cli/commands/prompts.py|arg-type|Argument 1 to \"cmd_run\" has incompatible type \"Any | None\"; expected \"str\"": 1,
     "effgen/cli/commands/prompts.py|arg-type|Argument 3 to \"cmd_run\" has incompatible type \"Any | None\"; expected \"str\"": 1,
@@ -226,7 +224,6 @@
     "effgen/cli/commands/serve.py|arg-type|Argument \"max_iterations\" to \"AgentConfig\" has incompatible type \"int | None\"; expected \"int\"": 1,
     "effgen/cli/commands/serve.py|arg-type|Argument \"model\" to \"AgentConfig\" has incompatible type \"str | None\"; expected \"BaseModel | str\"": 1,
     "effgen/cli/commands/serve.py|arg-type|Argument \"temperature\" to \"AgentConfig\" has incompatible type \"float | None\"; expected \"float\"": 1,
-    "effgen/cli/commands/tools.py|no-redef|Name \"example\" already defined on line 140": 1,
     "effgen/cli/commands/workflow.py|index|Unsupported target for indexed assignment (\"dict[Any, Any] | str\")": 2,
     "effgen/cli/onboarding.py|no-any-return|Returning Any from function declared to return \"dict[Any, Any]\"": 1,
     "effgen/cli/playground.py|no-any-return|Returning Any from function declared to return \"str\"": 1,
@@ -414,7 +411,6 @@
     "effgen/core/agent_stream_native.py|attr-defined|\"AgentNativeStreamMixin\" has no attribute \"run\"": 1,
     "effgen/core/agent_stream_native.py|attr-defined|\"AgentNativeStreamMixin\" has no attribute \"short_term_memory\"": 4,
     "effgen/core/agent_stream_native.py|attr-defined|\"AgentNativeStreamMixin\" has no attribute \"tools\"": 13,
-    "effgen/core/agent_streaming.py|arg-type|Argument \"temperature\" to \"GenerationConfig\" has incompatible type \"Any | None\"; expected \"float\"": 2,
     "effgen/core/agent_streaming.py|arg-type|Argument 1 to \"_stream_direct\" of \"AgentStreamingMixin\" has incompatible type \"str | Message | list[Any]\"; expected \"str\"": 1,
     "effgen/core/agent_streaming.py|attr-defined|\"AgentStreamingMixin\" has no attribute \"_can_stream_native_tools\"": 1,
     "effgen/core/agent_streaming.py|attr-defined|\"AgentStreamingMixin\" has no attribute \"_coerce_task_input\"": 1,
@@ -427,7 +423,6 @@
     "effgen/core/agent_streaming.py|attr-defined|\"AgentStreamingMixin\" has no attribute \"_stream_native_tools\"": 1,
     "effgen/core/agent_streaming.py|attr-defined|\"AgentStreamingMixin\" has no attribute \"_tool_prompt_generator\"": 1,
     "effgen/core/agent_streaming.py|attr-defined|\"AgentStreamingMixin\" has no attribute \"_verbose_tools\"": 1,
-    "effgen/core/agent_streaming.py|attr-defined|\"AgentStreamingMixin\" has no attribute \"config\"": 6,
     "effgen/core/agent_streaming.py|attr-defined|\"AgentStreamingMixin\" has no attribute \"model\"": 10,
     "effgen/core/agent_streaming.py|attr-defined|\"AgentStreamingMixin\" has no attribute \"name\"": 1,
     "effgen/core/agent_streaming.py|attr-defined|\"AgentStreamingMixin\" has no attribute \"short_term_memory\"": 4,
@@ -705,8 +700,6 @@
     "effgen/reliability/retry.py|no-any-return|Returning Any from function declared to return \"float\"": 1,
     "effgen/reliability/timeouts.py|arg-type|Argument 2 to \"_AsyncTimeoutContext\" has incompatible type \"str | Any | None\"; expected \"str\"": 1,
     "effgen/reliability/timeouts.py|arg-type|Argument 2 to \"_SyncTimeoutContext\" has incompatible type \"str | Any | None\"; expected \"str\"": 1,
-    "effgen/reliability/timeouts.py|attr-defined|\"None\" has no attribute \"__aenter__\"": 1,
-    "effgen/reliability/timeouts.py|attr-defined|Module has no attribute \"timeout\"": 1,
     "effgen/reliability/timeouts.py|exit-return|\"bool\" is invalid as return type for \"__exit__\" that always returns False": 1,
     "effgen/security/sandbox.py|arg-type|Argument \"exit_code\" to \"SandboxResult\" has incompatible type \"int | None\"; expected \"int\"": 1,
     "effgen/security/supply_chain.py|attr-defined|\"PackageMetadata\" has no attribute \"get\"": 3,

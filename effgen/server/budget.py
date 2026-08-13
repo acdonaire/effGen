@@ -20,7 +20,7 @@ import json
 import logging
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from effgen.errors import quote_for_message, with_next_step
@@ -64,7 +64,7 @@ _BUDGET_DIR: Path | None = None
 
 
 def _today() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
 
 def _persist_enabled() -> bool:

@@ -30,7 +30,7 @@ const faqs: FAQ[] = [
     id: 2,
     category: "Installation",
     question: "What are the system requirements?",
-    answer: "Minimum requirements:\n\n- **Python**: 3.10+\n- **RAM**: 8 GB (16 GB recommended)\n- **GPU VRAM**: 4 GB for 3B models, 8 GB for 7B models (4-bit quantization)\n- **CUDA**: 11.8+ for GPU support\n\nCPU-only mode works but is noticeably slower. Cloud providers only need the matching API key and optional provider extra.",
+    answer: "Minimum requirements:\n\n- **Python**: 3.11+\n- **RAM**: 8 GB (16 GB recommended)\n- **GPU VRAM**: 4 GB for 3B models, 8 GB for 7B models (4-bit quantization)\n- **CUDA**: 11.8+ for GPU support\n\nCPU-only mode works but is noticeably slower. Cloud providers only need the matching API key and optional provider extra.",
     tags: ["requirements", "system", "hardware", "gpu", "ram", "cuda", "minimum", "specs", "cpu", "vram", "python version"],
   },
   {

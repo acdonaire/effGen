@@ -495,7 +495,7 @@ class BashTool(BaseTool):
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(), timeout=effective_timeout
                 )
-            except asyncio.TimeoutError:  # noqa: UP041 - distinct class on py3.10
+            except TimeoutError:
                 # Kill the whole process group so backgrounded children die too.
                 await self._kill_process_group(proc)
                 raise TimeoutError(

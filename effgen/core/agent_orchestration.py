@@ -17,7 +17,7 @@ import difflib
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..memory.long_term import ImportanceLevel, MemoryType
@@ -138,7 +138,7 @@ class AgentOrchestrationMixin:
             )
 
         start_time = time.time()
-        started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        started_at = datetime.now(UTC).isoformat(timespec="seconds")
         context = context or {}
 
         # Accept str | Message | list[ContentPart]; route media to the

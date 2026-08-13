@@ -173,42 +173,27 @@ class _AsyncTimeoutContext:
             )
         self._seconds = seconds
         self._operation = operation
-        self._ctx = None
+        # Created in __aenter__, so the attribute exists before there is a
+        # context to put in it.
+        self._ctx: asyncio.Timeout | None = None
 
     async def __aenter__(self) -> "_AsyncTimeoutContext":
-        try:
-            # Python 3.11+
-            self._ctx = asyncio.timeout(self._seconds)
-            await self._ctx.__aenter__()
-        except AttributeError:
-            # Python 3.10 fallback
-            self._ctx = None  # handled in __aexit__
-            self._task = asyncio.current_task()
-            loop = asyncio.get_event_loop()
-            self._handle = loop.call_later(self._seconds, self._cancel)
+        self._ctx = asyncio.timeout(self._seconds)
+        await self._ctx.__aenter__()
         return self
 
-    def _cancel(self):
-        if self._task and not self._task.done():
-            self._task.cancel()
-
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
-        if self._ctx is not None:
-            try:
-                await self._ctx.__aexit__(exc_type, exc_val, exc_tb)
-            except builtins.TimeoutError as exc:
-                # asyncio.TimeoutError is an alias of builtins.TimeoutError
-                # in Python 3.11+.  In 3.10 it's distinct but still inherits.
-                if isinstance(exc, TimeoutError):
-                    # Already our typed timeout — propagate as-is
-                    raise
-                raise TimeoutError(self._operation, self._seconds) from exc
-        else:
-            # Python 3.10 fallback cleanup
-            if hasattr(self, "_handle"):
-                self._handle.cancel()
-            if exc_type is asyncio.CancelledError:
-                raise TimeoutError(self._operation, self._seconds)
+        if self._ctx is None:  # pragma: no cover - __aenter__ always sets it
+            return False
+        try:
+            await self._ctx.__aexit__(exc_type, exc_val, exc_tb)
+        except builtins.TimeoutError as exc:
+            # asyncio.TimeoutError is an alias of builtins.TimeoutError from
+            # 3.11 on, so a timeout arrives here as the builtin. Re-raise ours
+            # unchanged and wrap anything else.
+            if isinstance(exc, TimeoutError):
+                raise
+            raise TimeoutError(self._operation, self._seconds) from exc
         return False
 
 

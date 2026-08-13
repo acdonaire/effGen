@@ -104,7 +104,7 @@ class StdioTransport(MCPTransport):
             self.process.terminate()
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self.process.kill()
                 await self.process.wait()
             logger.info(f"Stopped MCP server: {self.command}")
@@ -188,7 +188,7 @@ class HTTPTransport(MCPTransport):
             correlation_id = await asyncio.wait_for(
                 self._pending_order.get(), timeout=self.timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TimeoutError(
                 f"No pending request to receive within {self.timeout}s"
             )
@@ -305,7 +305,7 @@ class SSETransport(MCPTransport):
             data = await asyncio.wait_for(
                 self._event_queue.get(), timeout=self.timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TimeoutError(
                 f"No SSE event received within {self.timeout}s"
             )
@@ -572,7 +572,7 @@ class MCPClient:
                         self._state = ConnectionState.CONNECTED
                         logger.info(f"Connection to {self.config.name} recovered")
 
-                except (ConnectionError, RuntimeError, asyncio.TimeoutError) as e:
+                except (TimeoutError, ConnectionError, RuntimeError) as e:
                     logger.warning(f"Health check failed for {self.config.name}: {e}")
                     self._state = ConnectionState.DEGRADED
                     # Try reconnection

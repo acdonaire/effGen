@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -241,7 +241,7 @@ class RegressionTracker:
         path = self._baseline_path(suite)
         data = {
             "version": version,
-            "timestamp": datetime.now(timezone.utc).isoformat(),  # noqa: UP017 - `timezone.utc` needed for py3.10 support
+            "timestamp": datetime.now(UTC).isoformat(),
             "summary": results.summary(),
         }
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")

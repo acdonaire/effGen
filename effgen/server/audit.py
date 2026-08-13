@@ -29,7 +29,7 @@ import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -98,7 +98,7 @@ def _get_audit_dir() -> Path:
 
 
 def _audit_file() -> Path:
-    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
     return _get_audit_dir() / f"{today}.jsonl"
 
 
@@ -202,7 +202,7 @@ class AuditMiddleware:
                 response_summary += f" ({response_ct.split(';')[0].strip()})"
 
             record = AuditRecord(
-                ts=datetime.now(tz=timezone.utc).isoformat(),
+                ts=datetime.now(tz=UTC).isoformat(),
                 principal=principal,
                 roles=roles,
                 endpoint=f"{method} {path}",
@@ -224,7 +224,7 @@ class AuditMiddleware:
 def read_audit_records(date_str: str | None = None) -> list[AuditRecord]:
     """Read all audit records for *date_str* (YYYY-MM-DD, defaults to today)."""
     if date_str is None:
-        date_str = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+        date_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
     path = _get_audit_dir() / f"{date_str}.jsonl"
     if not path.exists():
         return []
