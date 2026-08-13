@@ -95,10 +95,9 @@ def test_every_callable_fireworks_and_cerebras_model_is_flagged():
     """Both providers serve only reasoning models today.
 
     Measured on 2026-08-13 with one real call per id: every Fireworks chat and
-    vision entry and both Cerebras entries returned a reasoning chain
-    (``build_plan`` evidence ``120-reasoning-probe.txt``). Recorded as a test so
-    a future catalog refresh that adds a model has to make the same decision
-    deliberately rather than inheriting an unflagged default.
+    vision entry and both Cerebras entries returned a reasoning chain. Recorded
+    as a test so a future catalog refresh that adds a model has to make the same
+    decision deliberately rather than inheriting an unflagged default.
     """
     from effgen.models.cerebras_models import CEREBRAS_MODELS
     from effgen.models.fireworks_models import FIREWORKS_MODELS
