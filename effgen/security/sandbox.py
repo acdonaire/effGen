@@ -119,6 +119,19 @@ class SandboxResult:
     writable_root: str | None = None
     #: True when the executed code had no outbound network access.
     network_isolated: bool = False
+    #: True when the executed code ran in its own PID namespace with its own
+    #: ``/proc``, so it saw only its own processes. When ``False`` the host
+    #: process table was visible and ``/proc/<pid>/cmdline`` / ``environ`` for
+    #: the calling user's other processes could be read.
+    process_table_isolated: bool = False
+    #: True when the per-user credential stores were masked for this run.
+    #: Deliberately **not** called ``reads_confined``: reads are not confined,
+    #: they are denied at named locations (``~/.ssh``, ``~/.aws``, ``~/.gnupg``,
+    #: ``~/.kube``, ``~/.docker``, ``~/.azure``, ``~/.config/gcloud``, the
+    #: credential files beside them, ``/etc/shadow`` and the mounted-secret
+    #: directories). Executed code can still read ordinary files the calling
+    #: user can read. Reported so a caller never assumes more than was enforced.
+    credential_reads_masked: bool = False
 
 
 @dataclass
@@ -129,6 +142,8 @@ class _CommandPlan:
     network_isolated: bool = False
     filesystem_confined: bool = False
     writable_root: str | None = None
+    credential_reads_masked: bool = False
+    process_table_isolated: bool = False
     #: Directory to advertise as the temp directory, when the sandbox could not
     #: mount a private ``/tmp`` over the host one.
     tmpdir_override: str | None = None
@@ -208,6 +223,66 @@ def _scratch_root(config: SandboxConfig) -> str | None:
     return root
 
 
+#: Per-user credential stores masked inside the sandbox. A deny-list, not a
+#: confinement: executed code can still read ordinary files the calling user
+#: can read. What it closes is the chain that makes such a read more than local
+#: — an agent holding ``code_executor`` commonly also holds an outbound tool
+#: that runs *outside* the sandbox, so a secret read inside can be printed to
+#: stdout and handed out on the next turn. These are the paths that chain
+#: actually wants. Kept in step with ``effgen/tools/builtin/_fs.py``, which
+#: applies the same list to the *file* tools.
+_SANDBOX_DENY_HOME_DIRS: tuple[str, ...] = (
+    ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".azure", ".config/gcloud",
+)
+_SANDBOX_DENY_HOME_FILES: tuple[str, ...] = (
+    ".netrc", ".git-credentials", ".npmrc", ".pypirc",
+)
+_SANDBOX_DENY_ABS_FILES: tuple[str, ...] = ("/etc/shadow", "/etc/gshadow")
+_SANDBOX_DENY_ABS_DIRS: tuple[str, ...] = ("/run/secrets", "/var/run/secrets")
+
+
+def _deny_reads_script() -> str:
+    """Shell that masks the credential stores before the read-only remounts.
+
+    Runs as root in the sandbox's own user and mount namespace, so each step is
+    an unprivileged bind in a private namespace and nothing on the host changes.
+    A directory is covered by an empty tmpfs and a file by ``/dev/null``, so a
+    read succeeds and returns nothing rather than failing in a way that tells an
+    attacker the path exists.
+
+    This is a **deny-list**, and the docstring of the backend says so: reads are
+    not confined, they are masked at the locations that matter.
+
+    Returns:
+        The shell prologue, or ``""`` when no masking can be set up.
+    """
+    dirs = " ".join(shlex.quote(d) for d in _SANDBOX_DENY_HOME_DIRS)
+    files = " ".join(shlex.quote(f) for f in _SANDBOX_DENY_HOME_FILES)
+    abs_files = " ".join(shlex.quote(f) for f in _SANDBOX_DENY_ABS_FILES)
+    abs_dirs = " ".join(shlex.quote(d) for d in _SANDBOX_DENY_ABS_DIRS)
+    return (
+        '__deny=$(mktemp -d 2>/dev/null) || __deny=""; '
+        'if [ -n "$__deny" ]; then mount -t tmpfs none "$__deny" 2>/dev/null; fi; '
+        'if [ -n "$__deny" ]; then '
+        'for __h in /root /home/* "$HOME"; do '
+        '[ -d "$__h" ] || continue; '
+        f"for __s in {dirs}; do "
+        '[ -d "$__h/$__s" ] && mount --bind "$__deny" "$__h/$__s" 2>/dev/null; '
+        "done; "
+        f"for __s in {files}; do "
+        '[ -f "$__h/$__s" ] && mount --bind /dev/null "$__h/$__s" 2>/dev/null; '
+        "done; "
+        "done; "
+        f"for __p in {abs_dirs}; do "
+        '[ -d "$__p" ] && mount --bind "$__deny" "$__p" 2>/dev/null; '
+        "done; "
+        "fi; "
+        f"for __p in {abs_files}; do "
+        '[ -f "$__p" ] && mount --bind /dev/null "$__p" 2>/dev/null; '
+        "done; "
+    )
+
+
 def _confine_script(root: str, private_tmp: bool) -> str:
     """Build the shell prologue that makes *root* the only writable directory.
 
@@ -232,6 +307,9 @@ def _confine_script(root: str, private_tmp: bool) -> str:
     quoted = shlex.quote(root)
     parts = [
         f"mount --bind {quoted} {quoted} 2>/dev/null; ",
+        # Mask the credential stores first, while globbing is still on and
+        # before the read-only pass, which then covers the new mounts too.
+        _deny_reads_script(),
         # No globbing while the mountinfo line is split into fields.
         "set -f; ",
         "while IFS= read -r __l; do ",
@@ -566,11 +644,23 @@ class SubprocessSandbox(SandboxBase):
     enforced in ``filesystem_confined`` / ``writable_root``.
 
     **Caveats / limitations:**
-    - **Reads are not confined.** Executed code can read every file the calling
+    - **Reads are not confined, but the credential stores are masked.** The
+      per-user credential directories and files (``~/.ssh``, ``~/.aws``,
+      ``~/.gnupg``, ``~/.kube``, ``~/.docker``, ``~/.azure``,
+      ``~/.config/gcloud``, ``~/.netrc``, ``~/.git-credentials``, ``~/.npmrc``,
+      ``~/.pypirc``), ``/etc/shadow`` and the mounted-secret directories are
+      covered inside the sandbox — a directory by an empty tmpfs, a file by
+      ``/dev/null`` — so a read succeeds and returns nothing. It is a deny-list,
+      reported as ``SandboxResult.credential_reads_masked``, not confinement.
+    - **Everything else is readable.** Executed code can read every other file the calling
       user can read. Use DockerSandbox when reads must be confined too.
     - ``/proc`` stays writable, because the nested ``unshare`` needs to write
-      ``/proc/self/uid_map``; executed code therefore sees the host process
-      table.
+      ``/proc/self/uid_map`` — but it is the sandbox's **own** ``/proc``: the
+      run gets a private PID namespace (``--pid --fork --mount-proc``), so
+      executed code sees only its own process and the writes reach nothing
+      outside. Reported as ``SandboxResult.process_table_isolated``; a host that
+      cannot create the namespace degrades to the shared process table and says
+      so rather than claiming isolation.
     - Requires unprivileged user namespaces to be enabled
       (``kernel.unprivileged_userns_clone=1`` / ``user.max_user_namespaces>0``).
       Without them nothing is confined and a warning says so.
@@ -595,6 +685,11 @@ class SubprocessSandbox(SandboxBase):
     _caps_probed: bool = False
     _userns_ok: bool = False
     _mountns_ok: bool = False
+    #: Whether a private PID namespace with its own ``/proc`` can be created.
+    #: Without it the sandbox keeps the host process table visible, which is a
+    #: read exposure (``/proc/<pid>/cmdline`` and ``environ`` can carry a
+    #: secret), not a write one — so it degrades rather than refusing to run.
+    _pidns_ok: bool = False
 
     # Probed once per process: does the read-only remount recipe actually hold?
     _confine_probed: bool = False
@@ -672,6 +767,8 @@ class SubprocessSandbox(SandboxBase):
                 filesystem_confined=plan.filesystem_confined,
                 writable_root=plan.writable_root,
                 network_isolated=plan.network_isolated,
+                credential_reads_masked=plan.credential_reads_masked,
+                process_table_isolated=plan.process_table_isolated,
             )
         except Exception as exc:
             logger.error("SubprocessSandbox error: %s", exc)
@@ -713,6 +810,7 @@ class SubprocessSandbox(SandboxBase):
             return plain
 
         want_net = not config.network_enabled
+        pid_isolated = self._pidns_ok
         root: str | None = None
         if self._mountns_ok:
             root = _scratch_root(config)
@@ -745,11 +843,23 @@ class SubprocessSandbox(SandboxBase):
             unshare_flags.append("--mount")
         if want_net:
             unshare_flags.append("--net")
+        # A private process table and a ``/proc`` to match. Without it executed
+        # code reads the host's ``/proc/<pid>/cmdline`` and ``environ``, either
+        # of which can carry a credential the caller never handed it. ``--fork``
+        # is required: the process that creates a PID namespace does not enter
+        # it, so ``unshare`` forks a child to be PID 1, and the kill still lands
+        # because the timeout targets the process *group* from outside.
+        if pid_isolated:
+            unshare_flags += ["--pid", "--fork", "--mount-proc"]
         return _CommandPlan(
             argv=unshare_flags + ["bash", "-c", inner],
             network_isolated=want_net,
+            process_table_isolated=pid_isolated,
             filesystem_confined=root is not None,
             writable_root=root,
+            # Masked by the same prologue that confines writes, so it holds
+            # exactly when that one ran.
+            credential_reads_masked=root is not None,
             tmpdir_override=tmpdir_override,
         )
 
@@ -761,6 +871,12 @@ class SubprocessSandbox(SandboxBase):
         cls._userns_ok = await cls._unshare_succeeds(["--map-root-user", "true"])
         cls._mountns_ok = await cls._unshare_succeeds(
             ["--map-root-user", "--mount", "true"]
+        )
+        # A private process table needs the PID namespace *and* a ``/proc`` of
+        # its own; ``--mount-proc`` is what supplies the second, and it is the
+        # half a hardened runtime is most likely to withhold.
+        cls._pidns_ok = cls._mountns_ok and await cls._unshare_succeeds(
+            ["--map-root-user", "--mount", "--pid", "--fork", "--mount-proc", "true"]
         )
         cls._caps_probed = True
 
@@ -1170,6 +1286,7 @@ def reset_sandbox_cache() -> None:
     SubprocessSandbox._caps_probed = False
     SubprocessSandbox._userns_ok = False
     SubprocessSandbox._mountns_ok = False
+    SubprocessSandbox._pidns_ok = False
     SubprocessSandbox._confine_probed = False
     SubprocessSandbox._confine_ok = False
 

@@ -110,10 +110,24 @@ leaves confinement off — the result then reports `filesystem_confined=False`
 and the previous behavior applies.
 
 **Caveats:**
-- **Reads are not confined.** Executed code can read every file the calling user
-  can read. Use DockerSandbox when reads must be confined too.
+- **Reads are not confined, but the credential stores are masked.** Executed
+  code can read every ordinary file the calling user can read. What it cannot
+  read are the per-user credential stores: `~/.ssh`, `~/.aws`, `~/.gnupg`,
+  `~/.kube`, `~/.docker`, `~/.azure`, `~/.config/gcloud`, the credential files
+  beside them (`~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`),
+  `/etc/shadow` and the mounted-secret directories. Inside the sandbox each is
+  covered — a directory by an empty tmpfs, a file by `/dev/null` — so a read
+  succeeds and returns nothing rather than failing in a way that confirms the
+  path exists. This is a **deny-list**, reported as
+  `SandboxResult.credential_reads_masked`, not read confinement. Use
+  DockerSandbox when reads must be confined properly.
 - `/proc` stays writable, because the nested `unshare` writes
-  `/proc/self/uid_map`; executed code therefore sees the host process table.
+  `/proc/self/uid_map` — but it is the sandbox's *own* `/proc`. The run gets a
+  private PID namespace (`--pid --fork --mount-proc`), so executed code sees
+  only its own process (`ls /proc` shows one pid, against ~1,850 on the host)
+  and cannot read another process's `cmdline` or `environ`. Reported as
+  `SandboxResult.process_table_isolated`; a host that cannot create the
+  namespace degrades to the shared process table and says so.
 - A mount nested *inside* the scratch space becomes read-only; the scratch
   space's own mount is the one bound read-write.
 - Requires unprivileged user namespaces (`kernel.unprivileged_userns_clone=1`
@@ -258,10 +272,12 @@ except Exception as e:
 4. **Monitor container resource usage** via Docker stats or cAdvisor to detect
    abuse.
 5. **Treat SubprocessSandbox as a development-only fallback.** It confines
-   writes to the working directory, but reads are not confined, so code that
-   can be prompted into reading a credentials file still can. Never rely on it
-   for workloads handling untrusted code; check `filesystem_confined` on the
-   result if you need to know what a given run enforced.
+   writes to the working directory and masks the named credential stores, but
+   reads in general are not confined, so code that can be prompted into reading
+   a secret from an *unlisted* location still can. Never rely on it for
+   workloads handling untrusted code; check `filesystem_confined` and
+   `credential_reads_masked` on the result if you need to know what a given run
+   enforced.
 
 ---
 
