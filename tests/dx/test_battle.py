@@ -44,6 +44,25 @@ needs_groq = pytest.mark.skipif(not os.getenv("GROQ_API_KEY"), reason="GROQ_API_
 needs_gemini = pytest.mark.skipif(
     not os.getenv("GOOGLE_API_KEY"), reason="GOOGLE_API_KEY not set"
 )
+def _skip_if_a_contender_was_throttled(result) -> None:
+    """Skip when a provider rate-limited a contender instead of answering it.
+
+    A race needs every contender to have run before it can compare them. A
+    spent free-tier quota is the provider's decision, not a defect in the
+    battle, so it is reported rather than read as a contender that failed to
+    finish.
+    """
+    from effgen.models.errors import classify_provider_error
+
+    for contender in result.contenders:
+        if not contender.error:
+            continue
+        if classify_provider_error(RuntimeError(contender.error)).category == "rate_limited":
+            pytest.skip(
+                f"{contender.model} was rate limited: {str(contender.error)[:200]}"
+            )
+
+
 def _skip_if_the_judge_could_not_grade(judge: dict) -> None:
     """Skip when the judge model refused or was throttled rather than grading.
 
@@ -265,6 +284,7 @@ class TestLiveBattle:
             max_tokens=200,
         )
         assert len(result.contenders) == 3
+        _skip_if_a_contender_was_throttled(result)
         assert len(result.finishers) == 3, [c.error for c in result.contenders]
         for c in result.contenders:
             assert c.answer.strip(), f"{c.model} produced no answer"
