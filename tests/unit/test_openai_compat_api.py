@@ -823,3 +823,77 @@ class TestDefaultRunnerFailClosed:
         err = r.json()["error"]
         assert err["type"] == "invalid_request_error"
         assert "nonexistent" in err["message"]
+
+
+class TestAsyncRunner:
+    """An ``async def`` runner is a supported shape, not a 500.
+
+    Threading a coroutine function returns an un-awaited coroutine object, which
+    the non-streaming branch then tries to join as a string and the streaming
+    branch tries to iterate. Both produced an unexplained 500 and a
+    "coroutine was never awaited" warning in the server log, with nothing in the
+    response naming the cause.
+    """
+
+    @staticmethod
+    async def _async_runner(prompt, *, model, tools=None, stream=False, **kw):
+        from effgen.api.openai_compat import RunnerResult
+
+        if stream:
+            def g():
+                yield from ["Hel", "lo"]
+            return g()
+        return RunnerResult(
+            text="Hello from async",
+            prompt_tokens=7,
+            completion_tokens=3,
+            resolved_model=model,
+            finish_reason="stop",
+        )
+
+    def test_async_runner_answers_a_chat_completion(self):
+        c = _client(api_key="k", runner=self._async_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["choices"][0]["message"]["content"] == "Hello from async"
+        assert body["usage"]["prompt_tokens"] == 7
+
+    def test_async_runner_streams(self):
+        c = _client(api_key="k", runner=self._async_runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "gpt-4", "stream": True,
+                         "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 200, r.text
+        assert "Hello" in "".join(
+            json.loads(line[6:])["choices"][0]["delta"].get("content", "")
+            for line in r.text.splitlines()
+            if line.startswith("data: ") and line != "data: [DONE]"
+            and json.loads(line[6:]).get("choices")
+        )
+
+    def test_async_runner_answers_a_text_completion(self):
+        c = _client(api_key="k", runner=self._async_runner)
+        r = c.post("/v1/completions", headers={"X-API-Key": "k"},
+                   json={"model": "gpt-4", "prompt": "hi"})
+        assert r.status_code == 200, r.text
+        assert r.json()["choices"][0]["text"] == "Hello from async"
+
+    def test_a_callable_returning_an_awaitable_also_works(self):
+        """A plain function that hands back a coroutine is not a coroutine
+        function itself, so the awaitable it returns is awaited after the
+        thread hands it back."""
+        import asyncio as _asyncio
+
+        async_runner = self._async_runner
+
+        def runner(prompt, **kw):  # an ordinary def, returning an awaitable
+            return async_runner(prompt, **kw)
+
+        assert not _asyncio.iscoroutinefunction(runner)
+        c = _client(api_key="k", runner=runner)
+        r = c.post("/v1/chat/completions", headers={"X-API-Key": "k"},
+                   json={"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 200, r.text
+        assert r.json()["choices"][0]["message"]["content"] == "Hello from async"

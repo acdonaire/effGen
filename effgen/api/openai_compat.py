@@ -30,6 +30,7 @@ Compatibility level
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from typing import Any
 
@@ -82,25 +83,43 @@ from effgen.api.openai_compat_responses import (  # noqa: E402,F401  re-exported
 # ---------------------------------------------------------------------------
 
 # Type alias for the runner callable injected by the API server.
-# runner(prompt: str, *, model: str, tools: list, stream: bool) -> str | iterator
+#
+#   runner(prompt: str, *, model: str, tools: list, stream: bool)
+#       -> str | iterator | RunnerResult
+#
+# Either shape is accepted: a plain function, which is dispatched to a worker
+# thread, or an ``async def`` function, which is awaited on the event loop.
 Runner = Callable[..., Any]
 
 
 async def _call_runner(runner: Runner, prompt: str, **kwargs: Any) -> Any:
-    """Invoke the synchronous runner in a worker thread.
+    """Invoke the runner, whether it is synchronous or asynchronous.
 
-    The runner blocks for the duration of its work — model loading, the
-    provider HTTP call, tool execution — so calling it directly from a
+    A synchronous runner blocks for the duration of its work — model loading,
+    the provider HTTP call, tool execution — so calling it directly from a
     coroutine holds the event loop for the whole generation and makes
     concurrent requests to ``/health``, ``/metrics`` and the dashboard
     endpoints wait behind it. Dispatching it to a thread keeps those endpoints
     answering while a generation is in flight.
 
+    An ``async def`` runner is the shape an integrator whose model call is
+    already asynchronous reaches for first. It is awaited directly: threading it
+    would return an un-awaited coroutine object, which the caller then fails to
+    read as a result, and the client would see an unexplained 500. Anything else
+    that returns an awaitable — a ``functools.partial`` around a coroutine
+    function, a class whose ``__call__`` is ``async`` — is awaited after the
+    thread hands it back, so both spellings work.
+
     For a streaming request this covers the setup that produces the iterator;
     the iterator itself is consumed by :class:`StreamingResponse`, which
     already iterates a synchronous generator in a worker thread.
     """
-    return await asyncio.to_thread(runner, prompt, **kwargs)
+    if asyncio.iscoroutinefunction(runner):
+        return await runner(prompt, **kwargs)
+    result = await asyncio.to_thread(runner, prompt, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 # Error classification and the shared OpenAI error envelope live in a sibling
