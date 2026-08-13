@@ -33,7 +33,7 @@ import json
 import logging
 import time
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -52,7 +52,7 @@ _TIMEOUT = 15  # seconds — explicit, never None
 # Alert model
 # ---------------------------------------------------------------------------
 
-class AlertSeverity(str, Enum):
+class AlertSeverity(StrEnum):
     """Severity level of an alert: info, warning, or critical."""
 
     INFO = "info"

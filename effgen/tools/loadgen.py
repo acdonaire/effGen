@@ -37,7 +37,7 @@ import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -76,7 +76,7 @@ _MULTI_TOOL_EXPRESSIONS: list[str] = [
 ]
 
 
-class LoadScenario(str, Enum):
+class LoadScenario(StrEnum):
     """Prompt mix used by the load generator."""
 
     FIXED = "fixed"

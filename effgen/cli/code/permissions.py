@@ -45,7 +45,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +62,7 @@ _CONFIRM = "confirm"
 _DENY = "deny"
 
 
-class PermissionMode(str, Enum):
+class PermissionMode(StrEnum):
     """How a coding run treats file writes and command execution."""
 
     PLAN = "plan"

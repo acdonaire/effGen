@@ -782,16 +782,6 @@ ignore = [
     "B905",   # zip() without strict= (pre-existing)
     "C901",   # too complex
     "UP037",  # quoted annotations (pre-existing, cosmetic)
-    # UP042 wants `class C(str, Enum)` rewritten to `enum.StrEnum`. It became
-    # active when the floor moved to 3.11, and it is not a cosmetic rewrite:
-    # `str(TaskStatus.RUNNING)` and `f"{TaskStatus.RUNNING}"` change from
-    # "TaskStatus.RUNNING" to "running". TaskStatus is public, and the change is
-    # silent — no error, just different text in logs, stored records and any
-    # caller that formats one. Four classes are affected (PermissionMode,
-    # TaskStatus, AlertSeverity, LoadScenario). Migrating them is a deliberate
-    # behaviour change that belongs in a release that announces it, not one a
-    # lint autofix slips in.
-    "UP042",  # str-Enum -> StrEnum: changes str() of a public enum
 ]
 
 [tool.ruff.lint.per-file-ignores]

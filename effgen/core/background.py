@@ -23,7 +23,7 @@ import uuid
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ def _redact(text: str) -> str:
         return text
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     """Lifecycle state of a background task."""
 
     PENDING = "PENDING"
