@@ -63,6 +63,16 @@ fi
 NSHARDS="${#FREE_GPUS[@]}"
 log "free GPUs: ${FREE_GPUS[*]} -> ${NSHARDS} shard(s)"
 
+# Who is already on these GPUs. On a shared host somebody else's job is a normal
+# thing to find, and reporting it after the run as though this script leaked it
+# sends the reader after the wrong process. Only PIDs that appear between here
+# and the end are ours to answer for.
+PRE_EXISTING_GPU_PIDS="$(
+    for gpu in "${FREE_GPUS[@]}"; do
+        nvidia-smi --query-compute-apps=pid --format=csv,noheader -i "${gpu}" 2>/dev/null
+    done | tr -d ' ' | sort -u
+)"
+
 # -- 2. collect node ids (coverage-free thanks to the addopts fix) -------------
 log "collecting test node ids for: ${PYTEST_ARGS[*]}"
 mapfile -t NODEIDS < <(${PYTEST} "${PYTEST_ARGS[@]}" --collect-only -q -p no:cacheprovider 2>/dev/null \
@@ -129,10 +139,13 @@ fi
 for ((s=0; s<NSHARDS; s++)); do
     pkill -P "${PIDS[$s]}" 2>/dev/null || true
 done
-# Best-effort: warn about leftover python procs holding the GPUs we used.
+# Best-effort: warn about leftover procs this run is responsible for — that is,
+# ones holding a GPU now that were not holding it before the shards started.
 for gpu in "${FREE_GPUS[@]}"; do
-    leftover="$(nvidia-smi --query-compute-apps=pid --format=csv,noheader -i "${gpu}" 2>/dev/null | tr -d ' ')"
-    [ -n "${leftover}" ] && fail "GPU ${gpu} still has compute procs after run: ${leftover}"
+    now="$(nvidia-smi --query-compute-apps=pid --format=csv,noheader -i "${gpu}" 2>/dev/null | tr -d ' ' | sort -u)"
+    leftover="$(comm -13 <(printf '%s\n' "${PRE_EXISTING_GPU_PIDS}") <(printf '%s\n' "${now}") 2>/dev/null)"
+    leftover="$(printf '%s' "${leftover}" | tr '\n' ' ' | sed 's/ *$//')"
+    [ -n "${leftover}" ] && fail "GPU ${gpu} still has compute procs this run started: ${leftover}"
 done
 
 rm -rf "${WORKDIR}"
