@@ -138,7 +138,7 @@ class DropOldest(CompactionStrategy):
     """Discard the oldest messages without summarizing them.
 
     No model call, so nothing to wait for and nothing to pay for, and no risk
-    of a summary inventing something. The conversation simply forgets. Useful
+    of a summary inventing something. The conversation forgets them. Useful
     when older turns genuinely do not matter, and when a summarization call
     would cost more than the history is worth.
 
