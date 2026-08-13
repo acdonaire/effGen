@@ -9,10 +9,45 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=512)
+def _indicator_pattern(indicator: str) -> re.Pattern[str]:
+    """Return a whole-word matcher for *indicator*, compiled once per value.
+
+    Args:
+        indicator: The literal phrase to look for.
+
+    Returns:
+        A compiled pattern matching *indicator* only on word boundaries.
+    """
+    # \b is only meaningful next to a word character. An indicator that starts
+    # or ends with punctuation ("c++") would otherwise never match.
+    left = r"\b" if indicator[:1].isalnum() or indicator[:1] == "_" else ""
+    right = r"\b" if indicator[-1:].isalnum() or indicator[-1:] == "_" else ""
+    return re.compile(f"{left}{re.escape(indicator)}{right}")
+
+
+def _mentions(task_lower: str, indicators: "Iterable[str]") -> bool:
+    """Whether *task_lower* contains any of *indicators* as whole words.
+
+    Substring matching read "api" out of "capital" and "graph" out of
+    "paragraph", so ordinary prose was scored as needing tools it did not.
+
+    Args:
+        task_lower: The lowercased task text.
+        indicators: Phrases that suggest a tool is needed.
+
+    Returns:
+        True when at least one indicator appears as a whole word.
+    """
+    return any(_indicator_pattern(ind).search(task_lower) for ind in indicators)
 
 
 @dataclass
@@ -273,8 +308,8 @@ class ComplexityAnalyzer:
             Tool requirements score
         """
         tools_needed = sum(
-            1 for tool, indicators in self.TOOL_INDICATORS.items()
-            if any(ind in task_lower for ind in indicators)
+            1 for indicators in self.TOOL_INDICATORS.values()
+            if _mentions(task_lower, indicators)
         )
 
         # Scale: 1 tool = 2.5, 4+ tools = 10.0
@@ -284,7 +319,7 @@ class ComplexityAnalyzer:
         """Identify which tools are likely needed."""
         tools = []
         for tool, indicators in self.TOOL_INDICATORS.items():
-            if any(ind in task_lower for ind in indicators):
+            if _mentions(task_lower, indicators):
                 tools.append(tool)
         return tools
 
