@@ -457,3 +457,101 @@ class TestMLXVLMCallOverrides:
         """With no images the call delegates to the text engine, seed included."""
         mlx_vlm_engine.generate("no image here", seed=808, temperature=0.8)
         assert mlx_engine.calls[-1]["seed"] == 808
+
+
+# ---------------------------------------------------------------------------
+# A bare string never becomes a list of characters
+# ---------------------------------------------------------------------------
+#
+# ``stop_sequences`` is typed as a list and every consumer iterates it, so a
+# string given directly was walked character by character: the text was cut at
+# the first single letter that matched, not at the sequence. The OpenAI API
+# accepts a bare string, so it is the shape a caller naturally writes.
+
+
+class TestStopSequenceNormalization:
+    def test_a_string_is_one_sequence_not_three_characters(self):
+        from effgen.models._adapter_utils import normalize_stop_sequences
+
+        assert normalize_stop_sequences("END") == ["END"]
+        assert normalize_stop_sequences(["END"]) == ["END"]
+        assert normalize_stop_sequences(None) is None
+        assert normalize_stop_sequences(("A", "B")) == ["A", "B"]
+
+    def test_a_value_that_cannot_be_a_sequence_is_refused_by_name(self):
+        from effgen.models._adapter_utils import normalize_stop_sequences
+
+        with pytest.raises(TypeError, match="string or a list of strings"):
+            normalize_stop_sequences(7)
+        with pytest.raises(TypeError, match="only strings"):
+            normalize_stop_sequences(["ok", 7])
+
+    def test_apply_stop_sequences_cuts_at_the_sequence_not_a_letter(self):
+        """The text is chosen so the wrong and right answers differ.
+
+        ``E`` occurs in ``DEEP`` before ``END`` occurs, so a character-wise walk
+        cuts earlier and the two results cannot coincide.
+        """
+        from effgen.models._adapter_utils import apply_stop_sequences
+
+        text = "The ocean is DEEP and ENDless."
+        assert apply_stop_sequences(text, ["END"]) == "The ocean is DEEP and "
+        assert apply_stop_sequences(text, "END") == "The ocean is DEEP and "
+
+    def test_a_config_built_by_hand_carries_a_list(self):
+        assert GenerationConfig(stop_sequences="END").stop_sequences == ["END"]
+        assert GenerationConfig(stop_sequences=["END"]).stop_sequences == ["END"]
+        assert GenerationConfig().stop_sequences is None
+
+    def test_the_agent_boundary_does_not_split_a_string(self):
+        """``agent.run(task, stop_sequences="END")`` reaches the model whole.
+
+        The generation path builds its local-trim list from the caller's value
+        directly, so this is the site the per-call helpers do not cover.
+        """
+        from effgen.core.agent import Agent, AgentConfig
+        from effgen.models.base import BaseModel, GenerationResult, ModelType, TokenCount
+
+        seen: list = []
+
+        class _Recorder(BaseModel):
+            def __init__(self):
+                super().__init__(model_name="recorder", model_type=ModelType.TRANSFORMERS)
+                self._is_loaded = True
+
+            def load(self):
+                self._is_loaded = True
+
+            def unload(self):
+                self._is_loaded = False
+
+            def generate(self, prompt, config=None, **kwargs):
+                seen.append(config.stop_sequences if config else None)
+                return GenerationResult(
+                    text="The ocean is DEEP and ENDless.",
+                    tokens_used=6,
+                    finish_reason="stop",
+                    model_name="recorder",
+                    metadata={},
+                )
+
+            def generate_stream(self, prompt, config=None, **kwargs):
+                yield "x"
+
+            def count_tokens(self, text):
+                return TokenCount(prompt_tokens=1, completion_tokens=0, total_tokens=1)
+
+            def get_context_length(self):
+                return 4096
+
+        model = _Recorder()
+        with Agent(
+            AgentConfig(
+                name="s", model=model, tools=[], raise_on_error=False,
+                enable_sub_agents=False, enable_memory=False,
+            )
+        ) as agent:
+            response = agent.run("say something", stop_sequences="END")
+
+        assert seen and seen[0] == ["END"], seen
+        assert response.output.startswith("The ocean is DEEP and ")
