@@ -209,13 +209,18 @@ def test_the_record_property_does_not_change_the_serialized_record():
 def test_the_bundled_snapshots_are_byte_identical():
     """The property is derived, so no snapshot may have been rewritten.
 
-    Hashes recorded from the tree before the property existed.
+    Hashes recorded from the tree before the property existed. A hash moves
+    only when a snapshot is deliberately re-cut against the provider's live
+    listing — say so here and in the same commit, or the anchor stops meaning
+    anything. gemini.json was re-cut on 2026-08-13, dropping three ids Google
+    had retired (gemini-2.0-flash, gemini-2.0-flash-lite, gemini-3-pro-preview),
+    each confirmed absent from a live GET /v1beta/models.
     """
     expected = {
         "anthropic.json": "2716848fc0c9a650ac8643326a4c0a34f1476ec0ea7690ff7a67a134b6e6e4ab",
         "cerebras.json": "d45eca795d28d6e6c8c0e188cb9ae3784b7ee49545d0aafdbe1378009923d381",
         "fireworks.json": "a625220d24b0c5644c5c2de009fb2d54f03d15db1903496342e78ee6c97bd235",
-        "gemini.json": "c580e2d24357b1a29d3c1b1e90476b97b55afd4b1e52d55a084b378eac8cb46f",
+        "gemini.json": "2c19277fc5335481251cc5ad8c5badb1d34a97051f58d9e01cf254d872e407a5",
         "groq.json": "f29639649edf1f4d47a1c042f6b7bbf553406113ca6f642d59fb87c2fe4d8117",
         "hf.json": "1f44e05801fe4ce203ecae0e46805197ebb70a925fa613bd4dc1e00e32a92093",
         "hf_inference_catalog.json": "dc47c4080832e649ce1d37aeb77e17f651e20d298f86e55ba37c84355d3c3a1e",

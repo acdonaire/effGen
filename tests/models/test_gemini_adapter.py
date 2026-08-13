@@ -273,7 +273,10 @@ def test_registry_contains_3_1_flash_lite():
 def test_registry_free_tier_excludes_pro_preview():
     free = set(gemini_models.free_tier_models())
     assert "gemini-3.1-flash-lite" in free
-    assert "gemini-3-pro-preview" not in free
+    # A paid id the registry still lists, so the exclusion is a real one and
+    # not vacuously true against an id that was removed from the catalog.
+    assert "gemini-3.1-pro-preview" in gemini_models.GEMINI_MODELS
+    assert "gemini-3.1-pro-preview" not in free
     assert "gemma-4-31b-it" in free
 
 
