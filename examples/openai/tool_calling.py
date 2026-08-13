@@ -109,24 +109,23 @@ def run_tool_loop(adapter: OpenAIAdapter, user_prompt: str) -> str:
             print(f"Assistant: {result.text}")
             return result.text
 
-        # Append the assistant message (which includes tool_calls)
-        messages.append(result.metadata["message"])
+        # Re-submit the assistant turn, in whatever shape this provider takes.
+        messages.append(adapter.build_assistant_message(result))
 
-        # Execute each tool and append result messages. Every effGen adapter
-        # reports a call in this shape, so this block is not OpenAI-specific;
-        # the surrounding loop is, because it re-submits the raw assistant
-        # message (metadata["message"]) that only this adapter carries.
+        # Execute each tool and append its result. Every effGen adapter reports
+        # a call in this shape and builds its own provider's result message, so
+        # the whole loop is provider-agnostic: swap OpenAIAdapter for the Gemini
+        # or Anthropic one and nothing here changes, even though their wire
+        # formats differ (functionResponse parts, tool_result blocks).
         for tc in tool_calls:
             fn_name = tc["function"]["name"]
             fn_args = json.loads(tc["function"]["arguments"])
             print(f"  [Tool call] {fn_name}({fn_args})")
             tool_result = execute_tool(fn_name, fn_args)
             print(f"  [Tool result] {tool_result}")
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": tool_result,
-            })
+            messages.append(
+                adapter.build_tool_result_message(tc["id"], fn_name, tool_result)
+            )
 
 
 def main():

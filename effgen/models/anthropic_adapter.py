@@ -960,6 +960,30 @@ class AnthropicAdapter(FunctionCallingModel):
             return {"role": "assistant", "content": raw_blocks}
         return {"role": "assistant", "content": result.text}
 
+    def build_tool_result_message(
+        self, call_id: str, name: str, content: str
+    ) -> dict[str, Any]:
+        """Return one tool's result as an Anthropic ``tool_result`` block.
+
+        Anthropic carries results in a *user* turn as content blocks, keyed by
+        the ``tool_use`` id — not as a ``{"role": "tool"}`` message.
+
+        Args:
+            call_id: The ``tool_use`` id being answered.
+            name: Unused here; Anthropic matches by id.
+            content: What the tool returned.
+
+        Returns:
+            One ``{"role": "user", "content": [...]}`` message.
+        """
+        _ = name
+        return {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": call_id, "content": content}
+            ],
+        }
+
     def generate_with_history(
         self,
         messages: list[dict],

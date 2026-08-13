@@ -1124,6 +1124,57 @@ class GeminiAdapter(FunctionCallingModel):
             except Exception:
                 logger.debug("Failed to record streaming usage for Gemini", exc_info=True)
 
+    def build_assistant_message(self, result: GenerationResult) -> dict[str, Any]:
+        """Return the assistant turn as Gemini's ``functionCall`` parts.
+
+        Gemini's conversation is ``{"role": ..., "parts": [...]}`` and its
+        assistant role is ``"model"``, so the OpenAI-shaped default would be
+        rejected outright. Arguments are parsed back out of the uniform JSON
+        string, because Gemini takes them as an object.
+
+        Args:
+            result: The turn to re-submit.
+
+        Returns:
+            One ``{"role": "model", "parts": [...]}`` message.
+        """
+        import json as _json
+
+        parts: list[dict[str, Any]] = []
+        if result.text:
+            parts.append({"text": result.text})
+        for call in (result.metadata or {}).get("tool_calls") or []:
+            function = call.get("function", call)
+            raw = function.get("arguments")
+            try:
+                args = _json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except (ValueError, TypeError):
+                args = {}
+            parts.append({"functionCall": {"name": function.get("name"), "args": args}})
+        return {"role": "model", "parts": parts}
+
+    def build_tool_result_message(
+        self, call_id: str, name: str, content: str
+    ) -> dict[str, Any]:
+        """Return one tool's result as Gemini's ``functionResponse`` part.
+
+        Gemini matches a result to its call by **name**, not by id, so
+        ``call_id`` is accepted for a uniform call site and not sent.
+
+        Args:
+            call_id: Unused here; kept so one loop serves every provider.
+            name: The tool the result belongs to.
+            content: What the tool returned.
+
+        Returns:
+            One ``{"role": "user", "parts": [...]}`` message.
+        """
+        _ = call_id
+        return {
+            "role": "user",
+            "parts": [{"functionResponse": {"name": name, "response": {"result": content}}}],
+        }
+
     def generate_with_tools(
         self,
         prompt: str,

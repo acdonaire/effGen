@@ -80,12 +80,25 @@ reports the count as `AgentResponse.tool_calls` (an `int`); this shape matters
 when you drive an adapter directly, or when you forward the list onto an
 OpenAI-compatible wire from a custom server runner.
 
-Reading a call is portable; **feeding its result back is not**. Re-submitting
-the assistant turn plus a tool result uses each provider's own wire format —
-a `role: "tool"` message on the OpenAI-compatible providers, `functionResponse`
-parts on Gemini, `tool_result` blocks on Anthropic — and only the OpenAI
-adapter reports the raw assistant message (as `metadata["message"]`) needed to
-re-send it. For a multi-turn loop that works on every provider, use `Agent`.
+Feeding the result back is portable too. Re-submitting the assistant turn plus
+a tool result uses each provider's own wire format — a `role: "tool"` message on
+the OpenAI-compatible providers, `functionResponse` parts on Gemini,
+`tool_result` blocks on Anthropic — so every adapter builds its own:
+
+```python
+result = adapter.chat(messages=messages, tools=TOOLS)
+messages.append(adapter.build_assistant_message(result))
+for call in result.metadata["tool_calls"]:
+    name = call["function"]["name"]
+    args = json.loads(call["function"]["arguments"])
+    messages.append(
+        adapter.build_tool_result_message(call["id"], name, run_tool(name, args))
+    )
+```
+
+That loop is unchanged across providers; swapping the adapter is the only edit.
+`Agent` still dispatches the calls for you and is the easier route — these are
+for a caller driving `chat()` / `generate_with_tools()` by hand.
 
 ## Provider-specific additions
 
