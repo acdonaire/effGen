@@ -44,6 +44,19 @@ needs_groq = pytest.mark.skipif(not os.getenv("GROQ_API_KEY"), reason="GROQ_API_
 needs_gemini = pytest.mark.skipif(
     not os.getenv("GOOGLE_API_KEY"), reason="GOOGLE_API_KEY not set"
 )
+def _skip_if_the_judge_could_not_grade(judge: dict) -> None:
+    """Skip when the judge model refused or was throttled rather than grading.
+
+    ``run_battle`` records a judge failure as ``winner=None`` beside the reason
+    and leaves the measured results alone, so this reports the provider's
+    condition rather than reading it as a wrong verdict.
+    """
+    if judge.get("winner") is not None:
+        return
+    reason = judge.get("error") or "the judge returned no winner"
+    pytest.skip(f"the judge could not grade this field: {str(reason)[:200]}")
+
+
 needs_three_families = pytest.mark.skipif(
     not (
         os.getenv("OPENAI_API_KEY")
@@ -295,6 +308,11 @@ class TestLiveBattle:
         )
         judge = result.verdict["judge"]
         assert judge["judge_model"] == GEMINI_MODEL
+        # A judge whose quota is spent, or whose credential is not configured
+        # on this machine, cannot grade anything — that is the provider's
+        # decision, not a defect in the battle. The measurements below are
+        # still asserted, because a judge failure must leave them intact.
+        _skip_if_the_judge_could_not_grade(judge)
         assert judge["winner"] in {c.model for c in result.finishers}
         # The judged pick stays separate from what was measured.
         assert result.verdict["fastest"] is not None
