@@ -611,3 +611,65 @@ class TestGroqAdapterStream:
         adapter._client.chat.completions.create.return_value = iter(chunks)
         list(adapter.generate_stream("hi"))
         assert getattr(adapter, "total_cost", 0.0) == 0.0
+
+
+class TestReActPathToolUseFailedRecovery:
+    """The recovery must reach the one path that needs it.
+
+    The ReAct strategy describes its tools in the prompt and sends no ``tools``
+    array, so Groq applies ``tool_choice: "none"``. A gpt-oss model calls a tool
+    anyway and Groq rejects the whole completion with a 400 whose body quotes
+    the call the model wrote. The recovery was gated on ``tools`` being present,
+    which is exactly what this path does not send, so the run failed on a call
+    that was right there in the error.
+    """
+
+    def _loaded_adapter(self, model="openai/gpt-oss-20b"):
+        from unittest.mock import MagicMock
+
+        from effgen.models.groq_adapter import GroqAdapter
+
+        adapter = GroqAdapter(model_name=model, api_key="k", enable_rate_limiting=False)
+        adapter._client = MagicMock()
+        adapter._is_loaded = True
+        return adapter
+
+    _ERROR = (
+        "Error code: 400 - {'error': {'message': 'Tool choice is none, but model "
+        "called a tool', 'type': 'invalid_request_error', 'code': 'tool_use_failed', "
+        "'failed_generation': '{\"name\": \"calculator\", \"arguments\": "
+        "{\"expression\":\"234 * 567\"}}'}}"
+    )
+
+    def test_a_json_failed_generation_is_read_as_a_call(self):
+        from effgen.models.groq_adapter import _parse_failed_generation_tool_call
+
+        call = _parse_failed_generation_tool_call(self._ERROR)
+        assert call is not None
+        assert call["function"]["name"] == "calculator"
+        assert json.loads(call["function"]["arguments"]) == {"expression": "234 * 567"}
+
+    def test_the_recovery_fires_when_the_request_advertised_no_tools(self):
+        adapter = self._loaded_adapter()
+        adapter._client.chat.completions.create.side_effect = Exception(self._ERROR)
+
+        result = adapter.generate("Thought: I should calculate.\nAction: calculator")
+
+        assert result.finish_reason == "tool_calls"
+        call = result.metadata["tool_calls"][0]
+        assert call["function"]["name"] == "calculator"
+        assert json.loads(call["function"]["arguments"]) == {"expression": "234 * 567"}
+
+    def test_an_unreadable_failed_generation_names_the_mode_to_switch_to(self):
+        """When the call cannot be recovered the error says what happened."""
+        adapter = self._loaded_adapter()
+        adapter._client.chat.completions.create.side_effect = Exception(
+            "Error code: 400 - {'error': {'message': 'Tool choice is none, but model "
+            "called a tool', 'type': 'invalid_request_error', 'code': 'tool_use_failed', "
+            "'failed_generation': 'not a call at all'}}"
+        )
+        with pytest.raises(RuntimeError) as excinfo:
+            adapter.generate("Action: calculator")
+        message = str(excinfo.value)
+        assert "called a tool in a request that advertised none" in message
+        assert "native" in message and "react" in message
