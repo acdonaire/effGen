@@ -21,6 +21,8 @@ from .agent_runtime import (
 from .tool_calling import (
     ToolCallResult,
     action_name,
+    name_positional_arguments,
+    parse_call_syntax,
 )
 
 # The parsers log to the ReAct stream they serve.
@@ -253,7 +255,7 @@ class AgentReActParsingMixin:
             - Malformed responses
             - Missing fields
         """
-        parsed = {
+        parsed: dict[str, Any] = {
             "thought": None,
             "action": None,
             "action_input": None,
@@ -324,7 +326,10 @@ class AgentReActParsingMixin:
                 try:
                     action_match = re.search(pattern, text, re.IGNORECASE)
                     if action_match:
-                        action = action_match.group(1).strip()
+                        # Kept with its quoting intact for the call-syntax
+                        # reader below; the name path still strips quotes.
+                        action_raw = action_match.group(1).strip()
+                        action = action_raw
                         # Clean up common artifacts
                         action = action.replace('"', '').replace("'", "")
                         # Drop a same-line "Action Input:"/"Args:" section so the
@@ -366,6 +371,30 @@ class AgentReActParsingMixin:
                             # but didn't provide a proper answer text. Don't extract
                             # anything — let the loop continue for another iteration.
                             logger.debug("Action: Final Answer detected but no answer text found")
+                            break
+
+                        # A call written in Python call syntax, or a bare JSON
+                        # object after the name. Read from the unmangled text:
+                        # stripping every quote first leaves an argument list
+                        # nothing downstream can name, and the tool then ran
+                        # with the whole fragment as one value.
+                        call = parse_call_syntax(action_raw)
+                        if call is not None:
+                            call_name, call_kwargs, call_positional = call
+                            parsed["action"] = call_name
+                            if call_kwargs:
+                                raw_value = call_kwargs.get("__raw_input__")
+                                parsed["action_input"] = (
+                                    raw_value if raw_value is not None
+                                    else json.dumps(call_kwargs)
+                                )
+                            elif call_positional:
+                                parsed["action_input"] = json.dumps(
+                                    name_positional_arguments(
+                                        call_name, call_positional,
+                                        getattr(self, "tools", None),
+                                    )
+                                )
                             break
 
                         # Handle function-call format: tool_name(args) or tool_name("args")

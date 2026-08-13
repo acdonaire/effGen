@@ -299,3 +299,103 @@ class TestUnknownToolObservation:
         assert "No tool named" not in cleaned
         assert "The tools you can use are" not in cleaned
         assert cleaned.strip().startswith("The answer is 42.")
+
+
+# ---------------------------------------------------------------------------
+# Arguments written in call syntax reach the tool
+# ---------------------------------------------------------------------------
+#
+# ``action_name`` recovered the name from these shapes; the arguments were
+# dropped and the tool ran with ``{}``. It refused the empty set, the loop spent
+# a turn on the refusal, and the model tried again.
+
+# (label, Action: text, expected arguments dict)
+CALL_SYNTAX_SHAPES = [
+    (
+        "double-quoted keyword",
+        'Action: calculator(expression="1367 * 89")',
+        {"expression": "1367 * 89"},
+    ),
+    (
+        "single-quoted keyword",
+        "Action: calculator(expression='1367 * 89')",
+        {"expression": "1367 * 89"},
+    ),
+    (
+        "keyword named like a label",
+        'Action: calculator(input="1367 * 89")',
+        {"input": "1367 * 89"},
+    ),
+    (
+        "a JSON object as the only argument",
+        'Action: calculator({"expression": "1367 * 89"})',
+        {"expression": "1367 * 89"},
+    ),
+    (
+        "a bare JSON object after the name",
+        'Action: calculator {"expression": "1367 * 89"}',
+        {"expression": "1367 * 89"},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "label,text,expected", CALL_SYNTAX_SHAPES, ids=[c[0] for c in CALL_SYNTAX_SHAPES]
+)
+class TestCallSyntaxArgumentsAcrossParsers:
+    def test_react_strategy(self, label, text, expected):
+        assert ReActStrategy().parse_response(text).arguments == expected
+
+    def test_hybrid_strategy(self, label, text, expected):
+        assert HybridStrategy().parse_response(text).arguments == expected
+
+    def test_mixin_parser(self, label, text, expected, agent):
+        import json
+
+        parsed = agent._parse_react_response(text)
+        assert json.loads(parsed["action_input"]) == expected
+
+
+class TestPositionalCallArguments:
+    """A positional call carries its values in the tool's own parameter order."""
+
+    def test_a_single_positional_becomes_raw_input(self):
+        result = ReActStrategy().parse_response('Action: calculator("1367 * 89")')
+        assert result.tool_name == "calculator"
+        assert result.arguments == {"__raw_input__": "1367 * 89"}
+
+    def test_several_positionals_take_the_declared_parameter_names(self):
+        tools = {name: get_registry().get_tool_sync(name) for name in ("file_operations",)}
+        result = ReActStrategy().parse_response(
+            'Action: file_operations("write", "greet.py", "print(1)")', tools,
+        )
+        assert result.tool_name == "file_operations"
+        assert result.arguments["operation"] == "write"
+        assert result.arguments["path"] == "greet.py"
+        assert result.arguments["content"] == "print(1)"
+
+    def test_without_the_tool_the_first_value_is_still_handed_over(self):
+        """No schema to name them by, so the call degrades rather than dropping
+        every value."""
+        result = ReActStrategy().parse_response('Action: unknown_tool("a", "b")')
+        assert result.arguments == {"__raw_input__": "a"}
+
+
+class TestCallSyntaxIsNotOverEager:
+    """Prose and JSON answers must not be read as calls."""
+
+    def test_a_json_answer_is_not_a_call(self):
+        from effgen.core.tool_calling import parse_call_syntax
+
+        assert parse_call_syntax('{"name": "Acme Corp", "revenue": 5}') is None
+
+    def test_a_plain_name_is_not_a_call(self):
+        from effgen.core.tool_calling import parse_call_syntax
+
+        assert parse_call_syntax("calculator") is None
+
+    def test_an_expression_that_is_not_a_literal_is_refused(self):
+        """``ast.literal_eval`` is the only reader, so nothing is executed."""
+        from effgen.core.tool_calling import parse_call_syntax
+
+        assert parse_call_syntax('calculator(expression=__import__("os").system)') is None

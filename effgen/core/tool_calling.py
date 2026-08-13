@@ -12,6 +12,7 @@ and the ``tool_calling_mode`` setting in AgentConfig.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -194,7 +195,137 @@ def action_name(raw: str) -> str:
         if depths[marker.start()] == 0:
             name = raw[: marker.start()]
             break
+    # ``Action: calculator {"expression": "2 * 3"}`` — the arguments follow the
+    # name as a bare JSON object with no label between them. Without this the
+    # whole line is the tool name and resolves against nothing; the reader in
+    # ``parse_call_syntax`` takes the object.
+    brace = _SAME_LINE_JSON_RE.match(name)
+    if brace:
+        name = brace.group(1)
     return name.strip().rstrip(",;|-").strip()
+
+
+# ``name {json}`` — a bare object where an argument label would be.
+_SAME_LINE_JSON_RE = re.compile(r"\s*([\w.\-/]+)\s*\{")
+
+# ``name(...)`` spanning the whole construct.
+_CALL_SYNTAX_RE = re.compile(r"^\s*([\w.\-]+)\s*\((.*)\)\s*$", re.DOTALL)
+
+
+def parse_call_syntax(raw: str) -> tuple[str, dict[str, Any], list[Any]] | None:
+    """Read a tool call written in Python call syntax or as ``name {json}``.
+
+    ``action_name`` recovers the *name* from these shapes; this recovers the
+    *arguments*, which used to be dropped — the tool was invoked with ``{}``,
+    refused the empty argument set, and the loop spent a turn on the refusal.
+
+    Recognised, in the shapes models actually emit::
+
+        calculator(expression="1367 * 89")   -> {"expression": "1367 * 89"}
+        calculator(expression='1367 * 89')   -> {"expression": "1367 * 89"}
+        calculator("1367 * 89")              -> {"__raw_input__": "1367 * 89"}
+        calculator({"expression": "6*7"})    -> {"expression": "6*7"}
+        calculator {"expression": "6*7"}     -> {"expression": "6*7"}
+
+    A single positional argument becomes ``__raw_input__``, which the agent's
+    existing mapper resolves against the tool's declared parameters — the same
+    route a plain ``Action Input:`` value already takes, so a one-argument call
+    needs no schema here. Several positional arguments are returned separately
+    for a caller that has the schema to map them onto.
+
+    Args:
+        raw: The text following ``Action:``, with its surrounding quotes
+            stripped but its inner quoting intact.
+
+    Returns:
+        ``(name, keyword_arguments, positional_arguments)``, or ``None`` when
+        the text is not a call in either shape.
+    """
+    if not raw:
+        return None
+
+    brace = _SAME_LINE_JSON_RE.match(raw)
+    if brace:
+        from .structured_output import _extract_balanced
+
+        blob = _extract_balanced(raw[brace.end() - 1:])
+        try:
+            parsed = json.loads(blob) if blob else None
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return brace.group(1), parsed, []
+        return None
+
+    call = _CALL_SYNTAX_RE.match(raw)
+    if not call:
+        return None
+    name, inner = call.group(1), call.group(2).strip()
+    if not inner:
+        return name, {}, []
+
+    # A single JSON object argument: calculator({"expression": "6*7"}).
+    if inner.startswith("{"):
+        try:
+            parsed = json.loads(inner)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return name, parsed, []
+
+    # Python call syntax. ``ast`` is used for the parse only; every value is
+    # read with ``literal_eval``, so nothing in the model's text is executed.
+    try:
+        node = ast.parse(raw.strip(), mode="eval").body
+    except (SyntaxError, ValueError):
+        return None
+    if not isinstance(node, ast.Call):
+        return None
+
+    keywords: dict[str, Any] = {}
+    positional: list[Any] = []
+    try:
+        for kw in node.keywords:
+            if kw.arg is None:  # **kwargs — nothing to map it onto
+                return None
+            keywords[kw.arg] = ast.literal_eval(kw.value)
+        for arg in node.args:
+            positional.append(ast.literal_eval(arg))
+    except (ValueError, TypeError):
+        return None
+
+    if len(positional) == 1 and not keywords:
+        return name, {"__raw_input__": positional[0]}, []
+    return name, keywords, positional
+
+
+def name_positional_arguments(
+    tool_name: str, positional: list[Any], tools: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Give several positional arguments the names the tool declares.
+
+    ``file_operations('write', 'greet.py', 'print(1)')`` carries its values in
+    the order the tool's own parameters are declared, which is the only thing
+    that can name them. Without the tool the values cannot be placed, so the
+    first is handed over as raw input — the same shape a plain ``Action Input:``
+    takes — rather than being dropped.
+
+    Args:
+        tool_name: The name the call resolved to.
+        positional: The positional values read from the call, in order.
+        tools: The agent's tools by name, or ``None`` when unavailable.
+
+    Returns:
+        The values under the tool's declared parameter names, or the first value
+        under ``__raw_input__`` when there is no schema to name them by.
+    """
+    tool = (tools or {}).get(tool_name)
+    parameters = getattr(getattr(tool, "metadata", None), "parameters", None)
+    if parameters:
+        names = [p.name for p in parameters]
+        if len(names) >= len(positional):
+            return dict(zip(names, positional, strict=False))
+    return {"__raw_input__": positional[0]}
 
 
 # ---------------------------------------------------------------------------
@@ -424,8 +555,12 @@ class ReActStrategy(ToolCallingStrategy):
                 try:
                     action_match = re.search(pattern, text, re.IGNORECASE)
                     if action_match:
-                        action = action_match.group(1).strip()
-                        action = action.replace('"', '').replace("'", "")
+                        # Kept with its quoting intact: the call-syntax reader
+                        # below needs it, and stripping every quote first is
+                        # what turned calculator(expression="1367 * 89") into
+                        # an unparseable argument list.
+                        action_raw = action_match.group(1).strip()
+                        action = action_raw.replace('"', '').replace("'", "")
                         # Drop a same-line "Action Input:"/"Args:" section so the
                         # name resolves against the registry.
                         action = action_name(action)
@@ -452,6 +587,23 @@ class ReActStrategy(ToolCallingStrategy):
                                 if answer_text and not answer_text.startswith(("{", "[")):
                                     result.final_answer = answer_text
                                     return result
+                            break
+
+                        # Handle a call written in Python call syntax, or a
+                        # bare JSON object after the name. Read from the
+                        # unmangled text so the model's own quoting survives.
+                        call = parse_call_syntax(action_raw)
+                        if call is not None:
+                            call_name, call_kwargs, call_positional = call
+                            result.tool_name = call_name
+                            result.is_tool_call = True
+                            result.raw_text = text
+                            if call_kwargs:
+                                result.arguments = call_kwargs
+                            elif call_positional:
+                                result.arguments = name_positional_arguments(
+                                    call_name, call_positional, tools,
+                                )
                             break
 
                         # Handle function-call format: tool_name(args)
