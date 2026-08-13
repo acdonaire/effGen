@@ -144,6 +144,12 @@ STATIC_METHODS = ("_free_vram_gb", "_is_cuda_device_side_assert")
 #: Everything a caller can reach on the engine class, inherited members included.
 #: Splitting the file may move where a member is defined; it may not add, drop or
 #: rename one.
+#:
+#: ``build_assistant_message`` / ``build_tool_result_message`` were added on
+#: 2026-08-13 — on ``BaseModel``, so every adapter and engine inherits them and
+#: a multi-turn tool loop is portable across providers. Recorded here rather
+#: than silently absorbed, because this list is the anchor that says the surface
+#: only changes on purpose.
 ENGINE_MEMBERS = (
     "_HF_GEN_PARAMS",
     "_abc_impl",
@@ -168,6 +174,8 @@ ENGINE_MEMBERS = (
     "_resolve_placement",
     "_sanitize_generation_kwargs",
     "_seed_sampling",
+    "build_assistant_message",
+    "build_tool_result_message",
     "count_tokens",
     "generate",
     "generate_batch",

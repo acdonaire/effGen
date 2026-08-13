@@ -70,6 +70,20 @@ class GenerationConfig:
     response_mime_type: str | None = None
     response_schema: dict | None = None
 
+    def __post_init__(self) -> None:
+        """Accept a bare string for ``stop_sequences``.
+
+        Every consumer — the adapters, the local engines, the agent's own
+        trimming — iterates this field, so a string given directly is walked
+        character by character and cuts the text at the first single letter that
+        matches. The OpenAI API accepts a bare string, so it is the shape a
+        caller naturally reaches for; it becomes a one-element list here, once,
+        rather than in each consumer.
+        """
+        from effgen.models._adapter_utils import normalize_stop_sequences
+
+        self.stop_sequences = normalize_stop_sequences(self.stop_sequences)
+
 
 @dataclass
 class GenerationResult:
@@ -188,6 +202,14 @@ def _stamp_cost(model: "BaseModel", result: Any) -> None:
     cumulative-cost field for free, derived from the ``cost_usd`` it already
     reports per call. Skipped when the result carries no ``cost_usd`` (e.g.
     local engines that do not price calls).
+
+    **Tokens fold here too**, from the same per-call metadata. They used not to,
+    so on the six adapters that rely on this wrapper — groq, cerebras, together,
+    fireworks, replicate, hf_inference — ``model.total_cost`` was right while
+    ``model.total_tokens`` never moved. The presence check is what keeps that
+    from double-counting: the three adapters that fold their own totals also
+    write ``total_cost`` into the metadata, so this returns before touching
+    either counter for them.
     """
     if not isinstance(result, GenerationResult):
         return
@@ -197,7 +219,12 @@ def _stamp_cost(model: "BaseModel", result: Any) -> None:
     cost = meta.get("cost_usd")
     if cost is None:
         return
-    meta["total_cost"] = fold_call_totals(model, cost)
+    tokens = meta.get("total_tokens")
+    if tokens is None:
+        prompt = meta.get("prompt_tokens") or 0
+        completion = meta.get("completion_tokens") or 0
+        tokens = prompt + completion
+    meta["total_cost"] = fold_call_totals(model, cost, tokens)
 
 
 def clear_stream_usage(model: "BaseModel") -> None:
@@ -658,6 +685,12 @@ class BaseModel(ABC):
         self._context_length = context_length
         self._is_loaded = False
         self._metadata: dict[str, Any] = {}
+        # Session totals, folded by ``fold_call_totals``. Declared here so both
+        # exist from construction: an adapter whose folds all went through
+        # ``_stamp_cost`` never had ``total_tokens`` assigned at all, and
+        # reading it raised AttributeError rather than reporting zero.
+        self.total_cost: float = 0.0
+        self.total_tokens: int = 0
 
     @abstractmethod
     def load(self) -> None:
@@ -798,6 +831,71 @@ class BaseModel(ABC):
             str: One of ``"api"``, ``"template"`` or ``"none"``.
         """
         return "api" if self.supports_tool_calling() else "none"
+
+    # ------------------------------------------------------------------
+    # Multi-turn tool loop
+    # ------------------------------------------------------------------
+    #
+    # ``metadata["tool_calls"]`` has one shape on every adapter, so *reading* a
+    # call is portable. Re-submitting the turn was not: the loop in the examples
+    # appended ``metadata["message"]`` — written by the OpenAI adapter and by no
+    # other — and a ``{"role": "tool", ...}`` message, which is the OpenAI wire
+    # format and not Gemini's or Anthropic's. The two methods below make the
+    # loop portable by giving each adapter a way to build its *own* provider's
+    # shape, so a caller driving ``chat()``/``generate_with_tools()`` by hand
+    # across providers writes one loop.
+    #
+    # ``Agent`` already does this internally and remains the easier route; these
+    # are for a caller who wants the raw loop.
+
+    def build_assistant_message(self, result: "GenerationResult") -> dict[str, Any]:
+        """Return the assistant turn of *result*, in this provider's wire shape.
+
+        Append it to the conversation before the tool results, so the model sees
+        the call it made.
+
+        The default is the OpenAI-compatible shape, which groq, together,
+        fireworks, cerebras, hf and any OpenAI-protocol endpoint also speak. A
+        provider-native message the adapter kept (``metadata["message"]``) is
+        preferred when present, because it round-trips fields the uniform shape
+        does not carry.
+
+        Args:
+            result: The turn to re-submit.
+
+        Returns:
+            One message dict for this provider's conversation format.
+        """
+        metadata = result.metadata or {}
+        native = metadata.get("message")
+        if isinstance(native, dict):
+            return native
+        message: dict[str, Any] = {"role": "assistant", "content": result.text or None}
+        calls = metadata.get("tool_calls")
+        if calls:
+            message["tool_calls"] = calls
+        return message
+
+    def build_tool_result_message(
+        self, call_id: str, name: str, content: str
+    ) -> dict[str, Any]:
+        """Return one tool's result, in this provider's wire shape.
+
+        Append it after the assistant message, once per call the turn made.
+
+        Args:
+            call_id: The ``id`` of the call being answered, from
+                ``metadata["tool_calls"][i]["id"]``.
+            name: The tool's name — unused in the OpenAI shape, required by
+                Gemini's and carried here so one call site serves every
+                provider.
+            content: What the tool returned, as text.
+
+        Returns:
+            One message dict for this provider's conversation format.
+        """
+        _ = name
+        return {"role": "tool", "tool_call_id": call_id, "content": content}
 
     def streams_tool_calls(self) -> bool:
         """Report whether ``generate_stream`` records the turn's tool calls.
