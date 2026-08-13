@@ -365,8 +365,9 @@ def test_first_run_welcome_folds_and_is_identity_on_utf8():
 def test_public_surface_anchor_unchanged():
     import effgen
 
-    # 1.0.0 added 13 names: the OpenAI-compatible adapter and its
+    # 1.0.0 added 17 names: the OpenAI-compatible adapter and its
     # BackendUnreachableError, the middleware surface, the tool-call records,
-    # and the compaction strategies. Growing this number is a deliberate act —
-    # update it in the same commit that widens the surface, and say why.
-    assert len(effgen.__all__) == 219
+    # the compaction strategies, and the workflow checkpoint stores. Growing
+    # this number is a deliberate act — update it in the same commit that
+    # widens the surface, and say why.
+    assert len(effgen.__all__) == 223

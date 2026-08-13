@@ -8,6 +8,7 @@ Define agent execution as a directed acyclic graph (DAG):
 - Automatic parallelisation of independent nodes
 - Conditional branching based on agent output
 - YAML workflow definition support
+- Durable checkpoints, so a run that died part way through can be resumed
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from ..observability.tracing import (
     new_execution_id,
     record_skipped_step,
 )
+from .workflow_checkpoint import CheckpointStore, WorkflowCheckpoint
 
 logger = logging.getLogger(__name__)
 
@@ -323,7 +325,10 @@ class WorkflowDAG:
         )
 
     def run(self, initial_inputs: dict[str, Any] | str | None = None,
-            context: dict[str, Any] | None = None) -> WorkflowResult:
+            context: dict[str, Any] | None = None,
+            *,
+            checkpoint: CheckpointStore | None = None,
+            run_id: str | None = None) -> WorkflowResult:
         """
         Execute the workflow synchronously.
 
@@ -331,6 +336,11 @@ class WorkflowDAG:
             initial_inputs: Either a ``{node_id: task}`` mapping, or a single
                 task string that is routed to the workflow's entry node(s).
             context: Shared context dict passed to each agent
+            checkpoint: Where to record progress. With one given, every
+                completed level is saved, and a run started under a ``run_id``
+                the store already knows resumes rather than starting over.
+            run_id: The identifier this run is saved under. Required to use
+                *checkpoint*; two runs sharing an id are the same run.
 
         Returns:
             WorkflowResult
@@ -346,6 +356,12 @@ class WorkflowDAG:
             dag.connect("draft", "polish")
             result = dag.run("Write one sentence about the sea.")
             print(result.outputs["polish"])
+
+        Resuming a run that died part way through is the same call again::
+
+            store = FileCheckpointStore()
+            dag.run("Write one sentence about the sea.",
+                    checkpoint=store, run_id="sea-1")
         """
         initial_inputs = self._normalize_initial_inputs(initial_inputs)
         try:
@@ -353,27 +369,63 @@ class WorkflowDAG:
         except RuntimeError:
             loop = None
 
+        coro = self.run_async(
+            initial_inputs, context, checkpoint=checkpoint, run_id=run_id,
+        )
         if loop and loop.is_running():
             # Already inside an event loop — use thread
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, self.run_async(initial_inputs, context))
+                future = pool.submit(asyncio.run, coro)
                 return future.result()
         else:
-            return asyncio.run(self.run_async(initial_inputs, context))
+            return asyncio.run(coro)
 
     def execute(self, initial_inputs: dict[str, Any] | str | None = None,
-                context: dict[str, Any] | None = None) -> WorkflowResult:
-        """Alias for :meth:`run` — executes the workflow synchronously."""
-        return self.run(initial_inputs, context)
+                context: dict[str, Any] | None = None,
+                *,
+                checkpoint: CheckpointStore | None = None,
+                run_id: str | None = None) -> WorkflowResult:
+        """Alias for :meth:`run` — executes the workflow synchronously.
+
+        Args:
+            initial_inputs: A ``{node_id: task}`` mapping, or one task string
+                routed to the entry node(s).
+            context: Shared context dict passed to each agent.
+            checkpoint: Where to record progress, as on :meth:`run`.
+            run_id: The identifier this run is saved and resumed under.
+
+        Returns:
+            The :class:`WorkflowResult` for the run.
+        """
+        return self.run(initial_inputs, context, checkpoint=checkpoint, run_id=run_id)
 
     async def execute_async(self, initial_inputs: dict[str, Any] | str | None = None,
-                            context: dict[str, Any] | None = None) -> WorkflowResult:
-        """Alias for :meth:`run_async` — executes the workflow asynchronously."""
-        return await self.run_async(initial_inputs, context)
+                            context: dict[str, Any] | None = None,
+                            *,
+                            checkpoint: CheckpointStore | None = None,
+                            run_id: str | None = None) -> WorkflowResult:
+        """Alias for :meth:`run_async` — executes the workflow asynchronously.
+
+        Args:
+            initial_inputs: A ``{node_id: task}`` mapping, or one task string
+                routed to the entry node(s).
+            context: Shared context dict passed to each agent.
+            checkpoint: Where to record progress, as on :meth:`run`.
+            run_id: The identifier this run is saved and resumed under.
+
+        Returns:
+            The :class:`WorkflowResult` for the run.
+        """
+        return await self.run_async(
+            initial_inputs, context, checkpoint=checkpoint, run_id=run_id,
+        )
 
     async def run_async(self, initial_inputs: dict[str, Any] | str | None = None,
-                        context: dict[str, Any] | None = None) -> WorkflowResult:
+                        context: dict[str, Any] | None = None,
+                        *,
+                        checkpoint: CheckpointStore | None = None,
+                        run_id: str | None = None) -> WorkflowResult:
         """
         Execute the workflow asynchronously.
 
@@ -381,11 +433,40 @@ class WorkflowDAG:
         ``{node_id: task}`` dict or a single string routed to the entry nodes).
         Independent nodes at the same topological level are run in parallel
         via ``asyncio.gather``.
+
+        With *checkpoint* and *run_id* given, progress is saved after every
+        level and a run whose id the store already knows continues from where
+        it stopped. Nodes that completed are not run again; nodes that failed
+        are retried, which is the reason to resume after fixing what broke
+        them. A run id whose saved run already finished replays its stored
+        outputs without calling a model, so re-running one is cheap and
+        harmless; ``store.delete(run_id)`` starts it over.
+
+        Args:
+            initial_inputs: A ``{node_id: task}`` mapping, or one task string
+                routed to the entry node(s).
+            context: Shared context dict passed to each agent.
+            checkpoint: Where to record progress. Every completed level is
+                saved, and a known *run_id* resumes rather than starting over.
+            run_id: The identifier this run is saved and resumed under.
+                Required whenever *checkpoint* is given.
+
+        Returns:
+            The :class:`WorkflowResult` for the run.
+
+        Raises:
+            ValueError: *checkpoint* was given without *run_id*, or the saved
+                run belongs to a different set of nodes than this graph has.
         """
         start = time.time()
         initial_inputs = self._normalize_initial_inputs(initial_inputs)
         context = context or {}
         execution_id = new_execution_id()
+
+        # A call with the checkpoint arguments half given is wrong however many
+        # nodes the graph has, so it is reported before anything else — the
+        # empty-workflow result below would otherwise swallow it.
+        self._check_checkpoint_args(checkpoint, run_id)
 
         # A zero-node workflow has nothing to run: report it explicitly instead
         # of an empty success (all([]) is True). Mirrors the empty-team contract
@@ -419,10 +500,39 @@ class WorkflowDAG:
 
         outputs: dict[str, Any] = {}
 
+        # ------------------------------------------------------------------
+        # Resume, if this run has been here before.
+        # ------------------------------------------------------------------
+        saved = self._load_checkpoint(checkpoint, run_id)
+        resumed_nodes: set[str] = set()
+        if saved is not None:
+            outputs.update(saved.outputs)
+            for nid, value in saved.completed.items():
+                node = self._nodes[nid]
+                node.status = NodeStatus.COMPLETED
+                node.output = value
+                resumed_nodes.add(nid)
+            for nid, reason in saved.skipped.items():
+                node = self._nodes[nid]
+                node.status = NodeStatus.SKIPPED
+                node.metadata = {**node.metadata, "skip_reason": reason}
+                resumed_nodes.add(nid)
+            if resumed_nodes:
+                logger.info(
+                    "Workflow '%s' resuming run '%s': %d of %d node(s) already done",
+                    self.name, run_id, len(resumed_nodes), len(self._nodes),
+                )
+
         for level_nodes in levels:
             tasks = []
             for nid in level_nodes:
                 node = self._nodes[nid]
+
+                # A node the checkpoint already has is not run again. Its
+                # output was restored above and downstream nodes read it from
+                # `outputs` exactly as if this run had produced it.
+                if nid in resumed_nodes:
+                    continue
 
                 # Decide whether to skip this node. Two reasons:
                 #  1. A required upstream did NOT complete (it failed or was
@@ -504,11 +614,19 @@ class WorkflowDAG:
                 if out_key != node.id:
                     outputs[node.id] = node.output
 
+            # A finished level is the natural place to save: every node in it
+            # has reached a terminal state, and the next level has not started.
+            self._save_checkpoint(checkpoint, run_id, outputs)
+
         elapsed = time.time() - start
         success = all(
             n.status in (NodeStatus.COMPLETED, NodeStatus.SKIPPED)
             for n in self._nodes.values()
         )
+
+        # Record the verdict, so a reader of the store can tell a run that
+        # finished from one that stopped in the middle.
+        self._save_checkpoint(checkpoint, run_id, outputs, complete=success)
 
         # Fold a running cost/token tab onto the result so a budget owner can read
         # workflow spend without summing node_results by hand. The tab sums the
@@ -631,6 +749,117 @@ class WorkflowDAG:
             logger.error("Workflow node '%s' failed: %s", node.id, node.error)
         finally:
             node.execution_time = time.time() - t0
+
+    # ------------------------------------------------------------------
+    # Checkpointing
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _check_checkpoint_args(
+        store: CheckpointStore | None,
+        run_id: str | None,
+    ) -> None:
+        """Reject a half-given pair of checkpoint arguments.
+
+        Args:
+            store: The checkpoint store passed to the run, if any.
+            run_id: The run id passed to the run, if any.
+
+        Raises:
+            ValueError: One was given without the other. Silently ignoring a
+                lone ``run_id`` would leave the caller believing the run was
+                being saved when nothing was.
+        """
+        if store is None and run_id is not None:
+            raise ValueError(
+                "run_id was given without a checkpoint store. Pass "
+                "checkpoint=FileCheckpointStore() to save progress under it."
+            )
+        if store is not None and not run_id:
+            raise ValueError(
+                "A checkpoint store needs a run_id: it is the name this run is "
+                "saved under and resumed by. Pass run_id='...' to run()."
+            )
+
+    def _load_checkpoint(
+        self,
+        store: CheckpointStore | None,
+        run_id: str | None,
+    ) -> WorkflowCheckpoint | None:
+        """Return the saved state for *run_id*, after checking it fits this graph.
+
+        Args:
+            store: Where to read the saved run from, or None for no resume.
+            run_id: The run to read.
+
+        Returns:
+            The saved checkpoint, or None when there is no store or no saved
+            run under that id.
+
+        Raises:
+            ValueError: The saved run covers a different set of nodes.
+                Resuming into a changed graph would silently mix outputs from
+                two different workflows, so it is refused rather than guessed
+                at.
+        """
+        if store is None:
+            return None
+
+        saved = store.load(run_id or "")
+        if saved is None:
+            return None
+
+        if saved.node_ids and set(saved.node_ids) != set(self._nodes):
+            added = sorted(set(self._nodes) - set(saved.node_ids))
+            removed = sorted(set(saved.node_ids) - set(self._nodes))
+            raise ValueError(
+                f"Checkpoint '{run_id}' was saved for a different graph "
+                f"(added: {added or 'none'}, removed: {removed or 'none'}). "
+                f"Resume with the same nodes, or delete the checkpoint to "
+                f"start over."
+            )
+        return saved
+
+    def _save_checkpoint(
+        self,
+        store: CheckpointStore | None,
+        run_id: str | None,
+        outputs: dict[str, Any],
+        *,
+        complete: bool = False,
+    ) -> None:
+        """Record where this run has got to.
+
+        A store that cannot be written to must not take the run down with it:
+        the run's own work is still valid, and losing the ability to resume is
+        the smaller failure. The problem is logged rather than raised.
+        """
+        if store is None or not run_id:
+            return
+
+        checkpoint = WorkflowCheckpoint(
+            run_id=run_id,
+            workflow=self.name,
+            node_ids=list(self._nodes),
+            outputs=dict(outputs),
+            metadata={"complete": complete},
+        )
+        for nid, node in self._nodes.items():
+            if node.status is NodeStatus.COMPLETED:
+                checkpoint.completed[nid] = node.output
+            elif node.status is NodeStatus.SKIPPED:
+                checkpoint.skipped[nid] = str(
+                    node.metadata.get("skip_reason", "skipped")
+                )
+            elif node.status is NodeStatus.FAILED and node.error:
+                checkpoint.failed[nid] = node.error
+
+        try:
+            store.save(checkpoint)
+        except Exception as exc:  # noqa: BLE001 - saving must not fail the run
+            logger.warning(
+                "Could not save checkpoint for run '%s': %s: %s",
+                run_id, type(exc).__name__, exc,
+            )
 
     def _compute_levels(self, order: list[str]) -> list[list[str]]:
         """

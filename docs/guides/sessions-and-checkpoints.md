@@ -185,6 +185,67 @@ raises a clear `CorruptStateError` that names the file rather than a stack
 trace; a missing one raises `FileNotFoundError`. A SQLite backend is also
 available: `CheckpointManager(dir, backend="sqlite")`.
 
+## Resuming a workflow
+
+The checkpoints above resume **one agent's run**. A `WorkflowDAG` runs several
+agents, and it has its own store so a pipeline that died half way through does
+not start again from the top. Pass a store and a run id:
+
+```python
+from effgen import FileCheckpointStore, WorkflowDAG, WorkflowNode
+
+store = FileCheckpointStore()          # ~/.effgen/workflows by default
+dag = WorkflowDAG("report")
+dag.add_node(WorkflowNode(id="research", agent=researcher))
+dag.add_node(WorkflowNode(id="draft", agent=writer))
+dag.add_node(WorkflowNode(id="review", agent=editor))
+dag.connect("research", "draft")
+dag.connect("draft", "review")
+
+result = dag.run("Write the Q3 summary.", checkpoint=store, run_id="q3-summary")
+```
+
+If that process is killed after `research` and `draft` finished, running the
+**same line again** picks up at `review`. There is no separate resume call: a
+run id the store has never seen starts from the beginning, and one it knows
+continues.
+
+What resuming does with each node:
+
+| Node state when the run stopped | On resume |
+|---|---|
+| completed | not run again; its output is restored and flows downstream |
+| skipped | stays skipped, with the original reason |
+| failed | **retried** — that is usually why you are resuming |
+| never started | run normally |
+
+Progress is saved after each topological level, which is the point at which
+every node in that level has finished and the next has not started. Writes are
+atomic, so a crash during a save leaves the previous checkpoint intact rather
+than a half-written file.
+
+Two behaviours worth knowing:
+
+- **Re-running a finished run is cheap.** Its stored outputs are replayed
+  without calling a model, which makes a workflow run idempotent under a job
+  runner that retries. Call `store.delete(run_id)` to genuinely start over.
+- **The graph must match.** Resuming into a DAG with different node ids raises
+  `ValueError` naming what was added or removed, rather than mixing outputs
+  from two different workflows.
+
+The store holds run *state*, never the graph — agents own sockets, model
+handles and credentials, none of which survive a process boundary. Rebuild the
+same `WorkflowDAG` in the new process and hand it the same `run_id`.
+
+For a store that only needs to outlive a failed node rather than a failed
+process, use `InMemoryCheckpointStore()`. To keep checkpoints somewhere else
+entirely — a database, an object store — implement the three methods of
+`CheckpointStore` (`save`, `load`, `delete`) and pass your own.
+
+Set `EFFGEN_WORKFLOW_DIR` to move the on-disk location, which is what
+containers and test suites do so a run cannot write into a developer's home
+directory.
+
 ## Background tasks
 
 Run agent tasks on worker threads without blocking:

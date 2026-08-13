@@ -142,7 +142,7 @@ ALLOWED_IMPORTS: dict[str, set[str]] = {
 #: BackendUnreachableError, the middleware surface, the tool-call records, and
 #: the compaction strategies. Growing it is a deliberate act — move the number
 #: in the same commit that widens the surface.
-TOP_LEVEL_API_SIZE = 219
+TOP_LEVEL_API_SIZE = 223
 SANDBOX_STATUS_MODULE = "effgen.execution.sandbox"
 
 #: No module in the split may grow past this.

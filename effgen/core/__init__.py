@@ -117,6 +117,12 @@ from .tool_calling import (
 
 # Workflow
 from .workflow import WorkflowDAG, WorkflowEdge, WorkflowNode, WorkflowResult
+from .workflow_checkpoint import (
+    CheckpointStore,
+    FileCheckpointStore,
+    InMemoryCheckpointStore,
+    WorkflowCheckpoint,
+)
 
 __all__ = [
     # Multimodal message schema
@@ -196,6 +202,10 @@ __all__ = [
     "WorkflowDAG",
     "WorkflowNode",
     "WorkflowEdge",
+    "WorkflowCheckpoint",
+    "CheckpointStore",
+    "FileCheckpointStore",
+    "InMemoryCheckpointStore",
     "WorkflowResult",
 
     # Batch Execution
