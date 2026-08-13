@@ -1004,6 +1004,14 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         if status == 408 or status >= 500:
             return _TRANSIENT
 
+    # 2.5. A request that could not be built. A ``TypeError`` with no HTTP
+    # status behind it was raised while assembling the call — a wrong argument
+    # type, a value the SDK cannot serialize — so the request never left the
+    # process. Retrying re-sends the identical malformed call, spending the
+    # whole budget on an outcome that is fixed by construction.
+    if isinstance(exc, TypeError) and status is None:
+        return _INVALID
+
     # 3. Exception class name heuristics.
     name = type(exc).__name__.lower()
     if "ratelimit" in name or "toomanyrequests" in name:
@@ -1034,6 +1042,11 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
     # never reach here — they carry an HTTP status and are classified above.
     if any(k in msg or k in name for k in DEVICE_MEMORY_SIGNALS):
         return _RESOURCE_EXHAUSTED
+    # A value the SDK could not put on the wire. Same reasoning as the
+    # ``TypeError`` rule above, for the SDKs that re-raise it as their own
+    # exception class and keep only the sentence.
+    if "not json serializable" in msg:
+        return _INVALID
     if any(k in msg for k in ("rate limit", "rate-limit", "too many requests", "quota exceeded", "429")):
         return _RATE_LIMITED
     # A credential that is missing or rejected. Providers call it a key or a

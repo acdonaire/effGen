@@ -1472,3 +1472,88 @@ def test_a_streamed_tool_turn_is_not_reported_as_reasoning_only(provider, caplog
     assert not [r for r in caplog.records if "no visible text" in r.message], (
         "a streamed tool turn was reported as a turn with no answer"
     )
+
+
+# ---------------------------------------------------------------------------
+# generate_with_tools: one parameter order every adapter honours
+# ---------------------------------------------------------------------------
+#
+# ``config`` is the third parameter. Three adapters took ``messages`` there,
+# so ``adapter.generate_with_tools(prompt, tools, config)`` — the call a reader
+# of the other six signatures writes — put a GenerationConfig in the messages
+# slot and failed several layers down with a provider-level error the retry
+# layer then classified as retryable.
+
+_TOOLS_METHOD_ADAPTERS = {
+    "openai": ("effgen.models.openai_adapter", "OpenAIAdapter"),
+    "gemini": ("effgen.models.gemini_adapter", "GeminiAdapter"),
+    "cerebras": ("effgen.models.cerebras_adapter", "CerebrasAdapter"),
+    "hf_inference": ("effgen.models.hf_inference_adapter", "HFInferenceAdapter"),
+    "replicate": ("effgen.models.replicate_adapter", "ReplicateAdapter"),
+    "anthropic": ("effgen.models.anthropic_adapter", "AnthropicAdapter"),
+    "groq": ("effgen.models.groq_adapter", "GroqAdapter"),
+    "together": ("effgen.models.together_adapter", "TogetherAdapter"),
+    "fireworks": ("effgen.models.fireworks_adapter", "FireworksAdapter"),
+    "openai_compatible": (
+        "effgen.models.openai_compatible_adapter",
+        "OpenAICompatibleAdapter",
+    ),
+}
+
+
+def _tools_method_parameters(provider):
+    import importlib
+    import inspect
+
+    module, cls_name = _TOOLS_METHOD_ADAPTERS[provider]
+    cls = getattr(importlib.import_module(module), cls_name)
+    return list(inspect.signature(cls.generate_with_tools).parameters)
+
+
+@pytest.mark.parametrize("provider", sorted(_TOOLS_METHOD_ADAPTERS))
+def test_generate_with_tools_takes_config_third(provider):
+    """The first three parameters are the same on every adapter."""
+    assert _tools_method_parameters(provider)[:4] == ["self", "prompt", "tools", "config"], (
+        f"{provider} does not take config as its third parameter; a positional "
+        "call written against any other adapter misroutes its argument"
+    )
+
+
+def test_a_positional_conversation_is_still_read_as_a_conversation():
+    """The three adapters that took ``messages`` third keep working.
+
+    Told apart by type, not position, so neither spelling of the call breaks.
+    """
+    from effgen.models._adapter_utils import normalize_tools_call_args
+    from effgen.models.base import GenerationConfig
+
+    conversation = [{"role": "user", "content": "hi"}]
+    config = GenerationConfig(temperature=0.5)
+
+    # The old spelling: a conversation arriving in the config slot.
+    assert normalize_tools_call_args(conversation, None) == (None, conversation)
+    # The new spelling: a config arriving in the config slot.
+    assert normalize_tools_call_args(config, conversation) == (config, conversation)
+    # The mistake the report measured: a config in the messages slot.
+    assert normalize_tools_call_args(None, config) == (config, None)
+    # Neither given.
+    assert normalize_tools_call_args(None, None) == (None, None)
+
+
+def test_a_request_that_could_not_be_built_is_not_retried():
+    """A caller-side ``TypeError`` never left the process, so retrying is spend
+    with no chance of a different outcome."""
+    from effgen.models.errors import classify_provider_error
+
+    verdict = classify_provider_error(
+        TypeError("Object of type GenerationConfig is not JSON serializable")
+    )
+    assert not verdict.retryable
+    assert verdict.category == "invalid_request"
+
+    # Same conclusion when an SDK re-raises it as its own class and keeps only
+    # the sentence.
+    wrapped = classify_provider_error(
+        RuntimeError("Object of type GenerationConfig is not JSON serializable")
+    )
+    assert not wrapped.retryable

@@ -344,6 +344,93 @@ def normalize_finish_reason(raw: Any, *, default: str = FINISH_STOP) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Tool-request shaping
+# ---------------------------------------------------------------------------
+
+
+def apply_tool_request(
+    request_params: dict[str, Any],
+    tools: Any,
+    record: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Put the tool definitions on an OpenAI-shaped request, or leave it alone.
+
+    One helper for both ``generate()`` and ``generate_stream()``, because the
+    two used to shape the request differently: the non-streaming path normalized
+    the definitions and set ``tool_choice="auto"`` behind the catalog's
+    ``supports_native_tools`` gate, while the streaming path forwarded the
+    caller's ``tools=`` keyword through ``request_params.update(kwargs)``
+    untouched — no gate and no ``tool_choice``. The same agent, the same turn and
+    the same tools therefore produced a slightly different request depending on
+    whether the turn streamed.
+
+    The gate and ``tool_choice`` are one decision, not two: the gate decides
+    which models are offered definitions at all, so copying only the
+    ``tool_choice`` half would change which models receive them. Both live here.
+
+    Args:
+        request_params: The request being assembled; mutated in place.
+        tools: Tool definitions — OpenAI-format dicts or effGen tool objects.
+        record: The model's catalog record, or ``None`` when it is unknown.
+
+    Returns:
+        ``request_params``, for chaining.
+    """
+    if not tools or not (record or {}).get("supports_native_tools", False):
+        return request_params
+    normalized = []
+    for tool in tools:
+        if isinstance(tool, dict):
+            normalized.append(
+                tool if "type" in tool else {"type": "function", "function": tool}
+            )
+        else:
+            normalized.append(
+                {"type": "function", "function": tool.metadata.to_json_schema()}
+            )
+    request_params["tools"] = normalized
+    request_params["tool_choice"] = "auto"
+    return request_params
+
+
+# ---------------------------------------------------------------------------
+# generate_with_tools argument order
+# ---------------------------------------------------------------------------
+
+
+def normalize_tools_call_args(
+    config: Any, messages: Any
+) -> tuple[Any, Any]:
+    """Return ``(config, messages)`` however the two were positioned.
+
+    ``generate_with_tools`` takes ``config`` third on most adapters and took
+    ``messages`` third on groq, together and fireworks. A reader of one
+    signature writing ``adapter.generate_with_tools(prompt, tools, config)``
+    against the other put a :class:`GenerationConfig` in the ``messages`` slot,
+    and the provider SDK failed on it several layers down ("Object of type
+    GenerationConfig is not JSON serializable"). The documented order is now
+    ``config`` third everywhere; this reader keeps the other spelling working,
+    so no caller of either shape breaks.
+
+    The two are told apart by type, not by position: a conversation is a list
+    of message mappings and a config is not, so neither can be mistaken for the
+    other.
+
+    Args:
+        config: Whatever arrived in the ``config`` parameter.
+        messages: Whatever arrived in the ``messages`` parameter.
+
+    Returns:
+        The pair in canonical order.
+    """
+    config_is_messages = isinstance(config, list)
+    messages_is_config = messages is not None and not isinstance(messages, list)
+    if config_is_messages or messages_is_config:
+        return messages, config
+    return config, messages
+
+
+# ---------------------------------------------------------------------------
 # Output-token budgeting
 # ---------------------------------------------------------------------------
 
@@ -701,7 +788,54 @@ def warn_empty_stream(
     )
 
 
-def apply_stop_sequences(text: str, stop_sequences: list[str] | None) -> str:
+def normalize_stop_sequences(value: Any) -> list[str] | None:
+    """Return *value* as a list of stop sequences, whatever shape it arrived in.
+
+    ``stop_sequences`` is a list and every consumer iterates it, so a bare
+    string — the shape the OpenAI API itself accepts, and the one a caller
+    naturally writes as ``agent.run(task, stop_sequences="END")`` — is walked
+    character by character and cuts the text at the first single letter that
+    matches. ``"The ocean is DEEP and ENDless."`` came back as
+    ``"The ocean is "`` instead of ``"The ocean is DEEP and "``.
+
+    This is the one place that decision is made, so the agent boundary, the
+    per-call keyword helpers and :class:`~effgen.models.base.GenerationConfig`
+    cannot disagree about it.
+
+    Args:
+        value: ``None``, a string, or any iterable of strings.
+
+    Returns:
+        ``None`` when nothing was given, otherwise a list of strings.
+
+    Raises:
+        TypeError: The value is neither a string nor an iterable of strings.
+            It is rejected here, naming what was passed, rather than reaching a
+            provider as a malformed request or a consumer as a silent
+            character-wise walk.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list | tuple | set | frozenset):
+        items = list(value)
+        bad = [item for item in items if not isinstance(item, str)]
+        if bad:
+            raise TypeError(
+                "stop_sequences must contain only strings; got "
+                f"{type(bad[0]).__name__}. Pass a string for a single sequence "
+                'or a list of strings, e.g. stop_sequences=["\\nObservation:"].'
+            )
+        return items
+    raise TypeError(
+        f"stop_sequences must be a string or a list of strings; got "
+        f"{type(value).__name__}. Pass a string for a single sequence or a list "
+        'of strings, e.g. stop_sequences=["END"].'
+    )
+
+
+def apply_stop_sequences(text: str, stop_sequences: Any) -> str:
     """Truncate *text* at the earliest stop sequence it contains.
 
     Used when the stop sequences cannot be sent to the provider — a provider
@@ -709,7 +843,11 @@ def apply_stop_sequences(text: str, stop_sequences: list[str] | None) -> str:
     matches them against the chain as well, which can end generation before the
     first visible token. Cutting the returned answer locally gives the same
     visible result without that collision.
+
+    A bare string is accepted and treated as one sequence, so a config built by
+    hand cannot make this walk the string character by character.
     """
+    stop_sequences = normalize_stop_sequences(stop_sequences)
     if not text or not stop_sequences:
         return text
     cut = len(text)
@@ -764,8 +902,8 @@ def merge_call_overrides(config: Any, kwargs: dict[str, Any]) -> Any:
         field = CALL_OVERRIDE_ALIASES.get(key, key)
         if field in CALL_OVERRIDE_FIELDS:
             value = kwargs.pop(key)
-            if field == "stop_sequences" and isinstance(value, str):
-                value = [value]
+            if field == "stop_sequences":
+                value = normalize_stop_sequences(value)
             overrides[field] = value
     if not overrides:
         return config
@@ -999,6 +1137,9 @@ __all__ = [
     "CANONICAL_FINISH_REASONS",
     "merge_call_overrides",
     "normalize_finish_reason",
+    "apply_tool_request",
+    "normalize_stop_sequences",
+    "normalize_tools_call_args",
     "needs_reasoning_headroom",
     "default_max_output_tokens",
     "build_error_context",
