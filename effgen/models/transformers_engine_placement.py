@@ -17,6 +17,8 @@ except ImportError as exc:  # pragma: no cover - only on an install without torc
 
     raise missing_torch_error("transformers") from exc
 
+from ._vram import free_vram_gb
+
 logger = logging.getLogger("effgen.models.transformers_engine")
 
 
@@ -200,13 +202,9 @@ class TransformersPlacementMixin:
 
     @staticmethod
     def _free_vram_gb() -> float:
-        """Total free VRAM (GB) across the visible CUDA devices, or 0.0 if none."""
-        if not torch.cuda.is_available():
-            return 0.0
-        free_bytes = 0
-        for index in range(torch.cuda.device_count()):
-            try:
-                free_bytes += torch.cuda.mem_get_info(index)[0]
-            except Exception:
-                pass
-        return free_bytes / (1024 ** 3)
+        """Total free VRAM (GB) across the visible CUDA devices, or 0.0 if none.
+
+        Returns:
+            Free memory in gibibytes, summed over the visible devices.
+        """
+        return free_vram_gb()

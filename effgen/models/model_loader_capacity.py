@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 
+from ._vram import free_vram_gb
+
 logger = logging.getLogger("effgen.models.model_loader")
 
 
@@ -19,21 +21,14 @@ class ModelLoaderCapacityMixin:
     def _free_vram_gb() -> float:
         """Free VRAM (GB) across the visible CUDA devices.
 
-        Uses the currently-free memory (``torch.cuda.mem_get_info``), not the
-        card's total capacity, so quantization/offload decisions reflect what is
-        actually available after any other tenants on the GPU.
-        """
-        import torch
+        Uses the currently-free memory, not the card's total capacity, so
+        quantization and offload decisions reflect what is actually available
+        after any other tenants on the GPU.
 
-        if not torch.cuda.is_available():
-            return 0.0
-        free_bytes = 0
-        for index in range(torch.cuda.device_count()):
-            try:
-                free_bytes += torch.cuda.mem_get_info(index)[0]
-            except Exception:
-                pass
-        return free_bytes / (1024**3)
+        Returns:
+            Free memory in gibibytes, summed over the visible devices.
+        """
+        return free_vram_gb()
 
     def _auto_select_quantization(self, model_name: str) -> str | None:
         """
