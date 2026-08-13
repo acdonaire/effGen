@@ -368,3 +368,118 @@ def test_iteration_cap_names_the_tool_calling_path():
     assert resp.success is False
     assert resp.metadata["reason"].startswith("max_iterations")
     assert resp.metadata["tool_calling_strategy"] == "react"
+
+
+# ---------------------------------------------------------------------------
+# A tagged call whose body is a query string, not JSON
+# ---------------------------------------------------------------------------
+#
+# Measured live on groq:llama-3.1-8b-instant driving `effgen code`: one run in
+# two produced
+#
+#   <file_operations>operation=write&path=greet.py&content=greet(name)=print(&quot;…
+#
+# The tag is there but the body is a query string, sometimes HTML-escaped, so
+# both JSON readers found nothing and the turn was reported as a successful
+# answer with `files_written=[]` — the exact failure this detector exists to
+# stop, in a shape it did not cover.
+
+
+class TestQueryStringTaggedCall:
+    TOOLS = {"file_operations", "code_executor", "calculator"}
+
+    def test_the_shape_measured_live_is_detected(self):
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        answer = (
+            "<file_operations>operation=write&path=greet.py&"
+            "content=greet(name)=print(&quot;Hello, &quot;+name+&quot;!&quot;)"
+        )
+        assert find_written_tool_call(answer, self.TOOLS) == "file_operations"
+
+    def test_prose_that_merely_names_the_tool_is_not_flagged(self):
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        for answer in (
+            "The <file_operations> tool writes files.",
+            "Use file_operations to write a file; operation=write is the argument.",
+            "<file_operations> is one of the tools available here.",
+        ):
+            assert find_written_tool_call(answer, self.TOOLS) is None, answer
+
+    def test_a_code_span_is_still_exempt(self):
+        """A coding agent is often asked to *show* a call."""
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        answer = "```\n<file_operations>operation=write&path=x.py\n```"
+        assert find_written_tool_call(answer, self.TOOLS) is None
+
+    def test_a_tool_the_agent_does_not_hold_is_not_flagged(self):
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        assert find_written_tool_call(
+            "<unknown_thing>operation=write&x=1", self.TOOLS
+        ) is None
+
+
+# ---------------------------------------------------------------------------
+# Python call syntax — only when the call IS the answer
+# ---------------------------------------------------------------------------
+#
+# ``name(...)`` is ordinary prose and ordinary code, and a coding agent is
+# frequently *asked* to write or explain a call, so this shape cannot be flagged
+# wherever it appears — it carries no JSON object to anchor on the way the other
+# shapes do. The rule is the one the report proposes: with every such call
+# removed, an answer that merely mentions one still has words left; an answer
+# that is nothing but calls does not.
+
+
+class TestStandalonePythonCallSyntax:
+    TOOLS = {"file_operations", "code_executor", "calculator"}
+
+    @pytest.mark.parametrize(
+        "answer,expected",
+        [
+            ("file_operations('write', 'greet.py', 'print(1)')", "file_operations"),
+            ('file_operations(operation="write", path="greet.py")', "file_operations"),
+            (
+                (
+                    'file_operations(operation="write", path="greet.py")\n'
+                    'code_executor("python greet.py")'
+                ),
+                "file_operations",
+            ),
+            ("calculator(expression='1367 * 89')", "calculator"),
+        ],
+    )
+    def test_a_call_that_is_the_whole_answer_is_flagged(self, answer, expected):
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        assert find_written_tool_call(answer, self.TOOLS) == expected
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            "I used calculator(2+2) and got 4.",
+            (
+                'To write a file, call file_operations(operation="write", '
+                'path=...) with the path you want.'
+            ),
+            "Here is the diff:\n- calculator(1)\n+ calculator(2)\nThat fixes it.",
+            "The pytest function asserts that calculator(expression='2+2') is 4.",
+            "The answer is 42.",
+            "unknown_tool('x')",
+        ],
+    )
+    def test_writing_about_a_call_is_not_flagged(self, answer):
+        """The precision profile the detector was built to protect."""
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        assert find_written_tool_call(answer, self.TOOLS) is None
+
+    def test_a_call_inside_a_code_span_is_not_flagged(self):
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        assert find_written_tool_call(
+            "```python\ncalculator(expression='2+2')\n```", self.TOOLS
+        ) is None

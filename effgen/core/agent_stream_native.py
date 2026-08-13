@@ -78,6 +78,19 @@ _ANSWER_LABELS = ("final answer:", "answer:")
 #: removes these constructs from the middle of the text, so nothing can be
 #: emitted from a turn that contains one — what survives is not an extension of
 #: what came before it.
+#:
+#: These are **openers**, and the list is not a complete account of how local
+#: models emit calls. Measured on 2026-08-13 over the five families:
+#: Qwen2.5 emits ``<tool_call>{...}</tool_call>``, which is here; Llama 3.2
+#: emits a **bare JSON object** — ``{"name": ..., "parameters": {...}}`` — with
+#: no opener at all; Mistral-Small-24B, Phi-3.5-mini and gemma-2-2b report
+#: ``tool_call_support() == "none"`` and never take a template tool path. A
+#: suffix scan cannot hold back the Llama shape without holding back every
+#: answer that starts with ``{``, which is what structured output looks like.
+#: That is why the streamed tool loop is still gated on ``"api"`` rather than
+#: widened to template models: widening it would need a way to tell an
+#: opener-emitting family from a bare-JSON one, and streamed call recording on
+#: the local engines, neither of which exists.
 _CALL_CONSTRUCTS = (
     "<|channel>",
     "<channel|>",

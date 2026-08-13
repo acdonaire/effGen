@@ -324,6 +324,16 @@ _TAGGED_CALL_RE = re.compile(
     r"<tool_call>|\[TOOL_CALLS\]|<\|python_tag\|>", re.IGNORECASE,
 )
 _CALL_NAME_FIELD_RE = re.compile(r"\"(?:name|function)\"[ \t]*:[ \t]*\"([\w.\-]+)\"")
+# A third shape, seen live on groq's 8B: the tag is there but the body is a
+# query string rather than JSON, sometimes HTML-escaped —
+# ``<file_operations>operation=write&path=greet.py&content=&quot;...&quot;``.
+# The JSON readers above find nothing in it, so the turn used to be reported as
+# a successful answer with no file written. The tag must be angle-bracketed and
+# immediately followed by ``word=``, so a sentence that merely mentions a tool
+# in angle brackets is not flagged.
+_TAGGED_KV_CALL_RE = re.compile(
+    r"<(?P<name>[A-Za-z_][A-Za-z0-9_.\-]{1,63})>[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*="
+)
 
 
 def unknown_tool_observation(action: str, tool_names: list[str] | tuple[str, ...]) -> str:
@@ -347,6 +357,42 @@ def unknown_tool_observation(action: str, tool_names: list[str] | tuple[str, ...
         f"No tool named '{action}' is available. "
         f"The tools you can use are: {available}. {UNKNOWN_TOOL_CLOSE}"
     )
+
+
+# A call in Python call syntax — ``file_operations('write', 'greet.py', …)``.
+# Deliberately **not** matched wherever it appears: ``name(...)`` is ordinary
+# prose and ordinary code, and a coding agent is frequently *asked* to write or
+# explain a call. It is only a written-out call when it stands alone as the
+# whole answer, which is the rule below.
+_PAREN_CALL_RE = re.compile(
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_.\-]{1,63})[ \t]*"
+    r"\((?P<args>[^()]*(?:\([^()]*\)[^()]*)*)\)"
+)
+
+
+def _standalone_paren_call(scan: str, names: set[str]) -> str | None:
+    """Return the tool named by a paren call that *is* the whole answer.
+
+    With every such call removed, an answer that merely mentions one still has
+    words left; an answer that is nothing but calls does not. That separates
+    "the model is emitting a call" from "the model is writing about a call",
+    which is the distinction the looser JSON shapes get for free from having a
+    JSON object to anchor on.
+    """
+    remainder: list[str] = []
+    position = 0
+    found: str | None = None
+    for match in _PAREN_CALL_RE.finditer(scan):
+        if match.group("name") not in names:
+            continue
+        remainder.append(scan[position:match.start()])
+        position = match.end()
+        if found is None:
+            found = match.group("name")
+    if found is None:
+        return None
+    remainder.append(scan[position:])
+    return found if not re.search(r"[A-Za-z]{3,}", "".join(remainder)) else None
 
 
 def find_written_tool_call(text: str | None, tool_names: Any) -> str | None:
@@ -376,7 +422,12 @@ def find_written_tool_call(text: str | None, tool_names: Any) -> str | None:
         for field_match in _CALL_NAME_FIELD_RE.finditer(scan):
             if field_match.group(1) in names:
                 return field_match.group(1)
-    return None
+    # A tagged call whose body is a query string rather than JSON.
+    for kv_match in _TAGGED_KV_CALL_RE.finditer(scan):
+        if kv_match.group("name") in names:
+            return kv_match.group("name")
+    # Python call syntax, only when it is the entire answer.
+    return _standalone_paren_call(scan, names)
 
 
 def _json_object_end(text: str, start: int) -> int:
