@@ -833,10 +833,16 @@ def test_no_test_module_lets_the_repo_dotenv_override_the_environment():
     import ast
 
     root = Path(__file__).resolve().parents[2]
-    tracked = subprocess.run(
-        ["git", "ls-files", "tests/"], cwd=root,
-        capture_output=True, text=True, check=True,
-    ).stdout.split()
+    # An sdist or an exported copy is not a git checkout, and this rule is
+    # about what the repository contains, so there is nothing to check there.
+    try:
+        listing = subprocess.run(
+            ["git", "ls-files", "tests/"], cwd=root,
+            capture_output=True, text=True, check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("not a git checkout, so there is no tracked file list to scan")
+    tracked = listing.stdout.split()
 
     offenders = []
     for name in tracked:
