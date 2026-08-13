@@ -63,15 +63,6 @@ fi
 NSHARDS="${#FREE_GPUS[@]}"
 log "free GPUs: ${FREE_GPUS[*]} -> ${NSHARDS} shard(s)"
 
-# Who is already on these GPUs. On a shared host somebody else's job is a normal
-# thing to find, and reporting it after the run as though this script leaked it
-# sends the reader after the wrong process. Only PIDs that appear between here
-# and the end are ours to answer for.
-PRE_EXISTING_GPU_PIDS="$(
-    for gpu in "${FREE_GPUS[@]}"; do
-        nvidia-smi --query-compute-apps=pid --format=csv,noheader -i "${gpu}" 2>/dev/null
-    done | tr -d ' ' | sort -u
-)"
 
 # -- 2. collect node ids (coverage-free thanks to the addopts fix) -------------
 log "collecting test node ids for: ${PYTEST_ARGS[*]}"
@@ -96,6 +87,13 @@ if [ "${EFFGEN_SHARD_COV:-0}" = "1" ]; then
     COV_ARGS=(--cov=effgen --cov-report=)   # data only; we combine + report after
     log "coverage enabled (per-shard COVERAGE_FILE + combine)"
 fi
+
+# Job control puts every background job in a process group of its own, whose id
+# is the job's pid. That is what makes a leftover process attributable later: a
+# GPU process belongs to this run when its process group is one of ours, and a
+# job started elsewhere on this shared host never is. Parentage cannot answer
+# the question, because a worker that outlives its shard is reparented away.
+set -m
 
 for ((s=0; s<NSHARDS; s++)); do
     gpu="${FREE_GPUS[$s]}"
@@ -135,16 +133,32 @@ if [ "${EFFGEN_SHARD_COV:-0}" = "1" ]; then
 fi
 
 # -- 7. clean up orphan GPU procs on the assigned GPUs -------------------------
-# Only touch PIDs that are still our descendants; never kill unrelated jobs.
+# Each shard is its own process group, so the whole group goes at once — a
+# worker the shard forked is caught even after being reparented.
 for ((s=0; s<NSHARDS; s++)); do
-    pkill -P "${PIDS[$s]}" 2>/dev/null || true
+    kill -- "-${PIDS[$s]}" 2>/dev/null || true
 done
-# Best-effort: warn about leftover procs this run is responsible for — that is,
-# ones holding a GPU now that were not holding it before the shards started.
+
+# Warn about anything of ours still holding a GPU. Membership of one of this
+# run's process groups is the test: a process on the same GPU belonging to
+# somebody else's job is a normal thing to find on a shared host, and naming it
+# here would send the reader after a process they must not touch.
+is_ours() {
+    local pgid
+    pgid="$(ps -o pgid= -p "$1" 2>/dev/null | tr -d ' ')"
+    [ -n "${pgid}" ] || return 1
+    for ((k=0; k<NSHARDS; k++)); do
+        [ "${pgid}" = "${PIDS[$k]}" ] && return 0
+    done
+    return 1
+}
+
 for gpu in "${FREE_GPUS[@]}"; do
-    now="$(nvidia-smi --query-compute-apps=pid --format=csv,noheader -i "${gpu}" 2>/dev/null | tr -d ' ' | sort -u)"
-    leftover="$(comm -13 <(printf '%s\n' "${PRE_EXISTING_GPU_PIDS}") <(printf '%s\n' "${now}") 2>/dev/null)"
-    leftover="$(printf '%s' "${leftover}" | tr '\n' ' ' | sed 's/ *$//')"
+    leftover=""
+    for pid in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader -i "${gpu}" 2>/dev/null | tr -d ' '); do
+        is_ours "${pid}" && leftover="${leftover} ${pid}"
+    done
+    leftover="$(printf '%s' "${leftover}" | sed 's/^ *//')"
     [ -n "${leftover}" ] && fail "GPU ${gpu} still has compute procs this run started: ${leftover}"
 done
 
