@@ -88,8 +88,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
     # Tool Support & HTTP
     "requests>=2.31.0",
-    # aiohttp>=3.14.0 patches CVE-2026-34993 / CVE-2026-47265 (fixed in 3.14.0).
-    "aiohttp>=3.14.0",
+    # aiohttp>=3.14.3 clears CVE-2026-34993 / CVE-2026-47265 and the six
+    # advisories still open against 3.14.1, fixed across 3.14.2 and 3.14.3.
+    "aiohttp>=3.14.3",
     "httpx>=0.25.0",
     # Web Search
     "duckduckgo-search>=8.1.0",
@@ -127,7 +128,9 @@ dependencies = [
     "tiktoken>=0.5.0",
     "scikit-learn>=1.3.0",
     # Security
-    "cryptography>=41.0.0",
+    # >=50.0.0 clears the advisories open against 48.0.1, fixed across the
+    # 49.0.0 and 50.0.0 releases.
+    "cryptography>=50.0.0",
     # starlette pinned >= patched release (transitively pulled by fastapi).
     # 1.3.1 is the minimum that clears all currently-known advisories:
     #   - PYSEC-2026-161               (host-header injection)
@@ -177,7 +180,6 @@ dev = [
     # Local supply-chain auditing so the security gate (tests/security/
     # test_vuln_audit.py) is runnable from a dev install, matching the CI gate.
     "pip-audit>=2.7.0",
-    "tomli>=2.0.0; python_version < '3.11'",
 ]
 # vLLM pins one EXACT torch version per release, and that torch build fixes the
 # CUDA runtime. A Python extra cannot express "the torch that matches your
@@ -272,7 +274,7 @@ geo = [
     "Pillow>=12.3.0",
 ]
 documents = [
-    "pypdf>=6.14.2",
+    "pypdf>=6.15.0",
     "pdfplumber>=0.10.0",
     "python-docx>=1.1.0",
     "openpyxl>=3.1.0",
@@ -309,6 +311,9 @@ fireworks = [
     # which hard-pins openai==1.78.1. 0.16/0.17 require only `openai` and no
     # protobuf pin, so [all] stays resolvable and CVE-safe.
     "fireworks-ai>=0.15,<0.18",
+    # h2 reaches the install through fireworks-ai -> betterproto-fw -> grpclib;
+    # 4.4.1 is the first release that clears PYSEC-2026-3628.
+    "h2>=4.4.1",
     # via fireworks-ai
     "Pillow>=12.3.0",
 ]
@@ -343,10 +348,10 @@ cloud-secrets = [
 ]
 monitoring = [
     "wandb>=0.16.0",
-    # gitpython reaches the install through wandb; 3.1.55 is the first release
-    # that clears GHSA-fjr4-x663-mwxc, GHSA-6p8h-3wgx-97gf, GHSA-r9mr-m37c-5fr3
-    # and GHSA-94p4-4cq8-9g67.
-    "gitpython>=3.1.55",
+    # gitpython reaches the install through wandb; 3.1.58 is the first release
+    # that clears the eight advisories open against 3.1.56, fixed across
+    # 3.1.57 and 3.1.58.
+    "gitpython>=3.1.58",
     "tensorboard>=2.15.0",
     # via tensorboard
     "Pillow>=12.3.0",
@@ -363,6 +368,9 @@ api = [
     "groq>=0.15",
     "together>=1.3",
     "fireworks-ai>=0.15,<0.18",
+    # h2 reaches the install through fireworks-ai -> betterproto-fw -> grpclib;
+    # 4.4.1 is the first release that clears PYSEC-2026-3628.
+    "h2>=4.4.1",
     "replicate>=1.0",
     "cerebras-cloud-sdk>=1.0",
     "huggingface_hub>=0.26",
@@ -399,7 +407,7 @@ tools-web = [
 ]
 tools-docs = [
     # Document parsing tools (PDF / DOCX / XLSX).
-    "pypdf>=6.14.2",
+    "pypdf>=6.15.0",
     "pdfplumber>=0.10.0",
     "python-docx>=1.1.0",
     "openpyxl>=3.1.0",
@@ -432,7 +440,6 @@ all = [
     # RUNS — not skips — in the documented `pip install -e ".[all]" && pytest
     # tests/` path. Without it the core-CVE gate is silently skipped.
     "pip-audit>=2.7.0",
-    "tomli>=2.0.0; python_version < '3.11'",
     "vllm>=0.2.7,<1.0",
     "faiss-cpu>=1.7.4",
     "chromadb>=0.4.18",
@@ -448,10 +455,10 @@ all = [
     "azure-keyvault-secrets>=4.7.0",
     "azure-identity>=1.14.0",
     "wandb>=0.16.0",
-    # gitpython reaches the install through wandb; 3.1.55 is the first release
-    # that clears GHSA-fjr4-x663-mwxc, GHSA-6p8h-3wgx-97gf, GHSA-r9mr-m37c-5fr3
-    # and GHSA-94p4-4cq8-9g67.
-    "gitpython>=3.1.55",
+    # gitpython reaches the install through wandb; 3.1.58 is the first release
+    # that clears the eight advisories open against 3.1.56, fixed across
+    # 3.1.57 and 3.1.58.
+    "gitpython>=3.1.58",
     "tensorboard>=2.15.0",
     "sentence-transformers>=2.2.0",
     "yfinance>=0.2.31",
@@ -484,7 +491,7 @@ all = [
     "Pillow>=12.3.0",
     "faster-whisper>=1.0.0",
     "pydub>=0.25.1",
-    "pypdf>=6.14.2",
+    "pypdf>=6.15.0",
     "pdfplumber>=0.10.0",
     "python-docx>=1.1.0",
     "openpyxl>=3.1.0",
@@ -746,15 +753,12 @@ skips = ["B101", "B601"]  # Skip assert_used and paramiko_calls
 line-length = 100
 # Must equal the `requires-python` floor above. Several pyupgrade rules are
 # version-gated and fire only at a higher target, and their rewrites do not run
-# on 3.10:
-#   UP017  datetime.timezone.utc -> datetime.UTC     (3.11+, 57 sites)
-#   UP041  asyncio.TimeoutError  -> TimeoutError     (3.11+, 13 sites)
-#   UP042  class C(str, Enum)    -> enum.StrEnum     (3.11+, 4 sites)
-#   UP047  TypeVar function      -> PEP 695 `def f[T]` (3.12+, 2 sites)
-# Raising the target would make ruff demand syntax the declared floor cannot
-# run, so the target stays at the floor and moves only when the floor does.
-# tests/unit/test_static_check_ratchet.py keeps the two values in step.
-target-version = "py310"
+# on an older interpreter, so raising the target ahead of the floor would make
+# ruff demand syntax the declared floor cannot execute. The floor moved to 3.11
+# for 1.0.0, which turns on UP017 (`datetime.UTC`), UP041 (`TimeoutError`) and
+# UP042 (`enum.StrEnum`); UP047 (PEP 695 generics) stays off until the floor
+# reaches 3.12. tests/unit/test_static_check_ratchet.py keeps the two in step.
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
@@ -779,6 +783,16 @@ ignore = [
     "B905",   # zip() without strict= (pre-existing)
     "C901",   # too complex
     "UP037",  # quoted annotations (pre-existing, cosmetic)
+    # UP042 wants `class C(str, Enum)` rewritten to `enum.StrEnum`. It became
+    # active when the floor moved to 3.11, and it is not a cosmetic rewrite:
+    # `str(TaskStatus.RUNNING)` and `f"{TaskStatus.RUNNING}"` change from
+    # "TaskStatus.RUNNING" to "running". TaskStatus is public, and the change is
+    # silent — no error, just different text in logs, stored records and any
+    # caller that formats one. Four classes are affected (PermissionMode,
+    # TaskStatus, AlertSeverity, LoadScenario). Migrating them is a deliberate
+    # behaviour change that belongs in a release that announces it, not one a
+    # lint autofix slips in.
+    "UP042",  # str-Enum -> StrEnum: changes str() of a public enum
 ]
 
 [tool.ruff.lint.per-file-ignores]

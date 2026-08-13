@@ -21,7 +21,7 @@ accelerate==1.13.0
     # via effgen (pyproject.toml)
 aiohappyeyeballs==2.6.2
     # via aiohttp
-aiohttp==3.14.0
+aiohttp==3.14.3
     # via
     #   effgen (pyproject.toml)
     #   datasets
@@ -161,7 +161,7 @@ contourpy==1.3.3
     # via matplotlib
 coverage==7.14.0
     # via pytest-cov
-cryptography==48.0.0
+cryptography==50.0.0
     # via
     #   effgen (pyproject.toml)
     #   azure-identity
@@ -281,7 +281,7 @@ fsspec==2024.6.1
     #   torch
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.56
+gitpython==3.1.59
     # via
     #   effgen (pyproject.toml)
     #   wandb
@@ -343,13 +343,13 @@ h11==0.16.0
     #   httpcore
     #   uvicorn
     #   wsproto
-h2==4.3.0
+h2==4.4.1
     # via
     #   grpclib
     #   httpx
 hf-xet==1.5.0
     # via huggingface-hub
-hpack==4.1.0
+hpack==4.2.0
     # via h2
 httpcore==1.0.9
     # via
@@ -536,7 +536,7 @@ mmh3==5.2.1
     #   fireworks-ai
 mpmath==1.3.0
     # via sympy
-msal==1.36.0
+msal==1.37.0
     # via
     #   azure-identity
     #   msal-extensions
@@ -891,7 +891,7 @@ pyparsing==3.3.2
     #   httplib2
     #   matplotlib
     #   pip-requirements-parser
-pypdf==6.14.2
+pypdf==6.16.0
     # via effgen (pyproject.toml)
 pypdfium2==5.8.0
     # via pdfplumber
