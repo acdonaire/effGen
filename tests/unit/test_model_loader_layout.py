@@ -166,6 +166,7 @@ LOADER_MEMBERS = (
     "_load_gemini_model",
     "_load_huggingface_model",
     "_load_openai_model",
+    "_load_openai_compatible_model",
     "_load_with_mlx",
     "_load_with_mlx_vlm",
     "_load_with_transformers",

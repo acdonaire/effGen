@@ -96,6 +96,7 @@ def _calc_action(expr: str) -> str:
 
 def _make_agent(model: _ScriptedModel, max_iterations: int = 10) -> Agent:
     cfg = AgentConfig(
+        raise_on_error=False,  # these assert the failure response, not the raise
         name="loop-test",
         model=model,
         tools=[Calculator()],
@@ -178,6 +179,7 @@ def test_repeated_retrieval_dump_is_flagged_partial():
         _retrieval_action("vpn"),
     ])
     cfg = AgentConfig(
+        raise_on_error=False,  # these assert the failure response, not the raise
         name="rag-loop-test", model=model, tools=[_FixedRetrievalTool()],
         max_iterations=6, tool_calling_mode="react",
     )
@@ -305,6 +307,7 @@ def test_repeated_denied_tool_call_stops_offering_tools_and_answers():
 
     model = _ScriptedNativeToolModel()
     cfg = AgentConfig(
+        raise_on_error=False,  # these assert the failure response, not the raise
         name="denied-loop-test",
         model=model,
         tools=[issue_refund],
@@ -372,6 +375,7 @@ _REVIEW = "Final Answer: divide() has no guard against a zero divisor."
 def _review_agent(*, context_retrieval: bool) -> Agent:
     model = _ScriptedModel([_read_action("calc.py"), _read_action("calc.py"), _REVIEW])
     return Agent(config=AgentConfig(
+        raise_on_error=False,  # these assert the failure response, not the raise
         name="review-loop-test", model=model,
         tools=[_FileReadTool(context_retrieval=context_retrieval)],
         max_iterations=6, tool_calling_mode="react",

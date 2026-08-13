@@ -58,7 +58,20 @@ def test_the_matrix_covers_every_adapter_and_class() -> None:
     """
     from effgen.models.registry import ProviderRegistry
 
-    covered = {p.name for p in PROVIDERS}
+    # Registered names that are not a hosted provider, and so have no row.
+    # Every cell here is defined in terms of a service effGen calls on the
+    # caller's behalf with a credential it reads from the environment.
+    NOT_A_HOSTED_PROVIDER = {
+        # A protocol, not a service: the endpoint is whatever the caller runs,
+        # and the adapter reads no credential — api_key defaults to a
+        # placeholder because a local server checks nothing. The wire behaviour
+        # it inherits is the "openai" row, which drives the same dialect
+        # through the same adapter class against the same fault server.
+        # tests/models/test_openai_compatible.py covers what is specific to it,
+        # including an endpoint nobody is serving.
+        "openai_compatible",
+    }
+    covered = {p.name for p in PROVIDERS} | NOT_A_HOSTED_PROVIDER
     missing = set(ProviderRegistry.list_providers()) - covered
     assert not missing, (
         f"{sorted(missing)} are registered providers with no row in the failure "

@@ -30,7 +30,7 @@ What this adapter changes relative to :class:`~effgen.models.openai_adapter.Open
   consulted for context length, reasoning support or sampling support. Pass
   ``context_length=`` when the default does not match what you serve.
 - Calls report no price. What a server you run costs is not something effGen
-  can know, and a fabricated ``$0`` would be worse than an honest blank.
+  can derive from a token count, so it states nothing rather than ``$0``.
 """
 
 from __future__ import annotations

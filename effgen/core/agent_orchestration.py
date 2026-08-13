@@ -60,6 +60,8 @@ def _never_reached_the_backend(response: Any) -> bool:
     metadata = getattr(response, "metadata", None) or {}
     detail = metadata.get("error")
     return isinstance(detail, dict) and detail.get("category") == "unreachable"
+
+
 _slog = get_structured_logger("effgen.core.agent")
 _obs_log = _get_obs_logger("effgen.core.agent")
 
@@ -106,7 +108,19 @@ class AgentOrchestrationMixin:
             inputs: Optional list of multimodal content parts created by
                 ``image_from``, ``audio_from``, or ``video_from``. When present,
                 the agent sends a structured Message directly to the model.
-            **kwargs: Additional arguments (debug=True for DebugTrace)
+            **kwargs: Additional arguments. Two shape the run itself:
+
+                ``session`` — a :class:`~effgen.core.session.Session` or a
+                session id. The run builds its prompt from that conversation's
+                history and appends this turn to it, so one agent can serve many
+                independent conversations rather than needing one agent object
+                per conversation. Without it the agent's own memory applies, as
+                before.
+
+                ``middleware`` — hooks for this call only, appended to any on
+                the config. See :mod:`effgen.core.middleware`.
+
+                ``debug=True`` attaches a DebugTrace.
 
         Returns:
             AgentResponse with results
@@ -157,6 +171,43 @@ class AgentOrchestrationMixin:
                     },
                 },
             ), task=task, started_at=started_at)
+
+        # Hooks around this run. A per-call middleware= list is appended to
+        # the configured ones for this call only, and is what _execute_tool and
+        # _generate read while the run is in flight.
+        _run_middleware = kwargs.pop("middleware", None)
+        _chain = getattr(self, "_middleware", None)
+        if _chain is not None:
+            _chain = _chain.extended_with(_run_middleware)
+        _mw_run_ctx = None
+        if _chain:
+            from .middleware import RunContext
+
+            _mw_run_ctx = RunContext(
+                task=task if isinstance(task, str) else str(task),
+                agent_name=self.name,
+                mode=mode,
+            )
+            _short_circuit = _chain.before_run(_mw_run_ctx)
+            if _short_circuit is not None:
+                # A middleware answered without the model — a cache hit, or a
+                # refusal. after_run still sees it, so the chain stays symmetric.
+                return self._stamp_run_identity(
+                    _chain.after_run(_mw_run_ctx, _short_circuit),
+                    task=task, started_at=started_at,
+                )
+            if isinstance(task, str):
+                task = _mw_run_ctx.task
+        self._active_middleware = _chain
+        self._active_run_context = _mw_run_ctx
+
+        # A conversation handle for this call only. The run reads its history
+        # in and writes the turn back, so one agent serves many conversations
+        # without an agent object per conversation.
+        _run_session = kwargs.pop("session", None)
+        _previous_session = (
+            self._enter_run_session(_run_session) if _run_session is not None else None
+        )
 
         debug = kwargs.pop("debug", False)
         # A max_tokens set on the config is the default output budget for every
@@ -434,6 +485,9 @@ class AgentOrchestrationMixin:
                     except Exception as _e:
                         logger.warning("Failed to save final checkpoint: %s", _e)
 
+                if _chain:
+                    response = _chain.after_run(_mw_run_ctx, response)
+
                 # A backend that never answered produced no result to report, so
                 # it raises whatever raise_on_error says. Reporting it as a
                 # failed run lets a dead server read like a model that could not
@@ -502,6 +556,10 @@ class AgentOrchestrationMixin:
 
             finally:
                 prom_metrics.active_agents.dec(labels=labels)
+                self._active_middleware = None
+                self._active_run_context = None
+                if _previous_session is not None:
+                    self._exit_run_session(_previous_session)
 
     def run_batch(
         self,

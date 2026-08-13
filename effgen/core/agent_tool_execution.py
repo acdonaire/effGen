@@ -22,6 +22,49 @@ class AgentToolExecutionMixin:
 
     def _execute_tool(self, tool_name: str, tool_input: str) -> str:
         """
+        Execute a tool, with any configured middleware wrapped around it.
+
+        A ``before_tool_call`` hook may rewrite the input, or answer the call
+        itself — an approval gate refusing, a cache hit — in which case the tool
+        does not run. ``after_tool_call`` sees whichever output was produced.
+
+        Args:
+            tool_name: Name of tool to execute
+            tool_input: Input for the tool (JSON string or plain text)
+
+        Returns:
+            Tool output as string
+        """
+        chain = self._middleware_chain()
+        if not chain:
+            return self._execute_tool_guarded(tool_name, tool_input)
+
+        from .middleware import ToolCallContext
+
+        ctx = ToolCallContext(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            run=getattr(self, "_active_run_context", None),
+        )
+        short_circuit = chain.before_tool_call(ctx)
+        if short_circuit is not None:
+            return chain.after_tool_call(ctx, short_circuit)
+        result = self._execute_tool_guarded(ctx.tool_name, ctx.tool_input)
+        return chain.after_tool_call(ctx, result)
+
+    def _middleware_chain(self):
+        """Return the middleware in force, per-call ones included.
+
+        ``_active_middleware`` is set for the duration of one ``run()`` that was
+        given ``middleware=``; otherwise the agent's configured chain applies.
+        """
+        return (
+            getattr(self, "_active_middleware", None)
+            or getattr(self, "_middleware", None)
+        )
+
+    def _execute_tool_guarded(self, tool_name: str, tool_input: str) -> str:
+        """
         Execute a tool with circuit breaker, fallback support, and input sanitization.
 
         Args:

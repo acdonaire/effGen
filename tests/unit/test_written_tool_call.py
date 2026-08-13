@@ -132,6 +132,7 @@ class _ScriptedModel(BaseModel):
 
 def _agent(responses, *, mode="react", native=False, max_iterations=3) -> Agent:
     return Agent(config=AgentConfig(
+        raise_on_error=False,  # these assert the failure response, not the raise
         name="written-call-test",
         model=_ScriptedModel(responses, native=native),
         tools=[Calculator()],
@@ -231,6 +232,7 @@ def _fs_agent(responses, tmp_path, *, mode="react", native=False) -> Agent:
     """An agent over the real file tools, whose model is scripted turn by turn."""
     registry = get_registry()
     return Agent(config=AgentConfig(
+        raise_on_error=False,  # these assert the failure response, not the raise
         name="written-call-fs",
         model=_ScriptedModel(responses, native=native),
         tools=[

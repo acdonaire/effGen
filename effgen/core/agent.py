@@ -211,6 +211,12 @@ class Agent(
         # Last checkpoint info
         self._last_checkpoint_id: str | None = None
 
+        # Hooks around the run, each model call and each tool call. Empty
+        # for an agent that configured none, which costs one boolean test at
+        # each point.
+        from .middleware import MiddlewareChain
+        self._middleware = MiddlewareChain(getattr(config, "middleware", None))
+
         # Model initialization
         self.model_loader = ModelLoader()
         if isinstance(config.model, BaseModel):
@@ -421,6 +427,9 @@ class Agent(
             keep_recent_messages=mem_cfg.get("keep_recent_messages", 4),
             summary_budget_ratio=mem_cfg.get("summary_budget_ratio", 0.4),
             model=self.model,
+            compaction_strategy=config.compaction_strategy
+            or mem_cfg.get("compaction_strategy"),
+            tokenizer=config.tokenizer or mem_cfg.get("tokenizer"),
         )
 
         # Long-term memory (optional, requires persist path)
@@ -455,6 +464,60 @@ class Agent(
                     self.short_term_memory.add_user_message(content)
                 elif role == "assistant":
                     self.short_term_memory.add_assistant_message(content)
+
+    def _new_short_term_memory(self) -> ShortTermMemory:
+        """Build a short-term memory with this agent's configured limits."""
+        mem_cfg = self.config.memory_config or {}
+        return ShortTermMemory(
+            max_tokens=mem_cfg.get("short_term_max_tokens", 4096),
+            max_messages=mem_cfg.get("short_term_max_messages", 100),
+            summarization_threshold=mem_cfg.get("summarization_threshold", 0.8),
+            keep_recent_messages=mem_cfg.get("keep_recent_messages", 4),
+            summary_budget_ratio=mem_cfg.get("summary_budget_ratio", 0.4),
+            model=self.model,
+            compaction_strategy=self.config.compaction_strategy
+            or mem_cfg.get("compaction_strategy"),
+            tokenizer=self.config.tokenizer or mem_cfg.get("tokenizer"),
+        )
+
+    def _hydrate_memory_from(self, session: Any, memory: ShortTermMemory) -> None:
+        """Load *session*'s turns into *memory*, oldest first."""
+        for message in getattr(session, "messages", None) or []:
+            role = message.get("role")
+            content = message.get("content", "")
+            if role == "user":
+                memory.add_user_message(content)
+            elif role == "assistant":
+                memory.add_assistant_message(content)
+
+    def _enter_run_session(self, session: Any) -> tuple[Any, Any]:
+        """Point this run at *session*, and return what to restore afterwards.
+
+        The conversation the prompt is built from comes from the session rather
+        than from whatever this agent answered last, so one agent can serve many
+        independent conversations without their histories mixing.
+
+        Args:
+            session: A :class:`~effgen.core.session.Session`, or a session id to
+                load or create.
+
+        Returns:
+            The agent's own session and short-term memory, to put back.
+        """
+        from .session import Session as _Session
+
+        if isinstance(session, str):
+            session = _Session.load_or_create(session, agent_name=self.name)
+
+        previous = (self.session, self.short_term_memory)
+        self.session = session
+        self.short_term_memory = self._new_short_term_memory()
+        self._hydrate_memory_from(session, self.short_term_memory)
+        return previous
+
+    def _exit_run_session(self, previous: tuple[Any, Any]) -> None:
+        """Put back the session and memory :meth:`_enter_run_session` replaced."""
+        self.session, self.short_term_memory = previous
 
     def _get_call_state(self) -> _AgentCallState:
         """Return the active per-call state, or a private per-instance

@@ -69,6 +69,7 @@ class _NoFinalAnswerModel(BaseModel):
 
 def _make_agent(max_iterations: int = 3) -> Agent:
     cfg = AgentConfig(
+        raise_on_error=False,  # these assert the failure response, not the raise
         name="maxiter-test",
         model=_NoFinalAnswerModel(),
         tools=[Calculator()],

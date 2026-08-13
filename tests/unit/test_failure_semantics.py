@@ -89,6 +89,9 @@ class _FakeModel(BaseModel):
 
 
 def _agent(model: _FakeModel, *, tools=None, **cfg_kwargs) -> Agent:
+    # These assert the shape of the failure response, so they opt out of the
+    # 1.0.0 default of raising — unless a test is checking the raise itself.
+    cfg_kwargs.setdefault("raise_on_error", False)
     return Agent(
         AgentConfig(
             name="t",
@@ -456,7 +459,7 @@ def test_agentconfig_defaults_and_fields():
     assert "provider" in fields
     assert "raise_on_error" in fields
     assert fields["require_model"].default is True
-    assert fields["raise_on_error"].default is False
+    assert fields["raise_on_error"].default is True
     assert fields["provider"].default is None
 
 

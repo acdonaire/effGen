@@ -362,7 +362,9 @@ class _EmptyModel(_ReasoningModel):
 
 
 def _agent(model):
-    agent = Agent(config=AgentConfig(model="fake:reasoner-1", require_model=False))
+    agent = Agent(config=AgentConfig(
+        model="fake:reasoner-1", require_model=False, raise_on_error=False,
+    ))
     agent.model = model
     agent._all_models = [model]
     return agent
@@ -579,6 +581,7 @@ def _native_tool_agent(result: GenerationResult, **cfg):
         return result
 
     adapter.generate_with_native_tools = record
+    cfg.setdefault("raise_on_error", False)
     agent = Agent(config=AgentConfig(
         model=adapter, tools=[OpenAICodeInterpreterTool()], **cfg,
     ))

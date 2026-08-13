@@ -452,12 +452,32 @@ class TestASocketThatWentAwayIsTransient:
             "Together request failed: Server disconnected without sending a response.",
             "request failed: Remote end closed connection without response",
             "write failed: Broken pipe",
-            "openai call failed: Connection refused",
         ],
     )
     def test_a_severed_connection_is_transient_and_retryable(self, message):
         verdict = classify_provider_error(RuntimeError(message))
         assert verdict.category == "transient", message
+        assert verdict.should_retry
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "openai call failed: Connection refused",
+            "httpx request failed: All connection attempts failed",
+            "urllib3: Failed to establish a new connection",
+            "socket.gaierror: Name or service not known",
+        ],
+    )
+    def test_a_connection_that_never_opened_is_unreachable(self, message):
+        """Nothing answered, so the endpoint is the caller's problem.
+
+        A severed connection above reached a server and is worth chasing on the
+        provider's status page. These never reached one, so they are reported
+        against the address instead — and, at the agent surface, raise rather
+        than returning a run that looks like it produced an answer.
+        """
+        verdict = classify_provider_error(RuntimeError(message))
+        assert verdict.category == "unreachable", message
         assert verdict.should_retry
 
     def test_a_rejected_credential_is_still_auth(self):

@@ -86,6 +86,19 @@ class AgentConfig:
             Ignored when ``model`` is already a loaded model instance.
         api_key: Credential for that endpoint. A local server that checks
             nothing needs none.
+        middleware: Hooks to run around the run, each model call and each tool
+            call — see :mod:`effgen.core.middleware`. Anything effGen does not
+            ship as a subsystem (an approval gate, a cache, a redaction pass, a
+            spend cap) goes here rather than into a patched loop.
+        compaction_strategy: How the conversation is shortened when it
+            approaches the context window — see
+            :mod:`effgen.memory.compaction`. Accepts a strategy, a class or a
+            name (``"summarize_oldest"``, ``"drop_oldest"``,
+            ``"keep_first_and_last"``, ``"keep_tool_results"``). None keeps the
+            default of summarizing everything but the most recent few.
+        tokenizer: Anything with ``count_tokens(text)`` or ``encode(text)``,
+            used to measure the history in the units the window is measured in
+            rather than in characters divided by four.
         raise_on_error: When True — the default since 1.0.0 — run() raises the
             typed error on failure instead of returning an AgentResponse with
             success=False. The same failure raises regardless of which internal
@@ -126,6 +139,9 @@ class AgentConfig:
     provider: str | None = None
     base_url: str | None = None
     api_key: str | None = None
+    middleware: list[Any] = field(default_factory=list)
+    compaction_strategy: Any = None
+    tokenizer: Any = None
     # True since 1.0.0: a failed run raises rather than returning a
     # plausible-looking string with success=False, which callers that read
     # .output without checking .success never noticed.
@@ -189,6 +205,7 @@ _RUN_KWARGS = frozenset({
     "presence_penalty", "frequency_penalty", "repetition_penalty",
     "stop_sequences", "reasoning_effort", "tools",
     "checkpoint_dir", "checkpoint_interval", "max_iterations",
+    "middleware", "session",
 })
 
 

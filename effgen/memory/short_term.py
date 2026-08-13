@@ -9,11 +9,14 @@ and token counting.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class MessageRole(Enum):
@@ -131,7 +134,9 @@ class ShortTermMemory:
                  summary_length_ratio: float = 0.3,
                  keep_recent_messages: int = 10,
                  summary_budget_ratio: float = 0.4,
-                 model: Any = None) -> None:
+                 model: Any = None,
+                 compaction_strategy: Any = None,
+                 tokenizer: Any = None) -> None:
         """
         Initialize short-term memory.
 
@@ -146,6 +151,15 @@ class ShortTermMemory:
                 summaries, so without a bound on the summaries themselves the
                 stored total grows for as long as the conversation runs.
             model: Optional model instance for accurate token counting
+            compaction_strategy: How the history is shortened when it
+                approaches the window — see
+                :mod:`effgen.memory.compaction`. Accepts a strategy, a class or
+                a name; None keeps the default of summarizing everything but
+                the most recent few.
+            tokenizer: Anything with ``count_tokens(text)`` or ``encode(text)``.
+                Used in preference to the model's own counter and to the
+                character estimate, so the threshold is measured in the units
+                the context window is measured in.
         """
         self.max_tokens = max_tokens
         self.max_messages = max_messages
@@ -154,6 +168,9 @@ class ShortTermMemory:
         self.keep_recent_messages = keep_recent_messages
         self.summary_budget_ratio = summary_budget_ratio
         self._model = model
+        self._tokenizer = tokenizer
+        from .compaction import resolve_strategy
+        self.compaction_strategy = resolve_strategy(compaction_strategy)
 
         # Storage
         self.messages: deque[Message] = deque(maxlen=max_messages)
@@ -165,7 +182,24 @@ class ShortTermMemory:
         self._current_token_count = 0
 
     def _count_tokens(self, text: str) -> int:
-        """Count tokens using model tokenizer if available, else heuristic."""
+        """Count tokens with the supplied tokenizer, the model, else a heuristic.
+
+        An explicit tokenizer wins: a caller who supplied one wants the count
+        measured the way their model measures it, whatever model object the
+        memory happens to hold.
+        """
+        if self._tokenizer is not None:
+            try:
+                if hasattr(self._tokenizer, "count_tokens"):
+                    result = self._tokenizer.count_tokens(text)
+                    return result.count if hasattr(result, "count") else int(result)
+                if hasattr(self._tokenizer, "encode"):
+                    return len(self._tokenizer.encode(text))
+                if callable(self._tokenizer):
+                    return int(self._tokenizer(text))
+            except Exception:  # best-effort: fall through to the model/heuristic
+                logger.debug("Supplied tokenizer could not count; falling back",
+                             exc_info=True)
         if self._model is not None:
             try:
                 result = self._model.count_tokens(text)
@@ -357,13 +391,9 @@ class ShortTermMemory:
         Returns:
             True if summarization is needed
         """
-        # Use cached count for performance (validated after summarization)
-        current_tokens = self._current_token_count
-        threshold = self.max_tokens * self.summarization_threshold
-
-        # Only summarize if we have enough messages to make it worthwhile
-        return (current_tokens > threshold and
-                len(self.messages) > self.keep_recent_messages)
+        # The configured strategy decides; the default reproduces the
+        # long-standing behaviour of summarizing past a fraction of the window.
+        return self.compaction_strategy.should_compact(self)
 
     def _summarize_old_messages(self) -> None:
         """
@@ -375,40 +405,40 @@ class ShortTermMemory:
         3. Removes original messages
         4. Stores the summary
         """
-        if len(self.messages) <= self.keep_recent_messages:
+        # Which messages leave is the strategy's decision; the default takes
+        # everything but the most recent few, oldest first.
+        messages_to_summarize = self.compaction_strategy.messages_to_compact(self)
+        if not messages_to_summarize:
             return
 
-        # Calculate how many messages to summarize
-        num_to_summarize = len(self.messages) - self.keep_recent_messages
+        # What replaces them is also the strategy's: summary text, or None to
+        # drop them outright with no model call and no tokens spent.
+        summary_text = self.compaction_strategy.summarize(self, messages_to_summarize)
 
-        # Get messages to summarize
-        messages_to_summarize = list(self.messages)[:num_to_summarize]
-
-        # Generate summary
-        summary_text = self._generate_summary(messages_to_summarize)
-
-        # Calculate token savings
         original_tokens = sum(msg.estimate_tokens() for msg in messages_to_summarize)
-        summary_tokens = self._count_tokens(summary_text)
+        if summary_text:
+            summary_tokens = self._count_tokens(summary_text)
+            self.summaries.append(ConversationSummary(
+                summary=summary_text,
+                message_count=len(messages_to_summarize),
+                token_count=original_tokens,
+                metadata={
+                    "summary_tokens": summary_tokens,
+                    "compression_ratio": (
+                        summary_tokens / original_tokens if original_tokens > 0 else 0
+                    ),
+                    "strategy": type(self.compaction_strategy).__name__,
+                },
+            ))
+            self._compact_summaries()
 
-        # Create summary object
-        summary = ConversationSummary(
-            summary=summary_text,
-            message_count=len(messages_to_summarize),
-            token_count=original_tokens,
-            metadata={
-                "summary_tokens": summary_tokens,
-                "compression_ratio": summary_tokens / original_tokens if original_tokens > 0 else 0
-            }
-        )
-
-        # Store summary
-        self.summaries.append(summary)
-        self._compact_summaries()
-
-        # Remove summarized messages
-        for _ in range(num_to_summarize):
-            self.messages.popleft()
+        # Remove exactly the messages that were compacted. A strategy may take
+        # them from the middle, so they are removed by identity rather than by
+        # popping a count off the front.
+        compacted = {id(msg) for msg in messages_to_summarize}
+        remaining = [msg for msg in self.messages if id(msg) not in compacted]
+        self.messages.clear()
+        self.messages.extend(remaining)
 
         # Update statistics
         self.total_summarizations += 1

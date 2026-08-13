@@ -185,6 +185,17 @@ class NativeToolLoop:
         call the run made, so it is recorded with its *error* rather than
         dropped.
 
+        Args:
+            action: The tool's registered name.
+            arguments: The input as the model supplied it — text on the ReAct
+                path, a parsed dict on the native one.
+            result: What the tool returned, truncated for the record.
+            duration: Wall-clock seconds the dispatch took, when measured.
+            error: The failure message, when the caller already has one. A
+                result carrying the dispatch-failure prefix supplies it
+                otherwise.
+            iteration: The 1-based loop iteration the call was made on.
+
         Returns:
             The record appended, so a caller can amend it in place.
         """

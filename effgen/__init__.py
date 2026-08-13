@@ -67,8 +67,21 @@ from effgen import _logging_setup as _logging_setup  # noqa: F401
 # historically importable but were never in ``__all__``, so they stay out of it.
 # ---------------------------------------------------------------------------
 _LAZY: dict[str, tuple[str, str | None]] = {
+    "BackendUnreachableError": ("effgen.models.errors", "BackendUnreachableError"),
+    "OpenAICompatibleAdapter": ("effgen.models.openai_compatible_adapter", "OpenAICompatibleAdapter"),
+    "ToolCallList": ("effgen.core.tool_call_record", "ToolCallList"),
+    "ToolCall": ("effgen.core.tool_call_record", "ToolCall"),
+    "ToolApprovalMiddleware": ("effgen.core.middleware", "ToolApprovalMiddleware"),
+    "MiddlewareChain": ("effgen.core.middleware", "MiddlewareChain"),
+    "LoggingMiddleware": ("effgen.core.middleware", "LoggingMiddleware"),
+    "SummarizeOldest": ("effgen.memory.compaction", "SummarizeOldest"),
+    "KeepToolResults": ("effgen.memory.compaction", "KeepToolResults"),
+    "KeepFirstAndLast": ("effgen.memory.compaction", "KeepFirstAndLast"),
+    "DropOldest": ("effgen.memory.compaction", "DropOldest"),
+    "CompactionStrategy": ("effgen.memory.compaction", "CompactionStrategy"),
     "Agent": ("effgen.core.agent", "Agent"),
     "AgentConfig": ("effgen.core.agent", "AgentConfig"),
+    "AgentMiddleware": ("effgen.core.middleware", "AgentMiddleware"),
     "AgentEvaluator": ("effgen.eval.evaluator", "AgentEvaluator"),
     "AgentState": ("effgen.core.state", "AgentState"),
     "AgentSystemPromptBuilder": ("effgen.prompts.agent_system_prompt", "AgentSystemPromptBuilder"),
@@ -327,6 +340,20 @@ def __dir__() -> list[str]:
 # ``_LAZY``) so it is greppable and stable; the provider-native/MLX extras in
 # ``_LAZY`` are intentionally excluded, matching prior releases.
 __all__ = [
+    # Pointing effGen at a server, hooks around the loop, and what a run did
+    "OpenAICompatibleAdapter",
+    "BackendUnreachableError",
+    "AgentMiddleware",
+    "MiddlewareChain",
+    "LoggingMiddleware",
+    "ToolApprovalMiddleware",
+    "ToolCall",
+    "ToolCallList",
+    "CompactionStrategy",
+    "SummarizeOldest",
+    "DropOldest",
+    "KeepFirstAndLast",
+    "KeepToolResults",
     # Multimodal message schema
     "Role",
     "TextPart",

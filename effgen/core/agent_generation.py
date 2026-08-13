@@ -242,6 +242,35 @@ class AgentGenerationMixin:
             return None
 
     def _generate(self, prompt: Any, **kwargs) -> dict[str, Any]:
+        """Generate from the model, with any configured middleware around it.
+
+        A ``before_model_call`` hook may rewrite the prompt or the generation
+        options, or return a result to use without calling the model at all;
+        ``after_model_call`` sees whichever result was produced. With no
+        middleware configured this is one boolean test and a direct call.
+
+        Every retry and every failover hop is one call as far as the hooks are
+        concerned, because each is a separate request to a provider.
+        """
+        chain = self._middleware_chain()
+        if not chain:
+            return self._generate_instrumented(prompt, **kwargs)
+
+        from .middleware import ModelCallContext
+
+        ctx = ModelCallContext(
+            prompt=prompt,
+            model_name=getattr(self, "model_name", "") or "",
+            kwargs=kwargs,
+            run=getattr(self, "_active_run_context", None),
+        )
+        short_circuit = chain.before_model_call(ctx)
+        if short_circuit is not None:
+            return chain.after_model_call(ctx, short_circuit)
+        result = self._generate_instrumented(ctx.prompt, **ctx.kwargs)
+        return chain.after_model_call(ctx, result)
+
+    def _generate_instrumented(self, prompt: Any, **kwargs) -> dict[str, Any]:
         """
         Generate response from model with retry logic for empty responses.
 

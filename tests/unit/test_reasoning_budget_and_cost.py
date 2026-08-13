@@ -97,6 +97,7 @@ class _BudgetModel(BaseModel):
 def _agent(model: _BudgetModel, **cfg) -> Agent:
     return Agent(
         AgentConfig(
+            raise_on_error=False,  # these assert the failure response, not the raise
             name="t", model=model, tools=[],
             enable_sub_agents=False, enable_memory=False, **cfg,
         )

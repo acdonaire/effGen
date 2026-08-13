@@ -130,6 +130,7 @@ def test_openai_native_failure_is_structured_and_redacted():
     adapter.generate_with_native_tools = _boom  # type: ignore[assignment]
 
     agent = Agent(AgentConfig(name="t", model=adapter, tools=[OpenAIWebSearchTool()],
+                              raise_on_error=False,
                               tool_calling_mode="native"))
     resp = agent.run("do something")
     agent.close()
@@ -164,7 +165,7 @@ def test_gemini_mixed_native_and_custom_clear_error():
 
     adapter.generate = _boom  # type: ignore[assignment]
 
-    agent = Agent(AgentConfig(name="gm", model=adapter,
+    agent = Agent(AgentConfig(name="gm", model=adapter, raise_on_error=False,
                               tools=[GoogleSearchTool(), Calculator()]))
     resp = agent.run("compute 1+1 with the calculator")
     agent.close()

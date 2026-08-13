@@ -86,6 +86,7 @@ def _agent(max_iterations: int = 3):
         _lookup, name="lookup", category=ToolCategory.INFORMATION_RETRIEVAL,
     )
     return Agent(config=AgentConfig(
+        raise_on_error=False,  # these assert the failure response, not the raise
         name="cap-test",
         model=_AlwaysRetrievesModel(),
         tools=[lookup],
