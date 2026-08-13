@@ -880,6 +880,13 @@ def main() -> None:
 
 def _run_cli() -> None:
     """Parse the command line and dispatch to the selected command."""
+    # Before anything can warn: render this package's own warnings as one line
+    # instead of Python's file/line/source-echo block, which lands mid-answer
+    # and points at internals the reader did not write.
+    from effgen.cli import _warnings as _warning_render
+
+    _warning_render.install()
+
     # Load .env early so all subcommands see API keys (see load_env_files).
     load_env_files()
 
