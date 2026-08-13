@@ -16,17 +16,18 @@ import time
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
-from ..models._adapter_utils import default_max_output_tokens
 from ..models.base import GenerationConfig
 from .agent_config import AgentMode
 from .agent_response import StreamEvent
 from .agent_runtime import (
     NUDGE_NO_TOOLS,
+    resolve_output_budget,
     sanitize_final_answer,
     unknown_tool_observation,
 )
 
 if TYPE_CHECKING:
+    from .agent_config import AgentConfig
     from .messages import Message
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,14 @@ def _chunk_answer_text(answer: str) -> Iterator[str]:
 
 class AgentStreamingMixin:
     """Streaming-run methods for :class:`Agent`."""
+
+    if TYPE_CHECKING:
+        # Supplied by the class this is mixed into. Declared so a reader of the
+        # streaming code can see where `self.config` comes from, and so the
+        # type checker does not count each use as an undefined attribute. The
+        # wider mixin seam is followups/mixin_attr_defined_seam.md; this
+        # declares only what the code here actually reads.
+        config: AgentConfig
 
     def _fold_stream_usage(
         self, acc: dict[str, Any], prompt_text: str, completion_text: str
@@ -113,7 +122,9 @@ class AgentStreamingMixin:
         # through so callers can request "minimal" for trivial prompts.
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=kwargs.get("max_tokens", default_max_output_tokens(self.model)),
+            max_tokens=resolve_output_budget(
+                kwargs.get("max_tokens"), self.config.max_tokens, self.model
+            ),
             top_p=kwargs.get("top_p", 0.9),
             stop_sequences=kwargs.get("stop_sequences"),
             reasoning_effort=kwargs.get("reasoning_effort"),
@@ -374,7 +385,9 @@ class AgentStreamingMixin:
 
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
-            max_tokens=kwargs.get("max_tokens", default_max_output_tokens(self.model)),
+            max_tokens=resolve_output_budget(
+                kwargs.get("max_tokens"), self.config.max_tokens, self.model
+            ),
             top_p=kwargs.get("top_p", 0.9),
             stop_sequences=kwargs.get("stop_sequences", default_stop_sequences),
         )

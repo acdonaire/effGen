@@ -230,8 +230,16 @@ def trace_tool_execute(tool_name: str, tool_input: str) -> Any:
 
 
 def _infer_provider(model_name: str) -> str:
-    """Best-effort provider inference from a model name string."""
+    """Best-effort provider inference from a model name string.
+
+    Kept in step with ``agent_runtime._infer_provider_from_model``: an explicit
+    local-engine prefix settles the question before any family-name guess, so a
+    run on this machine's own GPU is not attributed to a cloud provider.
+    """
     m = model_name.lower()
+    for engine in ("transformers", "vllm", "gguf", "mlx"):
+        if m.startswith(f"{engine}:"):
+            return engine
     if m.startswith(("gpt-", "o1", "o3", "o4", "text-")):
         return "openai"
     if m.startswith(("gemini", "models/gemini")):

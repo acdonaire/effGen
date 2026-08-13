@@ -55,7 +55,20 @@ _PROVIDER_BY_CLASS_PREFIX: dict[str, str] = {
     "HFInference": "hf_inference",
     "Replicate": "replicate",
     "MLXVLM": "mlx_vlm",
+    # The local engines. Without these a run on this machine's own GPU fell
+    # through to the family-name guesses below and was attributed to whichever
+    # cloud provider serves a model of that family — on-device work reported as
+    # spend at a company the user never called.
+    "TransformersEngine": "transformers",
+    "VLLMEngine": "vllm",
+    "GGUFEngine": "gguf",
+    "MLXEngine": "mlx",
 }
+
+#: The engine prefixes a model id may carry (``transformers:Qwen/...``). Mirrors
+#: ``ModelLoader._LOCAL_ENGINE_PREFIXES``; kept as a literal so this module
+#: stays cheap to import.
+_LOCAL_ENGINE_PREFIXES: tuple[str, ...] = ("transformers", "vllm", "gguf", "mlx")
 
 
 def _infer_provider_from_model(model: Any, model_name: str | None = None) -> str:
@@ -79,6 +92,13 @@ def _infer_provider_from_model(model: Any, model_name: str | None = None) -> str
         if cls_name.startswith(prefix):
             return provider
     m = (model_name or "").lower()
+    # An explicit engine prefix is a statement, not a guess, so it settles the
+    # question before any family-name heuristic gets to see the id. Otherwise
+    # "transformers:Qwen/Qwen2.5-1.5B-Instruct" matched "qwen" and reported a
+    # local run as cerebras, and the span name read "cerebras:transformers:...".
+    for engine in _LOCAL_ENGINE_PREFIXES:
+        if m.startswith(f"{engine}:"):
+            return engine
     if m.startswith(("gpt-", "o1", "o3", "o4", "text-")):
         return "openai"
     if m.startswith(("gemini", "models/gemini")):
@@ -90,6 +110,35 @@ def _infer_provider_from_model(model: Any, model_name: str | None = None) -> str
     if m.startswith(("mixtral", "mistral")):
         return "groq"
     return "unknown"
+
+
+def resolve_output_budget(
+    per_call: int | None, configured: int | None, model: Any
+) -> int:
+    """Return the output-token budget a generation should use.
+
+    One order, used by every path that generates: an explicit per-call value,
+    then the agent's configured default, then the model's own default. The
+    streaming paths used to skip the middle step, so an agent built with
+    ``AgentConfig(max_tokens=333)`` got 333 tokens through ``run()`` and the
+    model default through ``stream()`` — the same agent answering at two
+    different lengths depending on which method was called.
+
+    Args:
+        per_call: ``max_tokens`` passed to this call, if any.
+        configured: ``AgentConfig.max_tokens``, if set.
+        model: The model, asked for its default as a last resort.
+
+    Returns:
+        The budget to send.
+    """
+    from ..models._adapter_utils import default_max_output_tokens
+
+    if per_call is not None:
+        return per_call
+    if configured is not None:
+        return configured
+    return default_max_output_tokens(model)
 
 
 def _safe_int_or_none(value: Any) -> int | None:
@@ -189,8 +238,15 @@ _UNKNOWN_TOOL_OBS_RE = re.compile(
 )
 
 # A line-anchored "Final Answer:" / "Answer:" label (allows quote/list prefixes).
+#
+# The label is often written in markdown emphasis — "**Answer:**", "__Answer:__",
+# "### Answer:". The closing marker is only swallowed when it matches the one
+# that opened the label, so a genuinely bold answer ("Answer: **42**") keeps
+# both of its markers instead of losing the opening one and rendering the rest
+# of the reply in bold.
 _ANSWER_LABEL_RE = re.compile(
-    r"(?:^|\n)[ \t>*\-]*(?:final[ \t]*answer|answer)[ \t]*[:\-][ \t]*",
+    r"(?:^|\n)[ \t>\-]*(\*{1,2}|_{1,2}|#{1,6})?[ \t]*"
+    r"(?:final[ \t]*answer|answer)[ \t]*[:\-][ \t]*(?:\1)?[ \t]*",
     re.IGNORECASE,
 )
 # Trailing ReAct bleed: an Observation/Thought/Question/Action section the model

@@ -44,7 +44,6 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from ..models._adapter_utils import default_max_output_tokens
 from ..models.base import (
     GenerationConfig,
     clear_stream_tool_calls,
@@ -60,6 +59,7 @@ from .agent_runtime import (
     NUDGE_NOT_USABLE,
     TEMPLATE_TOOL_USE_INSTRUCTION,
     find_written_tool_call,
+    resolve_output_budget,
     sanitize_final_answer,
     unknown_tool_observation,
 )
@@ -301,11 +301,9 @@ class AgentNativeStreamMixin:
         # A cap pinned on the call wins, then one configured on the agent — the
         # same order ``run()`` resolves, so a turn does not get a different
         # output budget for taking the streamed path.
-        max_tokens = kwargs.get("max_tokens")
-        if max_tokens is None:
-            max_tokens = self.config.max_tokens
-        if max_tokens is None:
-            max_tokens = default_max_output_tokens(self.model)
+        max_tokens = resolve_output_budget(
+            kwargs.get("max_tokens"), self.config.max_tokens, self.model
+        )
         gen_config = GenerationConfig(
             temperature=kwargs.get("temperature", self.config.temperature),
             max_tokens=max_tokens,

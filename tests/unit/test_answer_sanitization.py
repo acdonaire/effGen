@@ -38,6 +38,16 @@ from effgen.core.agent import sanitize_final_answer as sanitize
         ("[calculator({'expression': '15*15'})] → 225", "225"),
         # List-prefixed final-answer label.
         ("- Final Answer: done", "done"),
+        # The label written in markdown emphasis. The closing marker used to be
+        # left behind, and its stray "**" then paired with the next heading and
+        # ran emphasis through the rest of the reply.
+        ("**Answer:** \nThe product is 1,136,812.", "The product is 1,136,812."),
+        ("**Final Answer:** 42", "42"),
+        ("__Answer:__ 42", "42"),
+        ("### Answer: 42", "42"),
+        # An answer that is itself bold keeps both of its markers: only a
+        # closing marker matching the label's own opening one is absorbed.
+        ("Answer: **42**", "**42**"),
         # OpenAI native web-search replies sometimes end with a bare, dangling
         # "Final Answer:" label and nothing after it — strip the label, keep the
         # real answer that precedes it.
