@@ -269,8 +269,21 @@ def _catalog_pricing(provider: str, model: str) -> tuple[float, float, str, str]
     return (0.0, 0.0, "unpriced", "")
 
 
-def _legacy_rate(provider: str, model: str) -> tuple[float, float] | None:
-    """Per-1M rate from the small fallback table, or None if the provider/id is unknown."""
+def _legacy_rate(
+    provider: str, model: str, *, allow_wildcard: bool = True
+) -> tuple[float, float] | None:
+    """Per-1M rate from the small fallback table, or None if the provider/id is unknown.
+
+    Args:
+        provider: The provider that served the call.
+        model: The model id the call used.
+        allow_wildcard: Whether a provider's ``"*"`` placeholder rate may
+            answer. It is a rough figure for an id nobody has priced, so it is
+            useful as an estimate and wrong as a published price.
+
+    Returns:
+        The (input, output) per-million rate, or None when nothing matches.
+    """
     provider_rates = _RATES.get(provider.lower())
     if not provider_rates:
         return None
@@ -279,7 +292,7 @@ def _legacy_rate(provider: str, model: str) -> tuple[float, float] | None:
     for key in provider_rates:
         if key != "*" and model.startswith(key):
             return provider_rates[key]
-    if "*" in provider_rates:
+    if allow_wildcard and "*" in provider_rates:
         return provider_rates["*"]
     return None
 
@@ -312,7 +325,11 @@ def pricing_status(provider: str, model: str) -> str:
     catalog = _catalog_pricing(provider, model)
     if catalog is not None:
         return catalog[2]
-    legacy = _legacy_rate(provider, model)
+    # A provider's "*" placeholder is not a published price. Counting it as one
+    # billed every id the bundled catalog had not seen — a fine-tuned `ft:`
+    # model, anything released since the last refresh — at a made-up rate, and
+    # reported the invented number as real.
+    legacy = _legacy_rate(provider, model, allow_wildcard=False)
     if legacy is not None and (legacy[0] > 0 or legacy[1] > 0):
         return "priced"
     if provider.lower() in _FREE_TIER_PROVIDERS:

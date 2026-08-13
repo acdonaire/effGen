@@ -16,6 +16,7 @@ from effgen.models import _catalog as cat
 from effgen.models._cost import (
     CostTracker,
     _rate,
+    call_cost,
     pricing_status,
 )
 
@@ -68,11 +69,25 @@ class TestPricingStatus:
         assert _rate("cerebras", "gpt-oss-120b") == (0.0, 0.0)
 
     def test_unknown_id_on_priced_provider_never_silently_zero(self):
-        # A model absent from the catalog but on a known priced provider falls
-        # back to the provider estimate — it must NOT silently report $0.
+        # A model absent from the catalog but on a known priced provider must
+        # NOT silently report $0. It reports no cost at all instead: the
+        # provider's "*" entry is a placeholder, and billing an unknown id at
+        # it — a fine-tuned `ft:` id, anything newer than the last refresh —
+        # published an invented number as though it were real.
         rin, rout = _rate("openai", "totally-made-up-model-xyz")
-        assert rin > 0 and rout > 0
-        assert pricing_status("openai", "totally-made-up-model-xyz") == "priced"
+        assert rin > 0 and rout > 0, "the estimate itself is still available"
+        assert pricing_status("openai", "totally-made-up-model-xyz") == "unpriced"
+        assert call_cost("openai", "totally-made-up-model-xyz", 1000, 1000) is None
+
+    def test_a_fine_tuned_id_is_not_billed_at_the_placeholder(self):
+        model = "ft:gpt-4o-mini-2024-07-18:acme::abc123"
+        assert pricing_status("openai", model) == "unpriced"
+        assert call_cost("openai", model, 1000, 1000) is None
+
+    def test_a_catalogued_id_is_still_priced(self):
+        """The change must not cost a known model its real published rate."""
+        assert pricing_status("openai", "gpt-4o-mini") == "priced"
+        assert call_cost("openai", "gpt-4o-mini", 1000, 1000) > 0
 
     def test_unknown_provider_is_unpriced(self):
         assert pricing_status("no-such-provider", "model") == "unpriced"
