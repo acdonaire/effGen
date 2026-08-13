@@ -228,6 +228,9 @@ effgen/security/installed_hashes.json
 # CheckpointManager defaults to ./checkpoints (override with --checkpoint-dir);
 # per-user state normally lives in ~/.effgen but EFFGEN_HOME can redirect it.
 /checkpoints/
+# scripts/install_effgen.sh writes this convenience wrapper into the clone
+# so `source activate.sh` enters the environment it just built.
+/activate.sh
 /.effgen/
 # `effgen config init` writes ./config.yaml unless -o names another path.
 /config.yaml

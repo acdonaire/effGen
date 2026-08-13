@@ -447,8 +447,20 @@ if [ "$USE_CONDA" = true ]; then
     # Check if environment already exists
     if conda env list | grep -q "^${CONDA_ENV_NAME} "; then
         print_info "Conda environment '${CONDA_ENV_NAME}' already exists"
-        read -p "$(echo -e ${YELLOW}Do you want to recreate it? This will delete the existing environment. [y/N]:${NC} )" -n 1 -r
-        echo
+        # Only ask when there is somebody to answer. Run from CI, from another
+        # script, or with stdin redirected, `read` returns non-zero at once and
+        # `set -e` would end the install with "Installation failed" — for a
+        # condition that is not a failure. With no terminal, keep the existing
+        # environment: it is the choice that destroys nothing, and installing
+        # into it is what the next step does anyway.
+        REPLY=""
+        if [ -t 0 ]; then
+            read -p "$(echo -e ${YELLOW}Do you want to recreate it? This will delete the existing environment. [y/N]:${NC} )" -n 1 -r || REPLY=""
+            echo
+        else
+            print_info "No terminal to ask on — keeping the existing environment."
+            print_info "To rebuild it from scratch, run: conda env remove -n ${CONDA_ENV_NAME}"
+        fi
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             print_progress "Removing existing environment..."
             conda env remove -n "$CONDA_ENV_NAME" -y > /dev/null 2>&1

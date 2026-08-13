@@ -7,6 +7,159 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.0] - UNRELEASED
+
+### Highlights
+
+**effGen v1.0.0** is the first stable release. Its headline is a set of gaps found by
+running effGen side by side with LangChain, AutoGen, Microsoft Agent Framework and
+Smolagents on the same benchmark — the things that cost real work to route around.
+All of them are closed, and the three extension points the larger frameworks
+organise themselves around now exist in effGen under the same names.
+
+**Two changes are breaking.** Both are about a run that failed telling you so.
+Each has a one-line opt-out, listed under *Changed* below.
+
+### Added — new surface
+
+- **Point effGen at any OpenAI-compatible server.** `base_url` reaches
+  `load_model()` and `AgentConfig`, so effGen can drive a model you already
+  serve — vLLM, SGLang, TGI, llama.cpp, Ollama, LM Studio, LiteLLM, a gateway or
+  a corporate proxy — instead of loading a second copy of the weights in the
+  agent's process.
+
+  ```python
+  from effgen.models import load_model
+
+  model = load_model(
+      "Qwen/Qwen2.5-7B-Instruct",
+      provider="openai_compatible",
+      base_url="http://127.0.0.1:8000/v1",
+  )
+  ```
+
+  The endpoint also comes from `EFFGEN_BASE_URL`, `OPENAI_BASE_URL` or
+  `OPENAI_API_BASE`, in that order. The server serves its own model ids, so no
+  OpenAI catalog is consulted: pass `context_length=` for a window that differs
+  from the 32768 default, the full sampling surface is offered, and calls report
+  **no price** rather than a fabricated `$0`. `list_served_models()` asks the
+  endpoint what it has. See [docs/models/openai-compatible.md](docs/models/openai-compatible.md).
+
+- **Middleware around the agent loop.** Hooks at three points — the run, each
+  model call, each tool call — each with a *before* and an *after*. A *before*
+  hook can rewrite the request through its context or short-circuit it
+  entirely; an *after* hook can transform the result. *Before* hooks run in
+  order and *after* hooks in reverse, so middleware nest.
+
+  ```python
+  from effgen import Agent, AgentConfig
+  from effgen.core.middleware import AgentMiddleware
+
+  class SearchBudget(AgentMiddleware):
+      def __init__(self, limit=3):
+          self.limit, self.used = limit, 0
+
+      def before_tool_call(self, ctx):
+          if ctx.tool_name != "web_search":
+              return None
+          if self.used >= self.limit:
+              return "Skipped: this run has spent its search budget."
+          self.used += 1
+          return None
+
+  agent = Agent(AgentConfig(model="gpt-5-nano", middleware=[SearchBudget()]))
+  ```
+
+  Also available per call as `run(..., middleware=[...])`, which appends to the
+  configured ones for that call only. `LoggingMiddleware` and
+  `ToolApprovalMiddleware` ship. See [docs/guides/middleware.md](docs/guides/middleware.md).
+
+- **One agent, many conversations.** `run(..., session=Session | str)` builds
+  the prompt from that conversation's history and appends the turn to it,
+  restoring the agent's own session and memory afterwards. A server handling
+  many users no longer needs an agent object per user, nor history bookkeeping
+  outside the framework.
+
+  ```python
+  agent.run("My dog is named Pixel.", session="user-123")
+  agent.run("My cat is named Mote.",  session="user-456")
+  ```
+
+- **Pluggable context compaction.** What gets dropped when a conversation
+  outgrows the window is now a strategy: `SummarizeOldest` (the default, and
+  unchanged behaviour), `DropOldest` (no model call, nothing invented),
+  `KeepFirstAndLast` (the turns carrying the task survive verbatim) and
+  `KeepToolResults` (the evidence stays, the reasoning is compacted). Supply a
+  `tokenizer=` to measure the history in the units the window is measured in
+  rather than characters divided by four. Subclass `CompactionStrategy` for
+  your own. See [docs/guides/context-compaction.md](docs/guides/context-compaction.md).
+
+- **`AgentResponse.tool_calls` reports the calls, not just how many.** Each
+  entry is a `ToolCall` carrying `name`, `arguments`, `result`, `duration`,
+  `error` and the `iteration` it was made on, with `.failed` and `.by_name()`
+  to narrow them. Error analysis can now ask *which* call went wrong.
+
+  ```python
+  for call in result.tool_calls:
+      print(call.name, call.arguments, "->", call.error or call.result)
+  ```
+
+  Iterating the field used to raise `TypeError: 'int' object is not iterable`.
+  It still compares and casts as the count, so `tool_calls == 2` and
+  `tool_calls > 0` are unchanged; `tool_call_count` says the number plainly.
+
+- **New public names:** `OpenAICompatibleAdapter`, `BackendUnreachableError`,
+  `AgentMiddleware`, `MiddlewareChain`, `LoggingMiddleware`,
+  `ToolApprovalMiddleware`, `ToolCall`, `ToolCallList`, `CompactionStrategy`,
+  `SummarizeOldest`, `DropOldest`, `KeepFirstAndLast`, `KeepToolResults`.
+
+### Changed — breaking
+
+- **`AgentConfig.raise_on_error` now defaults to `True`.** A failed run raises
+  its typed error instead of returning an `AgentResponse` with `success=False`
+  and a plausible-looking string in `.output` — which a caller reading `.output`
+  without checking `.success` never noticed.
+
+  *If you inspect the response yourself:* pass `raise_on_error=False`. The
+  failure shape is unchanged.
+
+  ```python
+  Agent(AgentConfig(model=..., raise_on_error=False))
+  ```
+
+- **A backend that never answered raises whatever that flag says.** A refused
+  connection, an unresolvable host or a missing route is classified
+  `unreachable` — separately from a server that answered badly, which stays
+  `transient` and still retries — and raises `BackendUnreachableError`. A task
+  that ran and failed is a result you can inspect; a backend that was never
+  reached is not, and returning one is how a whole batch completes against
+  nothing and looks healthy in the summary.
+
+  *There is no opt-out, by design.* Catch `BackendUnreachableError` if you want
+  to handle it:
+
+  ```python
+  from effgen.models.errors import BackendUnreachableError
+
+  try:
+      result = agent.run(task)
+  except BackendUnreachableError:
+      ...   # the server is not up
+  ```
+
+  Classification reads the exception chain, because provider SDKs shorten a
+  refused port to "Connection error." and keep the real cause on `__cause__`.
+
+### Fixed
+
+- **`./install.sh` no longer fails when run without a terminal.** Re-running it,
+  or running it from CI or another script, hit an interactive prompt about an
+  existing conda environment; with no one to answer, the read failed and the
+  install ended with "Installation failed". It now keeps the existing
+  environment and says how to rebuild it.
+- **`activate.sh`**, which the installer writes into the clone, is no longer
+  left as an untracked file in `git status`.
+
 ## [0.3.2] - 2026-07-05
 
 ### Highlights
