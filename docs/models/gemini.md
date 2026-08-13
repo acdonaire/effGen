@@ -43,13 +43,10 @@ effgen.gemini_model_info("gemini-3.1-flash-lite")  # alias resolves
 |--------------------------------------|--------------|---------|-----|---------|--------|-------|----------|-----------|
 | `gemini-3.1-flash-lite`              | flash-lite   | free    | 15  | 250 K   | 500    | yes   | yes      | no¹       |
 | `gemini-3-flash-preview`             | flash        | free    | 5   | 250 K   | 20     | yes   | yes      | yes       |
-| `gemini-3-pro-preview`               | pro          | premium | —   | —       | —      | yes   | yes      | yes       |
 | `gemini-3.1-pro-preview`             | pro          | premium | —   | —       | —      | yes   | yes      | yes       |
 | `gemini-2.5-flash-lite`              | flash-lite   | free    | 10  | 250 K   | 20     | yes   | no       | yes       |
 | `gemini-2.5-flash`                   | flash        | free    | 5   | 250 K   | 20     | yes   | no       | yes       |
 | `gemini-2.5-pro`                     | pro          | premium | —   | —       | —      | yes   | yes      | yes       |
-| `gemini-2.0-flash`                   | flash        | premium | —   | —       | —      | yes   | no       | yes       |
-| `gemini-2.0-flash-lite`              | flash-lite   | premium | —   | —       | —      | yes   | no       | yes       |
 | `gemma-4-26b-a4b-it` / `gemma-4-31b-it` | gemma     | free    | 15  | unlim.  | 1 500  | no    | no       | no        |
 
 ¹ Google Search grounding hits quota on the free-tier for `gemini-3.1-flash-lite`. Use `gemini-2.5-flash` or higher for grounding.
@@ -108,7 +105,7 @@ print("Thinking tokens:", result.metadata["thoughts_token_count"])
 |---|---|---|
 | `gemini-3.1-flash-lite` | yes | Free tier, 15 RPM / 500 RPD |
 | `gemini-3-flash-preview` | yes | Free tier, 5 RPM / 20 RPD |
-| `gemini-3-pro-preview` | yes | Paid only |
+| `gemini-3.1-pro-preview` | yes | Paid only |
 | `gemini-2.5-pro` | yes | Paid only |
 | `gemini-2.5-flash` | no | Free tier |
 | `gemini-2.5-flash-lite` | no | Free tier |
@@ -243,7 +240,7 @@ These short forms resolve to the canonical ID in the registry:
 | `gemini-3.1-flash-lite-preview`¹   | `gemini-3.1-flash-lite`         |
 | `gemini-3-flash-lite`              | `gemini-3.1-flash-lite`         |
 | `gemini-3-flash`                   | `gemini-3-flash-preview`        |
-| `gemini-3-pro`                     | `gemini-3-pro-preview`          |
+| `gemini-3-pro`                     | `gemini-3.1-pro-preview`        |
 | `gemini-3.1-pro`                   | `gemini-3.1-pro-preview`        |
 | `gemini-flash-lite-latest`         | `gemini-3.1-flash-lite`         |
 

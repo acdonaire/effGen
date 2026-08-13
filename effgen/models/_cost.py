@@ -130,6 +130,19 @@ _FREE_TIER_PROVIDERS = {"cerebras"}
 
 # Legacy fallback rates (USD per 1M tokens) for ids the catalog does not carry.
 # Kept intentionally small — the catalog is authoritative for everything else.
+#
+# This table is deliberately **not** pruned to the current roster. A provider
+# drops an id from its listing long before the run records naming it stop being
+# read, and a stored record whose id has left the catalog would otherwise be
+# reported as unpriced. So a row here outliving its catalog entry is the point,
+# not drift: it is what still prices last quarter's runs. Nothing new can be
+# *called* through such a row — every adapter refuses an id its catalog does not
+# carry — so an extra row costs a dictionary entry and nothing else.
+#
+# The invariant that does matter is agreement: where this table and a catalog
+# both price the same id, the numbers must match, or the price a run reports
+# depends on which lookup answered first. It is gated by
+# ``tests/unit/test_cost_rate_tables.py``.
 _RATES: dict[str, dict[str, tuple[float, float]]] = {
     "cerebras": {
         # OFFICIAL: Cerebras free tier pricing = $0 for all models.

@@ -211,7 +211,7 @@ class TestMessageHasVideo:
 class TestGeminiAdapterVideoFrameSampling:
     """Test that Gemini sends VideoPart as frame-sequence when native video is unavailable."""
 
-    def _make_adapter(self, model_name: str = "gemini-2.0-flash"):
+    def _make_adapter(self, model_name: str = "gemini-3.1-flash-lite"):
         from effgen.models.gemini_adapter import GeminiAdapter
 
         adapter = GeminiAdapter.__new__(GeminiAdapter)

@@ -35,6 +35,12 @@ _SAME_CONCEPT: tuple[frozenset[str], ...] = (
 # Short flags bound to two genuinely different concepts before this check
 # existed. Repointing either would break a command line users already type, so
 # each is recorded with the commands it separates. Nothing may be added here.
+# Frozen, not pending. Repointing either would break a documented command line
+# (`effgen code -p`, `effgen run -c FILE`) that appears in shipped examples, for
+# a cosmetic gain; the long forms are the portable spelling and
+# `docs/dx/cli.md` says so under "Short flags are per-command". What this map
+# buys is that the situation cannot get *worse*: a third concept reaching for
+# `-c` or `-p`, or a new collision on any other short flag, fails the build.
 _KNOWN_COLLISIONS: dict[str, frozenset[str]] = {
     "-c": frozenset({"--concurrency", "--config"}),
     "-p": frozenset({"--port", "--print"}),
@@ -155,3 +161,23 @@ def test_a_concept_keeps_its_short_form_everywhere() -> None:
         "a flag carries a short form in some commands and not others:\n"
         + "\n".join(problems)
     )
+
+
+def test_the_per_command_short_flags_are_documented():
+    """The decision is "leave it and document it", so the document must exist.
+
+    Option 3 of the three the report offered: repointing `-p` or `-c` breaks a
+    documented command line for a cosmetic gain, so the collision stays and the
+    long form is named as the portable spelling. That is only a real answer if a
+    reader can find it, so the doc is part of the contract.
+    """
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parents[2] / "docs" / "dx" / "cli.md"
+    text = doc.read_text(encoding="utf-8")
+    assert "Short flags are per-command" in text
+    for token in ("--concurrency", "--config", "--port", "--print"):
+        assert token in text, f"{token} is not named in the short-flag section"
+    # Every collision the gate knows about is described, so the two cannot drift.
+    for short in _KNOWN_COLLISIONS:
+        assert f"`{short}`" in text, f"{short} is pinned but undocumented"

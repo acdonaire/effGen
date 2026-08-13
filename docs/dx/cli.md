@@ -5,6 +5,33 @@ commands and a shell-completion generator. All of them stay in sync with the
 real CLI automatically — the completion lists and preset choices are generated
 by introspecting the live parser and registries, never hand-maintained.
 
+## Short flags are per-command
+
+Long option names mean the same thing everywhere. **Two short flags do not**, and
+the long form is the portable spelling:
+
+| Short | Means | In |
+|---|---|---|
+| `-c` | `--concurrency` | `batch`, `loadtest` |
+| `-c` | `--config` | `run` |
+| `-p` | `--port` | `serve`, `monitor`, `top` |
+| `-p` | `--print` | `code` |
+
+`-p` is the one to watch: three commands read it as a port number and a fourth
+as a boolean, so `effgen code -p 8000` and `effgen serve -p 8000` mean unrelated
+things. In a script, prefer `--port` and `--print`.
+
+Two other short flags carry more than one long name but only one concept, and
+are not a hazard: `-m` for `--model`/`--models`, and `-o` for
+`--output`/`--output-dir`.
+
+These bindings are **frozen**, not pending. Repointing `-p` would break
+`effgen code -p`, which is documented and appears in shipped examples, for a
+purely cosmetic gain; `tests/unit/test_cli_flag_consistency.py` pins both
+collisions with the exact long names each separates, so a *third* concept
+reaching for `-c` or `-p` — or any new collision on another short flag — fails
+the build.
+
 ## Shell completion
 
 Generate a completion script for your shell and source it:
