@@ -183,3 +183,53 @@ class TestMapsToolIntegration:
         fpath = result["data"]["file"]
         assert os.path.isfile(fpath)
         os.unlink(fpath)
+
+
+class TestTileFailureIsBounded:
+    """`staticmap` names every tile it could not fetch, one URL each.
+
+    At zoom 13 that is a dozen tiles and around 900 characters, and it grows
+    with the render. This string is what a caller prints and what a log line
+    carries, so it is restated rather than forwarded.
+    """
+
+    FAILURE = (
+        "could not download 12 tiles: ["
+        + ", ".join(
+            f"(1316, {3175 + i}, "
+            f"'https://a.tile.openstreetmap.org/13/1316/{3175 + i}.png')"
+            for i in range(12)
+        )
+        + "]"
+    )
+
+    def test_the_message_is_shorter_than_what_it_restates(self):
+        from effgen.tools.builtin.maps import _restate
+
+        restated = _restate(RuntimeError(self.FAILURE))
+        assert len(restated) < len(self.FAILURE) / 3
+
+    def test_it_keeps_the_count_the_host_and_one_example(self):
+        from effgen.tools.builtin.maps import _restate
+
+        restated = _restate(RuntimeError(self.FAILURE))
+        assert "12" in restated
+        assert "a.tile.openstreetmap.org" in restated
+        assert "13/1316/3175.png" in restated
+
+    def test_it_says_what_to_do_about_it(self):
+        from effgen.tools.builtin.maps import _restate
+
+        restated = _restate(RuntimeError(self.FAILURE))
+        assert "zoom" in restated
+
+    def test_only_one_tile_url_survives(self):
+        from effgen.tools.builtin.maps import _restate
+
+        restated = _restate(RuntimeError(self.FAILURE))
+        assert restated.count("openstreetmap.org") == 1
+
+    def test_an_unrelated_failure_passes_through_unchanged(self):
+        from effgen.tools.builtin.maps import _restate
+
+        assert _restate(ValueError("dest is not writable")) == "dest is not writable"

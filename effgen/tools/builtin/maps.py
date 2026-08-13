@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import tempfile
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -55,6 +56,41 @@ def _require_staticmap():
             "    pip install staticmap\n"
             "or: pip install 'effgen[geo]'"
         ) from exc
+
+
+#: `staticmap` reports a download failure by inlining every tile it could not
+#: fetch, one URL each. At zoom 13 that is a dozen tiles and around 900
+#: characters, and it grows with the render — but this string is what a caller
+#: prints and what a log line carries, so it has to stay readable.
+_TILE_FAILURE_RE = re.compile(
+    r"could not download (\d+) tiles?:\s*\[(.*)", re.IGNORECASE | re.DOTALL
+)
+_TILE_URL_RE = re.compile(r"https?://([^/'\"\s]+)(/\S*?)['\"\)]")
+
+
+def _restate(exc: Exception) -> str:
+    """Return a bounded, actionable message for a rendering failure.
+
+    Args:
+        exc: Whatever the renderer raised.
+
+    Returns:
+        The tile-download failure restated as a count, the tile host and one
+        example, or the original message when it is not that failure.
+    """
+    text = str(exc)
+    match = _TILE_FAILURE_RE.search(text)
+    if not match:
+        return text
+
+    count = match.group(1)
+    tile = _TILE_URL_RE.search(match.group(2))
+    where = f" from {tile.group(1)} (first: {tile.group(2).lstrip('/')})" if tile else ""
+    return (
+        f"could not download {count} map tile(s){where}. "
+        f"Check network access to the tile host, or lower `zoom` to request "
+        f"fewer tiles."
+    )
 
 
 class MapsTool(BaseTool):
@@ -347,4 +383,4 @@ class MapsTool(BaseTool):
 
         except Exception as exc:
             logger.error("MapsTool error: %s", exc, exc_info=True)
-            return {"success": False, "data": {}, "error": str(exc)}
+            return {"success": False, "data": {}, "error": _restate(exc)}
