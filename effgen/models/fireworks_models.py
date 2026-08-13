@@ -14,6 +14,13 @@ output cap. Pricing is from https://docs.fireworks.ai/serverless/pricing; an
 entry with no pricing keys is reported as unpriced rather than as free.
 
 Model IDs must be given in full format: ``accounts/fireworks/models/<id>``.
+
+``reasoning: True`` marks a model that spends output budget on a hidden chain
+before it writes anything visible; the adapter reads it into
+``_is_reasoning_model``, which earns the larger first token budget from
+``default_max_output_tokens()``. Every chat- and vision-modality entry here
+carries it: each was called once on 2026-08-13 and every one returned a
+``reasoning_content`` chain. The two embedding entries do not.
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
+        "reasoning": True,
     },
     "deepseek-v4-flash-0731": {
         "display_name": "DeepSeek-V4-Flash-0731",
@@ -54,6 +62,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
+        "reasoning": True,
     },
     "deepseek-v4-pro": {
         "display_name": "DeepSeek-V4-Pro",
@@ -68,6 +77,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
+        "reasoning": True,
     },
     "glm-5p2": {
         "display_name": "GLM 5.2",
@@ -80,6 +90,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
+        "reasoning": True,
     },
     "gpt-oss-120b": {
         "display_name": "OpenAI gpt-oss-120b",
@@ -94,6 +105,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
+        "reasoning": True,
     },
     "gpt-oss-20b": {
         "display_name": "OpenAI gpt-oss-20b",
@@ -108,6 +120,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
+        "reasoning": True,
     },
     "inkling": {
         "display_name": "Inkling",
@@ -121,6 +134,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "vision",
+        "reasoning": True,
     },
     "kimi-k2p6": {
         "display_name": "Kimi K2.6",
@@ -136,6 +150,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "vision",
+        "reasoning": True,
     },
     "kimi-k2p7-code": {
         "display_name": "Kimi K2.7 Code",
@@ -149,6 +164,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "vision",
+        "reasoning": True,
     },
     "kimi-k3": {
         "display_name": "Kimi K3",
@@ -162,6 +178,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "vision",
+        "reasoning": True,
     },
     "minimax-m2p7": {
         "display_name": "MiniMax M2.7",
@@ -176,6 +193,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
+        "reasoning": True,
     },
     "minimax-m3": {
         "display_name": "MiniMax M3",
@@ -188,6 +206,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
+        "reasoning": True,
     },
     "nemotron-3-ultra-nvfp4": {
         "display_name": "NVIDIA Nemotron 3 Ultra NVFP4",
@@ -200,6 +219,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "chat",
+        "reasoning": True,
     },
     "qwen3p7-plus": {
         "display_name": "Qwen3.7 Plus",
@@ -215,6 +235,7 @@ _REGISTRY_SHORT: dict[str, dict] = {
         "rpm": 10,
         "tpm": 40_000,
         "modality": "vision",
+        "reasoning": True,
     },
     "qwen3-embedding-8b": {
         "display_name": "Qwen3 Embedding 8B",

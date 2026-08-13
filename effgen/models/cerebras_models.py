@@ -46,6 +46,8 @@ from __future__ import annotations
 #   free_tier       — True if reliably callable on the free tier today
 #   deprecated      — ISO date if scheduled for deprecation, else None
 #   family          — model family label
+#   reasoning       — True if the model spends output budget on a hidden
+#                     reasoning chain before any visible token
 # ---------------------------------------------------------------------------
 CEREBRAS_MODELS: dict[str, dict] = {
     "gpt-oss-120b": {
@@ -66,6 +68,7 @@ CEREBRAS_MODELS: dict[str, dict] = {
         "deprecated": None,
         # Supports OpenAI-compatible function calling (empirically verified 2026-04-24)
         "supports_native_tools": True,
+        "reasoning": True,
     },
     "zai-glm-4.7": {
         "family": "zai-glm",
@@ -86,6 +89,7 @@ CEREBRAS_MODELS: dict[str, dict] = {
         # GLM-4.7: tool calling not reliably surfaced; marked False so the agent
         # falls back to ReAct.  Paid-tier users can override.
         "supports_native_tools": False,
+        "reasoning": True,
     },
 }
 
