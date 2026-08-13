@@ -133,6 +133,93 @@ jobs:
           name: coverage-unit
           path: coverage.xml
 
+  install-paths:
+    name: Install (${{ matrix.method }}, Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    # A release is only installable if every documented route to it works. This
+    # lane exists because a regression in the installer — an interactive prompt
+    # that no CI run can answer — reached a release candidate unnoticed: nothing
+    # here had ever installed effGen the way a user does.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+        method: [editable, wheel, sdist, plain]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          case "${{ matrix.method }}" in
+            editable) pip install -e . ;;
+            plain)    pip install . ;;
+            wheel)    pip install build && python -m build --wheel -n . && pip install dist/*.whl ;;
+            sdist)    pip install build && python -m build --sdist  -n . && pip install dist/*.tar.gz ;;
+          esac
+
+      - name: The package imports and its public surface is whole
+        # Run from a directory that is not the checkout, so an import can only
+        # succeed through what was installed rather than through the source tree.
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -c "import effgen; print(effgen.__version__)"
+          python -c "
+          import effgen
+          broken = [n for n in effgen.__all__ if not hasattr(effgen, n)]
+          assert not broken, broken
+          print(len(effgen.__all__), 'public names, none broken')
+          "
+
+      - name: The CLI runs
+        working-directory: ${{ runner.temp }}
+        run: |
+          effgen --version
+          effgen --help > /dev/null
+          effgen doctor --json > /dev/null
+
+  installer-script:
+    name: ./install.sh runs unattended
+    runs-on: ubuntu-latest
+    # The installer must never wait for an answer nobody is there to give: a
+    # read on a closed stdin returns at once and, under `set -e`, ends the run
+    # as "Installation failed" — which is what a user sees in a pipeline, or on
+    # a second run against an environment that already exists.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Every prompt is guarded by a terminal check
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          python -m pytest -q tests/packaging/test_installer_is_unattended.py
+
+      - name: Run it with stdin closed, twice
+        # The second run is the regression: the first builds the environment,
+        # the second meets the branch that used to prompt about it.
+        run: |
+          bash install.sh < /dev/null
+          bash install.sh < /dev/null
+
+      - name: The clone is left clean
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "The installer left files behind in the clone:"
+            git status --porcelain
+            exit 1
+          fi
+          echo "git status is clean after installing"
+
   test-integration:
     name: Integration Tests
     runs-on: ubuntu-latest

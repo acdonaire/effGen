@@ -352,8 +352,12 @@ show_install_summary() {
 
     echo ""
 
-    # Confirm unless --yes was specified
-    if [ "$YES_TO_ALL" = false ] && [ "$QUICK_MODE" = false ]; then
+    # Confirm unless --yes was specified. Only ask when there is somebody to
+    # answer: run from CI, from another script, or with stdin redirected, this
+    # read returns non-zero at once and ends the install at the confirmation
+    # step. Nobody who invoked the installer needs it confirmed back to them,
+    # so with no terminal it goes ahead — the same thing --yes asks for.
+    if [ "$YES_TO_ALL" = false ] && [ "$QUICK_MODE" = false ] && [ -t 0 ]; then
         read -p "$(echo -e ${YELLOW}Proceed with installation? [Y/n]:${NC} )" -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]?$ ]]; then
