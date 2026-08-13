@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -90,4 +91,48 @@ def test_the_existing_environment_branch_keeps_what_is_there():
     assert guard_at < remove_at, (
         "the environment is removed before the terminal check decides whether "
         "anyone asked for that"
+    )
+
+
+def test_every_helper_the_installer_runs_exists():
+    """A documented flag must not point at a script nobody wrote.
+
+    `--full` and `--download-models` both reach a helper by path. When that
+    path is wrong the installer prints a warning and carries on, so the flag
+    reads as supported while doing nothing at all — which is how
+    `--download-models` shipped hollow.
+    """
+    text = (REPO / "scripts/install_effgen.sh").read_text()
+    referenced = set(re.findall(r'\$SCRIPT_DIR/([A-Za-z0-9_.-]+\.(?:py|sh))', text))
+    assert referenced, "no helper references found — has the syntax changed?"
+
+    missing = sorted(name for name in referenced if not (REPO / "scripts" / name).exists())
+    assert not missing, (
+        "The installer runs helpers that do not exist, so the flags reaching "
+        f"them do nothing: {missing}"
+    )
+
+
+def test_the_model_download_helper_runs_without_a_terminal():
+    """`--full` must not stall on a prompt, and must not fail the install."""
+    result = subprocess.run(
+        [sys.executable, str(REPO / "scripts/download_models.py"), "--list",
+         "--interactive"],
+        capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "GB" in result.stdout, "the listing does not say how large the set is"
+
+
+def test_the_model_download_helper_never_redirects_the_shared_cache():
+    """Passing a download directory would put a second copy of every model on
+    disk and hide the one the rest of the toolchain reads."""
+    source = (REPO / "scripts/download_models.py").read_text()
+    # An argument, not the word: the file explains in a comment why it passes
+    # neither, and that explanation must not fail the check it describes.
+    redirects = re.findall(r"^[^#]*\b(cache_dir|local_dir|download_dir)\s*=", source,
+                           re.MULTILINE)
+    assert not redirects, (
+        f"download_models.py passes {sorted(set(redirects))}, which overrides "
+        "HF_HUB_CACHE and puts a second copy of every model on disk"
     )
