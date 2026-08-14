@@ -53,6 +53,8 @@ run "rm -rf .coverage .coverage.* coverage.xml htmlcov .hypothesis \
 
 # Runtime state written under the working directory.
 run "rm -rf checkpoints .effgen"
+# Lane logs from scripts/run_tests.sh, and React stored by the web view.
+run "rm -rf .test-run scripts/_watch_assets"
 # `effgen config init` writes ./config.yaml unless -o names another path.
 run "rm -f config.yaml"
 
