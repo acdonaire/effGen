@@ -898,6 +898,20 @@ DEVICE_MEMORY_SIGNALS = (
 # Phrases that state outright that the submitted credential was rejected.
 # Kept narrow on purpose: each one names the key itself, so it cannot match a
 # request-validation error that merely mentions an argument.
+#: Phrases that mean "you have spent a per-minute budget", carried on a status
+#: code that would otherwise read as a permanent property of the request. Groq
+#: answers a spent token-per-minute allowance with 413 rather than 429, and the
+#: payload names it outright. Kept to statements about a *rate*, so a genuinely
+#: oversized body stays an invalid request.
+_EXPLICIT_RATE_LIMIT_SIGNALS = (
+    "rate_limit_exceeded",
+    "rate limit exceeded",
+    "tokens per minute",
+    "requests per minute",
+    "tokens per day",
+    "requests per day",
+)
+
 _EXPLICIT_INVALID_KEY_SIGNALS = (
     "api key not valid",
     "invalid api key",
@@ -997,8 +1011,16 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
         # 402 payment-required is an account/billing state (no credit, no
         # payment method): the same request will keep failing until billing
         # is fixed, so it must not be retried.
-        # 413 payload-too-large is a property of the request, not a transient
-        # rate limit — retrying the same oversized request will not succeed.
+        # 413 payload-too-large is normally a property of the request, not a
+        # transient rate limit — retrying the same oversized request will not
+        # succeed. The exception is a provider that answers a spent per-minute
+        # budget with 413: Groq does, and says so in the payload. Classifying
+        # that as invalid_request loses the backoff and reports a throttle as a
+        # permanent failure.
+        if status == 413 and any(
+            k in str(exc).lower() for k in _EXPLICIT_RATE_LIMIT_SIGNALS
+        ):
+            return _RATE_LIMITED
         if status in (400, 402, 413, 422):
             return _INVALID
         if status == 408 or status >= 500:
@@ -1047,7 +1069,16 @@ def classify_provider_error(exc: Exception) -> ErrorClass:
     # exception class and keep only the sentence.
     if "not json serializable" in msg:
         return _INVALID
-    if any(k in msg for k in ("rate limit", "rate-limit", "too many requests", "quota exceeded", "429")):
+    # The same per-minute signals the status-code branch reads, for an error
+    # that reaches here as text only — a contender's recorded error string,
+    # rebuilt without the status code the original carried.
+    if any(
+        k in msg
+        for k in (
+            "rate limit", "rate-limit", "too many requests", "quota exceeded", "429",
+            *_EXPLICIT_RATE_LIMIT_SIGNALS,
+        )
+    ):
         return _RATE_LIMITED
     # A credential that is missing or rejected. Providers call it a key or a
     # token depending on the house style — Hugging Face and Replicate say

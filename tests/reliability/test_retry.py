@@ -75,6 +75,47 @@ class TestIsTransientError:
         exc.status_code = 400  # type: ignore[attr-defined]
         assert not is_transient_error(exc)
 
+    def test_a_413_that_is_really_a_tokens_per_minute_limit_is_rate_limited(self):
+        """Groq reports a spent per-minute token budget as 413, not 429.
+
+        The payload says so — ``'code': 'rate_limit_exceeded'`` and "tokens per
+        minute (TPM)" — but a blanket 413 rule reads it as an oversized request,
+        which is permanent. The caller then neither backs off nor reports a
+        throttle, and the same budget would have served the request a minute
+        later.
+        """
+        from effgen.models.errors import classify_provider_error
+
+        exc = Exception(
+            "Error code: 413 - {'error': {'message': 'Request too large for model "
+            "`llama-3.1-8b-instant` in organization `org_x` service tier `on_demand` "
+            "on tokens per minute (TPM): Limit 6000, Requested 8212, please reduce "
+            "your message size and try again.', 'type': 'tokens', "
+            "'code': 'rate_limit_exceeded'}}"
+        )
+        exc.status_code = 413  # type: ignore[attr-defined]
+        result = classify_provider_error(exc)
+        assert result.category == "rate_limited"
+        assert result.rate_limited is True
+
+        # And through the shape an adapter actually raises, which is what the
+        # retry layer sees.
+        from effgen.models._adapter_utils import provider_runtime_error
+
+        wrapped = provider_runtime_error(
+            "groq", "llama-3.1-8b-instant", "generate", exc
+        )
+        assert is_transient_error(wrapped)
+        assert classify_provider_error(wrapped).rate_limited is True
+
+    def test_an_ordinary_413_is_still_an_invalid_request(self):
+        """A genuinely oversized payload is a property of the request."""
+        from effgen.models.errors import classify_provider_error
+
+        exc = Exception("Error code: 413 - payload too large: body exceeds 10 MB")
+        exc.status_code = 413  # type: ignore[attr-defined]
+        assert classify_provider_error(exc).category == "invalid_request"
+
     def test_value_error_not_retryable(self):
         assert not is_transient_error(ValueError("bad input"))
 
