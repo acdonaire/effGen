@@ -3,6 +3,7 @@
 import pytest
 
 from effgen import Agent
+from effgen.cli.code.engine import RECOVERED_ANSWER_SOURCES
 from effgen.core.agent import AgentConfig
 from effgen.tools.builtin import DateTimeTool, TextProcessingTool
 
@@ -12,7 +13,16 @@ from effgen.tools.builtin import DateTimeTool, TextProcessingTool
 # controls — the tool ran, the answer is in the run, and the run ended for a
 # known reason — rather than asserting that a small model always emits the
 # final-answer form, which would make them flaky rather than strict.
-_COMPLETED_REASONS = {"final_answer", "max_iterations_partial"}
+#
+# "Known reason" means every way the framework completes a run holding the
+# answer, not only the two a larger model usually takes. When the model repeats
+# a call to a tool whose output is a computed result, the loop stops and returns
+# that result: a success, reported as one, with the value in the output. Reading
+# the recovered set from the framework rather than restating it here is what
+# stops this list going stale the next time a completion path is added.
+_COMPLETED_REASONS = {"final_answer", "max_iterations_partial"} | set(
+    RECOVERED_ANSWER_SOURCES
+)
 
 
 def _assert_reached_answer(result, needle: str) -> None:

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from effgen.cli.scaffold import resolve_max_tokens
 from effgen.eval.battle import (
     BattleResult,
     Contender,
@@ -53,14 +54,26 @@ def _skip_if_a_contender_was_throttled(result) -> None:
     battle, so it is reported rather than read as a contender that failed to
     finish.
     """
+    _skip_if_a_serialized_contender_was_throttled(
+        [{"model": c.model, "error": c.error} for c in result.contenders]
+    )
+
+
+def _skip_if_a_serialized_contender_was_throttled(contenders) -> None:
+    """The same check against the serialized form, for the command tests.
+
+    A subprocess run has no ``BattleResult`` to inspect, only the JSON document
+    it printed, and that carries each contender's error verbatim.
+    """
     from effgen.models.errors import classify_provider_error
 
-    for contender in result.contenders:
-        if not contender.error:
+    for contender in contenders:
+        error = contender.get("error")
+        if not error:
             continue
-        if classify_provider_error(RuntimeError(contender.error)).category == "rate_limited":
+        if classify_provider_error(RuntimeError(error)).category == "rate_limited":
             pytest.skip(
-                f"{contender.model} was rate limited: {str(contender.error)[:200]}"
+                f"{contender.get('model')} was rate limited: {str(error)[:200]}"
             )
 
 
@@ -89,6 +102,23 @@ needs_three_families = pytest.mark.skipif(
 OPENAI_MODEL = "openai:gpt-5-nano"
 GROQ_MODEL = "groq:llama-3.1-8b-instant"
 GEMINI_MODEL = "gemini:gemini-3.1-flash-lite"
+
+#: A budget every contender in a race can answer within.
+#:
+#: One race, one number, and it is bounded from both sides. ``gpt-5-nano``
+#: spends its output budget on an internal reasoning chain before it writes
+#: anything, so a cap sized for a one-word reply from a plain chat model buys it
+#: 64 reasoning tokens and no answer — the empty column then reads as a
+#: contender that failed rather than as a budget that was too small. Above that,
+#: a free-tier per-minute token allowance is the ceiling: Groq counts what a
+#: request *asks for*, so 8192 on ``llama-3.1-8b-instant`` is refused outright
+#: against a 6000-token-per-minute limit however short the answer would be.
+#:
+#: effGen already computes each model's floor, so asking it keeps this right
+#: when the model list changes, and keeps it under every contender's ceiling.
+BATTLE_MAX_TOKENS = max(
+    resolve_max_tokens(m) for m in (OPENAI_MODEL, GROQ_MODEL, GEMINI_MODEL)
+)
 MISSING_MODEL = "openai:gpt-5-nonexistent-xyz"
 
 
@@ -282,7 +312,7 @@ class TestLiveBattle:
         result = run_battle(
             "Name the largest planet in one word.",
             [OPENAI_MODEL, GROQ_MODEL, GEMINI_MODEL],
-            max_tokens=200,
+            max_tokens=BATTLE_MAX_TOKENS,
         )
         assert len(result.contenders) == 3
         _skip_if_a_contender_was_throttled(result)
@@ -324,7 +354,7 @@ class TestLiveBattle:
         result = run_battle(
             "In one sentence, what is a mutex?",
             [OPENAI_MODEL, GROQ_MODEL],
-            max_tokens=200,
+            max_tokens=BATTLE_MAX_TOKENS,
             judge=GEMINI_MODEL,
         )
         judge = result.verdict["judge"]
@@ -342,9 +372,13 @@ class TestLiveBattle:
     @needs_groq
     def test_result_serializes_with_every_answer(self):
         result = run_battle(
-            "Reply with the word: ping", [OPENAI_MODEL, GROQ_MODEL], max_tokens=64
+            "Reply with the word: ping", [OPENAI_MODEL, GROQ_MODEL],
+            max_tokens=BATTLE_MAX_TOKENS,
         )
         doc = json.loads(result.to_json())
+        # What this measures is the serialized shape, not whether a free tier
+        # had budget left: a throttled contender is the provider's answer.
+        _skip_if_a_serialized_contender_was_throttled(doc["contenders"])
         assert doc["prompt"] == "Reply with the word: ping"
         assert {c["model"] for c in doc["contenders"]} == {OPENAI_MODEL, GROQ_MODEL}
         for c in doc["contenders"]:
@@ -385,7 +419,7 @@ class TestBattleCommand:
         """Piped output carries the whole result and no live frame or ANSI."""
         proc = self._run(
             "Reply with the word: pong", "-m", f"{OPENAI_MODEL},{GROQ_MODEL}",
-            "--max-tokens", "64",
+            "--max-tokens", str(BATTLE_MAX_TOKENS),
         )
         assert proc.returncode == 0, proc.stderr
         assert "\x1b[" not in proc.stdout, "piped output carries no ANSI escapes"
@@ -399,11 +433,12 @@ class TestBattleCommand:
     def test_json_output_is_valid_on_stdout(self):
         proc = self._run(
             "Reply with the word: pong", "-m", f"{OPENAI_MODEL},{GROQ_MODEL}",
-            "--max-tokens", "64", "--json",
+            "--max-tokens", str(BATTLE_MAX_TOKENS), "--json",
         )
         assert proc.returncode == 0, proc.stderr
         doc = json.loads(proc.stdout)
         assert len(doc["contenders"]) == 2
+        _skip_if_a_serialized_contender_was_throttled(doc["contenders"])
         assert all(c["answer"] for c in doc["contenders"])
         assert doc["verdict"]["fastest"]["model"]
         assert doc["total_cost_usd"] > 0
@@ -414,7 +449,7 @@ class TestBattleCommand:
         out = tmp_path / "battle.html"
         proc = self._run(
             "Reply with the word: pong", "-m", f"{OPENAI_MODEL},{GROQ_MODEL}",
-            "--max-tokens", "64", "--report", str(out), "--json",
+            "--max-tokens", str(BATTLE_MAX_TOKENS), "--report", str(out), "--json",
         )
         assert proc.returncode == 0, proc.stderr
         html = out.read_text(encoding="utf-8")
