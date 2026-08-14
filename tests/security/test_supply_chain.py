@@ -484,6 +484,11 @@ class TestLockfilePinsSatisfyDeclaredFloors:
         [
             ("requirements-lock.txt", ()),
             ("requirements-all-lock.txt", ("all",)),
+            # The 3.14 lock is how `effgen[all]` installs there at all, so it
+            # earns the same guarantees as the other two: a floor raised for an
+            # advisory has to reach every lock, not just the ones for the
+            # Pythons someone happened to remember.
+            ("requirements-all-py314-lock.txt", ("all",)),
         ],
     )
     def test_pins_satisfy_pyproject_specifiers(self, lock_name: str, extras: tuple[str, ...]):
@@ -513,6 +518,11 @@ class TestLockfilePinsSatisfyDeclaredFloors:
         [
             ("requirements-lock.txt", ()),
             ("requirements-all-lock.txt", ("all",)),
+            # The 3.14 lock is how `effgen[all]` installs there at all, so it
+            # earns the same guarantees as the other two: a floor raised for an
+            # advisory has to reach every lock, not just the ones for the
+            # Pythons someone happened to remember.
+            ("requirements-all-py314-lock.txt", ("all",)),
         ],
     )
     def test_declared_packages_are_locked(self, lock_name: str, extras: tuple[str, ...]):

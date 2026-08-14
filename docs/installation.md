@@ -206,13 +206,34 @@ Two effGen safety nets make a mismatch easy to diagnose rather than mysterious:
 
 ## Supported Python versions
 
-`effgen` officially supports Python **3.11, 3.12, 3.13**.
+`effgen` officially supports Python **3.11, 3.12, 3.13, 3.14**.
 
-**Python 3.14**: the base install, the CLI and every provider extra work — all
-ten documented installation routes were verified on 3.14.6. The `all` extra
-does not install, because it pulls `vllm`, which pulls `numba`, which declares
-`>=3.10,<3.14`. Until that lifts upstream, install the extras you need by name
-on 3.14 rather than `effgen[all]`, or use 3.13 for a full install.
+**Python 3.14 needs a lock file for `effgen[all]`.** The base install, the CLI,
+the `dev` extra and every provider extra install normally there:
+
+```bash
+pip install effgen              # works on 3.14
+pip install "effgen[openai]"    # any extra by name works on 3.14
+```
+
+`effgen[all]` is the exception, and the reason is pip's resolver rather than any
+one package. `all` pulls `vllm` on a wide range (`>=0.2.7,<1.0`). Recent `vllm`
+releases carry 3.14 wheels for themselves and their compiled dependencies, but
+when pip backtracks over an unrelated conflict it walks that range backwards
+until it reaches a release pinned to `numba==0.61`, which predates 3.14 and
+whose source build refuses to run there. Constraining `vllm` upward instead ends
+in `resolution-too-deep`.
+
+Pin the whole set instead:
+
+```bash
+pip install -r requirements-all-py314-lock.txt
+pip install --no-deps effgen
+```
+
+That is the same answer `requirements-all-lock.txt` gives on 3.11–3.13; the two
+are not interchangeable, because the 3.11 lock pins `torch==2.2.1` and
+`vllm==0.4.1`, neither of which has a 3.14 wheel.
 
 3.10 was dropped for 1.0.0. It reached the point where holding it back cost
 more than it bought: several `pyupgrade` rewrites and a few runtime branches

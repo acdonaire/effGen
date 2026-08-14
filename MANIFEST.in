@@ -12,6 +12,7 @@ include requirements.txt
 include requirements-dev.txt
 include requirements-lock.txt
 include requirements-all-lock.txt
+include requirements-all-py314-lock.txt
 recursive-include docs *.md
 
 # Plugin scaffold templates (shipped as package data).
