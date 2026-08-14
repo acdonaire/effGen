@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
+from tests._harness.provider_unavailable import assert_cli_succeeded
+
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 load_dotenv(Path.home() / ".effgen" / ".env", override=False)
 
@@ -113,7 +115,7 @@ def test_batch_json_flag_emits_a_row_per_query(tmp_path):
         "--concurrency", "4", "--json", "-q",
         cwd=Path(__file__).resolve().parents[2],
     )
-    assert proc.returncode == 0, proc.stderr
+    assert_cli_succeeded(proc, "effgen batch")
     data = json.loads(proc.stdout)
     assert data["total"] == 4
     assert len(data["rows"]) == 4
@@ -136,5 +138,5 @@ def test_batch_warns_when_no_output_and_no_json(tmp_path):
         "-i", str(input_path), "-m", f"groq:{GROQ_MODEL}",
         cwd=Path(__file__).resolve().parents[2],
     )
-    assert proc.returncode == 0, proc.stderr
+    assert_cli_succeeded(proc, "effgen batch")
     assert "discarded" in proc.stdout.lower()

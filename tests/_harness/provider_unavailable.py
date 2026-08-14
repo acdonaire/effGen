@@ -24,6 +24,7 @@ code and a sentence; that is what this matches.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 #: Statements that mean "your account has no capacity right now". Each is a
 #: quota, a rate, or a billing state — recoverable by waiting or by paying, and
@@ -99,3 +100,27 @@ def first_provider_sentence(text: str, limit: int = 240) -> str:
         if re.search(r"error code: \d{3}|\[rate_limited\]|RESOURCE_EXHAUSTED", stripped, re.I):
             return stripped[:limit]
     return text.strip().splitlines()[-1][:limit] if text.strip() else ""
+
+
+def assert_cli_succeeded(proc: Any, what: str = "the command") -> None:
+    """Assert a CLI subprocess exited 0, keeping both of its streams.
+
+    The rule above classifies a failure by reading its text, and across a
+    subprocess boundary the provider's sentence only reaches the parent through
+    what the child printed. A CLI that reports per-item outcomes prints them on
+    **stdout** — with ``--json``, the refusal is a field in that document — while
+    the process-level summary goes to stderr. So a message built from stderr
+    alone drops exactly the sentence the rule needs, and a throttled run is
+    reported as a defect in the tree.
+
+    Both streams therefore go into the message. Use this instead of
+    ``assert proc.returncode == 0, proc.stderr`` wherever the subprocess calls a
+    provider.
+    """
+    if proc.returncode == 0:
+        return
+    raise AssertionError(
+        f"{what} exited {proc.returncode}\n"
+        f"--- stderr ---\n{proc.stderr}\n"
+        f"--- stdout ---\n{proc.stdout}"
+    )

@@ -35,6 +35,7 @@ from effgen.eval.battle import (
     run_battle,
 )
 from tests._harness.offline_assets import assert_self_contained
+from tests._harness.provider_unavailable import assert_cli_succeeded
 
 NODE = shutil.which("node")
 STATIC_DIR = Path(__file__).parents[2] / "effgen" / "playground" / "static"
@@ -421,7 +422,7 @@ class TestBattleCommand:
             "Reply with the word: pong", "-m", f"{OPENAI_MODEL},{GROQ_MODEL}",
             "--max-tokens", str(BATTLE_MAX_TOKENS),
         )
-        assert proc.returncode == 0, proc.stderr
+        assert_cli_succeeded(proc, "effgen battle")
         assert "\x1b[" not in proc.stdout, "piped output carries no ANSI escapes"
         assert "# Model Battle" in proc.stdout
         assert "## Verdict" in proc.stdout
@@ -435,7 +436,7 @@ class TestBattleCommand:
             "Reply with the word: pong", "-m", f"{OPENAI_MODEL},{GROQ_MODEL}",
             "--max-tokens", str(BATTLE_MAX_TOKENS), "--json",
         )
-        assert proc.returncode == 0, proc.stderr
+        assert_cli_succeeded(proc, "effgen battle")
         doc = json.loads(proc.stdout)
         assert len(doc["contenders"]) == 2
         _skip_if_a_serialized_contender_was_throttled(doc["contenders"])
@@ -451,7 +452,7 @@ class TestBattleCommand:
             "Reply with the word: pong", "-m", f"{OPENAI_MODEL},{GROQ_MODEL}",
             "--max-tokens", str(BATTLE_MAX_TOKENS), "--report", str(out), "--json",
         )
-        assert proc.returncode == 0, proc.stderr
+        assert_cli_succeeded(proc, "effgen battle")
         html = out.read_text(encoding="utf-8")
         assert_self_contained(html, "the battle report")
         assert "//" not in _asset_refs(html), "no protocol-relative asset"
@@ -743,7 +744,7 @@ class TestPlaygroundBattleBehavior:
             capture_output=True, text=True, timeout=120,
             env={**os.environ, "NODE_PATH": _node_path() or ""},
         )
-        assert proc.returncode == 0, proc.stderr
+        assert_cli_succeeded(proc, "effgen battle")
         return json.loads(proc.stdout.strip().splitlines()[-1])
 
     def test_contenders_come_from_the_catalog(self, result):
