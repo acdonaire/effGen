@@ -91,6 +91,20 @@ class OpenAICompatibleAdapter(OpenAIAdapter):
                 "itself, use provider='openai' instead."
             )
 
+        # A window nobody named is a guess, and a wrong one is expensive: effGen
+        # plans the history against it, so a server started with a smaller
+        # `--max-model-len` truncates or refuses far from where the number was
+        # chosen. Say so once, naming the value and where to set it.
+        if context_length is None:
+            logger.warning(
+                "No context_length given for '%s' at %s; assuming %d tokens. "
+                "If the server was started with a smaller window (vLLM's "
+                "--max-model-len, TGI's --max-total-tokens), pass "
+                "context_length=<the real number> — planning against a window "
+                "the server does not have fails later, at the call.",
+                model_name, resolved, DEFAULT_CONTEXT_LENGTH,
+            )
+
         super().__init__(
             model_name=model_name,
             api_key=api_key or PLACEHOLDER_API_KEY,
