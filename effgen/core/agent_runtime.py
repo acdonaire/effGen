@@ -275,8 +275,36 @@ _TOOLCALL_CONSTRUCT_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _TOOLCALL_TAG_RE = re.compile(
-    r"</?\s*(?:function(?:\s*=\s*[\w.\-]+)?|tool_call)\s*>"
+    r"</?\s*(?:function(?:\s*=\s*[\w.\-]+)?|tool_call|invoke|function_call)\s*>"
     r"|<\|[^>|]*\|>",
+    re.IGNORECASE,
+)
+# The same call written as nested tags rather than as JSON —
+# "<function=calculator><parameter=expression>2+2</parameter></function>".
+# The construct regex above needs a JSON object and finds nothing here, and
+# stripping the tags alone would leave the argument values standing in the
+# answer as loose prose ("calculate 2+2"), so the whole construct goes.
+_XML_TAG_CALL_RE = re.compile(
+    r"<(?P<tag>function|tool_call|invoke|tool|function_call)"
+    r"(?:=|\s+name\s*=\s*[\"']?)[\w.\-]+[\"']?\s*>"
+    r".*?</(?P=tag)\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+# The same construct with no closing tag, because the token budget ran out
+# mid-call. It runs to the end of the text, so it is only applied when an
+# argument tag is actually present — otherwise an answer that merely mentions
+# "<function=name>" would lose everything after the mention.
+_XML_TRUNCATED_CALL_RE = re.compile(
+    r"<(?:function|tool_call|invoke|tool|function_call)"
+    r"(?:=|\s+name\s*=\s*[\"']?)[\w.\-]+[\"']?\s*>.*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
+# An argument tag left behind by a construct that was cut short. The opening
+# form has to name its argument; the closing form is bare.
+_XML_ARG_TAG_RE = re.compile(
+    r"<(?:parameter|param|argument|arg)"
+    r"(?:\s*=\s*[\w.\-]+|\s+name\s*=\s*[\"'][\w.\-]+[\"'])\s*>"
+    r"|</\s*(?:parameter|param|argument|arg)\s*>",
     re.IGNORECASE,
 )
 # A leaked tool call with no wrapping tag at all — just the bare tool name
@@ -426,6 +454,12 @@ def find_written_tool_call(text: str | None, tool_names: Any) -> str | None:
     for kv_match in _TAGGED_KV_CALL_RE.finditer(scan):
         if kv_match.group("name") in names:
             return kv_match.group("name")
+    # A call written as nested tags, which carries no JSON for the readers above.
+    from .tool_calling import _xml_parameter_call
+
+    xml_call = _xml_parameter_call(scan)
+    if xml_call is not None and xml_call[0] in names:
+        return xml_call[0]
     # Python call syntax, only when it is the entire answer.
     return _standalone_paren_call(scan, names)
 
@@ -529,6 +563,12 @@ def sanitize_final_answer(text: str | None) -> str | None:
     s = _TOOL_ECHO_RE.sub("", s)
     # 2b. Remove leaked model tool-call syntax (whole constructs, then stray tags).
     s = _TOOLCALL_CONSTRUCT_RE.sub("", s)
+    s = _XML_TAG_CALL_RE.sub("", s)
+    if _XML_ARG_TAG_RE.search(s):
+        # An argument tag survived the closed-construct pass, so a call was cut
+        # short. Only then is it safe to drop the rest of the text.
+        s = _XML_TRUNCATED_CALL_RE.sub("", s)
+        s = _XML_ARG_TAG_RE.sub("", s)
     s = _TOOLCALL_TAG_RE.sub("", s)
     # 2c. Remove a leading bare "tool_name {json}" echo with no wrapping tag.
     s = _LEADING_TOOLCALL_ECHO_RE.sub("", s)

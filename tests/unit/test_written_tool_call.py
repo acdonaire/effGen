@@ -483,3 +483,34 @@ class TestStandalonePythonCallSyntax:
         assert find_written_tool_call(
             "```python\ncalculator(expression='2+2')\n```", self.TOOLS
         ) is None
+
+
+class TestXmlTaggedWrittenCall:
+    """A call written as nested tags is a written-out call, not an answer."""
+
+    TOOLS = ("calculator", "retrieval")
+
+    def test_a_tagged_xml_call_is_flagged(self):
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        assert find_written_tool_call(
+            "<tool_call><function=calculator><parameter=expression>6*7</parameter>"
+            "</function></tool_call>",
+            self.TOOLS,
+        ) == "calculator"
+
+    def test_a_tool_the_agent_does_not_hold_is_not_flagged(self):
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        assert find_written_tool_call(
+            "<function=send_email><parameter=to>a@b.c</parameter></function>",
+            self.TOOLS,
+        ) is None
+
+    def test_prose_about_the_tags_is_not_flagged(self):
+        from effgen.core.agent_runtime import find_written_tool_call
+
+        assert find_written_tool_call(
+            "A template may render <function=NAME> tags around each parameter.",
+            self.TOOLS,
+        ) is None

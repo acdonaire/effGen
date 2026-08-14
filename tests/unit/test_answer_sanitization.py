@@ -354,3 +354,67 @@ def test_injection_sites_use_the_shared_nudges():
         assert "unknown_tool_observation(" in inspect.getsource(module), (
             f"{module.__name__} no longer builds the shared unknown-tool observation"
         )
+
+
+class TestXmlTaggedCallScaffolding:
+    """A call written as nested tags never reaches the user as prose.
+
+    Stripping the tags alone would leave the argument values standing in the
+    answer, so ``<parameter=expression>4817 * 236</parameter>`` would read as a
+    stray "4817 * 236" beside the real answer.
+    """
+
+    def test_a_wrapped_call_is_removed_whole(self):
+        from effgen.core.agent_runtime import sanitize_final_answer
+
+        text = (
+            "<tool_call>\n<function=calculator>\n<parameter=operation>\ncalculate\n"
+            "</parameter>\n<parameter=expression>\n4817 * 236\n</parameter>\n"
+            "</function>\n</tool_call>\nThe product is 1136812."
+        )
+        assert sanitize_final_answer(text).strip() == "The product is 1136812."
+
+    def test_the_attribute_spelling_is_removed_too(self):
+        from effgen.core.agent_runtime import sanitize_final_answer
+
+        text = (
+            '<invoke name="calculator"><parameter name="expression">6*7</parameter>'
+            "</invoke>\nIt is 42."
+        )
+        assert sanitize_final_answer(text).strip() == "It is 42."
+
+    def test_a_construct_cut_short_leaves_no_tags(self):
+        from effgen.core.agent_runtime import sanitize_final_answer
+
+        out = sanitize_final_answer(
+            "Working on it.\n<function=calculator>\n<parameter=expression>\n6*7"
+        )
+        assert "<" not in out and "parameter" not in out
+        assert out.strip().startswith("Working on it.")
+
+    def test_sanitizing_is_idempotent(self):
+        from effgen.core.agent_runtime import sanitize_final_answer
+
+        text = "<function=calculator><parameter=expression>6*7</parameter></function>42"
+        once = sanitize_final_answer(text)
+        assert sanitize_final_answer(once) == once
+
+    def test_prose_about_parameters_is_left_alone(self):
+        from effgen.core.agent_runtime import sanitize_final_answer
+
+        text = "Pass the expression parameter to the calculator, e.g. 6*7 = 42."
+        assert sanitize_final_answer(text) == text
+
+    def test_a_mention_with_no_arguments_keeps_the_rest_of_the_answer(self):
+        """Only a construct with argument tags may swallow the text after it.
+
+        An answer that explains the syntax carries the opening tag and nothing
+        else; dropping everything after the mention would delete the answer.
+        """
+        from effgen.core.agent_runtime import sanitize_final_answer
+
+        out = sanitize_final_answer(
+            "Templates write <function=NAME> to open a call. "
+            "The rest of this sentence must survive."
+        )
+        assert "The rest of this sentence must survive." in out
