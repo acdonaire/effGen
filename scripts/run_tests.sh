@@ -399,7 +399,11 @@ for p in $(descendants $$); do kill -9 "$p" 2>/dev/null; done
     done < "$L/manifest.txt"
     echo ""
     echo "## Failing tests"
-    if grep -haE '^(FAILED|ERROR) tests/' "$L"/*.txt 2>/dev/null | sed 's/ - .*//' | sort -u | grep .; then
+    # Leading whitespace is allowed: a lane that drives pytest itself reports a
+    # failure indented inside its own traceback, and anchoring at column 0
+    # silently drops it.
+    if grep -haE '^[[:space:]]*(FAILED|ERROR) tests/' "$L"/*.txt 2>/dev/null \
+        | sed -e 's/^[[:space:]]*//' -e 's/ - .*//' | sort -u | grep .; then
         echo ""
         echo "RESULT: FAILURES — the list above needs a decision."
     else
