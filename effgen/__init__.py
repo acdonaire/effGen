@@ -1,7 +1,7 @@
 """
 effGen: A comprehensive framework for building agents with Small Language Models.
 
-This framework enables SLMs to function as powerful agentic systems through:
+This framework runs SLMs as agentic systems through:
 - Tool integration (built-in tools + MCP/A2A/ACP protocols)
 - Advanced prompt engineering optimized for SLMs
 - Smart sub-agent decomposition for complex tasks

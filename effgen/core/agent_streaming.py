@@ -58,9 +58,9 @@ class AgentStreamingMixin:
     if TYPE_CHECKING:
         # Supplied by the class this is mixed into. Declared so a reader of the
         # streaming code can see where `self.config` comes from, and so the
-        # type checker does not count each use as an undefined attribute. The
-        # wider mixin seam is followups/mixin_attr_defined_seam.md; this
-        # declares only what the code here actually reads.
+        # type checker does not count each use as an undefined attribute. Only
+        # the attributes this module actually reads are declared; the other
+        # mixins declare their own.
         config: AgentConfig
 
     def _fold_stream_usage(

@@ -572,7 +572,7 @@ def _native_json_call(
 
     Returns ``(json_str, parsed, raw_text, error)``. On success ``json_str`` is the
     validated JSON; otherwise it is ``None`` and ``raw_text``/``error`` carry the
-    last model text and the reason so the caller can fall back cleanly.
+    last model text and the reason, so the caller can fall back.
     """
     from ..models._adapter_utils import default_max_output_tokens
     from ..models.base import GenerationConfig

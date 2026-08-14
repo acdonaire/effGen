@@ -1,8 +1,8 @@
 """
 Tool fallback chain for the effGen framework.
 
-When a tool fails, the fallback chain automatically tries alternative tools
-in a defined order, improving agent robustness.
+When a tool fails, the fallback chain tries alternative tools in a defined
+order, so a single tool failure does not end the run.
 """
 
 from __future__ import annotations

@@ -152,7 +152,10 @@ class AgentToolExecutionMixin:
 
     def _execute_tool_once(self, tool_name: str, tool_input: str) -> str:
         """
-        Execute a single tool with robust error handling (no fallback).
+        Execute a single tool, without consulting the fallback chain.
+
+        A failure is returned as an ``Error executing tool '<name>': ...``
+        string rather than raised, so the loop can act on it.
 
         Args:
             tool_name: Name of tool to execute

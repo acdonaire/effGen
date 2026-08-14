@@ -121,7 +121,7 @@ def _handle_compare_command(args, cli) -> int:
     if json_mode:
         cli._human_to_stderr = True
 
-    # Unknown suite is a user error, not a crash — report cleanly (no traceback)
+    # Unknown suite is a user error, not a crash — report it without a traceback
     # and exit 2 with the list of valid suites. A bad data file is reported the
     # same way.
     try:

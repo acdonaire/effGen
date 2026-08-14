@@ -138,8 +138,8 @@ def _parse_docstring(
     Understands the common ``Args:``/``Arguments:``/``Parameters:`` section with
     ``name: description`` or ``name (type): description`` lines (Google/NumPy
     style). *known_params* (the function's real parameter names) is used to tell
-    a new param entry from a wrapped continuation line, which is far more robust
-    than guessing from indentation. Best-effort — anything it can't parse simply
+    a new param entry from a wrapped continuation line, rather than guessing
+    from indentation. Best-effort — anything it can't parse simply
     yields no per-param description.
     """
     if not doc:

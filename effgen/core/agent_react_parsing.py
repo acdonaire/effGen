@@ -240,7 +240,7 @@ class AgentReActParsingMixin:
 
     def _parse_react_response(self, text: str) -> dict[str, Any]:
         """
-        Parse ReAct formatted response with robust error handling.
+        Parse a ReAct-formatted response into its components.
 
         Args:
             text: Response text
