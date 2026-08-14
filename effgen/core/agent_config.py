@@ -107,6 +107,20 @@ class AgentConfig:
             which is what the CLI does so it can render a failure as a panel.
             A backend that never answered raises either way: that run produced
             no result to inspect.
+
+            **Batch evaluation wants ``raise_on_error=False``.** Scoring a run
+            that hit the iteration cap as an error rather than as a wrong answer
+            measures the reporting style instead of the model, and a small model
+            hits that cap often. The pairing this flag was designed for is what
+            makes that safe: an ordinary failure comes back to be inspected,
+            while a backend that never answered still raises, so a broken
+            endpoint cannot be silently scored as a wrong answer.
+
+            One consequence to code for: with the flag off, a failed run's
+            ``response.output`` is effGen's report of what stopped it, and the
+            model's own text is in ``response.metadata["partial_output"]``. Read
+            that key rather than ``output`` when a partial answer is what you
+            want to score.
     """
     name: str = field(default="", kw_only=True)
     model: BaseModel | str

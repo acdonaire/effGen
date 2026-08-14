@@ -63,7 +63,13 @@ class AgentResponse:
     Response from agent execution.
 
     Attributes:
-        output: Final output text
+        output: The answer text on a successful run. **On a failed run this is
+            effGen's report of what stopped the run, not the model's words** —
+            what the run had reached is kept in ``metadata["partial_output"]``.
+            See ``metadata`` below for the per-reason detail. Callers that read
+            ``output`` without checking :attr:`success` are the reason
+            ``raise_on_error`` defaults to ``True``; a batch caller that turns
+            it off has to make that check itself.
         success: Whether execution succeeded
         mode: Execution mode used
         iterations: Number of iterations performed
