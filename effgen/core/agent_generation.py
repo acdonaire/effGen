@@ -591,12 +591,22 @@ class AgentGenerationMixin:
         }
 
     def _model_provider(self, model: Any) -> str:
-        """Best-effort provider name for a model object (for error reporting)."""
+        """Best-effort provider name for a model object.
+
+        Feeds the error detail, the model span and the provider-labelled
+        metric series. A local engine carries no provider attribute — it has an
+        *engine* — so this used to answer ``"unknown"`` for on-device work while
+        :func:`_infer_provider_from_model`, which feeds the run store for the
+        same run, answered ``transformers``. Two labels for one call is a
+        question the dashboard cannot answer, so the shared resolver is the
+        fallback here too.
+        """
         for attr in ("_provider", "provider", "provider_name"):
             val = getattr(model, attr, None)
             if isinstance(val, str) and val:
                 return val
-        return "unknown"
+        name = getattr(model, "model_name", None) or getattr(model, "name", None)
+        return _infer_provider_from_model(model, name if isinstance(name, str) else None)
 
     def _record_provider_metrics(
         self,
