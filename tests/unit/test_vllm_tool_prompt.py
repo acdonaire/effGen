@@ -17,6 +17,12 @@ from typing import Any
 
 import pytest
 
+# The engine module reaches for the vLLM SDK, which is an optional extra and is
+# not installed on the CI unit matrix. Skipping by name here states that plainly
+# rather than leaving it to the absent-optional-dependency rule to infer from a
+# traceback.
+pytest.importorskip("vllm", reason="the vllm extra is not installed")
+
 
 class _RecordingTokenizer:
     """Stands in for the HF tokenizer, recording what the template was given."""
