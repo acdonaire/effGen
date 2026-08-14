@@ -147,3 +147,92 @@ class TestFunctionTagFormat:
             "calculator",
             {"expression": "6*7"},
         )
+
+
+
+# A call written as nested tags rather than as JSON. Templates disagree about
+# the spelling: the tag that opens the call, the tag that carries one argument,
+# and whether the name follows an ``=`` or sits in a ``name=`` attribute all
+# vary. The first fixture is a generation captured from a local model; the rest
+# are the other spellings the same shape takes.
+XML_TAGGED_CALL = (
+    "<tool_call>\n<function=calculator>\n<parameter=operation>\ncalculate\n"
+    "</parameter>\n<parameter=expression>\n4817 * 236\n</parameter>\n"
+    "</function>\n</tool_call>"
+)
+
+
+class TestXmlTaggedCallParsing:
+    """``<function=NAME><parameter=KEY>value</parameter></function>``."""
+
+    def test_a_wrapped_call_is_parsed(self, strategy):
+        result = strategy.parse_response(XML_TAGGED_CALL)
+        assert (result.is_tool_call, result.tool_name) == (True, "calculator")
+        assert result.arguments == {"operation": "calculate", "expression": "4817 * 236"}
+
+    def test_a_call_without_a_wrapper_is_parsed(self, strategy):
+        result = strategy.parse_response(
+            "<function=get_weather>\n<parameter=city>\nSF\n</parameter>\n</function>"
+        )
+        assert (result.tool_name, result.arguments) == ("get_weather", {"city": "SF"})
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '<invoke name="get_weather"><parameter name="city">SF</parameter></invoke>',
+            '<function name="get_weather"><parameter name="city">SF</parameter></function>',
+            "<tool_call=get_weather><arg=city>SF</arg></tool_call>",
+            "<function_call=get_weather><argument=city>SF</argument></function_call>",
+            "<tool=get_weather><param=city>SF</param></tool>",
+        ],
+        ids=["invoke-attr", "function-attr", "arg", "argument", "param"],
+    )
+    def test_every_spelling_of_the_same_shape_is_read(self, strategy, text):
+        """The reader is keyed on the shape, not on one family's tag names."""
+        result = strategy.parse_response(text)
+        assert (result.tool_name, result.arguments) == ("get_weather", {"city": "SF"})
+
+    def test_a_json_valued_argument_keeps_its_type(self, strategy):
+        result = strategy.parse_response(
+            "<function=retrieval><parameter=query>refund</parameter>"
+            "<parameter=top_k>3</parameter><parameter=rerank>true</parameter></function>"
+        )
+        assert result.arguments == {"query": "refund", "top_k": 3, "rerank": True}
+
+    def test_a_call_the_budget_cut_short_still_reads(self, strategy):
+        """The closing tags are optional, so a truncated call is not lost."""
+        result = strategy.parse_response(
+            "<tool_call>\n<function=calculator>\n<parameter=expression>\n6*7\n</parameter>"
+        )
+        assert (result.tool_name, result.arguments) == ("calculator", {"expression": "6*7"})
+
+    def test_reasoning_before_the_call_does_not_hide_it(self, strategy):
+        result = strategy.parse_response(
+            "<think>The user wants a product, so I should use the calculator.</think>\n"
+            "<tool_call><function=calculator><parameter=expression>6*7</parameter>"
+            "</function></tool_call>"
+        )
+        assert (result.tool_name, result.arguments) == ("calculator", {"expression": "6*7"})
+
+    def test_the_json_dialects_are_unaffected(self, strategy):
+        """Templates that write JSON keep the reader they already had."""
+        for text, expected in [
+            ('<tool_call>{"name": "calculator", "arguments": {"expression": "6*7"}}</tool_call>',
+             ("calculator", {"expression": "6*7"})),
+            ('<function=calculator>{"expression": "6*7"}</function>',
+             ("calculator", {"expression": "6*7"})),
+            ('[TOOL_CALLS] [{"name": "calculator", "arguments": {"expression": "6*7"}}]',
+             ("calculator", {"expression": "6*7"})),
+        ]:
+            result = strategy.parse_response(text)
+            assert (result.tool_name, result.arguments) == expected, text
+
+    def test_prose_mentioning_the_tags_is_not_a_call(self, strategy):
+        result = strategy.parse_response(
+            "A model may write <function=name> tags, but this turn did not."
+        )
+        assert not result.is_tool_call
+
+    def test_an_empty_envelope_is_not_a_call(self, strategy):
+        result = strategy.parse_response("<function=calculator></function>")
+        assert not result.is_tool_call

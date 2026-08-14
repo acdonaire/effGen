@@ -71,6 +71,82 @@ def _json_tool_call(
         search_from = start + 1
 
 
+#: Tags a chat template uses to open a call in the XML dialect, and the tags it
+#: uses for one argument inside it. Both spellings of the name are accepted:
+#: ``<function=NAME>`` and ``<function name="NAME">``.
+_XML_CALL_TAGS = ("function", "tool_call", "invoke", "tool", "function_call")
+_XML_ARGUMENT_TAGS = ("parameter", "param", "argument", "arg")
+
+#: ``<TAG=NAME>`` / ``<TAG name="NAME">`` … ``</TAG>``. The closing tag is
+#: optional so a call the token budget cut short still reads.
+_XML_CALL_RE = re.compile(
+    r"<(?P<tag>" + "|".join(_XML_CALL_TAGS) + r")"
+    r"(?:=|\s+name\s*=\s*[\"']?)(?P<name>[\w.\-]+)[\"']?\s*>"
+    r"(?P<body>.*?)(?:</(?P=tag)>|$)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+#: One argument inside that envelope, in either spelling.
+_XML_ARGUMENT_RE = re.compile(
+    r"<(?P<tag>" + "|".join(_XML_ARGUMENT_TAGS) + r")"
+    r"(?:=|\s+name\s*=\s*[\"']?)(?P<key>[\w.\-]+)[\"']?\s*>"
+    r"(?P<value>.*?)</(?P=tag)>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+#: Cheap rejection: the dialect always carries an opener and an argument tag.
+_XML_CALL_HINT_RE = re.compile(
+    r"<(?:" + "|".join(_XML_CALL_TAGS + _XML_ARGUMENT_TAGS) + r")(?:=|\s+name\s*=)",
+    re.IGNORECASE,
+)
+
+
+def _xml_parameter_call(text: str) -> tuple[str, dict[str, Any]] | None:
+    """Extract a call written as XML tags rather than as JSON.
+
+    Chat templates disagree about how a tool call is spelled. Many render it as
+    JSON — the readers above cover those — and others render it as nested tags,
+    one per argument::
+
+        <tool_call>
+        <function=calculator>
+        <parameter=expression>
+        4817 * 236
+        </parameter>
+        </function>
+        </tool_call>
+
+    The JSON readers cannot see a call in that, and a wrapper such as
+    ``<tool_call>`` also stops the text being taken as a final answer, so
+    without this reader the turn parses to nothing at all: the loop nudges
+    itself to its iteration cap and the tool is never called, on any model whose
+    template writes this shape.
+
+    Both ways of naming a tag are accepted — ``<function=NAME>`` and
+    ``<function name="NAME">`` — across the tag names templates use for a call
+    and for an argument, so the reader is keyed on the shape rather than on a
+    model family. Each value is the tag's text: one that is valid JSON is
+    decoded, so an integer argument arrives as an ``int`` rather than as
+    ``"3"``, and anything else stays the string the model wrote.
+
+    Returns the tool name and its arguments, or ``None``.
+    """
+    if not _XML_CALL_HINT_RE.search(text):
+        return None
+
+    for call in _XML_CALL_RE.finditer(text):
+        arguments: dict[str, Any] = {}
+        for arg in _XML_ARGUMENT_RE.finditer(call.group("body")):
+            value = arg.group("value").strip()
+            try:
+                arguments[arg.group("key")] = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                arguments[arg.group("key")] = value
+        if arguments:
+            return call.group("name"), arguments
+    return None
+
+
 def _is_truncated_json_call(text: str) -> bool:
     """Whether the text looks like a tool call the generation cut short.
 
@@ -756,6 +832,18 @@ class NativeFunctionCallingStrategy(ToolCallingStrategy):
                     return result
             except (json.JSONDecodeError, TypeError) as e:
                 logger.debug(f"Failed to parse Qwen tool call JSON: {e}")
+
+        # --- Try the XML dialect ---
+        # <function=NAME><parameter=KEY>value</parameter>…</function>, the shape
+        # templates use where others write JSON. Read before the JSON wrappers
+        # below: none of them can see a call in it, and its wrapper tag keeps
+        # the text from being read as an answer either.
+        xml_call = _xml_parameter_call(text)
+        if xml_call is not None:
+            result.tool_name, result.arguments = xml_call
+            result.is_tool_call = True
+            logger.debug(f"Parsed XML-parameter tool call: {result.tool_name}")
+            return result
 
         # --- Try the <function=NAME>{...}</function> wrapper ---
         # The name is followed by '>', not by the '(' or '{' the combined
