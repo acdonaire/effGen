@@ -16,7 +16,12 @@ import pytest
 # reads them.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tests._harness import hermetic, lane_timing, optional_deps  # noqa: E402
+from tests._harness import (  # noqa: E402
+    hermetic,
+    lane_timing,
+    optional_deps,
+    provider_unavailable,
+)
 
 # Remove the ambient state of this machine when the run asked for it. This happens
 # before the .env load and before the temporary cost/run directories below, so what
@@ -68,18 +73,31 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.when not in ("setup", "call") or not report.failed:
         return
-    missing = optional_deps.absent_optional_dependency(str(report.longrepr))
-    if missing is None:
-        return
-    report.outcome = "skipped"
-    report.longrepr = (
-        str(item.fspath),
-        item.location[1] or 0,
-        (
+    rendered = str(report.longrepr)
+    missing = optional_deps.absent_optional_dependency(rendered)
+    if missing is not None:
+        reason = (
             f"Skipped: optional dependency '{missing}' is not installed "
             f"(pip install '{missing}' or the extra that carries it)"
-        ),
-    )
+        )
+    else:
+        # The same idea for a provider that would not serve the call: a spent
+        # quota or a provider outage is an account/provider state, not a defect.
+        # Narrow on purpose — a bare connection error is NOT converted, because
+        # that shape is usually local misconfiguration. See provider_unavailable.
+        # Never under tests/unit: those never reach a provider, so any provider
+        # error text there is simulated — a fault server, a fixture — and is the
+        # very thing the test is asserting about. Converting one to a skip would
+        # hide a regression in effGen's own error handling.
+        if "/tests/unit/" in _norm_path(item):
+            return
+        unavailable = provider_unavailable.provider_unavailable_reason(rendered)
+        if unavailable is None:
+            return
+        detail = provider_unavailable.first_provider_sentence(rendered)
+        reason = f"Skipped: {unavailable}{f' — {detail}' if detail else ''}"
+    report.outcome = "skipped"
+    report.longrepr = (str(item.fspath), item.location[1] or 0, reason)
     # Clear any xfail marking by REMOVING the attribute, never by setting it to
     # None. pytest decides a report is an xfail with `hasattr(report,
     # "wasxfail")` and then calls `.startswith()` on the value, so a None left
@@ -317,6 +335,35 @@ def _restore_server_auth_env():
         os.environ.pop("EFFGEN_API_KEY", None)
     else:
         os.environ["EFFGEN_API_KEY"] = _prev
+
+
+#: The variables that decide where an OpenAI-protocol call is addressed. Kept
+#: here rather than imported so this guard works even if the models package
+#: cannot be imported in a reduced install.
+_ENDPOINT_ENV_VARS = ("EFFGEN_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE")
+
+
+@pytest.fixture(autouse=True)
+def _restore_endpoint_env():
+    """Restore the endpoint overrides after every test (order-independence).
+
+    These decide the address of every OpenAI-protocol call, and one left behind
+    redirects every live cell that runs after it for the rest of the session.
+    A blank value is the damaging shape: effGen reads it as "no override", the
+    OpenAI SDK reads it as an address and sends the request to ``''``, and what
+    the run reports is a connection error advising you to check the provider's
+    status page. One test leaking the project template's blanks that way turned
+    45 later live cells red in a single suite run, none of which named the
+    cause.
+    """
+    _sentinel = object()
+    _prev = {name: os.environ.get(name, _sentinel) for name in _ENDPOINT_ENV_VARS}
+    yield
+    for name, was in _prev.items():
+        if was is _sentinel:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = was
 
 
 # ---------------------------------------------------------------------------
