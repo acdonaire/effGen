@@ -677,6 +677,24 @@ def scenario_trace_isolation() -> ContentionReport:
 _REQUESTS_PER_MINUTE = {"groq": 30, "openai": 500, "gemini": 15}
 
 
+def _is_rate_limit(exc: BaseException) -> bool:
+    """Whether *exc* is the account's tier refusing the call.
+
+    Classified through the shipped classifier rather than by matching provider
+    prose, so a new provider's wording does not quietly turn a quota refusal
+    into a counted shared-state failure.
+    """
+    from effgen.models.errors import classify_provider_error
+
+    try:
+        if classify_provider_error(exc).rate_limited:
+            return True
+    except Exception:  # noqa: BLE001 - a classifier failure is not a rate limit
+        pass
+    text = str(exc)
+    return "rate_limited" in text or "RateLimitExceeded" in text
+
+
 def scenario_live_server_concurrency() -> ContentionReport:
     """A running server answering many requests at once keeps them separate.
 
@@ -839,13 +857,33 @@ def scenario_live_agents_share_state() -> ContentionReport:
 
     workers, per_worker = 12, 8 * _scale()
     report = ContentionReport("live_agents_share_state", workers, per_worker)
+    # Workers are dealt round-robin, so each family carries several of them and
+    # they all call at once. A per-worker interval therefore paces nothing: four
+    # workers waiting 4.2s each still put ~57 requests a minute on a tier that
+    # allows 15, and the run then measures the provider's rate limiter rather
+    # than the shared state it is here to measure. The family's budget is
+    # divided across the workers dealt to it, the same way
+    # ``scenario_live_server_concurrency`` divides its own.
+    share = {
+        family.model: sum(1 for i in range(workers) if families[i % len(families)] is family)
+        for family in families
+    }
+    pace = {
+        family.model: max(
+            family.min_interval_s,
+            share[family.model] * 60.0 / _REQUESTS_PER_MINUTE.get(family.provider, 60),
+        )
+        for family in families
+    }
     tracker = CostTracker(storage=None)
     answers: list[tuple[str, str]] = []
+    refusals: list[int] = []
     lock = threading.Lock()
 
     def work(index: int) -> object:
         family = families[index % len(families)]
         local: list[tuple[str, str]] = []
+        refused = 0
         try:
             agent = Agent(config=AgentConfig(
                 model=family.model,
@@ -856,9 +894,21 @@ def scenario_live_agents_share_state() -> ContentionReport:
             try:
                 for n in range(per_worker):
                     marker = f"{index:02d}{n:02d}{os.urandom(3).hex()}"
-                    response = agent.run(
-                        f"Repeat this token exactly and write nothing else: {marker}"
-                    )
+                    try:
+                        response = agent.run(
+                            f"Repeat this token exactly and write nothing else: {marker}"
+                        )
+                    except Exception as exc:  # noqa: BLE001 - classified below
+                        if not _is_rate_limit(exc):
+                            raise
+                        # The account's tier refused this call. Skip the
+                        # iteration rather than abandoning the worker, so the
+                        # completed count stays exact and the shared-state
+                        # assertions still see the rest of the run.
+                        refused += 1
+                        if pace[family.model]:
+                            time.sleep(pace[family.model])
+                        continue
                     usage = response.metadata or {}
                     tracker.record(
                         family.model.split(":")[0],
@@ -868,8 +918,8 @@ def scenario_live_agents_share_state() -> ContentionReport:
                         cost_usd=usage.get("cost_usd") or 0.0,
                     )
                     local.append((marker, str(response)))
-                    if family.min_interval_s:
-                        time.sleep(family.min_interval_s)
+                    if pace[family.model]:
+                        time.sleep(pace[family.model])
             finally:
                 agent.close()
             return None
@@ -878,9 +928,18 @@ def scenario_live_agents_share_state() -> ContentionReport:
         finally:
             with lock:
                 answers.extend(local)
+                refusals.append(refused)
 
     errors = collect_exceptions(barrier_map(workers, work, timeout=3600.0))
-    runs = workers * per_worker
+    # A quota refusal is a real outcome of calling a rate-limited account, not a
+    # shared-state defect, and it is the account's tier that decides whether one
+    # arrives. Refused iterations are counted and subtracted, the way
+    # ``scenario_live_server_concurrency`` treats a non-200: what this scenario
+    # asserts is that no run's answer reaches another run, that the tracker
+    # recorded exactly the runs that completed, and that nothing failed for any
+    # other reason.
+    refused_total = sum(refusals)
+    runs = workers * per_worker - refused_total
     foreign = sum(
         1 for marker, text in answers
         if marker not in text and any(m in text for m, _ in answers if m != marker)
@@ -892,6 +951,7 @@ def scenario_live_agents_share_state() -> ContentionReport:
     report.add("answers_carrying_another_run_marker", foreign, 0)
     report.add("cost_tracker_requests", recorded, len(answers))
     report.notes["families"] = [f.model for f in families]
+    report.notes["rate_limited_calls"] = refused_total
     return report
 
 
