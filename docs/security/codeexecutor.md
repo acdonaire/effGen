@@ -120,7 +120,7 @@ and the previous behavior applies.
   succeeds and returns nothing rather than failing in a way that confirms the
   path exists. This is a **deny-list**, reported as
   `SandboxResult.credential_reads_masked`, not read confinement. Use
-  DockerSandbox when reads must be confined properly.
+  DockerSandbox when reads must be confined rather than masked.
 - `/proc` stays writable, because the nested `unshare` writes
   `/proc/self/uid_map` — but it is the sandbox's *own* `/proc`. The run gets a
   private PID namespace (`--pid --fork --mount-proc`), so executed code sees
