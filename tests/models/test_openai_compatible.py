@@ -176,6 +176,65 @@ class TestEndpointResolution:
         assert resolve_base_url("https://gateway.example/v1") == "https://gateway.example/v1"
 
 
+class TestABlankOverride:
+    """A variable that is present but empty means "no override", everywhere.
+
+    The OpenAI SDK reads ``OPENAI_BASE_URL`` itself and, unlike
+    :func:`resolve_base_url`, treats an empty value as a real address: it then
+    sends every request to ``''`` and the failure surfaces as a connection
+    error advising the caller to check the provider's status page. effGen's own
+    project template ships these variables for the user to fill in, so a blank
+    one is an ordinary state rather than a corner case, and effGen's resolution
+    has to be the only one that decides.
+    """
+
+    @staticmethod
+    def _client_url(monkeypatch, var: str, value: str) -> str:
+        for name in BASE_URL_ENV_VARS:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv(var, value)
+        adapter = OpenAIAdapter("gpt-4o-mini", api_key="sk-test", timeout=5, max_retries=0)
+        adapter.load()
+        return str(adapter.client.base_url)
+
+    @pytest.mark.parametrize("var", BASE_URL_ENV_VARS)
+    def test_an_empty_variable_leaves_the_call_addressed_to_openai(self, monkeypatch, var):
+        assert self._client_url(monkeypatch, var, "").startswith("https://api.openai.com")
+
+    @pytest.mark.parametrize("var", BASE_URL_ENV_VARS)
+    def test_a_whitespace_variable_leaves_the_call_addressed_to_openai(
+        self, monkeypatch, var
+    ):
+        assert self._client_url(monkeypatch, var, "   ").startswith("https://api.openai.com")
+
+    def test_a_real_override_still_redirects_the_call(self, monkeypatch, compatible_server):
+        monkeypatch.setenv("OPENAI_BASE_URL", compatible_server)
+        adapter = OpenAIAdapter("gpt-4o-mini", api_key="sk-test", timeout=5, max_retries=0)
+        adapter.load()
+        assert str(adapter.client.base_url).rstrip("/") == compatible_server
+
+    def test_the_catalog_refresh_is_not_redirected_by_a_blank_variable(self, monkeypatch):
+        """``_fetch_openai`` builds its own client and had the same hole."""
+        from effgen.models import _refresh
+
+        for name in BASE_URL_ENV_VARS:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("OPENAI_BASE_URL", "")
+        seen: dict[str, object] = {}
+
+        class _Client:
+            def __init__(self, **kwargs):
+                seen.update(kwargs)
+                self.models = self
+
+            def list(self):
+                return []
+
+        monkeypatch.setattr("openai.OpenAI", _Client)
+        _refresh._fetch_openai("sk-test")
+        assert str(seen.get("base_url", "")).startswith("https://api.openai.com")
+
+
 class TestAdapterConstruction:
     """What the adapter assumes when the catalog cannot answer."""
 

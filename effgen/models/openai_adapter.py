@@ -36,7 +36,11 @@ from effgen.models._adapter_utils import (
     reasoning_delta_text,
     warn_reasoning_only_stream,
 )
-from effgen.models._base_url import describe_endpoint, resolve_base_url
+from effgen.models._base_url import (
+    describe_endpoint,
+    openai_client_base_url,
+    resolve_base_url,
+)
 from effgen.models._multimodal import (
     require_audio_support,
     require_video_support,
@@ -256,8 +260,10 @@ class OpenAIAdapter(FunctionCallingModel):
                 "timeout": self.timeout,
                 "max_retries": self.max_retries,
             }
-            if self.base_url:
-                client_kwargs["base_url"] = self.base_url
+            # Always explicit: left unset, the SDK re-reads OPENAI_BASE_URL
+            # itself and treats a blank one as an address rather than as no
+            # override, which sends the call to ''.
+            client_kwargs["base_url"] = openai_client_base_url(self.base_url)
             if self.organization_id:
                 client_kwargs["organization"] = self.organization_id
             client_kwargs.update(self.additional_kwargs)

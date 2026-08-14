@@ -89,7 +89,11 @@ def has_credentials(provider: str) -> bool:
 def _fetch_openai(api_key: str) -> list[tuple[str, dict[str, Any]]]:
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key)
+    from effgen.models._base_url import openai_client_base_url, resolve_base_url
+
+    # Explicit for the same reason the adapter is: the SDK would otherwise read
+    # OPENAI_BASE_URL itself and send the catalog request to a blank address.
+    client = OpenAI(api_key=api_key, base_url=openai_client_base_url(resolve_base_url()))
     out: list[tuple[str, dict[str, Any]]] = []
     for m in client.models.list():
         out.append((m.id, {"owned_by": getattr(m, "owned_by", None)}))

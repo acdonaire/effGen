@@ -24,6 +24,9 @@ BASE_URL_ENV_VARS: tuple[str, ...] = (
 #: vLLM, SGLang, TGI, llama.cpp and Ollama all accept any non-empty string.
 PLACEHOLDER_API_KEY = "EMPTY"
 
+#: OpenAI's own endpoint — where a call goes when nothing overrides it.
+OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
 
 def resolve_base_url(explicit: str | None = None) -> str | None:
     """Return the endpoint URL to call, or None to use the provider's own.
@@ -64,6 +67,31 @@ def resolve_base_url(explicit: str | None = None) -> str | None:
             f"http://{url}."
         )
     return url
+
+
+def openai_client_base_url(resolved: str | None = None) -> str:
+    """Return the URL to hand the OpenAI SDK, so one resolution decides.
+
+    The SDK reads ``OPENAI_BASE_URL`` itself whenever no ``base_url`` argument
+    is given, and it does not agree with :func:`resolve_base_url` about a
+    variable that is present but empty: the resolver reads that as "no
+    override", the SDK reads it as an address and sends every request to
+    ``''``. What comes back is a connection error advising the caller to check
+    the provider's status page, which is the wrong place — the address came
+    from this machine.
+
+    A blank value is the ordinary state rather than a corner case: effGen's own
+    project template names these variables with nothing after the ``=`` for the
+    user to fill in. Passing this value explicitly settles the disagreement, so
+    the SDK never re-reads the environment behind the resolver's back.
+
+    Args:
+        resolved: The endpoint :func:`resolve_base_url` decided on, or None.
+
+    Returns:
+        That URL, or :data:`OPENAI_DEFAULT_BASE_URL` when there is no override.
+    """
+    return resolved or OPENAI_DEFAULT_BASE_URL
 
 
 def describe_endpoint(base_url: str | None) -> str:
