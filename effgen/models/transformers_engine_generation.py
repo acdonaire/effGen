@@ -18,6 +18,7 @@ except ImportError as exc:  # pragma: no cover - only on an install without torc
     raise missing_torch_error("transformers") from exc
 
 from effgen.models._adapter_utils import (
+    apply_call_overrides,
     normalize_finish_reason,
     not_loaded_error,
     provider_runtime_error,
@@ -64,6 +65,7 @@ class TransformersGenerationMixin:
 
         self.validate_prompt(prompt)
 
+        config = apply_call_overrides(config, kwargs)
         generation_config, stop_sequences = self._create_generation_config(config)
 
         # Serialize fast-tokenizer + generate so concurrent local calls (e.g.

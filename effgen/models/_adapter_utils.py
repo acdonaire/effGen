@@ -455,9 +455,39 @@ def needs_reasoning_headroom(model: Any) -> bool:
     """
     if getattr(model, "_is_reasoning_model", False):
         return True
+    if _local_template_reasons(model):
+        return True
     name = (getattr(model, "model_name", "") or "").lower()
     name = name.split(":", 1)[-1]  # drop any "provider:" prefix
     return name.startswith(_REASONING_NAME_PREFIXES)
+
+
+def _local_template_reasons(model: Any) -> bool:
+    """Whether a local model's own chat template emits a reasoning chain.
+
+    A cloud model is flagged from the catalog, but a local engine has no
+    catalog, and the name is not a reliable signal — ``Qwen3.5-2B`` reasons
+    while ``Qwen3-4B-Instruct`` does not, and both start "qwen3". The template
+    is the model's own statement about itself: one that opens a ``<think>``
+    block spends output budget before its first visible token, so the base
+    1024-token budget is consumed by the chain and the turn returns nothing.
+
+    Measured once per tokenizer and cached on the model, because this is asked
+    on the way into every call.
+    """
+    tokenizer = getattr(model, "tokenizer", None)
+    template = getattr(tokenizer, "chat_template", None)
+    if not template or not isinstance(template, str):
+        return False
+    cached = getattr(model, "_reasoning_template_probe", None)
+    if cached is not None and cached[0] is tokenizer:
+        return bool(cached[1])
+    reasons = "<think>" in template or "enable_thinking" in template
+    try:
+        model._reasoning_template_probe = (tokenizer, reasons)
+    except Exception:  # noqa: BLE001 - a model that refuses the attribute still answers
+        pass
+    return reasons
 
 
 def default_max_output_tokens(
@@ -908,6 +938,20 @@ def merge_call_overrides(config: Any, kwargs: dict[str, Any]) -> Any:
     if not overrides:
         return config
     return replace(config, **overrides)
+
+
+def apply_call_overrides(config: Any, kwargs: dict[str, Any]) -> Any:
+    """Fold per-call sampling keywords into *config*, defaulting it when absent.
+
+    ``merge_call_overrides`` needs a config object to copy; the local engines
+    are called with ``config=None`` whenever the caller passed only keywords,
+    which is the ordinary case for ``generate(prompt, stop_sequences="END")``.
+    Lives here rather than beside the engine so the generation and streaming
+    modules can reach it without importing a sibling that pulls in torch.
+    """
+    from .base import GenerationConfig
+
+    return merge_call_overrides(config if config is not None else GenerationConfig(), kwargs)
 
 
 # ---------------------------------------------------------------------------

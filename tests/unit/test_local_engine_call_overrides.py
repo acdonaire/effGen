@@ -555,3 +555,60 @@ class TestStopSequenceNormalization:
 
         assert seen and seen[0] == ["END"], seen
         assert response.output.startswith("The ocean is DEEP and ")
+
+
+class TestTheTransformersEngineTakesPerCallOverrides:
+    """A per-call sampling keyword must reach the local engine.
+
+    The vLLM, MLX and Gemini paths fold per-call keywords into the config with
+    ``merge_call_overrides``; the Transformers engine did not. It read the stop
+    list off the config *before* looking at the keywords, so
+    ``generate(prompt, stop_sequences="END")`` — the spelling the cloud adapters
+    accept — was dropped without a word and the text came back uncut.
+    """
+
+    @staticmethod
+    def _fold(config, kwargs):
+        """The exact call both the generate and the stream path make."""
+        from effgen.models._adapter_utils import apply_call_overrides
+
+        return apply_call_overrides(config, kwargs)
+
+    def test_a_bare_string_becomes_one_sequence(self):
+        kwargs = {"stop_sequences": "END"}
+        config = self._fold(None, kwargs)
+        assert config.stop_sequences == ["END"]
+        # Consumed, so it is not also forwarded to HuggingFace's generate().
+        assert "stop_sequences" not in kwargs
+
+    def test_a_list_is_taken_as_given(self):
+        config = self._fold(None, {"stop_sequences": ["END", "STOP"]})
+        assert config.stop_sequences == ["END", "STOP"]
+
+    def test_a_per_call_value_supersedes_the_config(self):
+        from effgen.models.base import GenerationConfig
+
+        original = GenerationConfig(stop_sequences=["FROM_CONFIG"])
+        config = self._fold(original, {"stop_sequences": "PER_CALL"})
+        assert config.stop_sequences == ["PER_CALL"]
+        # The caller's object is never mutated.
+        assert original.stop_sequences == ["FROM_CONFIG"]
+
+    def test_the_config_is_used_when_no_keyword_is_given(self):
+        from effgen.models.base import GenerationConfig
+
+        original = GenerationConfig(stop_sequences=["FROM_CONFIG"])
+        config = self._fold(original, {})
+        assert config.stop_sequences == ["FROM_CONFIG"]
+
+    def test_other_sampling_keywords_come_through_too(self):
+        kwargs = {"temperature": 0.0, "seed": 7, "top_p": 0.5}
+        config = self._fold(None, kwargs)
+        assert config.temperature == 0.0
+        assert config.seed == 7
+        assert config.top_p == 0.5
+
+    def test_an_unrecognised_keyword_is_left_for_the_backend(self):
+        kwargs = {"stop_sequences": "END", "some_hf_only_flag": True}
+        self._fold(None, kwargs)
+        assert kwargs == {"some_hf_only_flag": True}

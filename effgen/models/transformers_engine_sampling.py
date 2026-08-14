@@ -231,6 +231,10 @@ class TransformersSamplingMixin:
                 "tokenize": False,
                 "add_generation_prompt": True,
             }
+            # Caller-supplied template arguments, e.g. enable_thinking=False on a
+            # Qwen3 template. A template that does not declare the name ignores
+            # it, so this is safe to pass to any model.
+            template_kwargs.update(getattr(self, "chat_template_kwargs", None) or {})
             if tools_for_template:
                 template_kwargs["tools"] = tools_for_template
                 logger.debug(

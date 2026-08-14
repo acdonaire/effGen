@@ -292,3 +292,141 @@ def test_agentconfig_normal_construction_still_works():
     # dataclasses.replace round-trips through the wrapped __init__
     import dataclasses
     assert dataclasses.replace(cfg, temperature=0.9).temperature == pytest.approx(0.9)
+
+
+class TestALocalReasoningModelIsRecognised:
+    """A local reasoning model has no catalog entry to be flagged from.
+
+    The cloud flag comes from the catalog and the fallback is a name prefix, so
+    a local Qwen3 got the base 1024-token budget and spent it all on the hidden
+    chain — the turn returned nothing and the agent hit its iteration cap. The
+    name cannot decide it either: `Qwen3.5-2B` reasons and `Qwen3-4B-Instruct`
+    does not, and both start "qwen3". The chat template is the model's own
+    statement about itself.
+    """
+
+    class _Tokenizer:
+        def __init__(self, template):
+            self.chat_template = template
+
+    class _Local:
+        def __init__(self, name, template=None):
+            self.model_name = name
+            self.tokenizer = (
+                TestALocalReasoningModelIsRecognised._Tokenizer(template)
+                if template is not None
+                else None
+            )
+
+    # Both markers a thinking template carries.
+    THINKING = "{% if enable_thinking %}<think>{% endif %}"
+    PLAIN = "{{ message['content'] }}"
+
+    def test_a_thinking_template_gets_the_reasoning_budget(self):
+        from effgen.models._adapter_utils import (
+            default_max_output_tokens,
+            needs_reasoning_headroom,
+        )
+
+        model = self._Local("Qwen/Qwen3.5-2B", self.THINKING)
+        assert needs_reasoning_headroom(model) is True
+        assert default_max_output_tokens(model) == 4096
+
+    def test_a_plain_template_keeps_the_base_budget(self):
+        from effgen.models._adapter_utils import (
+            default_max_output_tokens,
+            needs_reasoning_headroom,
+        )
+
+        model = self._Local("Qwen/Qwen2.5-1.5B-Instruct", self.PLAIN)
+        assert needs_reasoning_headroom(model) is False
+        assert default_max_output_tokens(model) == 1024
+
+    def test_the_name_does_not_decide_it(self):
+        """Two models whose names share a prefix, answered differently."""
+        from effgen.models._adapter_utils import needs_reasoning_headroom
+
+        assert needs_reasoning_headroom(self._Local("Qwen/Qwen3.5-2B", self.THINKING))
+        assert not needs_reasoning_headroom(
+            self._Local("Qwen/Qwen3-4B-Instruct-2507", self.PLAIN)
+        )
+
+    def test_a_model_with_no_tokenizer_is_unchanged(self):
+        from effgen.models._adapter_utils import needs_reasoning_headroom
+
+        assert needs_reasoning_headroom(self._Local("Qwen/Qwen3.5-2B")) is False
+
+    def test_the_probe_is_cached_against_its_tokenizer(self):
+        from effgen.models._adapter_utils import needs_reasoning_headroom
+
+        model = self._Local("Qwen/Qwen3.5-2B", self.THINKING)
+        assert needs_reasoning_headroom(model) is True
+        # A reload swaps the tokenizer, and the answer is measured again rather
+        # than carried over from the previous weights.
+        model.tokenizer = self._Tokenizer(self.PLAIN)
+        assert needs_reasoning_headroom(model) is False
+
+    def test_a_cloud_flag_still_wins(self):
+        from effgen.models._adapter_utils import needs_reasoning_headroom
+
+        model = self._Local("some-catalog-model", self.PLAIN)
+        model._is_reasoning_model = True
+        assert needs_reasoning_headroom(model) is True
+
+
+class TestThinkingCanBeTurnedOff:
+    """``enable_thinking`` is a chat-template argument, not a sampling one.
+
+    There was no way to reach it, so a reasoning model could not be asked for a
+    direct answer; passing it as a load kwarg reached the model class instead
+    and raised ``unexpected keyword argument``.
+    """
+
+    def test_the_engine_holds_template_kwargs_out_of_the_model_call(self):
+        from effgen.models.transformers_engine import TransformersEngine
+
+        engine = TransformersEngine(
+            model_name="Qwen/Qwen3.5-2B",
+            chat_template_kwargs={"enable_thinking": False},
+        )
+        assert engine.chat_template_kwargs == {"enable_thinking": False}
+        # Anything left in additional_kwargs is forwarded to from_pretrained.
+        assert "chat_template_kwargs" not in engine.additional_kwargs
+
+    def test_they_reach_apply_chat_template(self):
+        from effgen.models.transformers_engine import TransformersEngine
+
+        seen = {}
+
+        class _Tokenizer:
+            chat_template = "{% if enable_thinking %}<think>{% endif %}"
+
+            def apply_chat_template(self, messages, **kwargs):
+                seen.update(kwargs)
+                return "formatted"
+
+        engine = TransformersEngine(
+            model_name="Qwen/Qwen3.5-2B",
+            chat_template_kwargs={"enable_thinking": False},
+        )
+        engine.tokenizer = _Tokenizer()
+        assert engine._apply_chat_template("hi") == "formatted"
+        assert seen.get("enable_thinking") is False
+        assert seen.get("add_generation_prompt") is True
+
+    def test_the_default_passes_nothing_extra(self):
+        from effgen.models.transformers_engine import TransformersEngine
+
+        seen = {}
+
+        class _Tokenizer:
+            chat_template = "{{ message['content'] }}"
+
+            def apply_chat_template(self, messages, **kwargs):
+                seen.update(kwargs)
+                return "formatted"
+
+        engine = TransformersEngine(model_name="Qwen/Qwen2.5-1.5B-Instruct")
+        engine.tokenizer = _Tokenizer()
+        engine._apply_chat_template("hi")
+        assert "enable_thinking" not in seen

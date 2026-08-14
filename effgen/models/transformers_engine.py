@@ -169,6 +169,18 @@ class TransformersEngine(
         self.offload_folder = offload_folder
         self.require_gpu = require_gpu
 
+        # Extra arguments for the tokenizer's chat template, e.g.
+        # ``chat_template_kwargs={"enable_thinking": False}`` to turn off a
+        # reasoning model's hidden chain. The switch is a property of the
+        # template rather than of generation, so it cannot be reached through
+        # GenerationConfig; passed here it reaches apply_chat_template and
+        # nothing else. Held out of additional_kwargs below, because anything
+        # left there is forwarded to ``from_pretrained`` and the model class
+        # rejects a keyword it does not know.
+        self.chat_template_kwargs: dict[str, Any] = dict(
+            kwargs.get("chat_template_kwargs") or {}
+        )
+
         # Filter out parameters that shouldn't be passed to model loading
         # These are vLLM-specific or other incompatible parameters
         self.additional_kwargs = {k: v for k, v in kwargs.items()
@@ -176,6 +188,7 @@ class TransformersEngine(
                                                'require_gpu',
                                                'use_tqdm', 'tensor_parallel_size',
                                                'apply_chat_template', 'system_prompt',
+                                               'chat_template_kwargs',
                                                'gpu_memory_utilization', 'max_num_seqs',
                                                'max_num_batched_tokens']}
 

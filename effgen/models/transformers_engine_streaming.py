@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from effgen.models._adapter_utils import (
+    apply_call_overrides,
     not_loaded_error,
     provider_runtime_error,
 )
@@ -51,6 +52,7 @@ class TransformersStreamingMixin:
 
         self.validate_prompt(prompt)
 
+        config = apply_call_overrides(config, kwargs)
         generation_config, stop_sequences = self._create_generation_config(config)
 
         try:
