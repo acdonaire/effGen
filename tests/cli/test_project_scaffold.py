@@ -219,19 +219,48 @@ def test_the_env_template_names_every_provider_variable_with_no_value(state, tmp
     _init("--init", str(project))
     body = (project / _scaffold.ENV_TEMPLATE_NAME).read_text(encoding="utf-8")
 
-    named = set()
+    assigned, commented = set(), set()
     for line in body.splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
+        if not line:
+            continue
+        if line.startswith("#"):
+            # A commented-out entry, not prose that happens to name a variable:
+            # the value is empty once any trailing comment is taken off.
+            key, sep, rest = line.lstrip("# ").partition("=")
+            if sep == "=" and key.isupper() and not rest.split("#", 1)[0].strip():
+                commented.add(key)
             continue
         key, sep, value = line.partition("=")
         assert sep == "=", f"{line!r} is not a variable assignment"
         assert value == "", f"{key} was given a value; the template invents none"
-        named.add(key)
+        assigned.add(key)
 
     expected = {key for _p, keys in _scaffold.provider_env_keys() for key in keys}
     assert expected, "no provider is registered"
-    assert named == expected
+    assert assigned | commented == expected
+
+
+def test_the_template_leaves_no_bare_endpoint_assignment(state, tmp_path):
+    """An endpoint variable names an address, and a blank one is not "absent".
+
+    Every OpenAI-protocol client on the machine reads ``OPENAI_BASE_URL``, and
+    the OpenAI SDK treats a variable that is present but empty as a real
+    address — it sends the request to ``''`` and the failure reads as a
+    provider outage. Copying this template unchanged must not arm that.
+    """
+    from effgen.models._base_url import BASE_URL_ENV_VARS
+
+    project = tmp_path / "proj"
+    _init("--init", str(project))
+    body = (project / _scaffold.ENV_TEMPLATE_NAME).read_text(encoding="utf-8")
+
+    live = [ln.strip() for ln in body.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    for var in BASE_URL_ENV_VARS:
+        assert var in body, f"{var} is no longer named in the template"
+        assert not any(ln.startswith(f"{var}=") for ln in live), (
+            f"{var} is assigned rather than commented out"
+        )
 
 
 def test_copying_the_template_unchanged_does_not_shadow_a_real_key(state, tmp_path):
@@ -247,8 +276,14 @@ def test_copying_the_template_unchanged_does_not_shadow_a_real_key(state, tmp_pa
         encoding="utf-8",
     )
 
-    os.environ["GROQ_API_KEY"] = "real-key-from-the-environment"
+    # load_dotenv writes into the real os.environ, and override=False still sets
+    # every name the file lists that is not already there — so this test loads
+    # the whole template into the session unless the mapping is put back.
+    # Leaking it once cost 45 later live cells, which failed as provider
+    # outages because their endpoint variable had been left set to "".
+    before = dict(os.environ)
     try:
+        os.environ["GROQ_API_KEY"] = "real-key-from-the-environment"
         load_dotenv(env_file, override=False)
         assert os.environ["GROQ_API_KEY"] == "real-key-from-the-environment"
 
@@ -257,7 +292,9 @@ def test_copying_the_template_unchanged_does_not_shadow_a_real_key(state, tmp_pa
         # A variable the file set to empty still reads as absent.
         assert check_keys(["together"])["together"]["available"] is False
     finally:
-        os.environ.pop("GROQ_API_KEY", None)
+        for name in set(os.environ) - set(before):
+            del os.environ[name]
+        os.environ.update(before)
 
 
 def test_the_gitignore_excludes_the_env_file(state, tmp_path):

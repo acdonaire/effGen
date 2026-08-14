@@ -194,10 +194,18 @@ max_iterations: 5
 def render_env_template(providers: list[tuple[str, list[str]]] | None = None) -> str:
     """The ``.env`` template: every provider variable, with no value filled in.
 
-    A variable is named and left empty. Nothing here is a key, and an empty
+    A credential is named and left empty. Nothing here is a key, and an empty
     value counts as absent, so copying this file to ``.env`` unchanged leaves
     ``effgen doctor`` reporting exactly the keys the environment already has.
+
+    The endpoint variables are the exception and are written commented out. They
+    do not name a credential, they name an address, and every OpenAI-protocol
+    client on the machine reads ``OPENAI_BASE_URL`` — including ones that treat
+    an empty value as a real address and send their requests to nowhere. A line
+    the user has to uncomment cannot do that by being copied unchanged.
     """
+    from effgen.models._base_url import BASE_URL_ENV_VARS
+
     if providers is None:
         providers = provider_env_keys()
     lines = [
@@ -221,7 +229,10 @@ def render_env_template(providers: list[tuple[str, list[str]]] | None = None) ->
     for provider, keys in providers:
         lines.append(f"# {provider}")
         for key in keys:
-            lines.append(f"{key}=")
+            if key in BASE_URL_ENV_VARS:
+                lines.append(f"# {key}=          # an address, not a key: uncomment to use")
+            else:
+                lines.append(f"{key}=")
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
 
