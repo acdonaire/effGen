@@ -80,7 +80,19 @@ def pytest_runtest_makereport(item, call):
             f"(pip install '{missing}' or the extra that carries it)"
         ),
     )
-    report.wasxfail = None
+    # Clear any xfail marking by REMOVING the attribute, never by setting it to
+    # None. pytest decides a report is an xfail with `hasattr(report,
+    # "wasxfail")` and then calls `.startswith()` on the value, so a None left
+    # here raises inside the terminal reporter — an INTERNALERROR that ends the
+    # whole session with exit 3 and discards several thousand passing results.
+    # It only fires on the verbose reporting path, so a quiet local run looks
+    # clean and CI does not.
+    try:
+        del report.wasxfail
+    except AttributeError:
+        # Either it was never set, or it is inherited rather than owned by this
+        # instance; both mean there is nothing on the report to mislead pytest.
+        pass
 
 
 def pytest_exception_interact(node, call, report):
