@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._harness.live_eval import assert_live_eval_passed
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "business"
 GOLDENS_DIR = Path(__file__).parent / "goldens"
 
@@ -347,10 +349,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(meeting_summary_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
         parsed = PromptEval._extract_json_object(result.model_output)
         assert parsed is not None, f"No JSON found: {result.model_output[:300]}"
         assert "decisions" in parsed
@@ -367,10 +366,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(elevator_pitch_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output ({len(result.model_output.split())} words): {result.model_output}"
-        )
+        assert_live_eval_passed(result)
         word_count = len(result.model_output.split())
         assert word_count <= 150, (
             f"Elevator pitch is {word_count} words — must be ≤150\n"
@@ -387,10 +383,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(swot_analysis_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
 
     @pytest.mark.skipif(
         not os.environ.get("CEREBRAS_API_KEY"),
@@ -402,7 +395,4 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(okr_generate_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)

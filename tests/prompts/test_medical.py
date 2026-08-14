@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._harness.live_eval import assert_live_eval_passed
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "medical"
 GOLDENS_DIR = Path(__file__).parent / "goldens"
 
@@ -383,10 +385,7 @@ class TestLiveEval:
         result = evaluator.eval_live(symptom_triage_v1, model="gpt-oss-120b")
         if not result.passed:
             _skip_transient_live_error(result.message)
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
         parsed = PromptEval._extract_json_object(result.model_output)
         assert parsed is not None, f"No JSON found: {result.model_output[:300]}"
         assert "urgency_level" in parsed
@@ -406,10 +405,7 @@ class TestLiveEval:
         result = evaluator.eval_live(drug_interaction_query_v1, model="gpt-oss-120b")
         if not result.passed:
             _skip_transient_live_error(result.message)
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
         parsed = PromptEval._extract_json_object(result.model_output)
         assert parsed is not None, f"No JSON found: {result.model_output[:300]}"
         assert "interactions" in parsed
@@ -428,7 +424,4 @@ class TestLiveEval:
         result = evaluator.eval_live(medical_literature_v1, model="gpt-oss-120b")
         if not result.passed:
             _skip_transient_live_error(result.message)
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)

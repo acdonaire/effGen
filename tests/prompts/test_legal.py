@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._harness.live_eval import assert_live_eval_passed
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "legal"
 GOLDENS_DIR = Path(__file__).parent / "goldens"
 
@@ -302,10 +304,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(contract_summarize_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
         parsed = PromptEval._extract_json_object(result.model_output)
         assert parsed is not None, f"No JSON found: {result.model_output[:300]}"
         assert "parties" in parsed
@@ -321,10 +320,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(clause_classify_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
 
     @pytest.mark.skipif(
         not os.environ.get("CEREBRAS_API_KEY"),
@@ -338,7 +334,4 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(legal_research_brief_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)

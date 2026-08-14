@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._harness.live_eval import assert_live_eval_passed
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "data"
 GOLDENS_DIR = Path(__file__).parent / "goldens"
 
@@ -461,10 +463,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(sql_from_nl_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
         parsed = PromptEval._extract_json_object(result.model_output)
         assert parsed is not None, f"No JSON object found in output: {result.model_output[:300]}"
         assert "sql" in parsed, "Missing 'sql' key"
@@ -483,10 +482,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(sql_explain_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
         output = result.model_output.lower()
         assert "customer" in output or "order" in output, (
             f"Output doesn't mention any table names: {result.model_output[:300]}"
@@ -503,10 +499,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(sql_optimize_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
 
     @pytest.mark.skipif(
         not os.environ.get("CEREBRAS_API_KEY"),
@@ -519,7 +512,4 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(etl_plan_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)

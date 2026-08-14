@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._harness.live_eval import assert_live_eval_passed
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "research"
 GOLDENS_DIR = Path(__file__).parent / "goldens"
 
@@ -280,7 +282,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(lit_review_zero_shot, model="gpt-oss-120b")
-        assert result.passed, f"Live eval failed: {result.message}\nOutput: {result.model_output[:800]}"
+        assert_live_eval_passed(result)
 
     @pytest.mark.skipif(
         not os.environ.get("CEREBRAS_API_KEY"),
@@ -293,7 +295,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(paper_summary_v1, model="gpt-oss-120b")
-        assert result.passed, f"Live eval failed: {result.message}\nOutput: {result.model_output[:500]}"
+        assert_live_eval_passed(result)
         # Also assert JSON parseable with required keys
         output = result.model_output.strip()
         try:

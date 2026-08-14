@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._harness.live_eval import assert_live_eval_passed
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "creative"
 GOLDENS_DIR = Path(__file__).parent / "goldens"
 
@@ -291,10 +293,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(character_bio_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
         parsed = PromptEval._extract_json_object(result.model_output)
         assert parsed is not None, f"No JSON found: {result.model_output[:300]}"
         assert "name" in parsed
@@ -312,10 +311,7 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(story_continuation_zero_shot, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
         assert len(result.model_output.split()) >= 20, "Story continuation too short"
 
     @pytest.mark.skipif(
@@ -328,7 +324,4 @@ class TestLiveEval:
 
         evaluator = PromptEval()
         result = evaluator.eval_live(world_building_v1, model="gpt-oss-120b")
-        assert result.passed, (
-            f"Live eval failed: {result.message}\n"
-            f"Output: {result.model_output[:600]}"
-        )
+        assert_live_eval_passed(result)
