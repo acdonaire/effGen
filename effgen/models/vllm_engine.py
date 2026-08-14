@@ -133,6 +133,13 @@ class VLLMEngine(BatchModel):
         self.max_num_batched_tokens = max_num_batched_tokens
         self.use_tqdm = use_tqdm
         self.apply_chat_template = apply_chat_template
+        # Extra arguments for the chat template, e.g.
+        # ``chat_template_kwargs={"enable_thinking": False}`` on a reasoning
+        # model. Same spelling as the Transformers engine, so switching engines
+        # does not change how the switch is reached.
+        self.chat_template_kwargs: dict[str, Any] = dict(
+            kwargs.pop("chat_template_kwargs", None) or {}
+        )
         self.system_prompt = system_prompt
         self.additional_kwargs = kwargs
 
@@ -302,7 +309,8 @@ class VLLMEngine(BatchModel):
     def _format_prompt_with_chat_template(
         self,
         prompt: str,
-        system_prompt: str | None = None
+        system_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         """
         Format a prompt using the model's chat template.
@@ -348,11 +356,25 @@ class VLLMEngine(BatchModel):
             messages.append({"role": "user", "content": prompt})
 
             # Apply chat template
-            formatted_prompt = self._hf_tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
+            template_kwargs: dict[str, Any] = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+            }
+            template_kwargs.update(getattr(self, "chat_template_kwargs", None) or {})
+            if tools:
+                template_kwargs["tools"] = tools
+            try:
+                formatted_prompt = self._hf_tokenizer.apply_chat_template(
+                    messages, **template_kwargs
+                )
+            except TypeError:
+                # A template that does not declare ``tools`` still has to render
+                # the turn; the model simply does not see the definitions, which
+                # is what ``tool_call_support() == "none"`` already reports.
+                template_kwargs.pop("tools", None)
+                formatted_prompt = self._hf_tokenizer.apply_chat_template(
+                    messages, **template_kwargs
+                )
 
             logger.debug(f"Applied chat template to prompt (length: {len(prompt)} -> {len(formatted_prompt)})")
             return formatted_prompt
@@ -444,9 +466,18 @@ class VLLMEngine(BatchModel):
         if not self._is_loaded:
             raise not_loaded_error("vllm", self.model_name, "generate")
 
+        # Tool definitions belong to the chat template, not to vLLM: the agent
+        # attaches them to every call and ``LLM.generate()`` has no ``tools``
+        # parameter, so forwarding them raised ``got an unexpected keyword
+        # argument 'tools'`` and every tool-using turn failed. Rendered into the
+        # prompt here, the way the Transformers engine does it.
+        tools_for_template = kwargs.pop("tools", None)
+
         # Apply chat template if enabled and not skipped
         if not skip_chat_template:
-            formatted_prompt = self._format_prompt_with_chat_template(prompt, system_prompt)
+            formatted_prompt = self._format_prompt_with_chat_template(
+                prompt, system_prompt, tools_for_template,
+            )
         else:
             formatted_prompt = prompt
 
@@ -523,9 +554,18 @@ class VLLMEngine(BatchModel):
         if not self._is_loaded:
             raise not_loaded_error("vllm", self.model_name, "generate_stream")
 
+        # Tool definitions belong to the chat template, not to vLLM: the agent
+        # attaches them to every call and ``LLM.generate()`` has no ``tools``
+        # parameter, so forwarding them raised ``got an unexpected keyword
+        # argument 'tools'`` and every tool-using turn failed. Rendered into the
+        # prompt here, the way the Transformers engine does it.
+        tools_for_template = kwargs.pop("tools", None)
+
         # Apply chat template if enabled and not skipped
         if not skip_chat_template:
-            formatted_prompt = self._format_prompt_with_chat_template(prompt, system_prompt)
+            formatted_prompt = self._format_prompt_with_chat_template(
+                prompt, system_prompt, tools_for_template,
+            )
         else:
             formatted_prompt = prompt
 
