@@ -16,7 +16,10 @@ text file and fails on two classes of text:
 * author/process breadcrumbs (``this phase``, ``as per audit``,
   ``fixed in phase``, ``builder/verifier added``),
 * names of internal planning artifacts (``findings report``, ``phase brief``,
-  ``zero-ignore``, ``ask-before-commit``, ``AUDIT_REPORT``),
+  ``zero-ignore``, ``ask-before-commit``, ``AUDIT_REPORT``) and paths into the
+  internal planning tree (``followups/x.md``, ``outputs/104_phase/…``), which
+  read as live cross-references but name a gitignored path no reader outside
+  the authoring checkout can follow,
 * leftover debugging (``breakpoint()`` / ``pdb.set_trace()`` /
   ``ipdb.set_trace()`` / ``import pdb`` / a JavaScript ``debugger;``),
 * unresolved placeholder markers (``TODO`` / ``FIXME`` / ``XXX`` / ``HACK`` /
@@ -93,10 +96,16 @@ Data files are out of scope by design:
 * ``.sql`` is query fixtures for the prompt-library evals.
 
 ``build_plan/`` is deliberately *not* scanned — it is gitignored internal
-scaffolding and is never shipped. The human-authored release narrative
-(``CHANGELOG.md``/``NEWS.md``/``README.md``/``README_PYPI.md``) is scanned for
-process jargon but *exempt from the editorializing check*: it is prose owned and
-maintained by the release step, not source code.
+scaffolding and is never shipped. ``CHANGELOG.md``/``NEWS.md`` and the
+``website/`` tree are scanned for process jargon but *exempt from the
+editorializing check*: the first two are an append-only historical record, and
+the third is marketing page copy mirrored from the published site. Neither is
+exempt from the jargon check — a milestone reference or a finding ID is a leak
+wherever it lands, and most of all on a public page.
+
+The scan reads tracked files *and* files that are untracked but not ignored, so
+a violation in a file that has been written but not yet committed is caught on
+the run that introduces it rather than on the push that first tracks it.
 """
 from __future__ import annotations
 
@@ -126,11 +135,16 @@ _SOURCE_NAME_PREFIXES = ("Dockerfile.",)
 # gitignored and never shipped. Bundled datasets need no directory rule — their
 # payload files are ``.txt``/``.json``/``.jsonl``, already out of scope by
 # suffix, while the scripts that fetch them are ordinary authored source.
+_SKIP_DIR_PREFIXES = ("build_plan/",)
+
 # ``website/`` holds the marketing site and its documentation app, kept as a
 # mirror of the site they are published from so an update there is a straight
-# copy. They are page copy rather than shipped library text, and rewording them
-# to satisfy this gate would put the repository and the live site out of step.
-_SKIP_DIR_PREFIXES = ("build_plan/", "website/")
+# copy. Its page copy is written to sell the project, so it is exempt from the
+# editorializing check — rewording it here would put the repository and the live
+# site out of step. It is *not* exempt from the process-jargon check: a
+# milestone reference or a finding ID on a public marketing page is a leak
+# whatever the page is for, and there is no editorial reason to allow one.
+_EDITORIALIZING_EXEMPT_DIR_PREFIXES = ("website/",)
 
 # This gate embeds every forbidden pattern as a literal, so it cannot scan
 # itself without self-tripping.
@@ -174,6 +188,15 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "planning-artifact": re.compile(
         r"\bfindings? report\b|\bphase brief\b|\bexplorer report\b|"
         r"\bzero[ -]ignore\b|\bask[ -]before[ -]commit\b|AUDIT_REPORT",
+        re.IGNORECASE,
+    ),
+    # Paths inside the internal planning tree. A comment that points a reader
+    # at one of these is unreadable outside the checkout it was written in,
+    # and the directory itself is gitignored. The slash is required, so the
+    # ordinary English "follow-ups" and "the findings" are untouched.
+    "planning-path": re.compile(
+        r"\b(?:resolved_)?follow[ _-]?ups?/|\bfindings/phase|"
+        r"\boutputs/\d+_phase\b|\bbuild_plan/",
         re.IGNORECASE,
     ),
     # leftover debugging, in Python and in the bundled JavaScript
@@ -360,14 +383,31 @@ def _is_scanned_path(rel: str) -> bool:
 
 
 def _tracked_source_files() -> list[str]:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "ls-files"],
-            capture_output=True, text=True, check=True,
-        ).stdout
-    except (OSError, subprocess.CalledProcessError):
-        pytest.skip("git not available / not a git checkout")
-    return [rel for rel in out.splitlines() if _is_scanned_path(rel)]
+    """Every source file this gate reads: tracked, plus staged-to-be.
+
+    ``git ls-files`` alone leaves a hole. A file that has been written but not
+    yet committed is invisible to it, so a violation in a brand-new file passes
+    every local run and only fails on the push that first tracks the file —
+    which is the run where it is most expensive to find. ``--others
+    --exclude-standard`` adds exactly those files: untracked and *not* ignored.
+    Ignored paths stay out, so gitignored scratch space (``build_plan/`` and
+    anything a contributor has excluded) is unaffected.
+    """
+    listings = []
+    for args in (["ls-files"], ["ls-files", "--others", "--exclude-standard"]):
+        try:
+            listings.append(subprocess.run(
+                ["git", "-C", str(REPO_ROOT), *args],
+                capture_output=True, text=True, check=True,
+            ).stdout)
+        except (OSError, subprocess.CalledProcessError):
+            pytest.skip("git not available / not a git checkout")
+    seen: dict[str, None] = {}
+    for out in listings:
+        for rel in out.splitlines():
+            if _is_scanned_path(rel):
+                seen[rel] = None
+    return list(seen)
 
 
 def test_tracked_source_has_no_internal_scaffolding():
@@ -390,6 +430,8 @@ def test_tracked_source_has_no_editorializing_self_praise():
     violations: list[str] = []
     for rel in _tracked_source_files():
         if rel in _EDITORIALIZING_EXEMPT_FILES:
+            continue
+        if rel.startswith(_EDITORIALIZING_EXEMPT_DIR_PREFIXES):
             continue
         try:
             text = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="ignore")
@@ -439,6 +481,13 @@ JARGON_SAMPLES: dict[str, list[str]] = {
         "held until the ask-before-commit gate",
         "recorded in AUDIT_REPORT_6",
     ],
+    "planning-path": [
+        "the wider seam is followups/mixin_attr_defined_seam.md",
+        "closed in resolved_followups/stop_sequences.md",
+        "written up in findings/phase12_report.md",
+        "the transcript is in outputs/104_phase/104-suite.txt",
+        "see build_plan/preamble.md",
+    ],
     "debug-leftover": [
         "    breakpoint()  # debug",
         "    pdb.set_trace()",
@@ -464,6 +513,30 @@ def test_detector_catches_planted_violation():
         for sample in samples:
             hits = find_violations("some/source.py", sample)
             assert any(n == name for _, n, _ in hits), (name, sample)
+
+
+def test_detector_catches_a_path_into_the_internal_planning_tree():
+    """A comment pointing at an internal planning file is a leak.
+
+    It reads as a live cross-reference but names a gitignored path, so nobody
+    outside the authoring checkout can follow it. The slash is what makes it a
+    path: ordinary prose about follow-ups or findings stays legal.
+    """
+    for sample in (
+        "# the wider mixin seam is followups/mixin_attr_defined_seam.md",
+        "# see build_plan/preamble.md",
+        "# transcript: outputs/104_phase/104-suite.txt",
+    ):
+        hits = find_violations("effgen/core/some_module.py", sample)
+        assert any(n == "planning-path" for _, n, _ in hits), sample
+    for legal in (
+        "Known follow-ups are tracked as GitHub issues.",
+        "the findings are reported through the returned envelope",
+        "collects follow up questions from the user",
+    ):
+        assert not any(
+            n == "planning-path" for _, n, _ in find_violations("s.py", legal)
+        ), legal
 
 
 def test_detector_catches_hyphenated_and_underscored_phase():
@@ -557,6 +630,31 @@ def test_scan_covers_files_whose_type_is_not_the_last_suffix():
     scanned = set(_tracked_source_files())
     assert ".github/workflows/release.yml.disabled" in scanned
     assert "deploy/sandbox/Dockerfile.sandbox" in scanned
+
+
+def test_scan_reaches_a_file_that_is_written_but_not_yet_committed(tmp_path):
+    """A new, uncommitted file is scanned — the hole that used to reach a push.
+
+    Written into the repository (not ``tmp_path``, which git cannot see) and
+    removed again, so the checkout is left as it was found.
+    """
+    planted = REPO_ROOT / "tests" / "unit" / "_scaffolding_gate_probe.py"
+    assert not planted.exists(), "probe path is already in use"
+    planted.write_text("# see Phase 9 of the build plan\n", encoding="utf-8")
+    try:
+        scanned = set(_tracked_source_files())
+        rel = "tests/unit/_scaffolding_gate_probe.py"
+        assert rel in scanned, "an untracked source file is invisible to the gate"
+        assert find_violations(rel, planted.read_text(encoding="utf-8"))
+    finally:
+        planted.unlink()
+    assert rel not in set(_tracked_source_files())
+
+
+def test_scan_does_not_reach_an_ignored_file(tmp_path):
+    """Ignored scratch space stays out, so a contributor's scratch file is safe."""
+    scanned = set(_tracked_source_files())
+    assert not any(r.startswith("build_plan/") for r in scanned)
 
 
 def test_scan_covers_scripts_that_sit_beside_bundled_data():
@@ -754,10 +852,10 @@ def test_scan_set_is_broad_and_did_not_silently_collapse():
     file under every top-level tree that holds authored text.
     """
     scanned = _tracked_source_files()
-    assert len(scanned) > 900, f"scan set shrank to {len(scanned)} files"
+    assert len(scanned) > 1250, f"scan set shrank to {len(scanned)} files"
     for prefix in (
         "effgen/", "tests/", "docs/", "examples/", "scripts/", "deploy/",
-        ".github/workflows/", "assets/", "clients/",
+        ".github/workflows/", "assets/", "clients/", "website/",
     ):
         assert any(r.startswith(prefix) for r in scanned), prefix
     # Every suffix and exact name the scanner claims to cover is either present
@@ -792,12 +890,27 @@ def test_every_scanned_file_kind_is_actually_read():
 
 def test_skipped_trees_are_the_documented_ones_only():
     """The skip list must stay small and explicit."""
-    assert _SKIP_DIR_PREFIXES == ("build_plan/", "website/")
+    assert _SKIP_DIR_PREFIXES == ("build_plan/",)
     assert _SKIP_FILES == {"tests/unit/test_no_internal_scaffolding.py"}
     assert _EDITORIALIZING_EXEMPT_FILES == {"CHANGELOG.md", "NEWS.md"}
+    assert _EDITORIALIZING_EXEMPT_DIR_PREFIXES == ("website/",)
     # The exempt release narrative is still scanned for process jargon.
     for rel in _EDITORIALIZING_EXEMPT_FILES:
         assert _is_scanned_path(rel), rel
+
+
+def test_marketing_site_is_exempt_from_praise_but_not_from_jargon():
+    """``website/`` is page copy, so it may sell — but it may not leak process.
+
+    The tree used to be skipped outright, which meant a milestone reference or a
+    finding ID could sit on a public marketing page and no gate would see it.
+    """
+    scanned = set(_tracked_source_files())
+    assert any(r.startswith("website/") for r in scanned), "website/ is not scanned"
+    # A praise word on a marketing page is allowed...
+    assert _EDITORIALIZING_EXEMPT_DIR_PREFIXES == ("website/",)
+    # ...but the jargon scan still reads those files, and still fires on them.
+    assert find_violations("website/components/Features.tsx", "shipped in Phase 12")
 
 
 def test_editorializing_allowlist_is_scoped_to_its_file():
