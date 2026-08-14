@@ -7,8 +7,6 @@ breakage if it were even slightly too broad.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from tests._harness.optional_deps import (
