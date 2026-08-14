@@ -91,12 +91,20 @@ _ANSWER_LABELS = ("final answer:", "answer:")
 #: widened to template models: widening it would need a way to tell an
 #: opener-emitting family from a bare-JSON one, and streamed call recording on
 #: the local engines, neither of which exists.
+#:
+#: The tag openers cover the XML dialect too — a call written as nested tags
+#: rather than as JSON (``<function=x><parameter=y>…``) opens with one of these,
+#: in either spelling of the name, so such a turn is held back and delivered
+#: sanitized rather than streamed with its scaffolding on screen.
 _CALL_CONSTRUCTS = (
     "<|channel>",
     "<channel|>",
     "<|tool_call>",
     "<tool_call>",
     "<function=",
+    "<function ",
+    "<function_call",
+    "<invoke",
     "[tool_calls]",
     "<|python_tag|>",
 )

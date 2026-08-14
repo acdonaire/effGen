@@ -625,3 +625,27 @@ def test_a_per_call_sampling_override_beats_the_configured_value():
     list(agent.stream(TASK, include_events=True, top_p=0.9))
 
     assert captured and all(config.top_p == 0.9 for config in captured)
+
+
+@pytest.mark.parametrize(
+    "opener",
+    ["<tool_call>", "<function=calculator>", '<function name="calculator">',
+     '<invoke name="calculator">'],
+    ids=["tool_call", "function-eq", "function-attr", "invoke-attr"],
+)
+def test_a_turn_writing_an_xml_call_streams_nothing_until_it_is_cleaned(opener):
+    """A call written as nested tags is held back like any other construct.
+
+    Sanitizing removes the construct from the middle of the text, so a delta
+    emitted before the turn ends could not be extended — it would put raw
+    scaffolding on screen and then have to take it back.
+    """
+    from effgen.core.agent_stream_native import _AnswerStream
+
+    stream = _AnswerStream()
+    assert stream.push("The product is ") != ""
+    assert stream.push(opener) == ""
+    assert stream.push("<parameter=expression>4817 * 236</parameter>") == ""
+    tail = stream.flush()
+    assert "<" not in stream.emitted + tail
+    assert "parameter" not in stream.emitted + tail
