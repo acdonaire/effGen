@@ -809,6 +809,24 @@ def scenario_live_server_concurrency() -> ContentionReport:
             # A run where the provider refused everything would satisfy every
             # row above without the server having answered anything, so the
             # scenario states how much real traffic it needs to have measured.
+            #
+            # When the shortfall IS the provider refusing — the upstream tier is
+            # per project while these workers are not — there is nothing here to
+            # assert about effGen, so this is a skip and not a red. The sibling
+            # scenario excludes quota refusals the same way; it can read them off
+            # the exception, while a refusal that arrives through the server is a
+            # status code. Any other shortfall still fails the row below.
+            if answered < requests // 2:
+                refused = sum(
+                    count for code, count in statuses.items()
+                    if code in (402, 429, 502, 503, 504)
+                )
+                if refused and answered + refused >= requests // 2:
+                    pytest.skip(
+                        f"the provider refused {refused} of {requests} calls "
+                        f"(status codes {sorted(c for c in statuses if c in (402, 429, 502, 503, 504))}); "
+                        "too little traffic was served to measure contention"
+                    )
             report.add(
                 "enough_answers_to_measure",
                 answered >= requests // 2,
