@@ -639,7 +639,39 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_for_server(base: str, proc: subprocess.Popen, deadline_s: float = 90.0) -> None:
+def _spawn_server(port: int, env: dict[str, str], log_path: Path) -> subprocess.Popen:
+    """Start ``effgen serve`` with its output going to a file.
+
+    Deliberately not a pipe. Nothing reads the server's output while a scenario
+    runs, so a pipe fills its buffer after a few hundred log lines and the
+    server blocks forever inside a write it can never finish — every request
+    after that times out against a process that is still alive and still
+    listening. A file has no such ceiling, and the failure paths below still
+    get the whole log.
+    """
+    with open(log_path, "w") as log:
+        return subprocess.Popen(
+            [sys.executable, "-m", "effgen.cli", "serve", "--port", str(port)],
+            env=env, stdout=log, stderr=subprocess.STDOUT, text=True,
+        )
+
+
+def _server_log(proc: subprocess.Popen, log_path: Path | None) -> str:
+    """Whatever the server has written so far."""
+    if log_path is not None:
+        try:
+            return log_path.read_text(errors="replace")
+        except OSError:
+            return ""
+    return proc.stdout.read() if proc.stdout else ""
+
+
+def _wait_for_server(
+    base: str,
+    proc: subprocess.Popen,
+    deadline_s: float = 90.0,
+    log_path: Path | None = None,
+) -> None:
     import httpx
 
     end = time.monotonic() + deadline_s
@@ -648,7 +680,7 @@ def _wait_for_server(base: str, proc: subprocess.Popen, deadline_s: float = 90.0
         if proc.poll() is not None:
             raise AssertionError(
                 f"server exited with {proc.returncode} before answering:\n"
-                + (proc.stdout.read() if proc.stdout else "")[-2000:]
+                + _server_log(proc, log_path)[-2000:]
             )
         try:
             httpx.get(f"{base}/health", timeout=5.0)
@@ -675,13 +707,11 @@ def test_server_under_sustained_load_is_bounded(tmp_path) -> None:
     base = f"http://127.0.0.1:{port}"
     api_key = "soak-" + os.urandom(8).hex()
     env = dict(os.environ, EFFGEN_API_KEY=api_key, EFFGEN_HOME=str(tmp_path))
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "effgen.cli", "serve", "--port", str(port)],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-    )
+    log_path = tmp_path / "server.log"
+    proc = _spawn_server(port, env, log_path)
     statuses: dict[int, int] = {}
     try:
-        _wait_for_server(base, proc)
+        _wait_for_server(base, proc, log_path=log_path)
         client = httpx.Client(timeout=120.0)
         headers = {"Authorization": f"Bearer {api_key}"}
 

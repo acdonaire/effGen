@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -41,6 +40,7 @@ from .test_endurance_soak import (
     LIVE_FAMILIES,
     _first_keyed_family,
     _free_port,
+    _spawn_server,
     _wait_for_server,
 )
 
@@ -727,10 +727,8 @@ def scenario_live_server_concurrency() -> ContentionReport:
 
     with tempfile.TemporaryDirectory() as home:
         env = dict(os.environ, EFFGEN_API_KEY=api_key, EFFGEN_HOME=home)
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "effgen.cli", "serve", "--port", str(port)],
-            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        )
+        log_path = Path(home) / "server.log"
+        proc = _spawn_server(port, env, log_path)
         statuses: dict[int, int] = {}
         run_ids: list[str] = []
         answered = 0
@@ -739,7 +737,7 @@ def scenario_live_server_concurrency() -> ContentionReport:
         usage_total = 0
         lock = threading.Lock()
         try:
-            _wait_for_server(base, proc)
+            _wait_for_server(base, proc, log_path=log_path)
             client = httpx.Client(timeout=300.0)
             headers = {"Authorization": f"Bearer {api_key}"}
 
