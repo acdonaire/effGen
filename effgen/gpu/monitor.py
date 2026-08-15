@@ -135,15 +135,17 @@ class GPUMonitor:
         >>> monitor = GPUMonitor(config)
         >>> monitor.start()
         >>>
-        >>> # Get current metrics
-        >>> metrics = monitor.get_metrics()
-        >>> for device_id, metric in metrics.items():
-        ...     print(f"GPU {device_id}: {metric.vram_used_gb:.2f}GB used")
+        >>> # Current metrics, one entry per visible device.
+        >>> usage = [
+        ...     f"GPU {device_id}: {metric.vram_used_gb:.2f}GB used"
+        ...     for device_id, metric in monitor.get_metrics().items()
+        ... ]
         >>>
-        >>> # Add alert callback
-        >>> def on_alert(alert):
-        ...     print(f"ALERT: {alert.message}")
-        >>> monitor.add_alert_callback(on_alert)
+        >>> # A callback runs on the monitor's own thread the moment a
+        >>> # threshold is breached, so it records the alert rather than
+        >>> # writing to a console it does not own.
+        >>> alerts = []
+        >>> monitor.add_alert_callback(lambda alert: alerts.append(alert.message))
         >>>
         >>> monitor.stop()
     """
