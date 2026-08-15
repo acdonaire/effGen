@@ -48,6 +48,19 @@ def _skip_if_rate_limited(exc: Exception) -> None:
     raise exc
 
 
+def _skip_if_refused(res: object) -> None:
+    """A team or DAG reports a refused call in its result, not by raising.
+
+    ``_skip_if_rate_limited`` only sees exceptions, and neither orchestrator
+    lets one out: a node that the provider would not serve comes back as
+    ``success=False`` with the 429 recorded per node. Without this the run reads
+    as ``assert False is True`` — an effGen defect — when the account is simply
+    out of tokens for the day.
+    """
+    from tests._harness.provider_unavailable import skip_if_provider_refused
+    skip_if_provider_refused(res, what="the orchestrated call")
+
+
 def test_sequential_team_live():
     from effgen import MultiAgentOrchestrator, OrchestrationPattern
     a, b = _mk_agent("drafter"), _mk_agent("editor")
@@ -55,6 +68,7 @@ def test_sequential_team_live():
         orch = MultiAgentOrchestrator()
         orch.create_team("seq", [a, b], pattern=OrchestrationPattern.SEQUENTIAL)
         res = orch.assign_task("Write one short sentence about the sea.", "seq")
+        _skip_if_refused(res)
         assert res.success is True
         assert len(res.agent_responses) == 2
         assert res.output.strip()
@@ -72,6 +86,7 @@ def test_parallel_team_live():
         orch = MultiAgentOrchestrator()
         orch.create_team("par", [a, b], pattern=OrchestrationPattern.PARALLEL)
         res = orch.assign_task("Name one primary color.", "par")
+        _skip_if_refused(res)
         assert res.success is True
         assert len(res.agent_responses) == 2
     except Exception as e:
@@ -89,6 +104,7 @@ def test_hierarchical_team_live():
         orch.create_team("hier", [w1, w2],
                          pattern=OrchestrationPattern.HIERARCHICAL, manager_agent=mgr)
         res = orch.assign_task("List two benefits of sleep.", "hier")
+        _skip_if_refused(res)
         assert res.success is True
         assert res.output.strip()
         # The manager's initial decomposition call is billed too (3 manager/
@@ -120,6 +136,7 @@ def test_dag_fanout_fanin_live():
         assert dag.topological_order()[0] == "src"
         # bare string routed to the entry node:
         res = dag.run("Reply with the single word: ping.")
+        _skip_if_refused(res)
         assert res.success is True
         statuses = {n["id"]: n["status"] for n in res.node_results}
         assert all(s == "completed" for s in statuses.values())
@@ -162,6 +179,7 @@ def test_dag_with_bad_node_reports_the_failure_live():
         dag.add_node(WorkflowNode(id="bad", agent=bad))
         dag.connect("ok", "bad")
         res = dag.run("hi")
+        _skip_if_refused(res)
         statuses = {n["id"]: n["status"] for n in res.node_results}
         assert statuses["ok"] == "completed"
         assert statuses["bad"] == "failed"

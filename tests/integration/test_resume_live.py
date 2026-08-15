@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
+from tests._harness.provider_unavailable import skip_if_provider_refused
+
 # Load keys from the repo .env (canonical) then the per-user one, without
 # overriding anything already in the environment.
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
@@ -97,6 +99,7 @@ def test_checkpoint_resume_live(tmp_path):
             "What is the capital of Japan? Answer in one word.",
             checkpoint_dir=ckpt,
         )
+        skip_if_provider_refused(r1)
         assert r1.success
     finally:
         a1.close()
@@ -110,6 +113,7 @@ def test_checkpoint_resume_live(tmp_path):
     a2 = _agent()
     try:
         r2 = a2.resume(checkpoint_dir=ckpt)
+        skip_if_provider_refused(r2)
         assert r2.success
         assert "tokyo" in r2.output.lower()
     finally:

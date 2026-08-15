@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from effgen._env import load_env
+from tests._harness.provider_unavailable import skip_if_provider_refused
 
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
@@ -258,6 +259,7 @@ class TestCookbook01ImageQA:
             "What color is this image? One word answer.",
             inputs=[img_part],
         )
+        skip_if_provider_refused(result)
         assert result.success, f"Agent failed: {result.output}"
         assert "red" in result.output.lower(), (
             f"Expected 'red'; got: {result.output[:200]}"
@@ -335,6 +337,7 @@ class TestCookbook02AudioTranscribeReason:
             "then give a one-line sentiment summary.",
             inputs=[part],
         )
+        skip_if_provider_refused(result)
         assert result.success, f"Audio agent failed: {result.output}"
         assert len(result.output) > 10, "Expected non-trivial output"
 
@@ -509,6 +512,7 @@ class TestCookbook04OCRPlusLLM:
             "Use the ocr tool to extract all visible text from this document image.",
             inputs=[img_part],
         )
+        skip_if_provider_refused(ocr_result)
         assert ocr_result.success, f"OCR step failed: {ocr_result.output}"
         raw_text = ocr_result.output
         assert len(raw_text) > 10, "Expected non-empty OCR output"

@@ -15,6 +15,8 @@ import pytest
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+from tests._harness.provider_unavailable import skip_if_provider_refused
+
 load_dotenv(Path(__file__).parent.parent.parent / ".env", override=False)
 load_dotenv(Path.home() / ".effgen" / ".env", override=False)
 
@@ -43,6 +45,7 @@ def test_output_schema_pydantic_class_live_groq():
     finally:
         pass
 
+    skip_if_provider_refused(result)
     assert result.success, f"expected success, got: {result.output!r}"
     parsed = json.loads(result.output)  # must be valid JSON matching the schema
     assert parsed["capital"].lower() == "paris"
@@ -65,6 +68,7 @@ def test_create_agent_engine_passthrough_loads_local_model():
         # engine= must have routed through load_model -> a TransformersEngine.
         assert isinstance(agent.model, TransformersEngine)
         result = agent.run("Reply with exactly: OK", max_tokens=16)
+        skip_if_provider_refused(result)
         assert result.success
     finally:
         agent.close()

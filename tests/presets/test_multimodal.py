@@ -12,6 +12,7 @@ import os
 import pytest
 
 from effgen.models.base import BaseModel, ModelType, TokenCount
+from tests._harness.provider_unavailable import skip_if_provider_refused
 
 # ---------------------------------------------------------------------------
 # Unit — preset registration
@@ -150,6 +151,7 @@ def test_multimodal_agent_run_accepts_structured_inputs_with_tools():
 
     result = agent.run("Count visible people.", inputs=[image])
 
+    skip_if_provider_refused(result)
     assert result.success
     assert result.output == "42"
     assert result.metadata["multimodal_inputs"] is True
@@ -210,6 +212,7 @@ def test_multimodal_preset_image_live(tmp_path):
         f"Describe what you see in this image: {img_path}. "
         "Use the multimodal_describe or image_caption tool."
     )
+    skip_if_provider_refused(result)
     assert result.success, f"Agent failed: {result.output}"
     out_lower = result.output.lower()
     assert any(w in out_lower for w in ("red", "square", "image", "color", "colour")), (
