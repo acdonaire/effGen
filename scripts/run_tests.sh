@@ -402,13 +402,32 @@ for p in $(descendants $$); do kill -9 "$p" 2>/dev/null; done
     # Leading whitespace is allowed: a lane that drives pytest itself reports a
     # failure indented inside its own traceback, and anchoring at column 0
     # silently drops it.
+    named=0
     if grep -haE '^[[:space:]]*(FAILED|ERROR) tests/' "$L"/*.txt 2>/dev/null \
         | sed -e 's/^[[:space:]]*//' -e 's/ - .*//' | sort -u | grep .; then
-        echo ""
-        echo "RESULT: FAILURES — the list above needs a decision."
+        named=1
     else
         echo "   (none)"
-        echo ""
+    fi
+
+    # A lane can fail without printing a pytest node id — it may run a checker of
+    # its own, or die before pytest starts. Its exit code is then the only
+    # evidence there is, so the verdict reads it rather than the log text.
+    red=""
+    while IFS='|' read -r id stream est label state; do
+        [ "$state" = "run" ] || continue
+        rc="$(cat "$L/$id.rc" 2>/dev/null || echo 0)"
+        [ "$rc" = "0" ] || red="$red  $id (exit $rc)"$'\n'
+    done < "$L/manifest.txt"
+
+    echo ""
+    echo "## Lanes that ended non-zero"
+    if [ -n "$red" ]; then printf '%s' "$red"; else echo "   (none)"; fi
+
+    echo ""
+    if [ "$named" = "1" ] || [ -n "$red" ]; then
+        echo "RESULT: FAILURES — the lists above need a decision."
+    else
         echo "RESULT: NO FAILURES in the lanes that ran."
     fi
     echo ""
