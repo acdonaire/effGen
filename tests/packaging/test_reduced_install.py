@@ -156,6 +156,15 @@ def _run(tmp_path: Path, program: str, blocked: str, encoding: str = "utf-8") ->
     )
 
 
+# The fixture below drives seven interpreters through the whole command surface
+# before the first test runs, and that does not fit the repository's 120s
+# default on a busy machine: every test in this file errored in setup during a
+# parallel suite run while the identical tests passed in a lane that raised the
+# cap. The work belongs to the module, so the allowance does too — a caller
+# should not have to pass a flag to run this file correctly.
+pytestmark = pytest.mark.timeout(900)
+
+
 @pytest.fixture(scope="module")
 def cells(tmp_path_factory) -> dict[str, list[dict]]:
     """Drive every cell once; each test reads the rows it needs."""
