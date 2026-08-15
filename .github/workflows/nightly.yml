@@ -84,70 +84,13 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          python - <<'PY'
-          import json, os, sys, traceback
-          from pathlib import Path
-
-          api_key = os.getenv("GROQ_API_KEY", "")
-          if not api_key:
-              Path("regression-report.md").write_text(
-                  "SKIPPED: GROQ_API_KEY secret not set — add it in GitHub Settings > Secrets."
-              )
-              Path("eval-status.txt").write_text("skipped")
-              print("SKIPPED: GROQ_API_KEY secret not set.")
-              sys.exit(0)
-
-          status = "crashed"
-          report_md = "Eval did not complete — see workflow logs."
-          try:
-              from effgen.eval import AgentEvaluator, MathSuite, RegressionTracker
-              from effgen.eval.evaluator import ScoringMode
-              from effgen.models.groq_adapter import GroqAdapter
-              from effgen.core.agent import Agent, AgentConfig
-              from effgen.tools.builtin.calculator import Calculator
-
-              # Migrated off Cerebras free tier (issues #41 / #42): the
-              # llama3.1-8b RPM cap was tightened upstream and the eval
-              # collapsed to ~0.4 accuracy with empty 429 responses.
-              # Groq's openai/gpt-oss-20b reliably scores ≥0.85 with sub-second
-              # latency on the free tier.
-              adapter = GroqAdapter("openai/gpt-oss-20b")
-              adapter.load()
-              config = AgentConfig(
-                  name="nightly-eval",
-                  model=adapter,
-                  tools=[Calculator()],
-                  system_prompt="You are a math assistant. Use the calculator tool for each computation. Give a concise final numerical answer.",
-                  max_iterations=5,
-                  temperature=0.1,
-              )
-              agent = Agent(config)
-
-              ev = AgentEvaluator(agent, scoring=ScoringMode.CONTAINS)
-              results = ev.run_suite(MathSuite(), max_cases=20)
-              tracker = RegressionTracker()
-              report = tracker.compare("math-20", results, version="ci-nightly")
-              report_md = report.to_markdown()
-              print(report_md)
-              Path("regression-report.md").write_text(report_md)
-              Path("eval-summary.json").write_text(json.dumps(results.summary(), indent=2))
-              if report.has_regressions:
-                  status = "regression"
-                  Path("eval-status.txt").write_text("regression")
-                  raise SystemExit("Regression detected — see report above")
-              status = "passed"
-              Path("eval-status.txt").write_text("passed")
-          except SystemExit:
-              raise
-          except Exception:
-              tb = traceback.format_exc()
-              report_md = f"## Eval crashed\n\n```\n{tb}\n```\n"
-              Path("regression-report.md").write_text(report_md)
-              Path("eval-status.txt").write_text("crashed")
-              print(report_md)
-              sys.exit(1)
-          PY
-
+          # Migrated off the Cerebras free tier (issues #41 / #42): the
+          # llama3.1-8b RPM cap was tightened upstream and the eval collapsed
+          # to ~0.4 accuracy with empty 429 responses. Groq's
+          # openai/gpt-oss-20b scores >=0.85 on the free tier, but that tier
+          # meters tokens per minute, so the script paces the cases and does
+          # not score a case the provider refused.
+          python scripts/ci_eval_regression.py --version ci-nightly
       - name: Upload regression report
         if: always()
         uses: actions/upload-artifact@v4
