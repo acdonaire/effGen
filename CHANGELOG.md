@@ -7,6 +7,725 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.0] - 2026-08-14
+
+### Highlights
+
+**effGen v1.0.0 is the first stable release.** It is more than 600 commits of work since v0.3.2, and the theme
+running through it is control over where a model runs and visibility into what a run did.
+
+You can now point effGen at any server that speaks the OpenAI protocol, read back which tool calls a
+run made, wrap the agent loop in middleware, hand a single agent many conversations, choose how
+history is compacted, and resume a workflow that died half way through. A backend that never answered
+raises instead of returning something that reads like an answer.
+
+Around that sits a terminal coding agent (`effgen code`), a branded command line that works on any
+terminal, a real-time dashboard, an in-browser playground, shareable HTML reports and run cards, a
+cross-provider model and pricing browser, a terminal mission-control view, a live model battle, and a
+browsable run and session history.
+
+Underneath both is the least visible and largest part of the release: a long pass over everything
+that used to report the wrong thing confidently. A run that failed now says so. An unpriced model
+reports no cost instead of a made-up one. A turn whose every action failed is not a success. A tool
+call written in a shape effGen could not read no longer ends a turn with nothing.
+
+**Three changes are breaking.** Each is listed below with its one-line migration. The public surface
+grew from 204 names to 223, and nothing was removed or renamed.
+
+### Changed - breaking
+
+1. **Python 3.10 is no longer supported.** The floor is 3.11, and the supported set is 3.11, 3.12,
+   3.13 and 3.14. `tomllib`, `asyncio.timeout`, `datetime.UTC` and the `TimeoutError` unification are
+   all stdlib from 3.11, and effGen carried a hand-written fallback for each.
+
+   *Migration:* upgrade the interpreter. Nothing in the API changed.
+
+2. **`AgentConfig.raise_on_error` now defaults to `True`.** A failed run raises its typed error
+   instead of returning an `AgentResponse` with `success=False` and a plausible-looking string in
+   `.output`, which a caller reading `.output` without checking `.success` never noticed.
+
+   *Migration:* pass `raise_on_error=False` to inspect the response yourself. The failure shape is
+   unchanged, and the CLI does exactly this at all fourteen of its construction sites.
+
+   ```python
+   Agent(AgentConfig(model="gpt-5-nano", raise_on_error=False))
+   ```
+
+   `raise_on_error=False` is also the documented setting for batch evaluation. Scoring a run that hit
+   the iteration cap as an error rather than as a wrong answer measures the reporting style instead
+   of the model, and a small model hits that cap often. With the flag off, a failed run's `output` is
+   effGen's report of what stopped the run, and the model's own text is in
+   `metadata["partial_output"]`.
+
+3. **A backend that never answered raises whatever that flag says.** A refused connection, an
+   unresolvable host or a missing route is classified `unreachable`, separately from a server that
+   answered badly (which stays `transient` and still retries), and raises `BackendUnreachableError`.
+   A task that ran and failed is a result you can inspect. A backend that was never reached is not,
+   and returning one is how a whole batch completes against nothing and still looks healthy in the
+   summary.
+
+   *Migration:* there is no opt-out, by design. Catch the error where you want to handle it.
+
+   ```python
+   from effgen.models.errors import BackendUnreachableError
+
+   try:
+       result = agent.run("Summarise the Q3 report.")
+   except BackendUnreachableError:
+       pass   # the server is not up
+   ```
+
+   Classification reads the exception chain, because provider SDKs shorten a refused port to
+   "Connection error." and keep the real cause on `__cause__`.
+
+One smaller change is worth knowing before you upgrade: four public enums are now `enum.StrEnum`, so
+`str(TaskStatus.RUNNING)` reads `"RUNNING"` rather than `"TaskStatus.RUNNING"`. Equality, membership
+and JSON serialization are unchanged.
+
+### Added - connecting to models
+
+- **Point effGen at any OpenAI-compatible server.** `base_url` reaches `load_model()` and
+  `AgentConfig`, so effGen can drive a model you already serve (vLLM, SGLang, TGI, llama.cpp, Ollama,
+  LM Studio, LiteLLM, a gateway or a corporate proxy) instead of loading a second copy of the weights
+  inside the agent process.
+
+  ```python
+  from effgen.models import load_model
+
+  model = load_model(
+      "Qwen/Qwen2.5-7B-Instruct",
+      provider="openai_compatible",
+      base_url="http://127.0.0.1:8000/v1",
+  )
+  ```
+
+  The endpoint also comes from `EFFGEN_BASE_URL`, `OPENAI_BASE_URL` or `OPENAI_API_BASE`, in that
+  order, and `provider="openai"` with a `base_url` routes here too. The server serves its own model
+  ids, so no OpenAI catalog is consulted: the full sampling surface is offered, calls report **no
+  price** rather than a fabricated `$0`, and `list_served_models()` asks the endpoint what it has.
+  Pass `context_length=` when your server's window is not the assumed 32,768 tokens; effGen now warns
+  when it is assuming, naming the value and the flag that sets the real one, instead of failing later
+  at a size nobody chose. See [docs/models/openai-compatible.md](docs/models/openai-compatible.md).
+
+- **A multi-turn tool loop you can write by hand, on any provider.** `build_assistant_message()` and
+  `build_tool_result_message()` on `BaseModel`, and so on every adapter, build each provider's own
+  message shape. A loop written once runs against OpenAI, Gemini, Anthropic, Groq, Together,
+  Fireworks, Cerebras, Replicate and HF Inference instead of only the first. Gemini and Anthropic
+  override them with their own shapes. See [docs/models/tool-calls.md](docs/models/tool-calls.md).
+
+- **Python 3.14 is supported.** It was installed and run, not just resolved: the unit lane passes on
+  3.14 with `.[dev]` (4,078 tests) and with `[all]` through a shipped lock (4,151). One caveat, since
+  it changes the install line: plain `pip install effgen[all]` does not resolve on 3.14, because pip
+  backtracks through the wide vLLM range into a release pinned to `numba==0.61`. On 3.14, install the
+  extras with `pip install -r requirements-all-py314-lock.txt` followed by
+  `pip install --no-deps effgen`. See [docs/installation.md](docs/installation.md).
+
+### Added - the agent surface
+
+- **Middleware around the agent loop.** Hooks at three points (the run, each model call, each tool
+  call), each with a *before* and an *after*. A *before* hook can rewrite the request through its
+  context or short-circuit it entirely; an *after* hook can transform the result. *Before* hooks run
+  in order and *after* hooks in reverse, so middleware nest.
+
+  ```python
+  from effgen import Agent, AgentConfig
+  from effgen.core.middleware import AgentMiddleware
+
+  class SearchBudget(AgentMiddleware):
+      def __init__(self, limit=3):
+          self.limit, self.used = limit, 0
+
+      def before_tool_call(self, ctx):
+          if ctx.tool_name != "web_search":
+              return None
+          if self.used >= self.limit:
+              return "Skipped: this run has spent its search budget."
+          self.used += 1
+          return None
+
+  agent = Agent(AgentConfig(model="gpt-5-nano", middleware=[SearchBudget()]))
+  ```
+
+  Also available per call as `run(..., middleware=[...])`, which appends to the configured ones for
+  that call only. `LoggingMiddleware` and `ToolApprovalMiddleware` ship. See
+  [docs/guides/middleware.md](docs/guides/middleware.md).
+
+- **One agent, many conversations.** `run(..., session=Session | str)` builds the prompt from that
+  conversation's history and appends the turn to it, restoring the agent's own session and memory
+  afterwards, including when the run fails. A server handling many users no longer needs an agent
+  object per user, nor history bookkeeping outside the framework.
+
+  ```python
+  agent.run("My dog is named Pixel.", session="user-123")
+  agent.run("My cat is named Mote.",  session="user-456")
+  ```
+
+- **Pluggable context compaction.** What gets dropped when a conversation outgrows the window is now
+  a strategy: `SummarizeOldest` (the default, with behaviour unchanged), `DropOldest` (no model call,
+  nothing invented), `KeepFirstAndLast` (the turns carrying the task survive verbatim) and
+  `KeepToolResults` (the evidence stays, the reasoning is compacted). Choose one with
+  `AgentConfig(compaction_strategy=DropOldest())`, or subclass `CompactionStrategy` for your own.
+  `AgentConfig(tokenizer=...)` measures the history in the units the window is measured in rather
+  than characters divided by four; anything with `count_tokens(text)` or `encode(text)` works. See
+  [docs/guides/context-compaction.md](docs/guides/context-compaction.md).
+
+- **A workflow that died part way through can be resumed.** `WorkflowDAG.run()` takes a `checkpoint=`
+  store and a `run_id=`. Run the same line again after a crash and it continues where it stopped.
+
+  ```python
+  from effgen import FileCheckpointStore, WorkflowDAG, WorkflowNode
+
+  store = FileCheckpointStore()          # ~/.effgen/workflows by default
+  dag = WorkflowDAG("report")
+  dag.add_node(WorkflowNode(id="research", agent=researcher))
+  dag.add_node(WorkflowNode(id="draft", agent=writer))
+  dag.connect("research", "draft")
+
+  result = dag.run("Write the Q3 summary.", checkpoint=store, run_id="q3-summary")
+  ```
+
+  Completed nodes are not re-run and their outputs flow downstream, failed nodes are retried (which
+  is usually the reason to resume), and a finished run replays its stored outputs without calling a
+  model, so a retrying job runner cannot double-bill you. There is no separate resume call: an
+  unknown run id starts from the beginning and a known one continues, so there is no second code path
+  to get wrong. Progress is written after each topological level, writes are atomic, only state is
+  stored (never the graph, which holds sockets and credentials), and resuming into a changed graph is
+  refused by name rather than mixing outputs from two different workflows.
+  `InMemoryCheckpointStore` is there for tests. See
+  [docs/guides/sessions-and-checkpoints.md](docs/guides/sessions-and-checkpoints.md).
+
+- **`AgentResponse.tool_calls` reports the calls, not just how many.** Each entry is a `ToolCall`
+  carrying `name`, `arguments`, `result`, `duration`, `error` and the `iteration` it was made on,
+  with `.failed` and `.by_name()` to narrow them.
+
+  ```python
+  for call in result.tool_calls:
+      print(call.name, call.arguments, "->", call.error or call.result)
+  ```
+
+  Iterating the field used to raise `TypeError: 'int' object is not iterable`. It still compares and
+  casts as the count, so `tool_calls == 2` and `tool_calls > 0` are unchanged; `tool_call_count` on
+  the response, and `tool_calls.total` on the list, say the number plainly. `to_dict()` keeps the
+  count under its original key and adds `tool_call_details`, so saved runs read back either way.
+  Records are captured on the ReAct, native and streaming paths.
+
+- **`load_env()`** runs the same `.env` search the CLI does, so a library script picks up the keys
+  the CLI already finds. It honours `EFFGEN_NO_DOTENV` and never overwrites a value you exported.
+
+- **A tool can declare its output to be retrieved context** (`is_context_retrieval`), so a loop that
+  ends on a repeated retrieval knows it has evidence rather than an answer.
+
+### Added - the coding agent
+
+- **`effgen code` is a coding agent in the terminal.** It reads your workspace, proposes edits as
+  unified diffs, and writes nothing until you say so. `--undo` rolls the last change back from a
+  journal bounded to 100 entries.
+
+  ```bash
+  effgen code "add a --dry-run flag to the importer"
+  effgen code --review                      # one read-only pass
+  effgen code --session-id my-refactor      # continue where you left off
+  ```
+
+  It runs in one of four permission modes (plan, ask, auto-edit, yes) that gate every write, every
+  shell command and every commit. Writes are confined to the workspace, and a hunk that no longer
+  applies is reported rather than clobbering the file. An interactive session keeps one run record
+  across turns and carries a slash-command set (`/plan`, `/diff`, `/apply`, `/reject`, `/undo`,
+  `/run`, `/test`, `/context`, `/add`, `/drop`, `/mode`, `/model`, `/tools`, `/cost`, `/trace`,
+  `/git`, `/review`, `/compact`, `/save`, `/session`, `/load`, `/doctor` and more). `--session-id`
+  resumes it in a later process. `--review` (and `/review`) makes one read-only pass over a change
+  with a tool set that holds nothing that writes, runs or executes.
+
+  It is repository-aware: branch, status and a layout inventory that honours `.gitignore` go into the
+  prompt, and an `AGENTS.md` brief is read when present. Git actions run through an allow-list, so
+  push, reset, checkout, clean, rebase and force are refused before a subprocess starts, including
+  when the model tries to reach them through the shell. A commit is confirmed like a write and uses
+  the repository's own identity, leaving your other staged work alone.
+
+  A turn streams its answer as it is written where the model's calls can be dispatched mid-stream,
+  names which tool-calling path it ran, and reports each action as it happens. `-p`, `--json` and
+  piped stdin run the single-shot path with byte-clean stdout. See [docs/cli/code.md](docs/cli/code.md).
+
+- **`effgen doctor` reports coding readiness** (workspace, sandbox backend, git), and
+  `quickstart`/`tutorial` include a coding step that writes and runs a real program.
+
+### Added - surfaces you can show someone
+
+- **A real-time dashboard** with per-model and per-provider cost, latency percentiles that are real
+  percentiles, an error breakdown, a run waterfall, a model catalog panel and a history panel. Every
+  chart is drawn locally.
+- **An in-browser playground** on the existing chat endpoint, with model and preset pickers, tool
+  toggles, the run's tool trace, and copy-as-curl, copy-as-CLI and copy-as-Python for the form you
+  filled in.
+- **A cross-provider model and pricing browser**, in the terminal (`effgen models browse`, with
+  search, provider, capability, context and price filters, sorting and paging) and in the dashboard.
+  `models info` shows every provider that serves a shared id.
+- **Shareable HTML reports** for compare, eval, cost and loadtest (`--report out.html`), plus
+  **single-run cards** (`run --card`, `runs show <id> --card`) and `effgen report <result.json>` to
+  render a saved document after the fact.
+- **`effgen top`** (alias `effgen monitor`), a terminal mission-control view over the telemetry you
+  already collect: activity, traffic, per-model, spend and GPU panels, each stating the window and
+  process it describes.
+- **`effgen battle`**, which races several models on one prompt side by side and reports the tally,
+  the cost and an optional judge's verdict separately from the measurements.
+- **A live multi-agent topology graph**, terminal trace timelines, a workflow DAG diagram
+  (`workflow run --diagram`) and a run waterfall.
+- **A command palette and keyboard-first navigation** on both web surfaces, with a skip link, jump
+  links, focus restoration and screen-reader announcements.
+- **Named CLI themes** (`--theme`, `EFFGEN_THEME`: default, high-contrast, monochrome, light) drawn
+  from one shared palette that the dashboard reads too, and a branded landing page and first-run
+  welcome.
+
+Every web surface is self-contained. There is no CDN, no external font and nothing fetched at view
+time, and that is enforced by a test that inspects what a browser would fetch rather than by
+searching for a substring.
+
+### Added - history, projects and the command line
+
+- **Durable run and session history.** Every run is recorded with its model, provider, tokens, cost,
+  status and task, keyed by the same run id its trace spans carry: `effgen runs list/show/cleanup`
+  and `effgen sessions list/show/browse/export/cleanup`, with search, status, model and date filters.
+  Runs from the CLI, a script and the server share one history and survive a restart.
+- **Project scaffolding.** `effgen quickstart --init [DIR]` writes `effgen.yaml`, `.env.example` (one
+  named variable per registered provider, with no value invented), a runnable `example.py` and a
+  `.gitignore`, puts a $1.00/day spend cap in force when none is configured, and prints the next three
+  commands. `effgen config init` writes a document a run actually reads, and `effgen run -c` applies
+  the `model` and `provider` that document names.
+- **Flags and output that behave the same everywhere.** `--json` on every command that had no machine
+  output, and `--json` stdout is now a single valid document on a pipe and on a terminal, with no
+  spinner, table or warning mixed into it. `-o` picks its format from the extension (`.html` renders
+  a report, `.md` writes Markdown, anything else JSON). `--guardrails` on `run`, `chat` and `batch`.
+  `--provider` on `eval` and `compare`, `-m` on `prompts run`/`prompts eval`, `--temperature` on
+  `eval`/`compare`, `--trace` on `run`, positional input on `batch`, `-t/--tools` on `chat`. A bare
+  group command prints its own help and exits 0 instead of reporting an unknown subcommand. Thirteen
+  short flags now mean the same thing across commands.
+- **Your own prompt templates load beside the shipped ones.** `EFFGEN_PROMPTS_DIR` names one or more
+  directories; each `*.py` in them is imported and its templates are registered under their own
+  names, so a team's library sits next to the built-in one without a fork. `prompts run` now fails
+  closed on an empty or truncated result rather than printing nothing and exiting 0, and reports the
+  tokens, cost and latency of the call it made.
+- **`effgen loadtest --url`** drives a running `effgen serve` over HTTP, through auth, rate limiting
+  and the middleware stack, instead of only driving an adapter directly.
+- **`effgen models status --json`**, `models info` on a local engine id, and `models browse
+  --include-local`.
+
+### Added - a documentation site
+
+- **effGen has a project site and a documentation site**, both published from this repository:
+  a landing page at <https://ctrl-gaurav.github.io/effGen/> with the examples, the community links
+  and the benchmark leaderboard, and 36 documentation pages at
+  <https://ctrl-gaurav.github.io/effGen/docs/> covering installation, the quick start, agents,
+  models and providers, tools, RAG, memory, multi-agent work, workflows, checkpointing, guardrails,
+  security, evaluation, observability, reliability, the API server, deployment, hardware, protocols,
+  the human-in-the-loop path and the API reference. Both are static, both are built and published by
+  the same lane on every change, and neither needs a server to read.
+- **Every public definition documents its arguments and its result.** The package was walked module
+  by module: each public class, method and function states what it does, what each argument means and
+  what comes back, and a gate fails when a public definition is added without that. The 119 pages
+  under `docs/` were re-run command by command against this release.
+
+### Changed
+
+- **A rate limit no longer multiplies.** Three layers each retried a throttled call and multiplied
+  rather than shared a budget: one client request became twelve upstream requests and held the caller
+  20.5 seconds at a stated 2-second delay. One layer now owns provider retry (the adapter's own
+  backoff where it has one, the SDK's where it does not), and the agent no longer re-retries a call
+  already classified as rate-limited. The same measurement now reads four requests and 6.7 seconds.
+- **A plain `run()` no longer fans out into sub-agents on its own.** `AgentConfig.mode` defaults to
+  `SINGLE` and `run()`/`run_async()`/`stream()` follow it, where they used to force automatic
+  decomposition. A task over roughly a hundred words used to become six billed calls, and a
+  decomposed run could report a number the source text never contained. `--mode auto` opts back in,
+  and a genuinely multi-part task still decomposes.
+- **`generate_with_tools()` takes `config` third on all ten adapters.** It was `messages` on Groq,
+  Together and Fireworks, so a positional call misrouted its argument and failed as a retryable
+  error. Both spellings still work, told apart by type, so there is no migration.
+- **A local model run is labelled with its engine, not `provider="unknown"`.** On-device work
+  reported `unknown` on the `effgen_model_*` metric series while the run store recorded `transformers`
+  for the same call. A dashboard that grouped local runs under `unknown` now shows them under their
+  engine. Nothing labelled with a real provider moves.
+- **The `standard` guardrail preset screens tool output for injection**, not just input, so an
+  instruction planted in a tool's return value no longer reaches the model under the default preset.
+  `standard` also redacts personal data rather than blocking the message, so a customer quoting their
+  own email address is answered instead of refused. `strict` still blocks.
+- **Library warnings render as one line in the CLI**, on stderr, instead of Python's traceback block
+  pointing at internals you did not write. Setting `-W` or `PYTHONWARNINGS` restores the default
+  rendering, because someone who set those asked for it.
+- **Catalogs refreshed against the live APIs** for Groq, Fireworks, Together, Replicate and Gemini:
+  retired ids removed, undeployed models dropped, four prices corrected in both the catalog and the
+  fallback table, and Fireworks and Cerebras models flagged as reasoning models so they get the
+  larger first-token budget instead of truncating and costing an extra billed call. The bundled
+  catalog now carries 417 models across 9 providers. Two drift checks that reported permanent false
+  positives were fixed.
+- **An incompatible protocol SDK now breaks only its own protocol.** `mcp` 2.0.0 removes the module
+  the effGen MCP server is built on, so an uncapped install took 2.x and failed at import, and
+  collecting the protocols package took thousands of unrelated tests down with it. The dependency
+  reads `mcp>=1.28.1,<2`, the streamable-HTTP transport is imported under its current name with a
+  fallback to the old alias, each protocol package imports its SDK only when that protocol is used,
+  and the upper-bound guard now covers `mcp` so the next fast mover is caught by a check rather than
+  by a user. A cross-loop `disconnect()` no longer hangs.
+- **Five dependency floors were raised past open advisories** (`aiohttp>=3.14.3`,
+  `cryptography>=50.0.0`, `gitpython>=3.1.58`, `h2>=4.4.1`, `pypdf>=6.15.0`), earlier floors were
+  raised for `mcp`, `Pillow` and `httplib2`, every floor is now declared beside each extra that
+  reaches the package, and both lockfiles were regenerated. The vulnerability audit passes.
+
+### Fixed - results that report what actually happened
+
+- **A turn that did nothing no longer reports success.** A coding turn whose every action failed, and
+  a retrieval loop that produced no answer, are reported as partial outcomes with the recovered text
+  under `metadata["partial_output"]` and a typed reason for what stopped the run.
+- **A run stopped at the iteration cap reports the stop**, not the last passage it retrieved, and
+  carries its progress through every surface that shows it: the terminal panel, `--json`, the run
+  record, the chat session and the coding report.
+- **A reasoning model that emitted no visible token says so** on every adapter, instead of being
+  retried three times and reported as an empty answer. A tight token budget raises a heads-up before
+  the call rather than after the bill.
+- **A tool call the model wrote out instead of making is a failed turn**, not an answer, including
+  the shapes that used to slip through: a stray angle bracket, a missing separator, a query string
+  with HTML entities, call syntax whose arguments were dropped, and a tag named after the tool
+  itself.
+- **A code execution that exited non-zero reports failure.** A raise, a `sys.exit`, a syntax error, a
+  non-zero bash exit and a JavaScript throw all return `success=False` with a named reason, and the
+  full stdout, stderr and exit code are kept on every path.
+- **An unpriced or uncatalogued model reports no cost rather than a fabricated one.** A provider's
+  placeholder rate made every id the bundled catalog had not seen read as priced, so a fine-tuned
+  `ft:` id was billed at a made-up rate and the invented number was reported as a published price.
+  `call_cost` returns `None` for an unpriced model and `0.0` only for a genuine free tier, and every
+  surface (the cost report, the ledger, the run card, the dashboard, the battle tally) says "no
+  price" instead of `$0`.
+- **Streamed runs report their cost and tokens** on every provider, including Replicate and HF
+  Inference, which recorded neither. `model.total_tokens` is correct on every adapter (six never
+  assigned it at all), a model span carries its cost every time, and a Groq response that reports an
+  all-zero usage block for a call it billed is estimated and flagged rather than recorded as free.
+- **Team and workflow totals include the manager's own calls**, so a hierarchical run's reported cost
+  is the cost.
+- **A model that could not run at all is reported as failed, not as scoring zero.** An evaluation
+  where the key was missing or the provider refused every call used to print `0%` beside the models
+  that did run, which reads as a bad model rather than as a model that never answered.
+- **`load_config(validate=True)` actually validates**, and names the file it refused. Each validator's
+  result used to be discarded, and a section was passed where the whole document was expected, so it
+  validated an empty set.
+- **A citation is a source the answer actually used.** `.sources` still carries every URL a search
+  returned; `.citations` now carries the ones the answer references, and a PDF citation carries its
+  page number.
+
+### Fixed - tool calling across providers
+
+- **A tool call written as XML tags is understood.** Chat templates disagree about how a call is
+  spelled. Many render JSON; others render nested tags, such as
+  `<function=calculator><parameter=expression>4817 * 236</parameter></function>`. effGen read only
+  the JSON spellings, so on a model whose template emits tags the turn parsed to nothing: no tool was
+  called, and the run ended at the iteration cap. The reader is keyed on the shape rather than on a
+  model family (five call tags, four argument tags, both `<tag=NAME>` and `<tag name="NAME">`), so any
+  family whose template writes that shape can use tools. Such a construct is also stripped from an
+  answer whole rather than leaving its argument values behind as prose, and a streamed turn holds it
+  back and delivers the cleaned answer instead of putting raw scaffolding on screen. Measured across
+  15 local families: three went from no tool call and no answer to a correct answer, twelve were
+  unchanged.
+- **Gemma 4's channel format is read.** Gemma 4 wraps its reasoning in `<|channel>` and its calls in
+  `<|tool_call>call:NAME{...}`, delimiters no reader knew. The whole reasoning trace was returned as
+  the answer and no tool was ever called. The channel is now parsed and stripped on every answer
+  path, loosely quoted arguments are accepted, and a verb-prefixed name is mapped onto the tool it
+  names. The branch runs only when the Gemma markers are present, so no other family is affected.
+- **One documented tool-call shape across every adapter.** Arguments arrive as a JSON string, five
+  adapters stopped parsing them differently, and Gemini, Anthropic and Replicate report their calls
+  the way the others do.
+- **A tool call written in call syntax keeps its arguments.** `calculator(expression="1367 * 89")`
+  used to resolve the tool and call it with `{}`, because every quote was stripped before the
+  arguments were read.
+- **JSON tool arguments survive their own punctuation.** A structural reader replaced a brace-matching
+  regular expression that stopped at the first brace inside a string value, so
+  `{"query": "Paris, France: population"}` no longer falls through to a raw-input fallback. Object and
+  array arguments sent as JSON strings are coerced when they parse to the declared type.
+- **A chat turn that uses tools streams its answer** where the model's calls can be dispatched
+  mid-stream, and a streamed request now carries the same tool definitions, `tool_choice` and
+  sampling settings as a non-streamed one.
+- **`stop_sequences="END"` works.** A bare string used to be walked character by character and cut
+  the text at the first matching letter.
+- **A Groq gpt-oss model works on the ReAct path.** It used to fail every turn with a 400.
+- **Tool definitions reach the model** when the chat template would otherwise drop them, and a model
+  now reports how it receives them, so the framework can choose a strategy the model can actually
+  follow. A small local model that would silently skip the tool and do the arithmetic itself is
+  routed to the strategy it answers on.
+- **A model that returns its reasoning in the answer field is asked not to.** Groq's qwen3 family
+  used to return the chain of thought as the answer text.
+- **`register_tool()` accepts a `@tool` instance**, and `@tool`/`Tool.from_function` carry
+  `requires_approval`, `cost_estimate` and `timeout_seconds`, so human approval is reachable from the
+  primary authoring API.
+
+### Fixed - errors that name the fix
+
+- **A URL with no `http://` or `https://` scheme is refused**, naming the environment variable it
+  came from, rather than being sent and reported as a provider outage.
+- **A connection failure names the endpoint the call was sent to** instead of pointing at the
+  provider's status page, which is advice about the wrong machine when the server is yours.
+- **A blank endpoint variable no longer redirects every OpenAI call.** effGen read a blank as "no
+  override" and passed no `base_url`; the OpenAI SDK then read the same variable itself, treated `''`
+  as an address and went there. The adapter now always passes an explicit endpoint, and the
+  scaffolded `.env.example` writes those variables commented out.
+- **A rate limit delivered as HTTP 413 is classified as one.** Groq reports a spent
+  tokens-per-minute allowance that way. It used to be `unknown`, so there was no backoff and a
+  throttle was reported as a permanent failure. A genuinely oversized body is still an invalid
+  request.
+- **Every message a user reads is bounded, redacted and actionable.** Provider errors, routing and
+  retry failures, server auth, budget and RBAC denials, SDK errors, config validation, tool refusals
+  and the coding agent's own refusals all end with what to do next. Quoted upstream text is bounded to
+  240 characters (one real provider body reached 42 kB), and credentials are removed by shape rather
+  than by neighbouring words.
+- **The submitted credential never reaches the caller.** effGen redacted its own message, but
+  `raise ... from exc` kept the SDK exception, and a 401 body quotes the key. The whole
+  `__cause__`/`__context__` chain is now scrubbed, including per-SDK attributes and parsed JSON
+  bodies, and a rendered traceback carries nothing.
+- **Failures are classified consistently.** A connection reset, a gateway page, a device
+  out-of-memory, a quantized load that does not fit, an absent API token, a missing repository, a
+  non-Hugging-Face token and a spent account balance each now carry the right retry verdict, so
+  effGen stops retrying what can never succeed and starts retrying what can.
+- **A call can be bounded.** Gemini took no timeout at all and Replicate's deadline governed polling
+  only, so a peer that never answers held the call for 90 seconds. Both take `timeout` and
+  `max_retries` now, and `max_retries=0` still budgets one attempt instead of making no request at
+  all.
+- **`effgen tools list --category <unknown>` names the filter and the valid categories** instead of
+  reporting an empty registry while 66 tools are registered.
+- **A malformed input names its file.** A workflow YAML that is not a workflow, a config file that is
+  not a mapping or not parseable, a drifted session, checkpoint or agent state, a damaged catalog
+  snapshot, and a batch input row with no query text are each named with the file and the position,
+  and either loaded usably or refused, instead of raising from somewhere unrelated. `depends_on:
+  search` is one node named `search`, not six nodes named `s`, `e`, `a`, `r`, `c`, `h`.
+- **A run refused before any model call shows its reason.** An empty task used to render an empty red
+  panel.
+
+### Fixed - the server and the API
+
+- **The server answers every failure with one error envelope**, including unknown URLs, wrong
+  methods, missing static assets, unhandled route errors, the metrics endpoint, RBAC denials, the
+  shutdown drain, the legacy convenience routes, websockets and the edge adapters.
+- **The server stays responsive during a long generation.** A non-streaming completion used to block
+  the event loop, so `/health` timed out for the length of the call. It now runs off the loop:
+  measured at 6 ms worst case during a 14.5 second completion.
+- **Content-free requests are refused before they are billed.** An empty or whitespace prompt,
+  absent content and a non-positive `max_tokens` each return a 4xx before any upstream call.
+- **An absent provider key is a 503 on every provider**, an upstream 429 passes its delay on as
+  `Retry-After`, and a mid-stream failure emits a terminal error event rather than truncating the
+  stream.
+- **`GET /v1/models` lists ids that were actually served**, marks legacy aliases and states that any
+  reachable `provider:model` id is callable. `effgen-default` and `default` resolve to the server's
+  default model, and the native client expands `tools=["calculator"]` into tool specs.
+- **An `async def` runner works with `create_openai_router()`** instead of returning an opaque 500.
+- **Rate limiting is not defeated by a header.** `X-Forwarded-For` is trusted only when you enable
+  it, and `effgen serve` no longer lets uvicorn rewrite the client address behind that setting.
+- **Body size limits cover `/v1/embeddings`**, which used to accept an unbounded body.
+
+### Fixed - security, guardrails and sandboxing
+
+- **The subprocess sandbox masks the credential stores** (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`,
+  `~/.docker`, `~/.azure`, `~/.config/gcloud`, the credential files beside them, `/etc/shadow` and
+  mounted secrets) **and runs in its own PID namespace**, so executed code sees one process rather
+  than the host's process table. Both are reported on the result as `credential_reads_masked` and
+  `process_table_isolated`. This is a deny-list over a known set of paths, not read confinement, and
+  the documentation says so.
+- **Executed code cannot write outside its scratch space**, and the model is told where it may write.
+  The Python REPL's restricted mode was hardened against every dynamic-attribute escape route found,
+  with an always-on audit hook that refuses process, shell and native execution.
+- **The shell tool refuses obfuscated credential reads**: quoted string concatenation, glob wildcards
+  against dot-files, and decode-to-file-then-execute chains.
+- **File tools refuse credential filenames and credential content** inside an allowed directory, and
+  a `.env`-shaped file renamed to `.csv` is refused by content.
+- **Guardrails redact what they promised.** Every credit card rather than the first; labeled clinical
+  identifiers in the shapes real documents use; modern provider key formats; credential tokens
+  replaced whole in log output; injection attempts that name the constraint they are overriding
+  rather than the word "instructions"; and a new `SystemPromptLeakGuardrail` that catches a system
+  prompt on its way out. Re-checking already-redacted text no longer nests placeholders, and email
+  scanning is linear time (a 32 kB pathological input went from 1.13 s to 0.015 s).
+- **`/compact` can no longer modify the workspace**, and `/git` is framed like the other read-only
+  views.
+
+### Fixed - local models, GPUs and long runs
+
+- **Per-call sampling keywords are honoured on the local engines** (vLLM, MLX and Transformers),
+  including `seed` and `stop_sequences`, which the Transformers engine read off the config before it
+  looked at the call. GGUF reproduces from a fixed seed.
+- **A local reasoning model is recognised from its own chat template**, so it gets the larger budget
+  instead of spending the base one on a hidden chain and returning nothing, and
+  `chat_template_kwargs={"enable_thinking": False}` reaches the template.
+- **A model that does not fit the GPU says so.** VRAM sizing reads free memory rather than total, the
+  engine reconciles `.device` with where the parameters actually are, the run's metadata carries it,
+  and `require_gpu=True` fails fast rather than falling back to CPU silently.
+- **Automatic sharding across several GPUs no longer produces invalid output.** On a multi-GPU node,
+  `device_map="auto"` could place a Transformers model so that sampling read invalid logits and the
+  run died in a CUDA `multinomial` assert. The engine now probes the logits after loading and pins
+  the model to one device before sampling, and an assert that has already poisoned the CUDA context
+  is retried once and then reported with the restart the caller needs. Contributed by Aafiya Hussain.
+- **The MLX engine works with the current `mlx_lm`.** Its sampler moved behind a new API and its
+  native tool schemas changed shape, so generation on Apple silicon failed against any recent
+  release. Contributed by Yasuo Tabei.
+- **Device memory comes back when a local model unloads** (a 1.5B model used to keep 2.9 GB
+  reserved), batched local prompts are prepared like single ones, an unusable model load is not
+  retried, and an offline or uncached model reports a cache miss with the cached models listed rather
+  than a connectivity error.
+- **A long conversation stops growing its own prompt.** Session summaries were unbounded and were
+  replayed into every prompt, so past a threshold each turn added another summary until every call
+  was refused for exceeding the context window. Summaries are now folded within a token budget
+  measured with the model's own tokenizer, and a 25,000-turn session stays flat.
+- **Long runs hold up under concurrency.** Tool discovery, registry replacement and rate-limit
+  accounting are serialised; costs and tokens are folded under a lock, so a shared adapter's totals
+  match the calls; the in-memory cost store is one database rather than one per thread; two writers of
+  one session no longer publish a blend, because every file is published through its own temporary;
+  REPL sessions are bounded with LRU eviction and their workers do not outlive the tool or the thread
+  that made the call.
+- **Batch rows no longer contaminate each other.** Per-call state is isolated, so eight concurrent
+  rows report eight distinct costs and token counts, and the job total reconciles with the sum.
+- **A timeout actually fires.** `with_timeout()` re-arms rather than firing once into an SDK retry
+  loop that swallowed it, so a 2-second bound stops a call at 2.25 seconds instead of 22 to 50.
+
+### Fixed - documents, RAG and batch input
+
+- **The `rag` preset refuses to run without a knowledge base** instead of succeeding with zero
+  documents.
+- **Retrieval keeps distinct topics.** The preset configures a wider `top_k` with MMR re-ranking, so a
+  two-topic question returns both topics; `RetrievalTool` takes `default_top_k` and `diversity`.
+- **Ingestion says what it skipped and why.** A corrupt file, an empty file, a file whose content
+  duplicates an earlier one, an image, and an unsupported extension each have their own reason, and
+  `DocumentIngester.last_summary` reports what was indexed. PDFs carry page numbers, and DOCX creation
+  dates are ISO-8601.
+- **A weak model no longer answers with the passages.** The prompt now ends with an answer-shaping
+  instruction after a retrieval tool, and both loop fallbacks give the model one tool-free turn to
+  answer from what it has. Measured on the worst case: verbatim passage dumps went from 8 of 9 runs to
+  0 of 9, with citations on every run.
+- **Batch input is read carefully.** A row keyed on `prompt`, `input`, `question` or `text` is
+  recognised, a scalar or dict row does not become a prompt, CSV rows report the right line, a
+  non-UTF-8 file names itself, a `.json` array reports item positions rather than line numbers, and
+  `--strict` fails the job on any unusable row.
+- **`run --file` reads source code and plain text**, not only documents, and refuses binaries.
+- **An image, audio or video source can be an inline `data:` URI.** `inputs=["data:image/png;base64,…"]`
+  used to be refused as a missing file, which sent the reader off to check a path that was never
+  involved. Both the base64 and the percent-encoded text forms are decoded now, a malformed one is
+  refused for the reason it is malformed, and a source the filesystem rejects outright raises the
+  typed `InvalidMultimodalContent` instead of a bare `OSError`.
+- **Local embeddings read the cache when the model hub is unreachable**, so an offline machine with
+  the model already downloaded still builds an index, and a backend that cannot be imported reports
+  that as a typed import error naming the package.
+- **Structured output extraction stopped corrupting valid JSON.** Repairs used to run inside string
+  literals, so a value containing `", note:"` was rewritten into something unparseable; a backtick
+  inside a value was read as a code fence. Measured over 8,000 adversarial examples: 36 mis-parses
+  before, 0 after, with 1,427 inputs newly recovered.
+
+### Fixed - the built-in tools
+
+- **A tool that cannot do its job says so rather than returning an empty success.** Translation with
+  no language pair available, a knowledge-base search the API refused, a news fetch where every RSS
+  source was unreachable, and a web search whose unset filters were sent to the backend as `None` all
+  reported success or the wrong error. Each now fails with the reason.
+- **A blocked request is not read as an empty result.** Reddit's redirect to a login page is reported
+  as a block, and a YouTube network failure is no longer reported as an age restriction.
+- **PubMed retries a truncated response** instead of failing on it, and a search that matched no
+  record says that rather than returning nothing.
+- **A refused tool call names what to pass.** Search, place and id lookups quote the argument they
+  needed, and a call rejected by a tool's own validation states what that tool expects.
+
+### Fixed - the terminal and the web surfaces
+
+- **Every command works on a terminal that cannot encode the characters effGen prints.** Twenty-two
+  commands used to exit non-zero purely because of the console encoding. Text is folded to ASCII where
+  it becomes bytes, so a command added later is covered, and `--json` escapes rather than
+  transliterates, so a French or Chinese answer survives a hard-ASCII console byte for byte.
+- **A styled line renders in its own colours.** The value highlighter used to recolour numbers,
+  brackets and identifiers inside lines effGen had already styled, so a version read as three colours
+  and a session id came out bold magenta. Fragmented lines went from 25 to 3 on a real terminal, and
+  the three that remain are lines whose author wrote two styles into them.
+- **Output reaches a redirected stdout while the command is still running.** Without `rich`, a server
+  banner sat in a block buffer until the process exited.
+- **The whole command surface works without `rich` and without `torch`.** Twelve commands used to
+  exit with `No module named 'rich'`, and a direct engine import reported the import system rather
+  than naming PyTorch and how to install it.
+- **Piped output is clean.** No spinner, no `Thinking...` placeholder, no chrome on stdout, one
+  answer per input line under `-q`, and zero colour codes under `NO_COLOR`.
+- **A closed pipe ends the command quietly.** `effgen ... | head` used to end in a `BrokenPipeError`
+  traceback; the command now exits 141, the convention the shell expects.
+- **The dashboard reports real numbers.** The estimated daily cost that read roughly 300 times the
+  real spend is gone, "p99" is a percentile rather than the mean, the error count includes HTTP 4xx,
+  per-model cost is not double-counted when two providers serve one model name, and generation counts
+  are labelled separately from HTTP responses.
+- **The web surfaces are usable by keyboard and by screen reader**: focus is not dropped by the poll,
+  live regions announce only what changed, contrast clears WCAG AA on every bar and control, and the
+  theme follows the operating system until you choose one.
+- **A generated report is inert.** Model output that contains markup renders as text, no injected
+  tag or event handler survives, and only `http` and `https` links keep an `href`.
+- **`effgen top --once` prints all five documented panels** when no server is reachable, and a
+  malformed URL degrades into the panel instead of ending the command.
+
+### Fixed - installation, packaging and documentation
+
+- **`./install.sh` no longer fails when run without a terminal.** Re-running it, or running it from
+  CI or another script, met an interactive prompt with no one to answer, and under `set -e` that
+  ended the install as "Installation failed" for a condition that is not a failure. Every prompt now
+  sits behind a terminal check.
+- **`--download-models` fetches models** instead of printing "not found, skipping". The helper it
+  called had never been written, so `--full` read as supported while doing nothing.
+- **A reduced install reports what it cannot run.** An absent optional extra is a skip naming the
+  package rather than a failure, so a `.[dev]` checkout no longer shows around 94 red tests for
+  extras that were never installed.
+- **The install checks can run at once.** Both built a wheel inside the repository and raced each
+  other; each now builds in its own directory, from the tracked tree, which is also what a user
+  installs.
+- **`activate.sh`**, which the installer writes into the clone, is no longer left as an untracked file
+  in `git status`.
+- **The docker compose file binds to loopback**, so `docker compose up` does not publish an
+  unauthenticated server on every interface.
+- **Every documentation snippet runs.** The 57 tool gallery snippets were rewritten to the awaited
+  keyword API, all 30 network snippets now check `ToolResult.success` before reading output, and the
+  CLI pages were re-run command by command. Two tool defects surfaced by that work were fixed: a news
+  fetch reported success with zero articles when every RSS source was unreachable, and a web search
+  sent unset filters to the backend and reported the resulting `NoneType` error instead of the
+  connection failure.
+
+### Contributor-facing
+
+- `scripts/run_tests.sh` runs the suite and the checks around it, asking which lanes to include
+  before it starts, with `scripts/watch_tests.sh` and `scripts/watch_tests_web.py` showing per-lane
+  progress and time remaining. A lane the machine cannot run is listed with the reason rather than
+  offered.
+- The test suite is order-independent and runs with the machine's ambient state removed
+  (`EFFGEN_TEST_HERMETIC=1`), with per-lane timing and a flake register. It grew from 260 test files
+  to 399, and now covers endurance soaks, concurrency contention, a failure-injection matrix over
+  every adapter, and the installation routes end to end.
+- **The largest modules were split along their responsibilities**, in behaviour-preserving steps with
+  a layout gate on each one: the CLI entry point went from 5,182 lines to 1,051 with one module per
+  command, `core/agent.py` from 2,059 to 844, `core/agent_react.py` from 1,920 to 1,158, the
+  Transformers engine from 1,053 to 267, `server/app.py` from 1,106 to 484, the OpenAI-compatible
+  API from 812 to 508, tracing from 989 to 255, and the HTML report writer into one builder per
+  report kind. Every moved definition was compared against the previous tree before and after.
+- **Types are checked against a ratchet.** Signatures were annotated across the package and the
+  recorded result is now a ceiling: a new error, or an old one becoming more frequent, fails the
+  types job, so the number can only come down.
+- **The language of the shipped tree is gated.** A test scans every tracked and untracked-but-not-
+  ignored file for internal process references and for self-congratulatory wording, with an
+  allowlist that has to state its reason. It is proven by planting each pattern in a real file of
+  each scanned kind and watching the gate fail.
+- **Provider trouble is told apart from a defect.** A test that fails because a provider refused to
+  serve the call, or because an optional extra is not installed, is reported as a skip quoting the
+  reason, while a connection error still fails, because that shape is usually local
+  misconfiguration.
+
+### Contributors
+
+Thank you to the people outside the maintainer who contributed code to this release:
+
+- **Yasuo Tabei** ([@tb-yasu](https://github.com/tb-yasu)): Gemma 4's channel and tool-call format,
+  and the MLX engine against the current `mlx_lm` (#94).
+- **Aafiya Hussain** ([@Aafiya-H](https://github.com/Aafiya-H)): the multi-GPU `device_map` sampling
+  fix and the example teardown that goes with it (#44).
+
+### New public names
+
+`OpenAICompatibleAdapter`, `BackendUnreachableError`, `AgentMiddleware`, `MiddlewareChain`,
+`LoggingMiddleware`, `ToolApprovalMiddleware`, `ToolCall`, `ToolCallList`, `CompactionStrategy`,
+`SummarizeOldest`, `DropOldest`, `KeepFirstAndLast`, `KeepToolResults`, `WorkflowCheckpoint`,
+`CheckpointStore`, `FileCheckpointStore`, `InMemoryCheckpointStore`, `SystemPromptLeakGuardrail`,
+`load_env`. The top-level surface grew from 204 names to 223, and nothing was removed or renamed.
+`BaseModel` gained `build_assistant_message` and `build_tool_result_message`; `SandboxResult` gained
+`credential_reads_masked` and `process_table_isolated`.
+
+---
+
 ## [0.3.2] - 2026-07-05
 
 ### Highlights
@@ -2081,10 +2800,19 @@ result = agent.run_message(msg)
 Thank you to all contributors who helped make effGen possible!
 
 - Gaurav Srivastava (@ctrl-gaurav) - Creator and maintainer
+- Yasuo Tabei (@tb-yasu) - Gemma 4 tool-call format, MLX engine (1.0.0)
+- Aafiya Hussain (@Aafiya-H) - multi-GPU device placement (1.0.0)
 
 ---
 
-[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/ctrl-gaurav/effGen/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/ctrl-gaurav/effGen/compare/v0.3.2...v1.0.0
+[0.3.2]: https://github.com/ctrl-gaurav/effGen/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/ctrl-gaurav/effGen/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.10...v0.3.0
+[0.2.10]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.9...v0.2.10
+[0.2.9]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.8...v0.2.9
+[0.2.8]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/ctrl-gaurav/effGen/compare/v0.2.4...v0.2.5
