@@ -81,14 +81,6 @@ print(f"Answer: {result.output}")
 
 ---
 
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/architecture.svg" alt="How an effGen run flows: your code calls the agent loop, which reaches tools and a model served locally, by a provider, or by any OpenAI-compatible server, and returns a result carrying text, tool calls and cost." width="100%"/>
-
-</div>
-
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/section-whatsnew.svg" alt="What's new — v1.0.0, the first stable release" width="100%"/>
-
 ## 📰 News & Updates
 
 | | Date | Update |
@@ -128,8 +120,6 @@ print(f"Answer: {result.output}")
 </details>
 
 ---
-
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/section-install.svg" alt="Install — pip install effgen, Python 3.11 to 3.14" width="100%"/>
 
 ## ⚡ Installation
 
@@ -182,8 +172,6 @@ pip install -e .        # manual editable install
 See [docs/installation.md](https://github.com/ctrl-gaurav/effGen/blob/main/docs/installation.md) for the full guide.
 
 ---
-
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/section-quickstart.svg" alt="Quick start — one model, one agent, one run" width="100%"/>
 
 ## 🚀 Quick Start
 
@@ -257,8 +245,6 @@ print(result.output)
 </details>
 
 ---
-
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/section-features.svg" alt="Features — what effGen gives you out of the box" width="100%"/>
 
 ## ✨ Features
 
@@ -820,8 +806,6 @@ See the [full tool gallery](https://github.com/ctrl-gaurav/effGen/blob/main/docs
 
 ---
 
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/section-tools.svg" alt="Tools and presets — 66 built-in tools, 9 presets, 35 templates" width="100%"/>
-
 ## 🎯 Agent Presets
 
 Nine ready-made agent configurations. Each one wires up a model, a tool set and a
@@ -1138,8 +1122,6 @@ sql_prompts = registry.search(domain="data")
 ---
 
 
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/section-models.svg" alt="Models — 9 cloud providers, 4 local engines, any OpenAI-compatible server" width="100%"/>
-
 ## 🤖 Multi-Model Support
 
 Nine cloud providers, four local engines, and **any server that speaks the OpenAI
@@ -1206,8 +1188,6 @@ effgen doctor   # see which provider API keys are configured
 
 ---
 
-
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/section-examples.svg" alt="Examples — copy, paste, run" width="100%"/>
 
 ## 📚 Examples
 
@@ -1337,8 +1317,6 @@ result = agent.run("What does the documentation say about configuration?")
 
 ---
 
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/section-deploy.svg" alt="Deploy and operate — Docker, Helm, Lambda, edge, dashboard" width="100%"/>
-
 ## 🚀 Deployment
 
 Deployment recipes for every major target, each with a working manifest in the repo.
@@ -1453,8 +1431,6 @@ open http://localhost:8000/dashboard
 
 ---
 
-
-<img src="https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/assets/section-security.svg" alt="Security — guardrails, redaction, sandboxing, supply chain" width="100%"/>
 
 ## 🔒 Security
 
