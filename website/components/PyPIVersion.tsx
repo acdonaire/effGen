@@ -2,6 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { siteData } from "./siteData";
+
+// What the badge shows when PyPI cannot be reached — offline, blocked, or simply
+// slow. It is the version `scripts/gen_site_data.py` read out of the installed
+// framework, so the fallback is a derived number rather than one typed in that
+// goes stale the next time the package is released.
+const BUILT_VERSION = siteData.version;
 
 interface PyPIVersionProps {
   className?: string;
@@ -16,7 +23,7 @@ interface VersionInfo {
 
 export default function PyPIVersion({ className = "", showLink = true }: PyPIVersionProps) {
   const [versionInfo, setVersionInfo] = useState<VersionInfo>({
-    version: "0.3.1",
+    version: BUILT_VERSION,
     loading: true,
     error: false,
   });
@@ -33,14 +40,16 @@ export default function PyPIVersion({ className = "", showLink = true }: PyPIVer
         const data = await response.json();
 
         setVersionInfo({
-          version: data.info?.version || "0.3.1",
+          version: data.info?.version || BUILT_VERSION,
           loading: false,
           error: false,
         });
-      } catch (error) {
-        console.error("Error fetching PyPI version:", error);
+      } catch {
+        // The badge is a live lookup over the built-in version, and the export is
+        // required to render with the network off. A failed lookup is an expected
+        // state, not an error: fall back to the version this site was built from.
         setVersionInfo({
-          version: "0.3.1", // Fallback version
+          version: BUILT_VERSION,
           loading: false,
           error: true,
         });
@@ -52,14 +61,14 @@ export default function PyPIVersion({ className = "", showLink = true }: PyPIVer
 
   if (versionInfo.loading) {
     return (
-      <span className={`inline-block px-2 py-1 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 animate-pulse ${className}`}>
+      <span className={`inline-block px-2 py-1 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 animate-pulse ${className}`}>
         v...
       </span>
     );
   }
 
   const versionBadge = (
-    <span className={`inline-block px-2 py-1 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 font-semibold ${className}`}>
+    <span className={`inline-block px-2 py-1 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-semibold ${className}`}>
       v{versionInfo.version}
     </span>
   );
@@ -84,7 +93,7 @@ export default function PyPIVersion({ className = "", showLink = true }: PyPIVer
 // Export a hook for use in other components
 export function usePyPIVersion() {
   const [versionInfo, setVersionInfo] = useState<VersionInfo>({
-    version: "0.3.1",
+    version: BUILT_VERSION,
     loading: true,
     error: false,
   });
@@ -101,13 +110,13 @@ export function usePyPIVersion() {
         const data = await response.json();
 
         setVersionInfo({
-          version: data.info?.version || "0.3.1",
+          version: data.info?.version || BUILT_VERSION,
           loading: false,
           error: false,
         });
-      } catch (error) {
+      } catch {
         setVersionInfo({
-          version: "0.3.1",
+          version: BUILT_VERSION,
           loading: false,
           error: true,
         });

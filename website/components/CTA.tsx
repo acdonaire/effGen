@@ -6,6 +6,8 @@ import { FiArrowRight, FiBook, FiZap, FiStar, FiGitBranch, FiUsers } from "react
 import Container from "./Container";
 import { useGitHubStats } from "./GitHubStats";
 import { withBasePath } from "./basePath";
+import { version } from "./siteData";
+import { accentTextStyle } from "./accentText";
 
 // Floating geometric shapes positions (fixed for SSR)
 const SHAPES = [
@@ -53,14 +55,14 @@ export default function CTA() {
   };
 
   const ctaStats = [
-    { icon: FiStar, value: githubStats.loading ? "..." : formatNumber(githubStats.stars), label: "GitHub Stars", color: "#ffd700" },
+    { icon: FiStar, value: githubStats.loading ? "..." : formatNumber(githubStats.stars), label: "GitHub stars", color: "#ffd700" },
     { icon: FiGitBranch, value: githubStats.loading ? "..." : formatNumber(githubStats.forks), label: "Forks", color: "#00e5ff" },
     { icon: FiUsers, value: githubStats.loading ? "..." : githubStats.contributors.toString(), label: "Contributors", color: "#a78bfa" },
   ];
 
   // Words for word-by-word reveal
-  const headingWords = ["Ready", "to", "Build", "the"];
-  const headingWords2 = ["Future", "of", "AI?"];
+  const headingWords = ["One", "install,", "and", "an"];
+  const headingWords2 = ["agent", "that", "runs"];
 
   return (
     <section className="py-24 bg-gray-50 dark:bg-[#030f07] relative overflow-hidden" ref={ref}>
@@ -138,14 +140,14 @@ export default function CTA() {
               initial={{ opacity: 0, scale: 0.8 }}
               animate={inView ? { opacity: 1, scale: 1 } : {}}
               transition={{ delay: 0.2 }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-green-500/30 bg-green-500/5 text-green-600 dark:text-green-400 text-sm font-semibold mb-8"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-green-500/30 bg-green-500/5 text-green-700 dark:text-green-400 text-sm font-semibold mb-8"
             >
               <motion.div
                 className="w-2 h-2 rounded-full bg-green-400"
                 animate={{ scale: [1, 1.5, 1] }}
                 transition={{ duration: 1.5, repeat: Infinity }}
               />
-              Start Building Today — It&apos;s Free
+              effGen {version} — Apache 2.0
             </motion.div>
 
             {/* Word-by-word reveal heading */}
@@ -181,8 +183,9 @@ export default function CTA() {
               transition={{ duration: 0.6, delay: 0.4 }}
               className="text-lg text-gray-600 dark:text-gray-400 mb-10 max-w-2xl mx-auto"
             >
-              Join thousands of developers building next-gen agents with effGen.
-              Open source, production-ready, and blazing fast.
+              <code className="font-mono">pip install effgen</code>, then one line to build an
+              agent. Run it against a model on your own hardware, a server you already have, or any
+              of the providers effGen ships an adapter for.
             </motion.p>
 
             <motion.div
@@ -211,7 +214,7 @@ export default function CTA() {
               >
                 <span className="absolute inset-0 bg-white/0 group-hover:bg-white/10 transition-colors" />
                 <FiZap />
-                Get Started Free
+                Quick start
                 <FiArrowRight className="group-hover:translate-x-1 transition-transform" />
               </motion.a>
 
@@ -222,7 +225,7 @@ export default function CTA() {
                 whileTap={{ scale: 0.95 }}
               >
                 <FiBook size={18} />
-                Read Documentation
+                Read the documentation
               </motion.a>
             </motion.div>
 
@@ -240,10 +243,10 @@ export default function CTA() {
                   whileHover={{ scale: 1.05, y: -3, borderColor: stat.color + "40" }}
                 >
                   <div className="flex justify-center mb-2">
-                    <stat.icon style={{ color: stat.color }} size={18} />
+                    <stat.icon style={accentTextStyle(stat.color)} size={18} />
                   </div>
-                  <div className="text-2xl font-black mb-1" style={{ color: stat.color }}>{stat.value}</div>
-                  <div className="text-xs text-gray-600 font-medium">{stat.label}</div>
+                  <div className="text-2xl font-black mb-1" style={accentTextStyle(stat.color)}>{stat.value}</div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400 font-medium">{stat.label}</div>
                 </motion.div>
               ))}
             </motion.div>

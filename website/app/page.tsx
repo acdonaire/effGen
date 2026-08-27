@@ -1,35 +1,21 @@
-"use client";
+import type { Metadata } from "next";
+import HomeView from "./HomeView";
+import { siteData } from "@/components/siteData";
+import { SITE_NAME, pageMetadata } from "@/components/seo";
 
-import Hero from "@/components/Hero";
-import TrustedBy from "@/components/TrustedBy";
-// import ReleaseTimeline from "@/components/ReleaseTimeline";
-import Features from "@/components/Features";
-import HowItWorks from "@/components/HowItWorks";
-import ToolShowcase from "@/components/ToolShowcase";
-import PresetShowcase from "@/components/PresetShowcase";
-import QuickStart from "@/components/QuickStart";
-import Examples from "@/components/Examples";
-import Community from "@/components/Community";
-import CTA from "@/components/CTA";
-import Footer from "@/components/Footer";
-import Navbar from "@/components/Navbar";
+// The page is a client tree, so the route is a thin server component around it
+// and owns the title, the description and the share card — the same shape the
+// six product routes use.
+export const metadata: Metadata = pageMetadata({
+  path: "/",
+  card: "home",
+  title: `${SITE_NAME} — agents built for small language models`,
+  description:
+    "Build agents on small language models, on your own hardware or any OpenAI-compatible " +
+    `server. ${siteData.tools.count} tools, ${siteData.presets.count} presets, RAG, ` +
+    "evaluation and a coding agent.",
+});
 
-export default function Home() {
-  return (
-    <main className="min-h-screen bg-white dark:bg-[#020c08] transition-colors duration-300">
-      <Navbar />
-      <Hero />
-      <TrustedBy />
-      {/* <ReleaseTimeline /> */}
-      <Features />
-      <HowItWorks />
-      <ToolShowcase />
-      <PresetShowcase />
-      <QuickStart />
-      <Examples />
-      <Community />
-      <CTA />
-      <Footer />
-    </main>
-  );
+export default function Page() {
+  return <HomeView />;
 }

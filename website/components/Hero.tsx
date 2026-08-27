@@ -8,6 +8,10 @@ import Container from "./Container";
 import Link from "next/link";
 import GitHubStats from "./GitHubStats";
 import { usePyPIVersion } from "./PyPIVersion";
+import { siteData } from "./siteData";
+import { useReducedMotion } from "./useReducedMotion";
+import { useLowPower } from "./useLowPower";
+import { accentTextStyle } from "./accentText";
 
 // Fixed particle positions to avoid SSR/client hydration mismatch
 const PARTICLE_POSITIONS = [
@@ -69,13 +73,19 @@ function Particle({ index, delay }: { index: number; delay: number }) {
   );
 }
 
-// Counter hook for animated stats
+// Counter hook for animated stats. A duration of 0 means the visitor asked for
+// reduced motion: the figure lands at once instead of counting up to itself.
 function useCounter(end: number, inView: boolean, duration: number = 1500) {
   const [count, setCount] = useState(0);
   const started = useRef(false);
 
   useEffect(() => {
     if (!inView || started.current) return;
+    if (duration <= 0) {
+      started.current = true;
+      setCount(end);
+      return;
+    }
     started.current = true;
     const startTime = Date.now();
     const timer = setInterval(() => {
@@ -97,6 +107,7 @@ function EnhancedTerminal({ inView }: { inView: boolean }) {
   const [typedCmd, setTypedCmd] = useState("");
   const fullCmd = 'agent.run("What is 24344 * 334?")';
   const mountedRef = useRef(true);
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -105,6 +116,16 @@ function EnhancedTerminal({ inView }: { inView: boolean }) {
 
   useEffect(() => {
     if (!inView) return;
+
+    // With motion off, the pane paints the run already finished — the command
+    // typed, every phase shown, the answer in place. That is the frame the
+    // animation settles on anyway, so a reader who asked for stillness gets the
+    // whole thing at once instead of a loop they did not ask for.
+    if (reducedMotion) {
+      setTypedCmd(fullCmd);
+      setPhase(4);
+      return;
+    }
 
     let timeoutId: ReturnType<typeof setTimeout>;
     let intervalId: ReturnType<typeof setInterval>;
@@ -155,13 +176,13 @@ function EnhancedTerminal({ inView }: { inView: boolean }) {
       clearTimeout(timeoutId);
       clearInterval(intervalId);
     };
-  }, [inView]);
+  }, [inView, reducedMotion]);
 
   return (
     <div className="text-left text-sm font-mono leading-relaxed">
       {/* Command line */}
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-green-600 dark:text-green-400">$</span>
+        <span className="text-green-700 dark:text-green-400">$</span>
         <span className="text-gray-800 dark:text-gray-200">{typedCmd}</span>
         {phase === 0 && (
           <motion.span className="w-2 h-4 bg-green-600 dark:bg-green-400" animate={{ opacity: [1, 0] }} transition={{ duration: 0.6, repeat: Infinity }} />
@@ -175,7 +196,7 @@ function EnhancedTerminal({ inView }: { inView: boolean }) {
           animate={{ opacity: 1, y: 0 }}
           className="mb-1"
         >
-          <span className="text-gray-500 text-xs">
+          <span className="text-gray-600 dark:text-gray-400 text-xs">
             <span className="text-yellow-500">[Thought]</span> I need to multiply 24344 by 334
             {phase === 1 && (
               <motion.span animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 0.8, repeat: Infinity }}>...</motion.span>
@@ -194,10 +215,10 @@ function EnhancedTerminal({ inView }: { inView: boolean }) {
           <span className="text-xs">
             <span className="text-cyan-400">[Action]</span>{" "}
             <span className="text-purple-400">Calculator</span>
-            <span className="text-gray-500">(</span>
+            <span className="text-gray-600 dark:text-gray-400">(</span>
             <span className="text-green-400">expression=</span>
             <span className="text-orange-400">&quot;24344 * 334&quot;</span>
-            <span className="text-gray-500">)</span>
+            <span className="text-gray-600 dark:text-gray-400">)</span>
           </span>
         </motion.div>
       )}
@@ -284,22 +305,45 @@ function GeometricShapes() {
   );
 }
 
+// Every figure in the hero comes from data/effgen.json, which
+// scripts/gen_site_data.py derives from the installed framework. A number here
+// cannot drift from the package the way the hand-typed ones did.
+const TOOL_COUNT = siteData.tools.count;
+const PRESET_COUNT = siteData.presets.count;
+const TEMPLATE_COUNT = siteData.prompts.library;
+const MODEL_COUNT = siteData.models.models;
+const PROVIDER_COUNT = siteData.models.adapter_count;
+const CATALOG_PROVIDER_COUNT = siteData.models.with_catalog_count;
+// Ten provider adapters plus the four engines that run weights on your own
+// hardware — the number of places a model can come from.
+const BACKEND_COUNT = PROVIDER_COUNT + siteData.models.local_engines.length;
+
+// The particle field is the largest single item in the hero's frame budget: at
+// full strength it is 30 of the 59 elements that animate continuously. On a
+// device that reports few cores or little memory it is drawn at a third of that
+// — the same field, thinner. Everything else in the composition is unchanged.
+const PARTICLE_COUNT_FULL = 30;
+const PARTICLE_COUNT_LOW = 10;
+
 export default function Hero() {
   const [ref, inView] = useInView({ triggerOnce: true, threshold: 0.05 });
+  const reducedMotion = useReducedMotion();
+  const lowPower = useLowPower();
+  const particleCount = lowPower ? PARTICLE_COUNT_LOW : PARTICLE_COUNT_FULL;
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [typedText, setTypedText] = useState("");
   const pypiVersion = usePyPIVersion();
-  const heroRef = useRef<HTMLDivElement>(null);
 
   const fullText = "pip install effgen";
   const [codeCopied, setCodeCopied] = useState(false);
 
-  // Animated stat counters
-  const count10 = useCounter(10, inView);
-  const count66 = useCounter(66, inView);
-  const count9p = useCounter(9, inView);
-  const count14 = useCounter(14, inView);
-  const count9 = useCounter(9, inView);
+  // Animated stat counters. Under reduced motion the count-up is skipped and the
+  // figure is simply there — the number is the point, the counting is not.
+  const countTools = useCounter(TOOL_COUNT, inView, reducedMotion ? 0 : 1500);
+  const countPresets = useCounter(PRESET_COUNT, inView, reducedMotion ? 0 : 1500);
+  const countTemplates = useCounter(TEMPLATE_COUNT, inView, reducedMotion ? 0 : 1500);
+  const countBackends = useCounter(BACKEND_COUNT, inView, reducedMotion ? 0 : 1500);
+  const countModels = useCounter(MODEL_COUNT, inView, reducedMotion ? 0 : 1500);
 
   const copyText = (text: string, onSuccess?: () => void) => {
     if (navigator.clipboard && window.isSecureContext) {
@@ -335,15 +379,25 @@ export default function Hero() {
   });
 
   useEffect(() => {
+    // Two blurred orbs follow the pointer. With motion off they stay where they
+    // are, so the listener is not attached at all rather than attached and
+    // ignored — the whole point is that nothing under the cursor moves.
+    if (reducedMotion) return;
     const handleMouseMove = (e: MouseEvent) => {
       setMousePosition({ x: e.clientX, y: e.clientY });
     };
-    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
     return () => window.removeEventListener("mousemove", handleMouseMove);
-  }, []);
+  }, [reducedMotion]);
 
   useEffect(() => {
     if (!inView) return;
+    // The install line types itself out. With motion off it is simply there —
+    // a reader who asked for stillness should not have to wait to read it.
+    if (reducedMotion) {
+      setTypedText(fullText);
+      return;
+    }
     let i = 0;
     const timer = setInterval(() => {
       if (i <= fullText.length) {
@@ -354,7 +408,7 @@ export default function Hero() {
       }
     }, 60);
     return () => clearInterval(timer);
-  }, [inView]);
+  }, [inView, reducedMotion]);
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -367,15 +421,18 @@ export default function Hero() {
   };
 
   const stats = [
-    { icon: FiZap, value: `${count10}x`, rawValue: 10, label: "Faster (vLLM)", color: "#ffd700" },
-    { icon: FiCode, value: `${count66}+`, rawValue: 66, label: "Built-in Tools", color: "#00ff88" },
-    { icon: FiBookOpen, value: count9p.toString(), rawValue: 9, label: "Presets", color: "#00e5ff" },
-    { icon: FiTrendingUp, value: count14.toString(), rawValue: 14, label: "Inference Backends", color: "#ff6b6b" },
-    { icon: FiStar, value: count9.toString(), rawValue: 9, label: "Cloud Providers", color: "#a78bfa" },
+    { icon: FiCode, value: countTools.toString(), rawValue: TOOL_COUNT, label: "Built-in tools", color: "#00ff88" },
+    { icon: FiBookOpen, value: countPresets.toString(), rawValue: PRESET_COUNT, label: "Presets", color: "#00e5ff" },
+    { icon: FiZap, value: countTemplates.toString(), rawValue: TEMPLATE_COUNT, label: "Prompt templates", color: "#ffd700" },
+    { icon: FiTrendingUp, value: countBackends.toString(), rawValue: BACKEND_COUNT, label: "Model backends", color: "#ff6b6b" },
+    { icon: FiStar, value: countModels.toString(), rawValue: MODEL_COUNT, label: "Catalogued models", color: "#a78bfa" },
   ];
 
-  // Heading words for staggered animation
-  const headingLine1 = ["Build", "Powerful", "AI", "Agents"];
+  // The words of the headline, animated in one at a time. The third carries the
+  // accent treatment; the array is what the loop below reads, so a change here
+  // is the only change a new headline needs.
+  const headingLine1 = ["Build", "AI", "agents"];
+  const ACCENT_WORD = "agents";
 
   return (
     <section
@@ -457,7 +514,7 @@ export default function Hero() {
 
       {/* Floating particles */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {Array.from({ length: 30 }).map((_, i) => (
+        {Array.from({ length: particleCount }).map((_, i) => (
           <Particle key={i} index={i} delay={i * 0.4} />
         ))}
       </div>
@@ -473,7 +530,12 @@ export default function Hero() {
         ))}
       </div>
       <div className="absolute top-20 right-8 text-green-500/20 font-mono text-xs text-right hidden lg:block">
-        {["[AGENTS:ACTIVE]", "[TOOLS:66]", "[PROMPTS:35]", "[PROVIDERS:9]"].map((t, i) => (
+        {[
+          "[AGENTS:ACTIVE]",
+          `[TOOLS:${TOOL_COUNT}]`,
+          `[PROMPTS:${TEMPLATE_COUNT}]`,
+          `[PROVIDERS:${PROVIDER_COUNT}]`,
+        ].map((t, i) => (
           <motion.div key={i}
             initial={{ opacity: 0 }}
             animate={{ opacity: [0.3, 0.7, 0.3] }}
@@ -500,10 +562,10 @@ export default function Hero() {
                 animate={{ scale: [1, 1.5, 1], opacity: [1, 0.5, 1] }}
                 transition={{ duration: 1.5, repeat: Infinity }}
               />
-              <span className="text-sm font-semibold text-green-600 dark:text-green-400">
-                Introducing effGen — The Future of SLM Agents
+              <span className="text-sm font-semibold text-green-700 dark:text-green-400">
+                effGen 1.0.0 is out — the first stable release
               </span>
-              <FiZap className="text-green-600 dark:text-green-400" size={14} />
+              <FiZap className="text-green-700 dark:text-green-400" size={14} />
             </motion.div>
           </motion.div>
 
@@ -520,15 +582,15 @@ export default function Hero() {
             {headingLine1.map((word, i) => (
               <motion.span
                 key={i}
-                className={`inline-block mr-3 sm:mr-4 ${word === "Powerful" ? "relative" : ""}`}
+                className={`inline-block mr-3 sm:mr-4 ${word === ACCENT_WORD ? "relative" : ""}`}
                 initial={{ opacity: 0, y: 30, filter: "blur(10px)", scale: 0.9 }}
                 animate={inView ? { opacity: 1, y: 0, filter: "blur(0px)", scale: 1 } : {}}
                 transition={{ duration: 0.6, delay: 0.3 + i * 0.12, ease: "easeOut" }}
               >
-                {word === "Powerful" ? (
-                  <span className="gradient-text neon-text glitch-text" data-text="Powerful">{word}</span>
-                ) : word === "Agents" ? (
-                  <span className="text-gray-800 dark:text-white/90">{word}</span>
+                {word === ACCENT_WORD ? (
+                  <span className="gradient-text neon-text glitch-text" data-text={word}>
+                    {word}
+                  </span>
                 ) : (
                   word
                 )}
@@ -536,12 +598,12 @@ export default function Hero() {
             ))}
             <br />
             <motion.span
-              className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-500 dark:text-gray-400 tracking-normal"
+              className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-600 dark:text-gray-400 tracking-normal"
               initial={{ opacity: 0, y: 20, filter: "blur(8px)" }}
               animate={inView ? { opacity: 1, y: 0, filter: "blur(0px)" } : {}}
               transition={{ duration: 0.6, delay: 0.8 }}
             >
-              with Small Language Models
+              on small language models
             </motion.span>
           </motion.h1>
 
@@ -550,9 +612,12 @@ export default function Hero() {
             variants={itemVariants}
             className="text-lg sm:text-xl text-gray-600 dark:text-gray-400 mb-10 max-w-2xl mx-auto leading-relaxed"
           >
-            Optimized for SLMs.{" "}
-            <span className="font-bold text-shimmer">5-10x faster</span>{" "}
-            with complexity routing, automatic task decomposition, multi-agent orchestration, and vLLM.
+            Run a small model on your own hardware, or reach{" "}
+            <span className="font-bold text-shimmer">
+              {CATALOG_PROVIDER_COUNT} providers and any OpenAI-compatible server
+            </span>{" "}
+            through the same agent. Tools, memory, RAG, guardrails, evaluation and a
+            production server come with it.
           </motion.p>
 
           {/* Terminal quick install */}
@@ -563,8 +628,8 @@ export default function Hero() {
               onClick={handleCopy}
               title="Click to copy"
             >
-              <FiTerminal className="text-green-600 dark:text-green-400 flex-shrink-0" size={16} />
-              <span className="text-green-600 dark:text-green-400">$</span>
+              <FiTerminal className="text-green-700 dark:text-green-400 flex-shrink-0" size={16} />
+              <span className="text-green-700 dark:text-green-400">$</span>
               <span className="text-gray-800 dark:text-gray-200">{typedText}</span>
               <motion.span
                 className="w-2 h-4 bg-green-600 dark:bg-green-400 flex-shrink-0"
@@ -622,7 +687,7 @@ export default function Hero() {
             <motion.a
               href="https://arxiv.org/abs/2602.00887"
               target="_blank" rel="noopener noreferrer"
-              className="px-6 py-4 rounded-full font-semibold text-green-600 dark:text-green-400 border border-green-500/30 bg-green-500/5 flex items-center gap-2 hover:border-green-400 hover:bg-green-500/10 transition-all"
+              className="px-6 py-4 rounded-full font-semibold text-green-700 dark:text-green-400 border border-green-500/30 bg-green-500/5 flex items-center gap-2 hover:border-green-400 hover:bg-green-500/10 transition-all"
               whileHover={{ scale: 1.05, y: -2 }}
               whileTap={{ scale: 0.95 }}
             >
@@ -640,7 +705,7 @@ export default function Hero() {
             >
               <FiPackage size={16} />
               PyPI
-              <span className="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-600 dark:text-green-400 border border-green-500/30 font-mono">
+              <span className="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-700 dark:text-green-400 border border-green-500/30 font-mono">
                 v{pypiVersion.loading ? "..." : pypiVersion.version}
               </span>
             </motion.a>
@@ -697,19 +762,19 @@ export default function Hero() {
                   whileHover={{ rotate: 360 }}
                   transition={{ duration: 0.5 }}
                 >
-                  <stat.icon style={{ color: stat.color }} size={18} />
+                  <stat.icon style={accentTextStyle(stat.color)} size={18} />
                 </motion.div>
 
                 <motion.div
                   className="text-3xl font-black mb-1"
-                  style={{ color: stat.color }}
+                  style={accentTextStyle(stat.color)}
                   initial={{ scale: 0.5, opacity: 0 }}
                   animate={inView ? { scale: 1, opacity: 1 } : {}}
                   transition={{ delay: 0.8 + index * 0.1, type: "spring", stiffness: 200 }}
                 >
                   {stat.value}
                 </motion.div>
-                <div className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+                <div className="text-xs text-gray-600 dark:text-gray-400 font-medium uppercase tracking-wide">
                   {stat.label}
                 </div>
 
@@ -779,9 +844,9 @@ export default function Hero() {
                         ))}
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono text-gray-500 dark:text-gray-600">effgen-terminal</span>
+                        <span className="text-xs font-mono text-gray-600 dark:text-gray-400 dark:text-gray-600">effgen-terminal</span>
                         <motion.span
-                          className="text-xs font-mono text-green-600/60 dark:text-green-400/60 bg-green-500/10 px-2 py-0.5 rounded border border-green-500/20"
+                          className="text-xs font-mono text-green-700/60 dark:text-green-400/60 bg-green-500/10 px-2 py-0.5 rounded border border-green-500/20"
                           animate={{ opacity: [0.6, 1, 0.6] }}
                           transition={{ duration: 2, repeat: Infinity }}
                         >
@@ -790,12 +855,13 @@ export default function Hero() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-gray-500 bg-gray-200 dark:bg-gray-800 px-3 py-1 rounded-full">
+                      <span className="text-xs font-mono text-gray-600 dark:text-gray-400 bg-gray-200 dark:bg-gray-800 px-3 py-1 rounded-full">
                         agent_demo.py
                       </span>
                       <motion.button
                         onClick={handleCodeCopy}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all text-xs border border-gray-300 dark:border-gray-700"
+                        aria-label={codeCopied ? "Copied" : "Copy the example"}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all text-xs border border-gray-300 dark:border-gray-700"
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
                       >
@@ -817,14 +883,14 @@ export default function Hero() {
                     transition={{ delay: 1.2 }}
                   >
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs text-gray-500 font-mono">AGENT LOOP</span>
+                      <span className="text-xs text-gray-600 dark:text-gray-400 font-mono">AGENT LOOP</span>
                       <motion.span
                         className="w-1.5 h-1.5 rounded-full bg-green-500 dark:bg-green-400"
                         animate={{ scale: [1, 1.5, 1] }}
                         transition={{ duration: 1, repeat: Infinity }}
                       />
                     </div>
-                    <div className="flex items-center gap-3 text-[10px] font-mono text-gray-500">
+                    <div className="flex items-center gap-3 text-[10px] font-mono text-gray-600 dark:text-gray-400">
                       <span className="text-yellow-400">Thought</span>
                       <span>&rarr;</span>
                       <span className="text-cyan-400">Action</span>

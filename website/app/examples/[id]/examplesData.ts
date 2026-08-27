@@ -1,268 +1,357 @@
-// Content for every example detail page, keyed by the id in the URL.
-// Kept out of the view component so the route can enumerate the ids it
-// generates without a second copy of the data.
-export const examplesData: Record<string, any> = {
-  "code-assistant": {
-    icon: "💻", title: "AI Code Assistant", subtitle: "A powerful coding companion that helps you write better code faster.", badge: "Code Generation",
-    description: "The AI Code Assistant is a production-ready example of how effGen can be used to create sophisticated coding tools. It leverages Small Language Models to provide intelligent code completion, bug detection, and refactoring suggestions across 50+ programming languages.",
-    accent: "#00e5ff",
-    features: [
-      { icon: "⚡", title: "Real-time Code Completion", description: "Get intelligent code suggestions as you type with context-aware completions." },
-      { icon: "🐛", title: "Smart Bug Detection", description: "Automatically identify potential bugs and security vulnerabilities in your code." },
-      { icon: "🔄", title: "Code Refactoring", description: "Receive suggestions for improving code quality and maintainability." },
-      { icon: "💬", title: "Natural Language to Code", description: "Convert plain English descriptions into working code snippets." },
-    ],
-    useCases: [
-      { icon: "🎯", title: "IDE Integration", description: "Integrate directly into your development environment for seamless assistance." },
-      { icon: "📚", title: "Learning Tool", description: "Help developers learn new languages and best practices." },
-      { icon: "🏢", title: "Enterprise Development", description: "Accelerate development cycles and maintain code quality standards." },
-    ],
-    codeExample: `from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools.builtin import CodeExecutor, WebSearch, FileOperations
+// The six examples, keyed by the id in the URL.
+//
+// Each one pairs a script that ships in the framework repository with a short
+// program built from it that was run on this machine, verbatim as shown, against
+// the released package. `output` is that run's stdout, pasted — never edited to
+// agree with the prose, and never written by hand.
+//
+// The data lives here rather than in the view so the route can enumerate the ids
+// it generates for the static export, and so the teaser on the landing page can
+// read the titles and accents from the same place the detail pages render.
 
-# Load the code assistant model
-model = load_model(
-    "Qwen/Qwen2.5-7B-Instruct",
-    engine="vllm",
-    tensor_parallel_size=2
+export interface ExampleRun {
+  /** The program, exactly as it was run. */
+  code: string;
+  /** What that run printed. */
+  output: string;
+  /** The model the run used. */
+  model: string;
+}
+
+export interface Example {
+  id: string;
+  icon: string;
+  title: string;
+  subtitle: string;
+  badge: string;
+  accent: string;
+  /** What the example does, in a paragraph. */
+  description: string;
+  /** What the run above demonstrates, one point each. */
+  observations: string[];
+  /** The tools it wires in, under the names the registry uses. */
+  tools: string[];
+  /** The script in the framework repository this is built from. */
+  script: string;
+  githubUrl: string;
+  /** The command that runs the full script. */
+  command: string;
+  run: ExampleRun;
+}
+
+const REPO = "https://github.com/ctrl-gaurav/effGen/blob/main";
+
+export const examples: Example[] = [
+  {
+    id: "code-assistant",
+    icon: "💻",
+    title: "Code assistant",
+    subtitle: "Writes a program, runs it, and reports what it saw rather than what it expected.",
+    badge: "Code execution",
+    accent: "#00e5ff",
+    description:
+      "The point of a coding agent is not that it writes code — it is that it runs the code before telling you it works. This agent has two execution tools and an iteration budget: it writes a function, executes it on a real input, reads the output, and answers with what came back. If the code raises, it sees the traceback and tries again.",
+    observations: [
+      "The answer is the string the executed program printed, not the model's prediction of it.",
+      "response.tool_calls carries every call the run made, including the ones that failed, so you can see which path the agent took.",
+      "CodeExecutor runs in a sandbox: a container where one is available, and an unprivileged subprocess namespace otherwise. Code that exits non-zero returns success=False with the reason.",
+    ],
+    tools: ["python_repl", "code_executor"],
+    script: "examples/tools/coding_agent.py",
+    githubUrl: `${REPO}/examples/tools/coding_agent.py`,
+    command: "effgen examples run tools/coding_agent",
+    run: {
+      model: "gemini:gemini-3.1-flash-lite",
+      code: `from effgen import Agent, AgentConfig
+from effgen.tools.builtin import CodeExecutor, PythonREPL
+
+agent = Agent(AgentConfig(
+    model="gemini:gemini-3.1-flash-lite",
+    name="code-assistant",
+    system_prompt=(
+        "You are a coding assistant. Write the code, run it with a tool, "
+        "read the output, and report the result you actually saw."
+    ),
+    tools=[PythonREPL(), CodeExecutor()],
+    max_iterations=8,
+))
+
+response = agent.run(
+    "Write a Python function that returns the longest palindromic substring "
+    "of a string, run it on 'forgeeksskeegfor', and report what it printed."
 )
 
-# Create the code assistant agent
-assistant = Agent(AgentConfig(
-    model=model,
-    name="code-assistant",
-    system_prompt="""You are an expert coding assistant.
-    Provide clear, efficient, and well-documented code.""",
-    tools=[CodeExecutor(), WebSearch(), FileOperations()],
-    enable_memory=True,
-))
+print(response.text)
+print()
+for call in response.tool_calls:
+    print(f"  {call.name} -> {'error' if call.error else 'ok'}")`,
+      output: `geeksskeeg
 
-# Use the assistant
-result = assistant.run("""
-    Create a Python function that efficiently finds
-    the longest palindromic substring in a given string.
-    Include error handling and unit tests.
-""")
-
-print(result.output)`,
-    stats: [{ value: "50+", label: "Languages Supported" }, { value: "95%", label: "Accuracy Rate" }, { value: "3x", label: "Faster Development" }, { value: "10K+", label: "Lines Analyzed/sec" }],
-    githubUrl: "https://github.com/ctrl-gaurav/effGen/blob/main/examples/tools/coding_agent.py",
+  code_executor -> ok`,
+    },
   },
-  "research-agent": {
-    icon: "🔍", title: "Research Agent", subtitle: "An intelligent research assistant that gathers, analyzes, and synthesizes information.", badge: "Information Gathering",
-    description: "The Research Agent demonstrates how effGen can autonomously conduct comprehensive research tasks. It combines web search, data extraction, and synthesis to provide well-researched, cited reports on any topic.",
+  {
+    id: "research-agent",
+    icon: "🔍",
+    title: "Research agent",
+    subtitle: "Answers from what the search actually returned, and hands back the URLs.",
+    badge: "Information retrieval",
     accent: "#a78bfa",
-    features: [
-      { icon: "🌐", title: "Multi-Source Research", description: "Gather information from multiple authoritative sources simultaneously." },
-      { icon: "✅", title: "Fact Verification", description: "Cross-reference facts across sources to ensure accuracy." },
-      { icon: "📎", title: "Citation Management", description: "Automatically generate and manage citations for all sources." },
-      { icon: "📝", title: "Summary Generation", description: "Create comprehensive summaries with key insights highlighted." },
+    description:
+      "A search tool and an instruction not to answer from memory. What makes the result usable is not the prose: it is that response.sources carries the URLs the run retrieved, so you can check the answer against them. In 1.0.0 these are separate fields — .sources is everything the search returned, .citations is what the answer referenced.",
+    observations: [
+      "The URLs are the ones the tool returned on this run. Run it tomorrow and they will be different, because the web is.",
+      "WebSearch defaults to a backend that needs no API key, so this example runs with nothing configured.",
+      "The system prompt is what keeps the model on the retrieved text. Without it, a model will happily answer from what it remembers.",
     ],
-    useCases: [
-      { icon: "🎓", title: "Academic Research", description: "Accelerate literature reviews and research paper preparation." },
-      { icon: "💼", title: "Market Analysis", description: "Conduct competitive intelligence and market research." },
-      { icon: "📰", title: "Journalism", description: "Research and verify facts for news articles and reports." },
-    ],
-    codeExample: `from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools.builtin import WebSearch, WikipediaTool, Calculator
+    tools: ["web_search"],
+    script: "examples/web_retrieval/web_agent.py",
+    githubUrl: `${REPO}/examples/web_retrieval/web_agent.py`,
+    command: "effgen examples run web_retrieval/web_agent",
+    run: {
+      model: "gemini:gemini-3.1-flash-lite",
+      code: `from effgen import Agent, AgentConfig
+from effgen.tools.builtin import WebSearch
 
-# Load the research model
-model = load_model("Qwen/Qwen2.5-7B-Instruct")
-
-# Create the research agent
-researcher = Agent(AgentConfig(
-    model=model,
+agent = Agent(AgentConfig(
+    model="gemini:gemini-3.1-flash-lite",
     name="research-agent",
-    system_prompt="""You are a thorough research assistant.
-    Always verify facts and cite your sources.""",
-    tools=[WebSearch(), WikipediaTool(), Calculator()],
-    enable_memory=True,
-    max_iterations=15,
+    system_prompt="Answer from what the search returned. Do not answer from memory.",
+    tools=[WebSearch()],
+    max_iterations=6,
 ))
 
-# Conduct research
-result = researcher.run("""
-    Research the latest developments in quantum computing
-    from 2024. Focus on:
-    1. Major breakthroughs
-    2. Key companies and institutions
-    3. Practical applications
-    4. Future outlook
+response = agent.run("What is the Open-Meteo API, and does it need an API key?")
 
-    Provide a comprehensive report with citations.
-""")
+print(response.text)
+print()
+print("sources:", len(response.sources))
+for url in response.sources[:3]:
+    print(" ", url)`,
+      output: `The Open-Meteo API is a service that provides access to historical, current, and forecasted weather data [1, 4]. It is designed to be easy to use and is a popular choice for projects requiring weather information [3, 4].
 
-print(result.output)`,
-    stats: [{ value: "10+", label: "Sources Per Query" }, { value: "90%", label: "Fact Accuracy" }, { value: "5x", label: "Faster Research" }, { value: "100+", label: "Topics Covered" }],
-    githubUrl: "https://github.com/ctrl-gaurav/effGen/blob/main/examples/web_retrieval/web_agent.py",
+Regarding authentication, the Open-Meteo API does not require an API key for development or low-volume production use [2, 5]. It allows users to access its services without the need for registration, signup, or credit card information [3, 4]. However, users should review the current terms for heavy commercial workloads [2].
+
+sources: 5
+  https://freeapihub.com/apis/open-meteo-historical
+  https://apideposu.com/en/blog/build-weather-widget-open-meteo-nextjs
+  https://freeapi.watch/open-meteo/`,
+    },
   },
-  "data-analysis": {
-    icon: "📊", title: "Data Analysis Agent", subtitle: "Automate complex data analysis workflows with intelligent processing.", badge: "Data Science",
-    description: "The Data Analysis Agent showcases how effGen handles sophisticated data science tasks. It combines data processing, statistical analysis, and visualization capabilities to extract meaningful insights.",
+  {
+    id: "data-analysis",
+    icon: "📊",
+    title: "Data analysis",
+    subtitle: "Reads a file, computes on it, and reports the number the tools produced.",
+    badge: "Multi-tool pipeline",
     accent: "#00ff88",
-    features: [
-      { icon: "🧹", title: "Automated Data Cleaning", description: "Detect and fix data quality issues automatically." },
-      { icon: "📈", title: "Statistical Analysis", description: "Perform comprehensive statistical tests and analyses." },
-      { icon: "📉", title: "Interactive Visualizations", description: "Generate publication-quality charts and graphs." },
-      { icon: "🔍", title: "Pattern Recognition", description: "Identify trends, anomalies, and patterns in data." },
+    description:
+      "Four tools that chain: file operations to read, a JSON tool to query and validate, a Python REPL to compute, and text processing to summarise. The agent picks which it needs. The value of running the sum through a REPL rather than asking the model for it is that arithmetic on a small model is where errors come from, and a tool does not guess.",
+    observations: [
+      "Two tool calls, in the order the agent chose them: read the file, then compute over what it read.",
+      "FileOperations confines reads to an allowed directory. A path outside it is refused by name rather than read.",
+      "The REPL session persists across calls within a run, so a variable defined in one call is available in the next.",
     ],
-    useCases: [
-      { icon: "💹", title: "Financial Analysis", description: "Analyze market trends and financial performance metrics." },
-      { icon: "🏥", title: "Healthcare Analytics", description: "Process and analyze patient data for insights." },
-      { icon: "🛒", title: "E-commerce Insights", description: "Understand customer behavior and optimize sales." },
-    ],
-    codeExample: `from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools.builtin import CodeExecutor, FileOperations, Calculator
+    tools: ["json_tool", "text_processing", "python_repl", "file_operations"],
+    script: "examples/advanced/data_processing_agent.py",
+    githubUrl: `${REPO}/examples/advanced/data_processing_agent.py`,
+    command: "effgen examples run advanced/data_processing_agent",
+    run: {
+      model: "gemini:gemini-3.1-flash-lite",
+      code: `import json
+from pathlib import Path
 
-# Load the data analysis model
-model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="vllm")
+from effgen import Agent, AgentConfig
+from effgen.tools.builtin import FileOperations, JSONTool, PythonREPL, TextProcessingTool
 
-# Create the data analysis agent
-analyst = Agent(AgentConfig(
-    model=model,
-    name="data-analyst",
-    system_prompt="""You are an expert data scientist.
-    Provide thorough analysis with visualizations.""",
-    tools=[CodeExecutor(), FileOperations(), Calculator()],
-    enable_memory=True,
+Path("orders.json").write_text(json.dumps({
+    "orders": [
+        {"id": 1, "region": "emea", "total": 240.5},
+        {"id": 2, "region": "amer", "total": 1204.0},
+        {"id": 3, "region": "emea", "total": 87.25},
+    ]
+}))
+
+agent = Agent(AgentConfig(
+    model="gemini:gemini-3.1-flash-lite",
+    name="data-analysis",
+    system_prompt="Use the tools to read and compute. Report the numbers the tools returned.",
+    tools=[JSONTool(), TextProcessingTool(), PythonREPL(), FileOperations()],
+    max_iterations=8,
 ))
 
-# Analyze data
-result = analyst.run("""
-    Analyze the sales_data.csv file:
-    1. Clean and validate the data
-    2. Calculate key metrics (revenue, growth, trends)
-    3. Identify top-performing products
-    4. Create visualizations
-    5. Provide actionable insights
-""")
+response = agent.run(
+    "Read orders.json, and report the total value of the emea orders."
+)
 
-print(result.output)`,
-    stats: [{ value: "1M+", label: "Rows/Second" }, { value: "20+", label: "File Formats" }, { value: "10x", label: "Faster Analysis" }, { value: "50+", label: "Chart Types" }],
-    githubUrl: "https://github.com/ctrl-gaurav/effGen/blob/main/examples/advanced/data_processing_agent.py",
+print(response.text)
+print()
+print("tool calls:", response.tool_calls.total)
+for call in response.tool_calls:
+    print(" ", call.name, "->", "error" if call.error else "ok")`,
+      output: `The total value of the emea orders is 327.75.
+
+tool calls: 2
+  file_operations -> ok
+  python_repl -> ok`,
+    },
   },
-  "multi-agent": {
-    icon: "🤖", title: "Multi-Agent System", subtitle: "Build complex workflows with multiple specialized agents collaborating.", badge: "Orchestration",
-    description: "The Multi-Agent System demonstrates the power of agent collaboration in effGen. Multiple specialized agents work together, each handling specific aspects of complex tasks.",
+  {
+    id: "multi-agent",
+    icon: "🤖",
+    title: "Multi-agent pipeline",
+    subtitle: "Three agents, each with one job, wired end to end.",
+    badge: "Orchestration",
     accent: "#ff6b6b",
-    features: [
-      { icon: "🎭", title: "Agent Orchestration", description: "Coordinate multiple agents with different specializations." },
-      { icon: "📋", title: "Task Delegation", description: "Intelligently distribute tasks based on agent capabilities." },
-      { icon: "⚡", title: "Parallel Execution", description: "Run multiple agents simultaneously for maximum efficiency." },
-      { icon: "🔗", title: "Result Synthesis", description: "Combine outputs from multiple agents into cohesive results." },
+    description:
+      "One agent restates the task, one solves it with a tool, one writes it up. Each has a narrow system prompt and only the tools it needs, which is what makes a small model reliable at its step. The framework also has a sub-agent router that decomposes a task on its own, and workflow DAGs with resumable checkpoints — but a pipeline you wired yourself is the version you can debug.",
+    observations: [
+      "A plain run() no longer fans out into sub-agents on its own — AgentConfig.mode defaults to SINGLE. Automatic decomposition is opt-in.",
+      "The solver has a calculator and an instruction to give the number only. The arithmetic is the tool's, not the model's.",
+      "Each step's output is just a string, so there is nothing to learn: the pipeline is three calls in a row.",
     ],
-    useCases: [
-      { icon: "🏗️", title: "Complex Workflows", description: "Handle multi-step processes requiring different expertise." },
-      { icon: "🔬", title: "Research Projects", description: "Coordinate research, analysis, and documentation tasks." },
-      { icon: "🎯", title: "Business Automation", description: "Automate complex business processes end-to-end." },
-    ],
-    codeExample: `from effgen import load_model
-from effgen.presets import create_agent
-from effgen.core.workflow import WorkflowDAG, WorkflowNode
+    tools: ["calculator"],
+    script: "examples/advanced/multi_agent_pipeline.py",
+    githubUrl: `${REPO}/examples/advanced/multi_agent_pipeline.py`,
+    command: "effgen examples run advanced/multi_agent_pipeline",
+    run: {
+      model: "gemini:gemini-3.1-flash-lite",
+      code: `from effgen import Agent, AgentConfig
+from effgen.tools.builtin import Calculator
 
-# Load the model
-model = load_model("Qwen/Qwen2.5-7B-Instruct", engine="vllm")
+MODEL = "gemini:gemini-3.1-flash-lite"
 
-# Create specialized agents via presets
-researcher = create_agent("research", model)   # WebSearch + URLFetch + Wikipedia
-analyst    = create_agent("math",     model)   # Calculator + PythonREPL
-writer     = create_agent("general",  model)   # All-purpose tools
-
-# Wire them into a DAG — independent levels run in parallel via asyncio.gather
-dag = WorkflowDAG(name="research_to_report")
-dag.add_node(WorkflowNode(id="research", agent=researcher, output_key="facts"))
-dag.add_node(WorkflowNode(id="analyze",  agent=analyst,    input_keys=["facts"], output_key="analysis"))
-dag.add_node(WorkflowNode(id="write",    agent=writer,
-                          input_keys=["facts", "analysis"], output_key="report"))
-
-dag.connect("research", "analyze", key="facts")
-dag.connect("research", "write",   key="facts")
-dag.connect("analyze",  "write",   key="analysis")
-
-result = dag.run(initial_inputs={
-    "research": "Research AI trends in 2026, analyze the data, and create a comprehensive report.",
-})
-
-print(result.outputs["write"])`,
-    stats: [{ value: "5+", label: "Specialized Agents" }, { value: "100%", label: "Parallel Execution" }, { value: "15x", label: "Efficiency Gain" }, { value: "\u221E", label: "Scalability" }],
-    githubUrl: "https://github.com/ctrl-gaurav/effGen/blob/main/examples/advanced/multi_agent_pipeline.py",
-  },
-  "weather-json-pipeline": {
-    icon: "🌤️", title: "Weather & JSON Pipeline", subtitle: "Fetch real-time weather data and process JSON responses automatically.", badge: "Data Pipeline",
-    description: "The Weather & JSON Pipeline demonstrates how effGen's WeatherTool and JSONTool work together to create automated data pipelines. Fetch weather from the free Open-Meteo API and process with JSONPath — no API keys required.",
-    accent: "#ffd700",
-    features: [
-      { icon: "🌡️", title: "Real-Time Weather Data", description: "Fetch current weather, forecasts, and historical data from Open-Meteo API (free, no key)." },
-      { icon: "📋", title: "JSON Processing", description: "Parse, query with JSONPath, transform, and validate JSON data automatically." },
-      { icon: "📊", title: "Report Generation", description: "Combine weather data with text processing to generate formatted reports." },
-      { icon: "🔄", title: "Pipeline Automation", description: "Chain multiple tools together for end-to-end data pipeline workflows." },
-    ],
-    useCases: [
-      { icon: "🏙️", title: "City Weather Dashboards", description: "Build automated weather monitoring for multiple cities." },
-      { icon: "🌾", title: "Agriculture Planning", description: "Analyze weather patterns for crop planning and irrigation." },
-      { icon: "✈️", title: "Travel Planning", description: "Generate weather-based travel recommendations." },
-    ],
-    codeExample: `from effgen import load_model
-from effgen.core.agent import Agent, AgentConfig
-from effgen.tools.builtin import WeatherTool, JSONTool
-
-# Load model with 4-bit quantization
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-
-# Create a custom agent with WeatherTool + JSONTool
-agent = Agent(config=AgentConfig(
-    name="weather_agent", model=model,
-    tools=[WeatherTool(), JSONTool()]
+analyst = Agent(AgentConfig(
+    model=MODEL,
+    name="analyst",
+    system_prompt="Restate the task as one arithmetic question. Nothing else.",
+))
+solver = Agent(AgentConfig(
+    model=MODEL,
+    name="solver",
+    system_prompt="Answer with the calculator. Give the number only.",
+    tools=[Calculator()],
+))
+writer = Agent(AgentConfig(
+    model=MODEL,
+    name="writer",
+    system_prompt="Write one sentence reporting the result to a manager.",
 ))
 
-# Fetch and process weather data
-result = agent.run("""
-    Get the current weather for San Francisco and Tokyo.
-    Compare temperatures, humidity, and conditions.
-    Format the results as a clean comparison table.
-""")
+question = analyst.run("A team of 14 people each bill 37 hours at $145. What is the invoice?")
+answer = solver.run(question.text)
+summary = writer.run(f"Question: {question.text}\\nAnswer: {answer.text}")
 
-print(result.output)`,
-    stats: [{ value: "Free", label: "No API Key" }, { value: "31", label: "Tools Available" }, { value: "Real-time", label: "Weather Data" }, { value: "JSONPath", label: "Query Support" }],
-    githubUrl: "https://github.com/ctrl-gaurav/effGen/blob/main/examples/web_retrieval/weather_agent.py",
+print("analyst:", question.text.strip()[:120])
+print("solver :", answer.text.strip())
+print("writer :", summary.text.strip())`,
+      output: `analyst: 14 * 37 * 145 = ?
+solver : 75110
+writer : The calculation of 14 * 37 * 145 results in a total of 75,110.`,
+    },
   },
-  "rag-knowledge-base": {
-    icon: "📚", title: "RAG Knowledge Base", subtitle: "Build intelligent knowledge bases with hybrid search capabilities.", badge: "Knowledge Management",
-    description: "The RAG Knowledge Base showcases effGen's Retrieval tool with hybrid search combining vector similarity and BM25 keyword matching. Load from multiple formats, chunk intelligently, and query with semantic understanding.",
+  {
+    id: "weather-json-pipeline",
+    icon: "🌤️",
+    title: "Weather, with no API key",
+    subtitle: "A live third-party API an agent can reach with nothing configured.",
+    badge: "External API",
+    accent: "#ffd700",
+    description:
+      "The weather tool goes to Open-Meteo, which needs no key, so this is the shortest path from a fresh install to an agent that calls something real. The JSON tool is there for when you want to reshape the response rather than read it. It is a small example, and the reason it is on this page is that it is the one you can run first.",
+    observations: [
+      "One tool call. The arguments are the model's, chosen from the tool's schema — a location string and an operation.",
+      "The temperature, conditions and wind speed in the answer are the ones the API returned at the moment of the run.",
+      "Nothing in this example reads an environment variable, so there is no key to get wrong.",
+    ],
+    tools: ["weather", "json_tool"],
+    script: "examples/web_retrieval/weather_agent.py",
+    githubUrl: `${REPO}/examples/web_retrieval/weather_agent.py`,
+    command: "effgen examples run web_retrieval/weather_agent",
+    run: {
+      model: "gemini:gemini-3.1-flash-lite",
+      code: `from effgen import Agent, AgentConfig
+from effgen.tools.builtin import JSONTool, WeatherTool
+
+agent = Agent(AgentConfig(
+    model="gemini:gemini-3.1-flash-lite",
+    name="weather-agent",
+    system_prompt=(
+        "Use the weather tool for current conditions. Report the temperature, "
+        "the conditions and the wind speed."
+    ),
+    tools=[WeatherTool(), JSONTool()],
+    max_iterations=6,
+))
+
+response = agent.run("What is the weather in Blacksburg, Virginia right now?")
+
+print(response.text)
+print()
+print("tool calls:", response.tool_calls.total)
+for call in response.tool_calls:
+    print(" ", call.name, call.arguments)`,
+      output: `The current weather in Blacksburg, Virginia is as follows:
+
+*   **Temperature:** 25.1°C
+*   **Conditions:** Partly cloudy
+*   **Wind Speed:** 14.7 km/h
+
+tool calls: 1
+  weather {"location": "Blacksburg, Virginia", "operation": "current"}`,
+    },
+  },
+  {
+    id: "rag-knowledge-base",
+    icon: "📚",
+    title: "Retrieval over your own documents",
+    subtitle: "One call builds the index; the answer comes back with the source it used.",
+    badge: "RAG",
     accent: "#ff9500",
-    features: [
-      { icon: "📄", title: "Multi-Format Document Loading", description: "Load and process documents from TXT, Markdown, PDF, CSV, and JSON formats." },
-      { icon: "🔍", title: "Hybrid Search", description: "Combine vector similarity search with BM25 keyword matching for best results." },
-      { icon: "✂️", title: "Smart Chunking", description: "Intelligent document chunking with configurable overlap and size parameters." },
-      { icon: "🧠", title: "Semantic Understanding", description: "Vector embeddings enable semantic search beyond simple keyword matching." },
+    description:
+      "create_agent(\"rag\", model, knowledge_base=...) ingests the path you give it and wires a retrieval tool over it. Retrieval is hybrid — dense embeddings and BM25 — and the answer carries inline markers backed by response.citations, each naming the source and its relevance score. Ask it something the documents do not cover and it says so rather than inventing an answer.",
+    observations: [
+      "The preset refuses to build without a knowledge base, rather than succeeding over zero documents. Leave the argument out and it names the argument it needs.",
+      "The [1] in the answer is backed by a Citation object: the source file, the chunk, the score and, for a PDF, the page.",
+      "Ingestion reports what it skipped and why — a corrupt file, an empty one, a duplicate, an unsupported extension each have their own reason.",
     ],
-    useCases: [
-      { icon: "📖", title: "Documentation Q&A", description: "Build chatbots that answer questions from your documentation." },
-      { icon: "⚖️", title: "Legal Research", description: "Search and analyze legal documents with semantic understanding." },
-      { icon: "🏥", title: "Medical Knowledge Base", description: "Build searchable medical reference systems from research papers." },
-    ],
-    codeExample: `from effgen import load_model
+    tools: ["retrieval"],
+    script: "examples/web_retrieval/retrieval_agent.py",
+    githubUrl: `${REPO}/examples/web_retrieval/retrieval_agent.py`,
+    command: "effgen examples run web_retrieval/retrieval_agent",
+    run: {
+      model: "gemini:gemini-3.1-flash-lite",
+      code: `from pathlib import Path
+
 from effgen.presets import create_agent
-from effgen.tools.builtin import Retrieval
 
-# Load model
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
+Path("handbook.md").write_text(
+    "# Support handbook\\n\\n"
+    "Refunds are issued within 14 days of purchase.\\n"
+    "Priority support answers within 4 business hours.\\n"
+    "The free tier allows 60 API requests an hour.\\n"
+)
 
-# Create research agent with retrieval capabilities
-agent = create_agent("research", model)
+agent = create_agent(
+    "rag",
+    "gemini:gemini-3.1-flash-lite",
+    knowledge_base="handbook.md",
+)
 
-# Build knowledge base from documents
-result = agent.run("""
-    Load all markdown files from ./docs/ directory.
-    Build a searchable knowledge base with hybrid search.
-    Then answer: What are the main features of the system?
-""")
+response = agent.run("How long do I have to ask for a refund?")
 
-print(result.output)`,
-    stats: [{ value: "5+", label: "File Formats" }, { value: "Hybrid", label: "Search Mode" }, { value: "BM25", label: "Keyword Search" }, { value: "Vector", label: "Semantic Search" }],
-    githubUrl: "https://github.com/ctrl-gaurav/effGen/blob/main/examples/web_retrieval/retrieval_agent.py",
+print(response.text)
+print()
+for citation in response.citations:
+    print(f"[{citation.index}] {citation.source}  score={citation.relevance_score}")`,
+      output: `You are eligible to request a refund within 14 days of your purchase [1].
+
+[1] handbook.md  score=0.7`,
+    },
   },
-};
+];
+
+/** Keyed by the id in the URL, which is what the route and the teaser look up. */
+export const examplesData: Record<string, Example> = Object.fromEntries(
+  examples.map((example) => [example.id, example]),
+);

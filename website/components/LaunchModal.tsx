@@ -1,38 +1,44 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FiX,
-  FiZap,
   FiArrowRight,
-  FiBookOpen,
-  FiCheckSquare,
   FiTerminal,
-  FiPlayCircle,
-  FiBriefcase,
   FiActivity,
   FiCheck,
   FiCopy,
   FiStar,
-  FiLock,
   FiShield,
-  FiCloud,
   FiCode,
   FiCpu,
   FiServer,
 } from "react-icons/fi";
+import { useFocusTrap } from "./useFocusTrap";
+import { resolveRoute } from "./routes";
+import { useReducedMotion } from "./useReducedMotion";
+import { accentTextStyle } from "./accentText";
 
-import { withBasePath } from "./basePath";
-const STORAGE_KEY = "effgen_v031_launch_seen";
+// One key per release, so a reader who dismissed the 0.3.1 modal still sees this
+// one, and dismissing this one is remembered.
+const STORAGE_KEY = "effgen_v100_launch_seen";
 
+// Four, not the whole release. The full 1.0.0 story is a page — /changelog — and
+// restating it here would mean two copies to keep true.
 const HIGHLIGHTS = [
-  { icon: FiActivity, label: "Traceable evidence", sub: "response.sources / .citations are populated from the URLs a run actually retrieved (plus provider-native grounding) — never from the model's prose", accent: "#00ff88" },
-  { icon: FiCpu, label: "Reasoning models finish the job", sub: "gpt-5 / o-series no longer return empty, billed results on token-heavy tasks; cost, tokens, and latency land on every result", accent: "#22d3ee" },
-  { icon: FiShield, label: "One-call domain agents", sub: "LegalDomain().to_agent('gpt-5-nano') wires prompt + tools + guardrails; a custom persona is honored on every path", accent: "#10b981" },
-  { icon: FiServer, label: "Honest teams & server", sub: "Teams and workflow DAGs fail closed and route by name; no silent client-tool drop (clear 400) or TF-IDF embedding fallback", accent: "#a78bfa" },
-  { icon: FiZap, label: "Local-first truth & automation", sub: "Physical GPU memory in models status, grammar-constrained local output, no MCP deadlock, plugin auto-discovery, effgen run --json", accent: "#f59e0b" },
-  { icon: FiLock, label: "Hardened code execution", sub: "The Python REPL sandbox toggle is out of the model's hands; an exhaustive bash secret strip; broader injection + credential-aware PII", accent: "#ec4899" },
+  { icon: FiServer, label: "Point it at any OpenAI-compatible server", sub: "base_url= reaches vLLM, SGLang, TGI, llama.cpp, Ollama, LM Studio or a gateway, with the ids the server actually serves", accent: "#00ff88" },
+  { icon: FiCode, label: "effgen code", sub: "A terminal coding agent: unified diffs, four permission modes, --undo, --review, and a git allow-list", accent: "#22d3ee" },
+  { icon: FiActivity, label: "Read back what a run did", sub: "AgentResponse.tool_calls carries each call, its arguments, its result and its duration — with .failed and .by_name()", accent: "#a78bfa" },
+  { icon: FiCpu, label: "Middleware, sessions, compaction, resumable workflows", sub: "Wrap the loop, give one agent many conversations, choose how context is compacted, and resume a DAG that died half way", accent: "#f59e0b" },
+];
+
+// 1.0.0 is the first stable release and it breaks three things. A launch modal
+// that only lists the good news is how someone upgrades into a surprise.
+const BREAKING = [
+  "Python 3.10 is no longer supported — the floor is 3.11.",
+  "AgentConfig.raise_on_error now defaults to True; opt out with raise_on_error=False.",
+  "An unreachable backend raises BackendUnreachableError regardless of that flag.",
 ];
 
 // Fixed positions to avoid SSR/hydration mismatch
@@ -46,6 +52,8 @@ const PARTICLES = Array.from({ length: 18 }, (_, i) => ({
 export default function LaunchModal() {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -61,14 +69,14 @@ export default function LaunchModal() {
     }
   }, []);
 
-  const close = () => {
+  const close = useCallback(() => {
     setOpen(false);
     try {
       window.localStorage.setItem(STORAGE_KEY, "1");
     } catch {
       /* ignore */
     }
-  };
+  }, []);
 
   const copyInstall = () => {
     const text = "pip install -U effgen";
@@ -97,14 +105,10 @@ export default function LaunchModal() {
     }
   };
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  // Escape closes, Tab stays inside the dialog, and focus returns to whatever
+  // had it when the dialog opened. A modal that does none of those is a trap for
+  // anyone not using a pointer.
+  useFocusTrap(dialogRef, open, close);
 
   return (
     <AnimatePresence>
@@ -139,7 +143,7 @@ export default function LaunchModal() {
             />
             {/* Floating particles */}
             <div className="absolute inset-0 overflow-hidden">
-              {PARTICLES.map((p, i) => (
+              {(reducedMotion ? [] : PARTICLES).map((p, i) => (
                 <motion.div
                   key={i}
                   className="absolute rounded-full bg-green-400"
@@ -164,6 +168,7 @@ export default function LaunchModal() {
 
           {/* Modal card */}
           <motion.div
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="launch-modal-title"
@@ -288,7 +293,7 @@ export default function LaunchModal() {
                   />
                   <FiStar size={12} className="text-green-300" />
                   <span className="text-[11px] font-bold tracking-[0.2em] text-green-300 uppercase">
-                    New Release · Live Now
+                    v1.0.0 · First stable release
                   </span>
                 </motion.div>
 
@@ -309,7 +314,7 @@ export default function LaunchModal() {
                       animate={{ opacity: [0.6, 1, 0.6] }}
                       transition={{ duration: 3, repeat: Infinity }}
                     >
-                      v0.3.1
+                      v1.0.0
                     </motion.span>
                     <span
                       className="relative bg-clip-text text-transparent"
@@ -318,7 +323,7 @@ export default function LaunchModal() {
                           "linear-gradient(120deg, #00ff88, #00e5ff, #a78bfa)",
                       }}
                     >
-                      v0.3.1
+                      v1.0.0
                     </span>
                   </span>{" "}
                   is here!
@@ -330,13 +335,9 @@ export default function LaunchModal() {
                   animate={{ y: 0, opacity: 1 }}
                   transition={{ delay: 0.32 }}
                 >
-                  v0.3.1 is the <strong>Real-World Usability &amp; Polish</strong> release — driven
-                  by living with the framework as eleven professionals do. It adds no new providers
-                  or subsystems and instead makes grounded results carry their sources, reasoning
-                  models finish token-heavy work, custom personas steer every path, multi-agent
-                  teams fail honestly, the OpenAI-compatible server stop silently downgrading, and a
-                  knowledge domain become a runnable agent in one call. No breaking changes — every
-                  addition is additive.
+                  The first stable release, out on 14 August 2026. It opens effGen up to any
+                  OpenAI-protocol endpoint, adds a terminal coding agent, and makes a run report what
+                  it actually did — every tool call, and a cost that is either real or absent.
                 </motion.p>
 
                 {/* Highlights */}
@@ -362,7 +363,7 @@ export default function LaunchModal() {
                         style={{
                           background: `${accent}1a`,
                           borderColor: `${accent}50`,
-                          color: accent,
+                          ...accentTextStyle(accent),
                           boxShadow: `0 0 0px ${accent}00`,
                         }}
                         whileHover={{
@@ -378,7 +379,7 @@ export default function LaunchModal() {
                         <div className="text-[13px] font-semibold text-gray-100 truncate">
                           {label}
                         </div>
-                        <div className="text-[11px] text-gray-500 truncate">{sub}</div>
+                        <div className="text-[11px] text-gray-600 dark:text-gray-400 truncate">{sub}</div>
                       </div>
                       <FiArrowRight
                         size={14}
@@ -387,6 +388,29 @@ export default function LaunchModal() {
                     </motion.li>
                   ))}
                 </motion.ul>
+
+                {/* Three things break. Say so here rather than letting an
+                    upgrade discover them. */}
+                <motion.div
+                  className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3.5 py-3"
+                  initial={{ y: 10, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.9 }}
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <FiShield size={12} className="text-amber-400 flex-shrink-0" />
+                    <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-amber-300">
+                      Three breaking changes
+                    </span>
+                  </div>
+                  <ul className="space-y-0.5">
+                    {BREAKING.map((item) => (
+                      <li key={item} className="text-[11px] leading-relaxed text-gray-400">
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </motion.div>
 
                 {/* Install row */}
                 <motion.div
@@ -437,7 +461,9 @@ export default function LaunchModal() {
                   transition={{ delay: 1.1 }}
                 >
                   <motion.a
-                    href={withBasePath("/docs/introduction")}
+                    href={resolveRoute("/docs/migration").href}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     onClick={close}
                     className="group relative inline-flex items-center gap-2 px-6 py-3 rounded-full font-black text-black text-sm cursor-pointer overflow-hidden"
                     style={{
@@ -462,23 +488,23 @@ export default function LaunchModal() {
                       animate={{ x: "120%" }}
                       transition={{ duration: 2.2, repeat: Infinity, repeatDelay: 1.2 }}
                     />
-                    <span className="relative">Read the Docs</span>
+                    <span className="relative">Read the migration notes</span>
                     <FiArrowRight className="relative group-hover:translate-x-1 transition-transform" />
                   </motion.a>
 
                   <a
-                    href="https://github.com/ctrl-gaurav/effGen/blob/main/CHANGELOG.md"
+                    href={resolveRoute("/changelog").href}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={close}
                     className="inline-flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm text-green-300 border border-green-500/40 bg-green-500/5 hover:bg-green-500/15 hover:border-green-400 hover:text-white transition-all"
                   >
-                    What&apos;s new
+                    Everything in 1.0.0
                   </a>
 
                   <button
                     onClick={close}
-                    className="px-4 py-3 rounded-full text-sm text-gray-500 hover:text-gray-200 transition-colors"
+                    className="px-4 py-3 rounded-full text-sm text-gray-600 dark:text-gray-400 hover:text-gray-200 transition-colors"
                   >
                     Maybe later
                   </button>

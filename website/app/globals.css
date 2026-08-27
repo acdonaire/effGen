@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The page ground and the inherited text colour. `body` below and the
+   `background` / `foreground` colours in `tailwind.config.ts` both read these,
+   so they have to be defined for either to resolve. */
 :root {
   --background: #ffffff;
   --foreground: #0a0a0a;
@@ -596,7 +599,21 @@ section { overflow-x: clip; }
 }
 
 /* ====== SYNTAX HIGHLIGHT (landing code blocks) ====== */
-.syntax-code .syn-comment   { color: #6b7280; font-style: italic; }
+.syntax-code .syn-comment   { color: #78808e; font-style: italic; }
+
+/* An accent chosen to read on the dark ground is not readable on the light one.
+   Components put both candidates on the element with `accentTextStyle`, and the
+   colour is chosen here — on that same element, so each one resolves its own
+   value. Declaring the choice on `:root` instead resolves it there, where
+   neither candidate is set, and every accent quietly becomes `currentColor`. */
+[style*="--accent-on-light"] {
+  color: var(--accent-on-light);
+}
+
+.dark [style*="--accent-on-light"] {
+  color: var(--accent-on-dark);
+}
+
 .syntax-code .syn-string    { color: #4ade80; }
 .syntax-code .syn-number    { color: #f59e0b; }
 .syntax-code .syn-keyword   { color: #c084fc; font-weight: 600; }
@@ -610,7 +627,7 @@ section { overflow-x: clip; }
 .syntax-code .syn-punct     { color: #94a3b8; }
 
 /* Light mode tweaks */
-:root:not(.dark) .syntax-code .syn-comment   { color: #6b7280; }
+:root:not(.dark) .syntax-code .syn-comment   { color: #6a707e; }
 :root:not(.dark) .syntax-code .syn-string    { color: #15803d; }
 :root:not(.dark) .syntax-code .syn-number    { color: #b45309; }
 :root:not(.dark) .syntax-code .syn-keyword   { color: #7c3aed; }
@@ -622,3 +639,122 @@ section { overflow-x: clip; }
 :root:not(.dark) .syntax-code .syn-flag      { color: #b45309; }
 :root:not(.dark) .syntax-code .syn-operator  { color: #b91c1c; }
 :root:not(.dark) .syntax-code .syn-punct     { color: #475569; }
+
+/* ====== SKIP LINK ====== */
+/* The first focusable element on the page. It stays out of the layout until it
+   is focused, so a keyboard visitor can jump the navigation and a pointer
+   visitor never sees it. */
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 100;
+  padding: 0.625rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid #00ff88;
+  background: #020c08;
+  color: #00ff88;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transform: translateY(-200%);
+}
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* ====== FOCUS ====== */
+/* Every interactive element gets the same visible ring, in the accent colour
+   the site already uses. `:focus-visible` means a pointer click does not draw
+   it — only keyboard and programmatic focus do. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #00ff88;
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+:root:not(.dark) a:focus-visible,
+:root:not(.dark) button:focus-visible,
+:root:not(.dark) input:focus-visible,
+:root:not(.dark) select:focus-visible,
+:root:not(.dark) textarea:focus-visible,
+:root:not(.dark) summary:focus-visible,
+:root:not(.dark) [tabindex]:focus-visible {
+  outline-color: #00995c;
+}
+
+/* ====== REDUCED MOTION ====== */
+/* Everything the site animates through CSS settles here. The rules resolve the
+   element to the state it holds when its animation has finished, so a page read
+   with motion off is the same composition at rest — not a page caught mid-frame
+   and not a page with pieces missing.
+
+   `data-motion` on <html> overrides the media query in both directions, which
+   is how the reduced state is reached in a test or a review without changing an
+   OS setting. `components/useReducedMotion.ts` reads the same two signals for
+   JavaScript, and framer-motion is driven from it through MotionConfig. */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) *,
+  html:not([data-motion="full"]) *::before,
+  html:not([data-motion="full"]) *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+  html:not([data-motion="full"]) {
+    scroll-behavior: auto !important;
+  }
+}
+
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  animation-delay: 0ms !important;
+  transition-duration: 1ms !important;
+  transition-delay: 0ms !important;
+}
+html[data-motion="reduced"] {
+  scroll-behavior: auto !important;
+}
+
+/* Two animations hold their subject at zero opacity or off-screen for part of
+   the cycle, so collapsing their duration is not enough — the element has to be
+   pinned to its settled frame. */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) .animate-blink,
+  html:not([data-motion="full"]) .animate-shimmer,
+  html:not([data-motion="full"]) .animate-scan,
+  html:not([data-motion="full"]) .animate-ring-expand,
+  html:not([data-motion="full"]) .animate-ripple {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  html:not([data-motion="full"]) .animate-scan,
+  html:not([data-motion="full"]) .animate-ring-expand,
+  html:not([data-motion="full"]) .animate-ripple {
+    display: none !important;
+  }
+}
+html[data-motion="reduced"] .animate-blink,
+html[data-motion="reduced"] .animate-shimmer,
+html[data-motion="reduced"] .animate-scan,
+html[data-motion="reduced"] .animate-ring-expand,
+html[data-motion="reduced"] .animate-ripple {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
+html[data-motion="reduced"] .animate-scan,
+html[data-motion="reduced"] .animate-ring-expand,
+html[data-motion="reduced"] .animate-ripple {
+  display: none !important;
+}

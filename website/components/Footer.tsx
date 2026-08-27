@@ -6,7 +6,9 @@ import { SiDiscord } from "react-icons/si";
 import { FaLinkedin as SiLinkedin } from "react-icons/fa6";
 import HelpBot from "./HelpBot";
 import { useState, useEffect } from "react";
+import { resolveRoute } from "./routes";
 import { withBasePath } from "./basePath";
+import { useReducedMotion } from "./useReducedMotion";
 
 // Brand color glows for social icons
 const socialBrandColors: Record<string, string> = {
@@ -17,6 +19,7 @@ const socialBrandColors: Record<string, string> = {
 };
 
 export default function Footer() {
+  const reducedMotion = useReducedMotion();
   const [showTop, setShowTop] = useState(false);
 
   useEffect(() => {
@@ -25,24 +28,31 @@ export default function Footer() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const footerLinks = {
+  // Every entry declares `external` so the type is uniform and a new link cannot
+  // silently lose its target/rel pair.
+  const footerLinks: Record<string, { name: string; href: string; external: boolean }[]> = {
     Product: [
-      { name: "Features", href: "#features" },
-      { name: "Examples", href: "/examples" },
-      { name: "Documentation", href: "/docs", external: false },
-      { name: "GitHub", href: "https://github.com/ctrl-gaurav/effGen", external: true },
+      { name: "The command line", href: "/cli", external: false },
+      { name: "effgen code", href: "/code", external: false },
+      { name: "Dashboard & playground", href: "/dashboard", external: false },
+      { name: "Models", href: "/models", external: false },
+      { name: "Agents", href: "/agents", external: false },
+      { name: "Production", href: "/production", external: false },
     ],
     Resources: [
-      { name: "API Reference", href: "/docs/api-reference", external: false },
+      { name: "Documentation", href: "/docs", external: false },
+      { name: "API reference", href: "/docs/api-reference", external: false },
+      { name: "Examples", href: "/examples", external: false },
+      { name: "Changelog", href: "/changelog", external: false },
       { name: "PyPI", href: "https://pypi.org/project/effgen/", external: true },
-      { name: "arXiv Paper", href: "https://arxiv.org/abs/2602.00887", external: true },
-      { name: "Support", href: "https://github.com/ctrl-gaurav/effGen/issues", external: true },
+      { name: "arXiv paper", href: "https://arxiv.org/abs/2602.00887", external: true },
     ],
-    Company: [
-      { name: "About", href: "/community" },
-      { name: "Contributing", href: "https://github.com/ctrl-gaurav/effGen", external: true },
+    Project: [
+      { name: "Community", href: "/community", external: false },
+      { name: "Leaderboard", href: "/leaderboard", external: false },
+      { name: "GitHub", href: "https://github.com/ctrl-gaurav/effGen", external: true },
+      { name: "Issues", href: "https://github.com/ctrl-gaurav/effGen/issues", external: true },
       { name: "License", href: "https://github.com/ctrl-gaurav/effGen/blob/main/LICENSE", external: true },
-      { name: "Changelog", href: "https://github.com/ctrl-gaurav/effGen/blob/main/NEWS.md", external: true },
     ],
   };
 
@@ -84,11 +94,20 @@ export default function Footer() {
           <div className="lg:col-span-2">
             <motion.div className="flex items-center gap-3 mb-5" whileHover={{ scale: 1.03 }}>
               <div className="relative">
+                {/* Holds the first frame of the loop under reduced motion,
+                    matching the mark in the navbar. */}
                 <motion.div
                   className="absolute inset-0 rounded-full bg-green-400/20 blur-md"
-                  animate={{ scale: [1, 1.4, 1], opacity: [0.4, 0.7, 0.4] }}
-                  transition={{ duration: 2.5, repeat: Infinity }}
+                  animate={
+                    reducedMotion
+                      ? { scale: 1, opacity: 0.4 }
+                      : { scale: [1, 1.4, 1], opacity: [0.4, 0.7, 0.4] }
+                  }
+                  transition={reducedMotion ? { duration: 0 } : { duration: 2.5, repeat: Infinity }}
                 />
+                {/* A 36px inline SVG mark. next/image has nothing to optimise here, and
+                    the static export ships with the image optimiser off. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={withBasePath("/favicon.svg")} alt="effGen logo" className="w-9 h-9 relative z-10" />
               </div>
               <div>
@@ -98,14 +117,15 @@ export default function Footer() {
                 </span>
               </div>
             </motion.div>
-            <p className="text-gray-600 dark:text-gray-500 text-sm mb-6 max-w-xs leading-relaxed">
-              Build powerful AI agents with Small Language Models. Production-ready framework optimized for speed and efficiency.
+            <p className="text-gray-600 dark:text-gray-400 text-sm mb-6 max-w-xs leading-relaxed">
+              Agents built for small language models — on your own hardware, behind a server you
+              already run, or at any provider effGen ships an adapter for.
             </p>
 
             {/* Terminal snippet */}
             <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-[#0a1a0f] border border-gray-300 dark:border-green-500/20 font-mono text-xs mb-6 w-fit">
-              <FiZap className="text-green-600 dark:text-green-400 flex-shrink-0" size={12} />
-              <span className="text-green-600 dark:text-green-400">$</span>
+              <FiZap className="text-green-700 dark:text-green-400 flex-shrink-0" size={12} />
+              <span className="text-green-700 dark:text-green-400">$</span>
               <span className="text-gray-700 dark:text-gray-300">pip install effgen</span>
             </div>
 
@@ -120,7 +140,7 @@ export default function Footer() {
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={social.label}
-                    className="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 flex items-center justify-center text-gray-500 hover:text-green-600 dark:hover:text-green-400 hover:border-green-500/40 hover:bg-green-500/5 transition-all"
+                    className="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 flex items-center justify-center text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:border-green-500/40 hover:bg-green-500/5 transition-all"
                     whileHover={{
                       scale: 1.1,
                       y: -2,
@@ -128,7 +148,7 @@ export default function Footer() {
                     }}
                     whileTap={{ scale: 0.95 }}
                   >
-                    <social.icon size={16} />
+                    <social.icon size={16} aria-hidden="true" />
                   </motion.a>
                 );
               })}
@@ -138,21 +158,27 @@ export default function Footer() {
           {/* Links with animated underlines */}
           {Object.entries(footerLinks).map(([category, links]) => (
             <div key={category}>
-              <h3 className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-widest mb-4">{category}</h3>
+              <h3 className="text-xs font-bold text-green-700 dark:text-green-400 uppercase tracking-widest mb-4">{category}</h3>
               <ul className="space-y-2.5">
-                {links.map((link, index) => (
+                {links.map((link, index) => {
+                  // A route whose page has not been built yet resolves to the
+                  // framework documentation for that topic — see `routes.ts`.
+                  const resolved = resolveRoute(link.href);
+                  const leavesSite = link.external || resolved.external;
+                  return (
                   <li key={index}>
                     <motion.a
-                      href={withBasePath(link.href)}
-                      target={link.external ? "_blank" : undefined}
-                      rel={link.external ? "noopener noreferrer" : undefined}
-                      className="text-sm text-gray-600 dark:text-gray-500 hover:text-green-600 dark:hover:text-green-400 transition-colors hover-underline inline-block"
+                      href={leavesSite ? resolved.href : withBasePath(resolved.href)}
+                      target={leavesSite ? "_blank" : undefined}
+                      rel={leavesSite ? "noopener noreferrer" : undefined}
+                      className="text-sm text-gray-600 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition-colors hover-underline inline-block"
                       whileHover={{ x: 4 }}
                     >
                       {link.name}
                     </motion.a>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
           ))}
@@ -201,22 +227,33 @@ export default function Footer() {
       {/* Help Bot */}
       <HelpBot />
 
-      {/* Scroll to top */}
-      <motion.a
-        href="#home"
+      {/* Scroll to top. A control, not a link: the anchor it used to point at
+          exists only on the home page, so on every other page it went nowhere.
+          Scrolling the window works the same on all of them. */}
+      <motion.button
+        type="button"
+        aria-label="Back to top"
+        onClick={() =>
+          window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" })
+        }
         className="fixed bottom-8 right-8 w-11 h-11 rounded-full flex items-center justify-center text-black z-40"
+        // Faded out is out: a control nobody can see must not take a tab stop
+        // or swallow a click meant for the page behind it.
+        tabIndex={showTop ? 0 : -1}
+        aria-hidden={!showTop}
         style={{
           background: "linear-gradient(135deg, #00ff88, #00c96e)",
           boxShadow: "0 0 20px rgba(0,255,136,0.4)",
+          pointerEvents: showTop ? "auto" : "none",
         }}
         whileHover={{ scale: 1.1, y: -2, boxShadow: "0 0 30px rgba(0,255,136,0.6)" }}
         whileTap={{ scale: 0.95 }}
         initial={{ opacity: 0, scale: 0 }}
         animate={{ opacity: showTop ? 1 : 0, scale: showTop ? 1 : 0 }}
-        transition={{ duration: 0.3 }}
+        transition={{ duration: reducedMotion ? 0 : 0.3 }}
       >
-        <FiArrowUp size={18} />
-      </motion.a>
+        <FiArrowUp size={18} aria-hidden="true" />
+      </motion.button>
     </footer>
   );
 }
