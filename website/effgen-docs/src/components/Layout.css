@@ -108,10 +108,15 @@
   z-index: 1;
 }
 
-/* Ensure home page content is above noise overlay */
-.main-content > .home {
-  position: relative;
-  z-index: 1;
+/* Wide enough for the on-page outline to sit beside the text. The page takes
+   the full column and `DocPage` splits it, which leaves the text roughly the
+   width it had at this size and puts the outline in what used to be margin.
+   Below this width nothing changes: the outline is not drawn and the page is
+   the 80% column it has always been. */
+@media (min-width: 1400px) {
+  .main-content > .doc-page {
+    max-width: 100%;
+  }
 }
 
 /* ============================================

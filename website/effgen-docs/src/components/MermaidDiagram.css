@@ -87,7 +87,7 @@
 }
 
 /* Diagram area with animated grid */
-.mermaid-diagram {
+.mermaid-scroll {
   padding: 2rem;
   display: flex;
   justify-content: center;
@@ -103,7 +103,7 @@
 }
 
 /* Subtle radial gradient overlay for depth */
-.mermaid-diagram::after {
+.mermaid-scroll::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -116,18 +116,38 @@
   100% { background-position: 20px 20px; }
 }
 
-[data-theme="light"] .mermaid-diagram {
+[data-theme="light"] .mermaid-scroll {
   background-image:
     linear-gradient(rgba(0, 0, 0, 0.02) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 0, 0, 0.02) 1px, transparent 1px);
   background-size: 20px 20px;
 }
 
-.mermaid-diagram svg {
+.mermaid-scroll svg {
   max-width: 100%;
   height: auto;
   position: relative;
   z-index: 1;
+}
+
+.mermaid-scroll:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+/* The label on an edge is drawn in a box of its own, and mermaid fills that box
+   from a theme variable it does not always honour. Painting it from the page's
+   own token is what keeps it the colour of the card it sits on in both modes. */
+.mermaid-scroll .edgeLabel,
+.mermaid-scroll .edgeLabel p,
+.mermaid-scroll .edgeLabel span,
+.mermaid-scroll .edgeLabel div {
+  background: var(--bg-card) !important;
+  color: var(--text-primary) !important;
+}
+
+.mermaid-scroll .edgeLabel rect {
+  fill: var(--bg-card) !important;
 }
 
 .mermaid-error {
@@ -137,35 +157,43 @@
 }
 
 /* Ensure diagrams are readable with enhanced styling */
-.mermaid-diagram .node rect,
-.mermaid-diagram .node circle,
-.mermaid-diagram .node ellipse,
-.mermaid-diagram .node polygon,
-.mermaid-diagram .node path {
+.mermaid-scroll .node rect,
+.mermaid-scroll .node circle,
+.mermaid-scroll .node ellipse,
+.mermaid-scroll .node polygon,
+.mermaid-scroll .node path {
   stroke-width: 2px;
   transition: all 0.3s ease;
 }
 
-.mermaid-diagram .edgePath path {
+.mermaid-scroll .edgePath path {
   stroke-width: 2px;
 }
 
 /* Custom scrollbar for diagram overflow */
-.mermaid-diagram::-webkit-scrollbar {
+.mermaid-scroll::-webkit-scrollbar {
   height: 6px;
 }
 
-.mermaid-diagram::-webkit-scrollbar-track {
+.mermaid-scroll::-webkit-scrollbar-track {
   background: rgba(0, 255, 136, 0.02);
 }
 
-.mermaid-diagram::-webkit-scrollbar-thumb {
+.mermaid-scroll::-webkit-scrollbar-thumb {
   background: rgba(0, 255, 136, 0.15);
   border-radius: 3px;
 }
 
 @media (max-width: 768px) {
-  .mermaid-diagram {
+  .mermaid-scroll {
     padding: 1rem;
+    justify-content: flex-start;
+  }
+
+  /* Narrow enough that fitting the diagram to the screen would shrink its
+     labels past reading size. It keeps its own size here and the container
+     scrolls instead — which is why the container is focusable. */
+  .mermaid-scroll svg {
+    max-width: none;
   }
 }

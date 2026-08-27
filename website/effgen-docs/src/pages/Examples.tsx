@@ -1,946 +1,365 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { BookOpen, Bot, Code, Database, Brain, GitBranch, Zap, FileText, Settings, Cpu, Play, Terminal, Layers, Network, Shield, RefreshCw, Workflow, Grid, List } from 'lucide-react';
-import PageNavbar from '../components/PageNavbar';
-import CodeBlock from '../components/CodeBlock';
+import { useMemo, useState } from 'react';
+import { PlayCircle, Search } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import {
+  ApiTable,
+  Callout,
+  CodeBlock,
+  DocPage,
+  SeeAlso,
+  Terminal,
+} from '../components/docs';
+import { siteData, version } from '../siteData';
+import { siteHref } from '../siteLinks';
 import './Examples.css';
 
-interface Example {
-  id: string;
-  title: string;
-  description: string;
-  category: string;
-  icon: React.ReactNode;
-  code: string;
-  filename: string;
-}
-
-const examples: Example[] = [
-  // Getting Started
-  {
-    id: 'model-loading',
-    title: 'Model Loading',
-    description: 'Load models with different engines and quantization',
-    category: 'Getting Started',
-    icon: <Cpu size={20} />,
-    filename: 'test_model_loading.py',
-    code: `"""Load models with different configurations."""
-from effgen import load_model
-
-# Load with Transformers engine (4-bit quantization)
-model = load_model(
-    "Qwen/Qwen2.5-3B-Instruct",
-    engine="transformers",
-    quantization="4bit"
-)
-
-# Load with vLLM engine (faster inference)
-model_vllm = load_model(
-    "Qwen/Qwen2.5-7B-Instruct",
-    engine="vllm",
-    tensor_parallel_size=1
-)
-
-# Test generation
-response = model.generate("What is Python?")
-print(f"Response: {response}")`
-  },
-  {
-    id: 'agent-creation',
-    title: 'Agent Creation',
-    description: 'Create and configure agents with custom settings',
-    category: 'Getting Started',
-    icon: <Bot size={20} />,
-    filename: 'test_agent_creation.py',
-    code: `"""Create agents with different configurations."""
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools.builtin import Calculator, PythonREPL, DateTimeTool
-
-# Load model
-model = load_model(
-    "Qwen/Qwen2.5-3B-Instruct",
-    engine="transformers",
-    quantization="4bit"
-)
-
-# Create tools directly
-tools = [Calculator(), PythonREPL(), DateTimeTool()]
-
-# Create agent with default config
-config = AgentConfig(
-    name="test_agent",
-    model=model,
-    tools=tools
-)
-agent = Agent(config=config)
-
-# Create agent with custom config
-custom_config = AgentConfig(
-    name="custom_agent",
-    model=model,
-    tools=tools,
-    max_iterations=5,
-    temperature=0.5,
-    system_prompt="You are a helpful assistant."
-)
-custom_agent = Agent(config=custom_config)
-
-# Run a simple task
-result = agent.run("What is 2 + 2?")
-print(f"Answer: {result.output}")`
-  },
-  {
-    id: 'simple-task',
-    title: 'Simple Agent Task',
-    description: 'Run basic tasks with agents',
-    category: 'Getting Started',
-    icon: <Play size={20} />,
-    filename: 'test_agent_simple_task.py',
-    code: `"""Run simple tasks with an agent."""
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools.builtin import Calculator
-
-# Setup
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-
-config = AgentConfig(
-    name="math_agent",
-    model=model,
-    tools=[Calculator()],
-    system_prompt="You are a helpful math assistant.",
-    temperature=0.1,
-    max_iterations=5
-)
-
-agent = Agent(config=config)
-
-# Run task
-result = agent.run("Calculate 25 * 17 + sqrt(144)")
-print(f"Answer: {result.output}")
-print(f"Success: {result.success}")
-print(f"Tool calls: {result.tool_calls}")`
-  },
-
-  // Tools
-  {
-    id: 'calculator-tool',
-    title: 'Calculator Tool',
-    description: 'Use the built-in calculator for math operations',
-    category: 'Tools',
-    icon: <Code size={20} />,
-    filename: 'test_calculator.py',
-    code: `"""Use the Calculator tool for math operations."""
-import asyncio
-from effgen.tools.builtin import Calculator
-
-async def main():
-    calculator = Calculator()
-
-    # Basic operations
-    result = await calculator.execute(expression="2 + 3 * 4")
-    print(f"2 + 3 * 4 = {result.output}")
-
-    # Complex expressions
-    result = await calculator.execute(expression="sqrt(16) + pow(2, 3)")
-    print(f"sqrt(16) + pow(2, 3) = {result.output}")
-
-    # Mathematical functions
-    result = await calculator.execute(expression="sin(pi/2) + cos(0)")
-    print(f"sin(pi/2) + cos(0) = {result.output}")
-
-asyncio.run(main())`
-  },
-  {
-    id: 'python-repl',
-    title: 'Python REPL Tool',
-    description: 'Execute Python code with state persistence',
-    category: 'Tools',
-    icon: <Terminal size={20} />,
-    filename: 'test_python_repl.py',
-    code: `"""Use Python REPL with state persistence."""
-import asyncio
-from effgen.tools.builtin import PythonREPL
-
-async def main():
-    repl = PythonREPL()
-
-    # Execute code and store state
-    await repl.execute(code='x = 42')
-
-    # State persists across executions
-    result = await repl.execute(code='print(x * 2)')
-    print(f"x * 2 = {result.output}")  # 84
-
-    # Define functions
-    code = '''
-def factorial(n):
-    if n <= 1:
-        return 1
-    return n * factorial(n - 1)
-
-print(factorial(5))
-'''
-    result = await repl.execute(code=code)
-    print(f"factorial(5) = {result.output}")  # 120
-
-    # Use defined functions later
-    result = await repl.execute(code='print(factorial(6))')
-    print(f"factorial(6) = {result.output}")  # 720
-
-asyncio.run(main())`
-  },
-  {
-    id: 'custom-tool',
-    title: 'Custom Tool Creation',
-    description: 'Create your own tools for agents',
-    category: 'Tools',
-    icon: <Zap size={20} />,
-    filename: 'test_custom_tool.py',
-    code: `"""Create custom tools for agents."""
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools import BaseTool, ParameterSpec, ParameterType, ToolCategory, ToolMetadata
-
-class WeatherTool(BaseTool):
-    """Custom weather lookup tool."""
-
-    def __init__(self, api_key: str):
-        super().__init__(
-            metadata=ToolMetadata(
-                name="weather",
-                description="Get current weather for a city",
-                category=ToolCategory.EXTERNAL_API,
-                parameters=[
-                    ParameterSpec(
-                        name="city",
-                        type=ParameterType.STRING,
-                        description="City name",
-                        required=True,
-                    )
-                ]
-            )
-        )
-        self.api_key = api_key
-
-    async def _execute(self, city: str) -> dict:
-        # Implementation here
-        return {
-            "city": city,
-            "temperature": 22,
-            "condition": "Sunny",
-            "humidity": 45
-        }
-
-# Use custom tool
-model = load_model("Qwen/Qwen2.5-7B-Instruct", quantization="4bit")
-weather = WeatherTool(api_key="your-api-key")
-
-config = AgentConfig(
-    name="weather_agent",
-    model=model,
-    tools=[weather]
-)
-
-agent = Agent(config=config)
-result = agent.run("What's the weather in Tokyo?")`
-  },
-  {
-    id: 'file-operations',
-    title: 'File Operations Tool',
-    description: 'Read and write files safely',
-    category: 'Tools',
-    icon: <FileText size={20} />,
-    filename: 'test_file_operations.py',
-    code: `"""Use file operation tools safely."""
-import asyncio
-from effgen.tools.builtin import FileOperations
-
-async def main():
-    files = FileOperations()
-
-    # Write to a file
-    result = await files.execute(
-        operation="write",
-        path="./output.txt",
-        content="Hello, World!",
-    )
-    print(f"Write success: {result.success}")
-
-    # Read a file
-    result = await files.execute(
-        operation="read",
-        path="./output.txt",
-    )
-    print(f"File contents: {result.output}")
-
-    # List files
-    result = await files.execute(
-        operation="list",
-        path=".",
-    )
-    print(f"Files: {result.output}")
-
-asyncio.run(main())`
-  },
-
-  // Memory
-  {
-    id: 'short-term-memory',
-    title: 'Short-Term Memory',
-    description: 'Manage conversation context efficiently',
-    category: 'Memory',
-    icon: <Brain size={20} />,
-    filename: 'test_short_term_memory.py',
-    code: `"""Use short-term memory for conversations."""
-from effgen.memory import ShortTermMemory, MessageRole
-
-# Create short-term memory
-memory = ShortTermMemory(
-    max_tokens=4096,
-    max_messages=50
-)
-
-# Add messages
-memory.add_message(MessageRole.USER, "My name is Alice")
-memory.add_message(MessageRole.ASSISTANT, "Hello Alice! Nice to meet you.")
-
-# Get formatted context for model input
-messages = memory.get_conversation_context()
-print(f"Messages: {len(messages)}")
-
-# Check token usage
-stats = memory.get_statistics()
-print(f"Token count: {stats['current_tokens']}")
-print(f"Message count: {stats['current_messages']}")
-
-# Search recent messages
-matches = memory.search_messages("Alice")
-print(f"Matches: {len(matches)}")`
-  },
-  {
-    id: 'long-term-memory',
-    title: 'Long-Term Memory',
-    description: 'Persistent storage with search capabilities',
-    category: 'Memory',
-    icon: <Database size={20} />,
-    filename: 'test_long_term_memory.py',
-    code: `"""Use long-term memory with persistence."""
-from effgen.memory import (
-    LongTermMemory,
-    MemoryType,
-    ImportanceLevel,
-    SQLiteStorageBackend
-)
-
-# Create with SQLite backend
-backend = SQLiteStorageBackend(db_path="./memory.db")
-memory = LongTermMemory(backend=backend)
-
-# Start a session
-session = memory.start_session(name="user_session")
-
-# Add memories with metadata
-memory.add_memory(
-    content="User prefers Python over JavaScript",
-    memory_type=MemoryType.OBSERVATION,
-    importance=ImportanceLevel.HIGH,
-    tags=["preference", "programming"]
-)
-
-memory.add_memory(
-    content="Completed ML project successfully",
-    memory_type=MemoryType.TASK,
-    importance=ImportanceLevel.MEDIUM,
-    tags=["task", "ml"]
-)
-
-# Search memories
-results = memory.search(
-    query="programming",
-    min_importance=ImportanceLevel.MEDIUM
-)
-print(f"Found {len(results)} relevant memories")
-
-# Get statistics
-stats = memory.get_statistics()
-print(f"Total memories: {stats['total_memories']}")`
-  },
-  {
-    id: 'memory-integration',
-    title: 'Memory Integration',
-    description: 'Combine memory types with agents',
-    category: 'Memory',
-    icon: <Layers size={20} />,
-    filename: 'test_memory_integration.py',
-    code: `"""Integrate memory systems with agents."""
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-
-model = load_model("Qwen/Qwen2.5-7B-Instruct", quantization="4bit")
-
-# Create agent with memory
-config = AgentConfig(
-    name="memory_agent",
-    model=model,
-    enable_memory=True,
-    memory_config={
-        "short_term_max_tokens": 4096,
-        "short_term_max_messages": 50,
-        "long_term_backend": "sqlite",
-        "long_term_persist_path": "./memory",
-    },
-    system_prompt="You are a helpful assistant with memory."
-)
-
-agent = Agent(config=config)
-
-# Multi-turn conversation - agent remembers context
-agent.run("My name is Alice and I'm a software engineer")
-agent.run("I'm working on a machine learning project")
-agent.run("I prefer Python and PyTorch")
-
-# Agent uses context for personalized response
-result = agent.run("What programming tools should I learn next?")
-print(result.output)  # Personalized recommendation`
-  },
-
-  // Agents
-  {
-    id: 'react-loop',
-    title: 'ReAct Loop',
-    description: 'Reason-Act execution pattern',
-    category: 'Agents',
-    icon: <RefreshCw size={20} />,
-    filename: 'test_react_loop.py',
-    code: `"""Test the ReAct (Reason-Act) loop execution."""
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools.builtin import Calculator
-
-# Load model and tools
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-calculator = Calculator()
-
-# Create agent with ReAct pattern
-config = AgentConfig(
-    name="react_agent",
-    model=model,
-    tools=[calculator],
-    max_iterations=5,
-    temperature=0.1
-)
-agent = Agent(config=config)
-
-# Run task requiring multi-step reasoning
-task = "Calculate the square root of 144 and then add 8 to it."
-response = agent.run(task)
-
-# Analyze execution
-print(f"Total iterations: {response.iterations}")
-print(f"Answer: {response.output}")
-print(f"Tool calls: {response.tool_calls}")`
-  },
-  {
-    id: 'agent-streaming',
-    title: 'Streaming Responses',
-    description: 'Stream agent responses in real-time',
-    category: 'Agents',
-    icon: <Play size={20} />,
-    filename: 'test_agent_streaming.py',
-    code: `"""Stream agent responses in real-time."""
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-
-config = AgentConfig(
-    name="streaming_agent",
-    model=model,
-    tools=[],
-    enable_streaming=True
-)
-
-agent = Agent(config=config)
-
-# Stream response
-print("Streaming response:")
-for chunk in agent.stream("Explain quantum computing in 3 sentences."):
-    print(chunk, end="", flush=True)
-print()
-
-# Stream with execution-event callbacks
-def on_thought(text: str):
-    print(f"Thought: {text}")
-
-def on_tool_call(tool_name: str, tool_input):
-    print(f"Tool: {tool_name}({tool_input})")
-
-def on_answer(answer: str):
-    print(f"Answer: {answer}")
-
-for chunk in agent.stream(
-    "What is machine learning?",
-    on_thought=on_thought,
-    on_tool_call=on_tool_call,
-    on_answer=on_answer,
-):
-    print(chunk, end="", flush=True)`
-  },
-  {
-    id: 'multi-tool-task',
-    title: 'Multi-Tool Tasks',
-    description: 'Use multiple tools to solve complex tasks',
-    category: 'Agents',
-    icon: <Workflow size={20} />,
-    filename: 'test_multi_tool_task.py',
-    code: `"""Solve complex tasks using multiple tools."""
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-from effgen.tools.builtin import Calculator, PythonREPL
-
-model = load_model("Qwen/Qwen2.5-7B-Instruct", quantization="4bit")
-
-# Create multiple tools
-tools = [Calculator(), PythonREPL()]
-
-config = AgentConfig(
-    name="multi_tool_agent",
-    model=model,
-    tools=tools,
-    system_prompt="""You are a problem-solving assistant.
-Use the appropriate tools to solve tasks efficiently.""",
-    max_iterations=10
-)
-
-agent = Agent(config=config)
-
-# Complex task requiring multiple tools
-task = """
-Analyze this data and provide insights:
-Numbers: [12, 45, 23, 67, 89, 34, 56]
-
-1. Calculate the mean
-2. Find the max and min
-3. Calculate the standard deviation
-"""
-
-result = agent.run(task)
-print(f"Analysis: {result.output}")
-print(f"Tools used: {result.tool_calls}")`
-  },
-
-  // Prompts
-  {
-    id: 'prompt-templates',
-    title: 'Prompt Templates',
-    description: 'Create reusable prompt templates',
-    category: 'Prompts',
-    icon: <FileText size={20} />,
-    filename: 'test_template_manager.py',
-    code: `"""Create and manage prompt templates."""
-from effgen.prompts import TemplateManager
-from effgen.prompts.template_manager import PromptTemplate
-
-# Create template manager
-manager = TemplateManager()
-
-# Register a PromptTemplate instance
-manager.add_template(PromptTemplate(
-    name="analyze",
-    template="""Analyze the following {{ content_type }}:
-
-{{ content }}
-
-Focus on:
-{% for point in focus_points %}
-- {{ point }}
-{% endfor %}
-
-Provide a {{ output_format }} response.""",
-))
-
-# Render template by name with variables
-prompt = manager.render_template(
-    "analyze",
-    variables={
-        "content_type": "code",
-        "content": "def hello(): print('Hello')",
-        "focus_points": ["readability", "efficiency", "best practices"],
-        "output_format": "detailed",
-    },
-)
-print(prompt)`
-  },
-  {
-    id: 'prompt-chains',
-    title: 'Prompt Chains',
-    description: 'Create multi-step prompt workflows',
-    category: 'Prompts',
-    icon: <GitBranch size={20} />,
-    filename: 'test_chain_manager.py',
-    code: `"""Create and execute prompt chains."""
-import asyncio
-from effgen import Agent, AgentConfig, load_model
-from effgen.prompts import ChainManager
-from effgen.prompts.chain_manager import (
-    PromptChain,
-    ChainStep,
-    ChainType
-)
-
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-agent = Agent(config=AgentConfig(name="chain_agent", model=model))
-
-async def main():
-    manager = ChainManager(executor=agent.run)
-
-    chain = PromptChain(
-        name="research_chain",
-        chain_type=ChainType.SEQUENTIAL,
-        steps=[
-            ChainStep(
-                name="research",
-                type="prompt",
-                prompt="Research the topic: {topic}. List 5 key facts.",
-                output_var="facts"
-            ),
-            ChainStep(
-                name="analyze",
-                type="prompt",
-                prompt="Analyze these facts: {facts}. Identify patterns.",
-                output_var="analysis"
-            ),
-            ChainStep(
-                name="summarize",
-                type="prompt",
-                prompt="Create executive summary from: {analysis}",
-                output_var="summary"
-            ),
-        ]
-    )
-
-    result = await manager.execute_chain(
-        chain,
-        initial_state={"topic": "renewable energy trends"}
-    )
-    print(f"Summary: {result.get_variable('summary')}")
-
-asyncio.run(main())`
-  },
-
-  // Multi-Agent
-  {
-    id: 'orchestrator',
-    title: 'Multi-Agent Orchestrator',
-    description: 'Coordinate multiple agents with different patterns',
-    category: 'Multi-Agent',
-    icon: <Network size={20} />,
-    filename: 'test_orchestrator.py',
-    code: `"""Orchestrate multiple agents."""
-from effgen.core.orchestrator import (
-    MultiAgentOrchestrator,
-    OrchestrationPattern
-)
-from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-
-model = load_model("Qwen/Qwen2.5-7B-Instruct", quantization="4bit")
-
-# Create specialized agents
-researcher = Agent(config=AgentConfig(
-    name="researcher",
-    model=model,
-    system_prompt="You research and gather information."
-))
-
-analyst = Agent(config=AgentConfig(
-    name="analyst",
-    model=model,
-    system_prompt="You analyze data and find patterns."
-))
-
-writer = Agent(config=AgentConfig(
-    name="writer",
-    model=model,
-    system_prompt="You write clear, engaging content."
-))
-
-# Create orchestrator
-orchestrator = MultiAgentOrchestrator()
-orchestrator.register_agent(researcher)
-orchestrator.register_agent(analyst)
-orchestrator.register_agent(writer)
-
-# Create team with sequential pattern
-team = orchestrator.create_team(
-    name="research_team",
-    agents=[researcher, analyst, writer],
-    pattern=OrchestrationPattern.SEQUENTIAL
-)
-
-# Execute task
-result = orchestrator.assign_task(
-    task="Research AI trends, analyze findings, write a summary",
-    team=team
-)
-print(f"Output: {result.output}")`
-  },
-  {
-    id: 'sub-agent-routing',
-    title: 'Sub-Agent Routing',
-    description: 'Let Agent route complex tasks through built-in sub-agents',
-    category: 'Multi-Agent',
-    icon: <GitBranch size={20} />,
-    filename: 'test_sub_agent_routing.py',
-    code: `"""Route complex tasks through Agent sub-agent mode."""
-from effgen import Agent, AgentConfig, load_model
-from effgen.core.agent import AgentMode
-
-model = load_model("Qwen/Qwen2.5-7B-Instruct", quantization="4bit")
-
-agent = Agent(config=AgentConfig(
-    name="planner",
-    model=model,
-    enable_sub_agents=True,
-    max_sub_agent_depth=2,
-    sub_agent_config={"max_sub_agents": 4},
-))
-
-complex_task = """
-Create a comprehensive report on climate change:
-1. Research current statistics
-2. Analyze trends over the past decade
-3. Identify key factors
-4. Propose solutions
-5. Write executive summary
-"""
-
-result = agent.run(complex_task, mode=AgentMode.AUTO)
-print(result.output)
-
-if result.routing_decision:
-    print(f"Strategy: {result.routing_decision.strategy.value}")`
-  },
-
-  // Configuration
-  {
-    id: 'config-loader',
-    title: 'Configuration Loading',
-    description: 'Load and manage configurations',
-    category: 'Configuration',
-    icon: <Settings size={20} />,
-    filename: 'test_config_loader.py',
-    code: `"""Load and manage configurations."""
-from effgen.config import ConfigLoader, Config
-
-# Initialize config loader
-loader = ConfigLoader()
-
-# Load configuration from YAML file
-config = loader.load_config("config/config.yaml")
-
-# Access configuration values
-print(f"Config loaded: {config}")
-
-# Get specific values
-model_name = loader.get("model.default_model")
-temperature = loader.get("agent.temperature")
-
-# Set configuration values
-loader.set("agent.temperature", 0.5)
-
-# Save configuration
-loader.save_config("config/config.yaml")
-
-# Or create programmatically with the Config dataclass (single data dict)
-config = Config(data={
-    "model": {
-        "name": "Qwen/Qwen2.5-7B-Instruct",
-        "engine": "transformers",
-        "quantization": "4bit",
-    },
-    "agent": {
-        "max_iterations": 10,
-        "temperature": 0.3,
-    },
-    "memory": {
-        "enable_long_term": True,
-        "storage_path": "./memory",
-    },
-})
-
-# Access config values; dot-path lookup is on ConfigLoader
-print(f"Model: {loader.get('model.name')}")
-print(f"Max iterations: {loader.get('agent.max_iterations')}")`
-  },
-
-  // Execution
-  {
-    id: 'sandbox-execution',
-    title: 'Sandbox Execution',
-    description: 'Execute code safely in a sandbox',
-    category: 'Execution',
-    icon: <Shield size={20} />,
-    filename: 'test_sandbox.py',
-    code: `"""Execute code safely in a sandbox."""
-from effgen.execution import (
-    CodeExecutor,
-    SandboxConfig,
-    ExecutionStatus
-)
-
-# Create executor with custom config
-config = SandboxConfig(
-    timeout=10,
-    memory_limit="256M",
-    allow_network=False,
-    allow_file_ops=False
-)
-executor = CodeExecutor(sandbox_type="local", config=config)
-
-# Execute Python code
-code = '''
-x = 10
-y = 20
-result = x + y
-print(f"Result: {result}")
-'''
-result = executor.execute(code, language="python")
-print(f"Status: {result.status.value}")
-print(f"Output: {result.output}")
-
-# Handle errors gracefully
-result = executor.execute("x = 1 / 0", language="python")
-print(f"Error handled: {result.error}")
-
-# Execute with retry
-result = executor.execute_with_retry(
-    "print('Hello')",
-    language="python",
-    max_retries=3
-)`
-  },
-];
-
-const categories = ['All', 'Getting Started', 'Tools', 'Memory', 'Agents', 'Prompts', 'Multi-Agent', 'Configuration', 'Execution'];
+/**
+ * The six examples the main site writes up in full, keyed by the script each
+ * one is built from.
+ *
+ * The rows on this page and the cards on `/examples` therefore name the same
+ * scripts, and a reader following either one arrives at the same file in the
+ * framework repository.
+ */
+const WRITTEN_UP: Record<string, { id: string; title: string }> = {
+  'tools/coding_agent': { id: 'code-assistant', title: 'Code assistant' },
+  'web_retrieval/web_agent': { id: 'research-agent', title: 'Research agent' },
+  'advanced/data_processing_agent': { id: 'data-analysis', title: 'Data analysis' },
+  'advanced/multi_agent_pipeline': { id: 'multi-agent', title: 'Multi-agent pipeline' },
+  'web_retrieval/weather_agent': { id: 'weather-json-pipeline', title: 'Weather, with no API key' },
+  'web_retrieval/retrieval_agent': { id: 'rag-knowledge-base', title: 'Retrieval over your own documents' },
+};
+
+const REPO = 'https://github.com/ctrl-gaurav/effGen/blob/main';
 
 export default function Examples() {
-  const [selectedCategory, setSelectedCategory] = useState('All');
-  const [selectedExample, setSelectedExample] = useState<Example | null>(examples[0]);
-  const [viewMode, setViewMode] = useState<'split' | 'list'>('split');
-  const contentRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState('');
+  const catalogue = siteData.examples;
+  const needle = query.trim().toLowerCase();
 
-  const filteredExamples = selectedCategory === 'All'
-    ? examples
-    : examples.filter(e => e.category === selectedCategory);
+  const visible = useMemo(
+    () =>
+      catalogue.items.filter(
+        (item) =>
+          !needle ||
+          item.name.toLowerCase().includes(needle) ||
+          item.summary.toLowerCase().includes(needle),
+      ),
+    [catalogue.items, needle],
+  );
 
-  const handleExampleClick = (example: Example) => {
-    setSelectedExample(example);
-    if (contentRef.current) {
-      contentRef.current.scrollTop = 0;
+  const byGroup = useMemo(() => {
+    const map = new Map<string, typeof visible>();
+    for (const item of visible) {
+      const list = map.get(item.group);
+      if (list) list.push(item);
+      else map.set(item.group, [item]);
     }
-    if (window.innerWidth <= 968) {
-      const contentElement = document.querySelector('.examples-content');
-      if (contentElement) {
-        contentElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (filteredExamples.length > 0 && !filteredExamples.find(e => e.id === selectedExample?.id)) {
-      setSelectedExample(filteredExamples[0]);
-    }
-  }, [selectedCategory]);
-
-  const navItems = categories.map(cat => ({
-    label: cat,
-    path: '#',
-  }));
+    return map;
+  }, [visible]);
 
   return (
-    <div className="examples-page">
-      <PageNavbar
-        title="Examples"
-        items={[]}
-        rightContent={
-          <div className="examples-view-toggle">
-            <button
-              className={`view-btn ${viewMode === 'split' ? 'active' : ''}`}
-              onClick={() => setViewMode('split')}
-              title="Split View"
-            >
-              <Grid size={18} />
-            </button>
-            <button
-              className={`view-btn ${viewMode === 'list' ? 'active' : ''}`}
-              onClick={() => setViewMode('list')}
-              title="List View"
-            >
-              <List size={18} />
-            </button>
-          </div>
-        }
+    <DocPage
+      subtitle={`The ${catalogue.count} runnable programs in the framework repository, what each one shows, and how to start it.`}
+      icon={<PlayCircle size={48} />}
+      toc={false}
+    >
+      <p>
+        These are whole programs, not fragments: each one loads a model, builds an agent and prints
+        something. Six of them are written up with their output on{' '}
+        <a href={siteHref('/examples')}>the examples page</a>; this page is the whole directory,
+        including the ones that need a GPU and the ones that need a key.
+      </p>
+
+      <Callout type="warning" title="They ship with the repository, not with the wheel">
+        <p>
+          <code>pip install effgen</code> does not put <code>examples/</code> on your disk — the
+          package build excludes it. Clone the repository, or download the directory, and{' '}
+          <code>effgen examples</code> will find it: it looks beside the installed package, then in
+          the working directory, then wherever <code>EFFGEN_EXAMPLES_DIR</code> points. With none
+          of those present the command says so rather than listing nothing.
+        </p>
+      </Callout>
+
+      <h2>Listing and running one</h2>
+
+      <CodeBlock
+        language="bash"
+        filename="terminal"
+        code={`effgen examples list                       # every script, with the command that runs it
+effgen examples run openai/basic_chat      # run one by name
+
+python examples/openai/basic_chat.py       # or start it yourself, from a checkout`}
       />
 
-      <div className="examples-category-bar">
-        {categories.map(cat => (
-          <button
-            key={cat}
-            className={`category-btn ${selectedCategory === cat ? 'active' : ''}`}
-            onClick={() => setSelectedCategory(cat)}
-          >
-            {cat}
-          </button>
-        ))}
+      <Terminal
+        command="effgen examples list"
+        output={`Available Examples
+                              Example Scripts (52)
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Name                                 ┃ Command                               ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ advanced/advanced_streaming_agent    │ effgen examples run                   │
+│                                      │ advanced/advanced_streaming_agent     │
+│ advanced/agent_communication         │ effgen examples run                   │
+│                                      │ advanced/agent_communication          │
+│ advanced/async_concurrent_agent      │ effgen examples run                   │
+│                                      │ advanced/async_concurrent_agent       │
+│ advanced/conversational_agent        │ effgen examples run                   │
+│                                      │ advanced/conversational_agent         │
+│ basic/basic_agent                    │ effgen examples run basic/basic_agent │
+│ basic/qa_agent                       │ effgen examples run basic/qa_agent    │
+└──────────────────────────────────────┴───────────────────────────────────────┘`}
+        maxLines={18}
+        caption={`Trimmed to the first rows. ${catalogue.count} scripts, in ${catalogue.groups.length} directories.`}
+      />
+
+      <p>
+        A name that does not exist is matched by basename across the tree first, so{' '}
+        <code>effgen examples run qa_agent</code> finds <code>basic/qa_agent</code>. When nothing
+        matches, the command says so and exits 1.
+      </p>
+
+      <Terminal command="effgen examples run nope/not_here" output={`✗ Example not found: nope/not_here`} />
+
+      <Callout
+        type="danger"
+        title={`${catalogue.parses_arguments} of the ${catalogue.count} cannot be started by the run sub-command`}
+      >
+        <p>
+          A script that builds its own <code>argparse</code> parser sees effGen's command line
+          rather than its own, because <code>examples run</code> executes the file in the running
+          process without resetting <code>sys.argv</code>. Those{' '}
+          {catalogue.parses_arguments} scripts exit 2 with an{' '}
+          <em>unrecognized arguments</em> message naming the effGen command you typed. Start them
+          with <code>python</code> instead — the last column below says which of the two to use for
+          every script.
+        </p>
+      </Callout>
+
+      <Terminal
+        command="effgen examples run tools/coding_agent"
+        output={`Running Example: tools/coding_agent
+
+usage: effgen [-h] [--model MODEL] [--interactive] [--regression]
+              [--no-cleanup]
+effgen: error: unrecognized arguments: examples run tools/coding_agent`}
+        caption="The script's own options are parsed — against effGen's argv. Exit code 2."
+      />
+
+      <Terminal
+        command="python examples/tools/coding_agent.py --help"
+        output={`usage: coding_agent.py [-h] [--model MODEL] [--interactive] [--regression]
+                       [--no-cleanup]
+
+effGen Code Execution Agent Example
+
+options:
+  -h, --help     show this help message and exit
+  --model MODEL  Model to use (default: Qwen/Qwen2.5-3B-Instruct)
+  --interactive  Interactive chat mode
+  --regression   Run regression tests only
+  --no-cleanup   Skip cleanup of generated files`}
+        caption="The same script, started directly. Its flags work, and --model is how you point it at something other than the local default."
+      />
+
+      <h2>What each one needs</h2>
+
+      <ApiTable
+        headers={['Directory', 'What it shows', 'Scripts', 'What it needs']}
+        rows={[
+          [
+            <code>basic/</code>,
+            'One agent, one question — the shortest path through the framework.',
+            String(catalogue.groups.find((g) => g.id === 'basic')?.count ?? ''),
+            'A local model; the MLX and GUI ones need Apple Silicon or a display',
+          ],
+          [
+            <code>tools/</code>,
+            'Agents that call tools: files, code execution, several at once.',
+            String(catalogue.groups.find((g) => g.id === 'tools')?.count ?? ''),
+            'A local model',
+          ],
+          [
+            <code>advanced/</code>,
+            'Streaming, memory across turns, concurrency, agent-to-agent pipelines.',
+            String(catalogue.groups.find((g) => g.id === 'advanced')?.count ?? ''),
+            'A local model',
+          ],
+          [
+            <code>web_retrieval/</code>,
+            'Web search, the weather, and retrieval over your own documents.',
+            String(catalogue.groups.find((g) => g.id === 'web_retrieval')?.count ?? ''),
+            'A local model; network access, no key',
+          ],
+          [
+            <code>plugins_presets/</code>,
+            'Building from a preset, and registering a tool you wrote.',
+            String(catalogue.groups.find((g) => g.id === 'plugins_presets')?.count ?? ''),
+            'A local model',
+          ],
+          [
+            <code>openai/</code>,
+            'Chat, tool calling, structured output, caching, reasoning effort, and the four native provider tools.',
+            String(catalogue.groups.find((g) => g.id === 'openai')?.count ?? ''),
+            <code>OPENAI_API_KEY</code>,
+          ],
+          [
+            <code>cerebras/</code>,
+            'The same ground on Cerebras: streaming, multi-turn, rate limits, cost tracking.',
+            String(catalogue.groups.find((g) => g.id === 'cerebras')?.count ?? ''),
+            <code>CEREBRAS_API_KEY</code>,
+          ],
+          [
+            <code>data/</code>,
+            'Downloading the ARC set the retrieval examples read.',
+            String(catalogue.groups.find((g) => g.id === 'data')?.count ?? ''),
+            'Network access',
+          ],
+          [
+            <code>utils/</code>,
+            'Sweeping one model across settings to compare them.',
+            String(catalogue.groups.find((g) => g.id === 'utils')?.count ?? ''),
+            'A local model',
+          ],
+        ]}
+      />
+
+      <Callout type="note" title="The default model in most of them">
+        <p>
+          Everything outside <code>openai/</code> and <code>cerebras/</code> defaults to{' '}
+          <code>Qwen/Qwen2.5-3B-Instruct</code> loaded locally in 4-bit, which downloads about 6 GB
+          on first run and wants a GPU. Most take <code>--model</code>, and every one of them can
+          be pointed at a cloud model or at your own endpoint by editing the two lines that build
+          the config — <Link to="/local-models">Local models</Link> and{' '}
+          <Link to="/openai-compatible">Any OpenAI-compatible server</Link> cover both.
+        </p>
+      </Callout>
+
+      <h2>Every script</h2>
+
+      <div className="examples-controls">
+        <label className="examples-search">
+          <Search size={16} aria-hidden="true" />
+          <span className="sr-only">Search the examples</span>
+          <input
+            type="search"
+            value={query}
+            placeholder={`Search ${catalogue.count} scripts by name or description`}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+        <p className="examples-count" aria-live="polite">
+          {visible.length === catalogue.count
+            ? `Showing all ${catalogue.count}.`
+            : `Showing ${visible.length} of ${catalogue.count}.`}
+        </p>
       </div>
 
-      <div className={`examples-layout ${viewMode}`}>
-        <div className="examples-sidebar">
-          <div className="examples-list">
-            {filteredExamples.map(example => (
-              <div
-                key={example.id}
-                className={`example-card ${selectedExample?.id === example.id ? 'active' : ''}`}
-                onClick={() => handleExampleClick(example)}
-              >
-                <div className="example-icon">{example.icon}</div>
-                <div className="example-info">
-                  <h3>{example.title}</h3>
-                  <p>{example.description}</p>
-                  <span className="example-category">{example.category}</span>
-                </div>
-              </div>
-            ))}
+      {visible.length === 0 && (
+        <p className="examples-empty">Nothing matches that. Clear the search to see all of them.</p>
+      )}
+
+      {catalogue.groups.map((group) => {
+        const items = byGroup.get(group.id);
+        if (!items || items.length === 0) return null;
+        return (
+          <div key={group.id} className="examples-group">
+            <h3>
+              <code>{group.id}/</code>
+            </h3>
+            <ApiTable
+              headers={['Script', 'What it does', 'Start it with']}
+              rows={items.map((item) => {
+                const written = WRITTEN_UP[item.name];
+                return [
+                  <>
+                    <a href={`${REPO}/${item.file}`}>{item.name.split('/')[1]}</a>
+                    {written && (
+                      <>
+                        {' '}
+                        <a className="examples-writeup" href={siteHref(`/examples/${written.id}`)}>
+                          written up
+                        </a>
+                      </>
+                    )}
+                  </>,
+                  item.summary || '—',
+                  item.parses_arguments ? (
+                    <code>python {item.file}</code>
+                  ) : (
+                    <code>effgen examples run {item.name}</code>
+                  ),
+                ];
+              })}
+            />
           </div>
-        </div>
+        );
+      })}
 
-        <div className="examples-content" ref={contentRef}>
-          {selectedExample ? (
-            <>
-              <div className="example-header">
-                <div className="example-header-icon">{selectedExample.icon}</div>
-                <div className="example-header-info">
-                  <h2>{selectedExample.title}</h2>
-                  <p>{selectedExample.description}</p>
-                </div>
-              </div>
-              <CodeBlock
-                code={selectedExample.code}
-                language="python"
-                filename={selectedExample.filename}
-              />
-            </>
-          ) : (
-            <div className="example-placeholder">
-              <BookOpen size={64} />
-              <h3>Select an Example</h3>
-              <p>Choose an example from the list to view the code.</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      <h2>Two that fail here, and why</h2>
+
+      <p>
+        Both of these were run against effGen {version} while this page was written, and neither is
+        something you have done wrong.
+      </p>
+
+      <Terminal
+        command="effgen examples run openai/basic_chat"
+        output={`Running Example: openai/basic_chat
+
+Loaded: gpt-5.4-nano (context=1,047,576 tokens)
+
+--- Basic generation ---
+Response: A large language model is a machine-learning system trained on vast text data to predict and generate human-like language, often by learning statistical patterns and relationships in the text.
+Tokens used: 36
+✗ Error running example: 'cost'`}
+        maxLines={14}
+        caption="The generation succeeds; the script then reads a metadata key that is not there."
+      />
+
+      <p>
+        <code>examples/openai/basic_chat.py</code> prints{' '}
+        <code>result.metadata['cost']</code>. The OpenAI adapter reports the spend under{' '}
+        <code>cost_usd</code> and <code>total_cost</code>, so that line raises{' '}
+        <code>KeyError: 'cost'</code> after the answer has already been printed. Use{' '}
+        <code>result.metadata['cost_usd']</code>, or <code>model.get_total_cost()</code> for the
+        running total — <Link to="/cost">Cost &amp; budgets</Link> has the ledger behind both.
+      </p>
+
+      <CodeBlock
+        filename="metadata.py"
+        code={`from effgen import load_model
+
+model = load_model("gpt-5-nano", provider="openai")
+result = model.generate("Say the word ready.")
+print("text     :", result.text.strip())
+print("metadata :", sorted(result.metadata))
+print("get_total_cost():", model.get_total_cost())`}
+      />
+
+      <Terminal
+        command="python metadata.py"
+        output={`text     : ready
+metadata : ['cached_input_tokens', 'completion_tokens', 'cost_usd', 'duration_s', 'latency_ms', 'prompt_tokens', 'reasoning_tokens', 'tool_calls', 'total_cost', 'total_tokens', 'truncated']
+get_total_cost(): 5.575e-05`}
+        maxLines={10}
+      />
+
+      <Terminal
+        command="effgen examples run cerebras/basic_cerebras"
+        output={`Running Example: cerebras/basic_cerebras
+
+Loading Cerebras adapter (gpt-oss-120b) ...
+Context length : 65,536 tokens
+✗ Error running example: Cerebras generation failed : Error code: 402 -
+{'message': 'Payment required to access this resource. Visit your billing tab.',
+'type': 'payment_required_error', 'param': 'quota', 'code': 'payment_required'}.`}
+        maxLines={12}
+        caption="A 402 from the provider, not a fault in the example: the account this was run under has no Cerebras credit. The adapter reports the provider's own message rather than a generic failure."
+      />
+
+      <SeeAlso paths={['/tutorials', '/cookbook', '/quickstart']} />
+    </DocPage>
   );
 }

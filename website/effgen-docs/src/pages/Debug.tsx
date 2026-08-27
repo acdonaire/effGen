@@ -1,203 +1,414 @@
-import React from 'react';
+import { Bug } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Activity } from 'lucide-react';
-import DocPage, { InfoBox, ApiTable, FeatureList } from '../components/DocPage';
-import CodeBlock from '../components/CodeBlock';
+import {
+  ApiTable,
+  Callout,
+  CodeBlock,
+  DocPage,
+  ParamTable,
+  SeeAlso,
+  Terminal,
+} from '../components/docs';
 
 export default function Debug() {
   return (
     <DocPage
-      title="Debugging &amp; Observability"
-      subtitle="OpenTelemetry tracing, Prometheus metrics, structured logging, and a step-through DebugAgent for inspecting ReAct loops iteration-by-iteration."
-      icon={<Activity size={48} />}
-      breadcrumbs={[
-        { label: 'Docs', path: '/introduction' },
-        { label: 'Advanced', path: '/multi-agent' },
-        { label: 'Debugging' },
-      ]}
+      subtitle="Watching a run from the inside — the prompt, the tool calls, the timings and the decision at each step."
+      icon={<Bug size={48} />}
     >
-      <h2>DebugAgent — Step-Through Inspection</h2>
       <p>
-        Wrap any agent in <code>DebugAgent</code> (or just pass <code>debug=True</code> to
-        <code> Agent.run()</code>) to capture a rich per-iteration trace:
+        When a run gives the wrong answer, the question is nearly always <em>which step went
+        wrong</em>. Three surfaces answer it at different depths: <code>--explain</code> and{' '}
+        <code>--trace</code> on any run, <code>effgen debug</code> for a stepped inspection, and{' '}
+        <code>DebugAgent</code> when you want the trace as data.
+      </p>
+
+      <h2>Start here: the trace on a normal run</h2>
+
+      <p>
+        Nothing needs to change about the command. <code>--explain</code> prints the tool the agent
+        chose at each iteration with its arguments, its result and its duration.
       </p>
 
       <CodeBlock
-        code={`from effgen.debug import DebugAgent
-
-agent = DebugAgent(config)
-result = agent.run("What is 24344 * 334?")
-
-trace = result.metadata["debug_trace"]     # DebugTrace
-for it in trace.iterations:                # list[DebugIteration]
-    print(it.iteration)
-    print("  raw_prompt:  ", it.raw_prompt[:120])
-    print("  raw_response:", it.raw_response[:120])
-    print("  thought:     ", it.thought)
-    print("  action:      ", it.action, it.action_input)
-    print("  observation: ", it.observation)
-    print("  tokens_used: ", it.tokens_used)
-    print("  latency (s): ", it.latency)
-
-print(trace.total_tokens, trace.total_latency)`}
-        language="python"
-        filename="debug_agent.py"
-      />
-
-      <h3>DebugIteration fields</h3>
-      <ApiTable
-        headers={['Field', 'Type', 'Description']}
-        rows={[
-          [<code>iteration</code>, 'int', 'Index in the ReAct loop (starting at 1)'],
-          [<code>raw_prompt</code>, 'str', 'Exact prompt sent to the model'],
-          [<code>raw_response</code>, 'str', 'Exact model output (pre-parsing)'],
-          [<code>thought</code>, 'str', 'Extracted "Thought:" text'],
-          [<code>action</code>, 'str', 'Tool name chosen'],
-          [<code>action_input</code>, 'str | None', 'Raw tool argument string (parsed by the tool)'],
-          [<code>observation</code>, 'str | None', 'Tool output fed back to the model'],
-          [<code>final_answer</code>, 'str | None', 'Final answer if this iteration completed the run'],
-          [<code>tokens_used</code>, 'int', 'Tokens consumed this iteration'],
-          [<code>latency</code>, 'float', 'Wall-clock for this iteration (seconds)'],
-          [<code>scratchpad_snapshot</code>, 'str', 'Scratchpad state captured for step-through debugging'],
-          [<code>memory_snapshot</code>, 'list[dict]', 'Memory state snapshot when available'],
-          [<code>metadata</code>, 'dict', 'Additional debug metadata'],
-        ]}
-      />
-
-      <h3>Interactive TUI</h3>
-      <CodeBlock
-        code={`effgen debug "What is sqrt(144)?" --model Qwen/Qwen2.5-3B-Instruct`}
         language="bash"
         filename="terminal"
-      />
-      <p>
-        Steps through iterations one at a time, showing the raw prompt, thought, action, and
-        observation. Press <code>n</code> to advance, <code>q</code> to quit.
-      </p>
-
-      <h2>OpenTelemetry Tracing</h2>
-      <p>
-        effGen emits OpenTelemetry spans for every agent run, iteration, tool call, and model
-        generation. Cross-agent propagation flows through <code>LogRunContext</code>.
-      </p>
-
-      <CodeBlock
-        code={`# Simply set the standard OTel environment variables:
-export OTEL_SERVICE_NAME=my-effgen-app
-export OTEL_EXPORTER_TYPE=otlp                # "otlp" | "jaeger" | "zipkin" | "console"
-export OTEL_EXPORTER_ENDPOINT=http://otel-collector:4318
-
-# Or configure programmatically:
-from effgen.utils.tracing import setup_tracing
-
-setup_tracing(
-    service_name="my-effgen-app",
-    exporter_type="otlp",            # "otlp" | "jaeger" | "zipkin" | "console"
-    endpoint="http://otel-collector:4318",
-)`}
-        language="python"
-        filename="otel_setup.py"
+        code={`effgen run "What is 7*6? Use the calculator." -m openai:gpt-5-nano -t calculator --explain`}
       />
 
-      <InfoBox type="info" title="No-op fallback">
-        <p>
-          If <code>opentelemetry</code> is not installed, effGen silently no-ops all tracing
-          calls. You can deploy without OTel and add it later without code changes.
-        </p>
-      </InfoBox>
+      <Terminal
+        command={`effgen run "What is 7*6? Use the calculator." -m openai:gpt-5-nano -t calculator --explain -q`}
+        output={`
+Response
+╭───────────────────────────────────────── Agent Response ─────────────────────────────────────────╮
+│ 42                                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-      <h2>Prometheus Metrics</h2>
-      <p>
-        When <code>prometheus_client</code> is installed, <code>/metrics</code> exposes:
-      </p>
-      <FeatureList
-        features={[
-          { icon: '⏱️', title: 'effgen_response_latency_seconds', description: 'Histogram for agent response latency.' },
-          { icon: '🔢', title: 'effgen_token_usage', description: 'Histogram of token usage per request.' },
-          { icon: '🛠️', title: 'effgen_tool_execution_seconds', description: 'Histogram for tool execution duration.' },
-          { icon: '💾', title: 'effgen_gpu_memory_used_bytes', description: 'Gauge for live GPU memory usage.' },
-          { icon: '❌', title: 'effgen_errors_total', description: 'Counter for errors.' },
-        ]}
+Execution Trace
+💭 Iteration 1: Reasoning...
+🔧 calculator(expression="7*6", operation="calculate")  ⏱ 1.9s
+   ✓ 42
+
+Execution Statistics
+                   Execution Statistics
+┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Metric         ┃ Value                                 ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Mode           │ single                                │
+│ Success        │ Yes                                   │
+│ Iterations     │ 1                                     │
+│ Tool Calls     │ ToolCallList(['calculator'], total=1) │
+│ Tokens Used    │ 312                                   │
+│ Execution Time │ 1.86s                                 │
+└────────────────┴───────────────────────────────────────┘`}
+        maxLines={24}
+        caption={
+          <>
+            <code>--trace</code> adds a timeline with per-step durations above the same statistics
+            block. Both flags work on every model and every tool-calling path, which is what makes
+            them the first thing to reach for.
+          </>
+        }
       />
 
-      <h3>Grafana Dashboard</h3>
-      <p>
-        A 12-panel Grafana dashboard (latency p50/p95/p99, throughput, error rate, tool
-        breakdown, GPU memory, queue depth) ships in the effGen repo under
-        <code> assets/grafana/dashboard.json</code>. Import it directly into Grafana.
-      </p>
-
-      <h2>Structured Logging</h2>
-      <p>
-        <code>EffGenJSONFormatter</code> emits one JSON object per log line with correlation
-        fields so log aggregators (Loki, Elasticsearch, Datadog) can group a single agent run
-        together.
-      </p>
-      <CodeBlock
-        code={`from effgen.utils.structured_logging import (
-    get_structured_logger, LogRunContext, generate_run_id,
-)
-
-log = get_structured_logger(__name__)
-run_id = generate_run_id()
-
-with LogRunContext(run_id=run_id, agent_name="researcher", session_id="user-123"):
-    log.info("starting_research", query="SLM agents", num_sources=5)
-    # ... correlated automatically through all downstream logs ...`}
-        language="python"
-        filename="structured_logging.py"
-      />
-
-      <h3>Fields always attached</h3>
       <ApiTable
-        headers={['Field', 'Source']}
+        headers={['Reach for', 'When']}
         rows={[
-          [<code>run_id</code>, 'Generated per agent.run()'],
-          [<code>workflow_id</code>, 'WorkflowDAG.run() / run_async()'],
-          [<code>agent_name</code>, 'AgentConfig.name'],
-          [<code>session_id</code>, 'Agent(..., session_id="...") if using Sessions'],
-          [<code>iteration</code>, 'Current ReAct loop index'],
-          [<code>tool_name</code>, 'During tool execution spans'],
+          [
+            <code>--explain</code>,
+            'You want to know which tool was chosen, with what arguments, and what came back.',
+          ],
+          [
+            <code>--trace</code>,
+            'You want the same steps ordered on a timeline with their durations — which step is slow.',
+          ],
+          [
+            <code>effgen debug</code>,
+            <>
+              You want to stop between iterations and look at the scratchpad, or you want the run
+              summary framed on its own.
+            </>,
+          ],
+          [
+            <code>DebugAgent</code>,
+            'You want the trace as an object, in a test or a script.',
+          ],
+          [
+            <code>-v/--verbose</code>,
+            <>
+              You want the framework's own DEBUG and INFO logs — the adapter, the retries, the
+              router. <Link to="/observability">Observability</Link> covers the log surface.
+            </>,
+          ],
+          [
+            <code>--card out.html</code>,
+            <>
+              You want to send the whole trace to someone else.{' '}
+              <Link to="/cli/reports">Reports and run cards</Link>.
+            </>,
+          ],
         ]}
       />
 
-      <h2>Caching</h2>
-      <p>
-        <code>effgen.cache</code> offers two caches relevant to debugging slow runs:
-      </p>
-
-      <FeatureList
-        features={[
-          { icon: '📝', title: 'PromptCache', description: 'LRU + TTL over SHA-256 prompt fingerprints. Thread-safe, tracks hit / miss stats.' },
-          { icon: '🛠️', title: 'ResultCache', description: 'LRU + per-tool TTL for tool results. Optional semantic similarity via embed_fn + cosine.' },
-        ]}
-      />
+      <h2>
+        <code>effgen debug</code>
+      </h2>
 
       <CodeBlock
-        code={`from effgen.cache import PromptCache, ResultCache
-
-pc = PromptCache(max_size=1000, default_ttl=3600)
-rc = ResultCache(max_size=500, default_ttl=600)
-rc.set_tool_ttl("web_search", 60)        # per-tool TTL override
-
-# Hit / miss stats
-print(pc.stats())      # {"hits": 42, "misses": 7, "hit_rate": 0.857, ...}`}
-        language="python"
-        filename="caching.py"
+        language="bash"
+        filename="terminal"
+        code={`effgen debug "What is 137 * 19? Use the calculator." -m openai:gpt-5-nano
+effgen debug "Plan a 3-step research task" --preset research --step`}
       />
 
-      <h2>TokenBudget</h2>
+      <Terminal
+        command={`effgen debug "What is 137 * 19? Use the calculator." -m openai:gpt-5-nano`}
+        output={`╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ effGen Debug Mode                                                                                │
+│ Task: What is 137 * 19? Use the calculator.                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+          Run Summary
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Metric        ┃ Value       ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ Agent         │ debug_agent │
+├───────────────┼─────────────┤
+│ Iterations    │ 0           │
+├───────────────┼─────────────┤
+│ Total Tokens  │ 222         │
+├───────────────┼─────────────┤
+│ Total Latency │ 2.262s      │
+├───────────────┼─────────────┤
+│ Success       │ True        │
+├───────────────┼─────────────┤
+│ Output        │ 2603        │
+└───────────────┴─────────────┘`}
+        maxLines={22}
+        caption={
+          <>
+            Captured on a real pseudo-terminal. <code>Iterations: 0</code> is not a bug in the run —
+            see <em>What the per-iteration trace records</em> below.
+          </>
+        }
+      />
+
+      <ParamTable
+        nameLabel="Argument"
+        params={[
+          { name: 'task', required: true, description: 'Task to execute' },
+          { name: '-m MODEL, --model MODEL', description: 'Model to use' },
+          {
+            name: '--provider PROVIDER',
+            description: (
+              <>
+                Provider for a bare model id (e.g. <code>groq</code>). Equivalent to the{' '}
+                <code>provider:model</code> prefix.
+              </>
+            ),
+          },
+          {
+            name: '--preset {coding,general,math,media,minimal,multimodal,notify,rag,research}',
+            description: 'Use a preset agent configuration',
+          },
+          { name: '--step', type: 'flag', description: 'Step through each iteration' },
+        ]}
+        caption={
+          <>
+            Every argument <code>effgen debug --help</code> declares. One of <code>-m/--model</code>{' '}
+            or <code>--preset</code> is required.
+          </>
+        }
+      />
+
+      <Terminal
+        command={`effgen debug "hi"`}
+        output={`Could not create agent config. Provide -m/--model (e.g. \`-m gpt-5-nano\`) or --preset. Run \`effgen
+models list\` for options or \`effgen doctor\` to check usable providers.`}
+        caption="Exit 2 — a usage error, distinct from exit 1, which means the run itself failed."
+      />
+
+      <ApiTable
+        headers={['Exit code', 'Means']}
+        rows={[
+          [<code>0</code>, 'The run succeeded.'],
+          [<code>1</code>, 'The run failed.'],
+          [<code>2</code>, 'A configuration or usage error — no model, an unknown preset.'],
+        ]}
+      />
+
+      <Callout type="tip" title="It needs a terminal to draw on">
+        <p>
+          The panels and tables are drawn with the same live renderer the rest of the command line
+          uses. Redirected to a file the frames arrive without their content, so capture it under a
+          pseudo-terminal (<code>script -qc "effgen debug …" out.txt</code>) — or use{' '}
+          <code>effgen run --explain --json</code>, which was designed for a pipe.
+        </p>
+      </Callout>
+
+      <h2>The trace as data</h2>
+
       <p>
-        <code>TokenBudget</code> allocates context window by section (system 20% / tools 30% /
-        history 40% / response 10%) and truncates with <code>smart_truncate()</code>
-        (head + tail) or <code>fit_to_budget()</code>.
+        <code>DebugAgent</code> wraps an agent and runs it with <code>debug=True</code>, attaching a{' '}
+        <code>DebugTrace</code> to the response's metadata. It is the form to use in a test.
       </p>
 
-      <h2>See Also</h2>
+      <CodeBlock
+        filename="debug_trace.py"
+        code={`from effgen import AgentConfig
+from effgen.tools import get_registry
+from effgen.debug import DebugAgent
+
+calculator = get_registry().get_tool_sync("calculator")
+config = AgentConfig(model="openai:gpt-5-nano", tools=[calculator])
+
+with DebugAgent(config) as agent:
+    result = agent.run("What is 137 * 19? Use the calculator.")
+
+trace = result.metadata["debug_trace"]
+print("answer:  ", result.output)
+print("iterations:", len(trace.iterations))
+for it in trace.iterations:
+    print(f"  [{it.iteration}] action={it.action} input={it.action_input}")
+    print(f"       observation={str(it.observation)[:60]}")
+    print(f"       tokens={it.tokens_used} latency={it.latency:.2f}s")
+print(trace.summary())`}
+      />
+
+      <Terminal
+        command="python debug_trace.py"
+        output={`answer:   2603
+iterations: 0
+DebugTrace(openai:gpt-5-nano, 0 iters, 275 tokens, 2.32s, success=True)`}
+      />
+
+      <Callout type="warning" title="AgentConfig(tools=…) takes Tool instances, not names">
+        <p>
+          Passing <code>tools=["calculator"]</code> raises{' '}
+          <code>TypeError: AgentConfig(tools=…) expects Tool instances, not names — got a str
+          'calculator'</code>, and the message names the fix:{' '}
+          <code>get_registry().get_tool_sync("calculator")</code>. The <em>command line</em> takes
+          names, because it does that lookup for you.
+        </p>
+      </Callout>
+
+      <h3>What the objects carry</h3>
+
+      <ApiTable
+        headers={['DebugTrace field', 'Carries']}
+        rows={[
+          [<code>task</code>, 'The task string the run was given.'],
+          [<code>agent_name</code>, 'The agent that ran it.'],
+          [<code>run_id</code>, <>The run id, the same one <Link to="/cli/history">history</Link> stores.</>],
+          [
+            <code>iterations</code>,
+            <>
+              A list of <code>DebugIteration</code>. See below for when it is populated.
+            </>,
+          ],
+          [<code>total_tokens</code>, "The run's token total."],
+          [<code>total_latency</code>, 'Wall-clock seconds.'],
+          [<code>final_answer</code>, <>The answer, or <code>None</code> on a failure.</>],
+          [<code>success</code>, 'Whether the run reported success.'],
+          [<code>metadata</code>, 'Anything else the run attached.'],
+          [
+            <code>summary()</code>,
+            <>
+              One line: <code>DebugTrace(model, N iters, T tokens, Ss, success=…)</code>.
+            </>,
+          ],
+          [<code>to_dict()</code>, 'The whole trace as plain data.'],
+          [<code>print_rich()</code>, 'The framed rendering `effgen debug` prints.'],
+        ]}
+      />
+
+      <ApiTable
+        headers={['DebugIteration field', 'Carries']}
+        rows={[
+          [<code>iteration</code>, 'Its number in the loop.'],
+          [
+            <>
+              <code>raw_prompt</code>, <code>raw_response</code>
+            </>,
+            'What was sent and what came back, each capped at 2,000 characters.',
+          ],
+          [<code>thought</code>, 'The reasoning the model wrote before choosing.'],
+          [
+            <>
+              <code>action</code>, <code>action_input</code>
+            </>,
+            'The tool it chose and the arguments it passed.',
+          ],
+          [<code>observation</code>, 'What the tool returned.'],
+          [<code>final_answer</code>, 'Set on the iteration that produced the answer.'],
+          [
+            <>
+              <code>tokens_used</code>, <code>latency</code>
+            </>,
+            "That iteration's own cost in tokens and seconds.",
+          ],
+          [
+            <>
+              <code>scratchpad_snapshot</code>, <code>memory_snapshot</code>
+            </>,
+            'The working context as it stood at that step.',
+          ],
+        ]}
+      />
+
+      <h3>What the per-iteration trace records</h3>
+
       <p>
-        <Link to="/agents">Agents</Link> · <Link to="/evaluation">Evaluation</Link> ·
-        {' '}<Link to="/api-server">API Server</Link>
+        <code>iterations</code> is filled in on the <strong>text ReAct path</strong> — the loop that
+        reads the model's tool calls out of its own text, keeping a scratchpad between steps. On the{' '}
+        <strong>native and hybrid tool-calling paths</strong>, where the tool definitions go to the
+        provider's own tool-calling API, the loop returns as soon as the provider hands back a final
+        answer, and the trace carries the totals — tokens, latency, the answer, success — with an
+        empty <code>iterations</code> list. That is what the <code>Iterations: 0</code> above is.
       </p>
+
+      <p>
+        Every current cloud model takes the native path, so in practice{' '}
+        <code>trace.iterations</code> is empty for them. For step-by-step detail on those models,
+        use <code>--explain</code> or <code>--trace</code>, which read the execution trace the run
+        records regardless of path, or the{' '}
+        <Link to="/tracing">span stream</Link>, which times every model and tool call.{' '}
+        <Link to="/tool-calling">Tool calling</Link> explains which path a given model takes and how
+        to pin one.
+      </p>
+
+      <h2>What goes wrong</h2>
+
+      <ApiTable
+        headers={['What you see', 'What it means', 'What to do']}
+        rows={[
+          [
+            <>
+              <code>trace.iterations</code> is empty
+            </>,
+            'The run took the native or hybrid tool-calling path, which does not keep a per-iteration scratchpad.',
+            <>
+              Use <code>--explain</code>/<code>--trace</code>, or the span stream. The totals on the
+              trace are still correct.
+            </>,
+          ],
+          [
+            <>
+              <code>No debug trace captured.</code>
+            </>,
+            'The run finished without the debug machinery attaching anything — a preset with no tools has no loop to trace.',
+            <>
+              Give the agent a tool, or read the answer, which is printed under the message.
+            </>,
+          ],
+          [
+            <>
+              <code>Could not create agent config. Provide -m/--model … or --preset</code>, exit{' '}
+              <code>2</code>
+            </>,
+            <>
+              <code>effgen debug</code> requires one of the two. It will not choose a model for you.
+            </>,
+            <>
+              Add <code>-m openai:gpt-5-nano</code> or <code>--preset math</code>.
+            </>,
+          ],
+          [
+            'Empty boxes and headers with nothing in them',
+            'The output was redirected, so the live renderer had no terminal to draw on.',
+            <>
+              Capture under a pseudo-terminal, or use <code>effgen run --explain</code>.
+            </>,
+          ],
+          [
+            <>
+              A warning that an agent was garbage-collected without <code>close()</code>
+            </>,
+            'A `DebugAgent` was created and never closed — common in a notebook or a REPL.',
+            <>
+              <code>with DebugAgent(config) as agent:</code>, which closes it on the way out.
+            </>,
+          ],
+          [
+            'The answer is right but a tool never ran',
+            'The model answered from its own knowledge instead of calling the tool.',
+            <>
+              The trace shows <code>Tool Calls: total=0</code>. A stricter system prompt, or a model
+              that advertises tool calling — <code>effgen models list</code> marks them.
+            </>,
+          ],
+        ]}
+      />
+
+      <Callout type="note" title="New in 1.0.0">
+        <p>
+          <code>--trace</code> on <code>effgen run</code> and the shareable{' '}
+          <code>--card</code> are new, and the run's execution trace and execution tree are now part
+          of the saved result. <code>effgen debug</code> and <code>DebugAgent</code> carry over from
+          earlier releases with the same surface.
+        </p>
+      </Callout>
+
+      <SeeAlso paths={['/tracing', '/observability', '/errors']} />
     </DocPage>
   );
 }

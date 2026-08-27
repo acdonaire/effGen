@@ -1,300 +1,468 @@
-import React from 'react';
+import { ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Zap } from 'lucide-react';
-import DocPage, { InfoBox, ApiTable, FeatureList } from '../components/DocPage';
-import CodeBlock from '../components/CodeBlock';
+import {
+  ApiTable,
+  Callout,
+  CodeBlock,
+  DocPage,
+  ParamTable,
+  SeeAlso,
+  Terminal,
+} from '../components/docs';
+import { version } from '../siteData';
 
 export default function Execution() {
   return (
     <DocPage
-      title="Code Execution"
-      subtitle="Secure sandboxed code execution with Docker support, resource limits, and security validation."
-      icon={<Zap size={48} />}
-      breadcrumbs={[
-        { label: 'Docs', path: '/introduction' },
-        { label: 'Advanced', path: '/multi-agent' },
-        { label: 'Execution' },
-      ]}
+      subtitle="Running model-written code with a container, a timeout and a filesystem it cannot leave."
+      icon={<ShieldCheck size={48} />}
     >
-      <h2>Overview</h2>
       <p>
-        effGen provides secure code execution capabilities through sandboxed environments.
-        Code can be executed locally in restricted mode or in Docker containers for full isolation.
+        A prompt an attacker can reach becomes code an agent runs, so effGen never hands model
+        output straight to an interpreter: <code>CodeExecutor</code> runs it inside a sandbox with
+        no network, a memory and CPU cap, and one writable directory, and every result says which
+        of those were actually enforced.
       </p>
 
-      <InfoBox type="success" title="New in v0.3.1 — the sandbox toggle is out of the model's hands">
-        <p>
-          The Python REPL&apos;s <code>restricted_mode</code> switch is no longer advertised in the
-          model-facing tool schema, so a prompt-injected model can never flip it. Unrestricted
-          execution is now a <strong>developer-only opt-in</strong>{' '}
-          (<code>PythonREPL(allow_unrestricted=True)</code> or{' '}
-          <code>EFFGEN_REPL_ALLOW_UNRESTRICTED</code>); a model-supplied{' '}
-          <code>restricted_mode=False</code> is ignored and execution stays sandboxed — fail-closed.
-          The <code>bash</code> tool&apos;s environment scrub now strips every provider credential
-          (and anything matching <code>*_API_KEY</code> / <code>*_TOKEN</code> /{' '}
-          <code>*SECRET*</code> / <code>*PASSWORD*</code>), refuses reads of common secret files, no
-          longer claims to run &quot;safely&quot;, and is no longer bundled in the{' '}
-          <code>general</code> preset.
-        </p>
-      </InfoBox>
+      <h2>Running something</h2>
 
-      <FeatureList
-        features={[
-          { icon: '🔒', title: 'Security Validation', description: 'Pre-execution code analysis for dangerous patterns' },
-          { icon: '🐳', title: 'Docker Sandboxing', description: 'Full isolation with Docker containers' },
-          { icon: '⏱️', title: 'Resource Limits', description: 'CPU, memory, and time limits' },
-          { icon: '🔄', title: 'Retry Logic', description: 'Automatic retry on transient failures' },
+      <CodeBlock filename="run_code.py" code={`import asyncio
+
+from effgen.tools.builtin.code_executor import CodeExecutor
+
+result = asyncio.run(CodeExecutor().execute(
+    language="python", code="print(sum(range(100)))"
+))
+print(result.success, result.output["stdout"].strip())`} />
+
+      <Terminal
+        command="python run_code.py"
+        output={`True 4950`}
+        caption={`Run against effGen ${version}.`}
+      />
+
+      <h3>What comes back</h3>
+
+      <CodeBlock filename="result.py" code={`import asyncio
+
+from effgen.tools.builtin.code_executor import CodeExecutor
+
+result = asyncio.run(CodeExecutor().execute(
+    language="python", code="import sys; print('out'); print('err', file=sys.stderr)"
+))
+for key, value in result.output.items():
+    print(f"{key:16} {value!r}")`} />
+
+      <Terminal command="python result.py" output={`stdout           'out\\n'
+stderr           'err\\n'
+exit_code        0
+execution_time   0.36937657510861754
+timed_out        False
+sandbox_backend  'subprocess'
+filesystem_confined True
+writable_root    '/tmp/effgen-workspace'
+success          True`} />
+
+      <h3>Three languages</h3>
+
+      <CodeBlock filename="languages.py" code={`import asyncio
+
+from effgen.tools.builtin.code_executor import CodeExecutor
+
+executor = CodeExecutor()
+for language, code in [
+    ("python", "print('from python')"),
+    ("javascript", "console.log('from node')"),
+    ("bash", "echo from bash"),
+]:
+    result = asyncio.run(executor.execute(language=language, code=code))
+    print(f"{language:11} success={result.success} {result.output['stdout'].strip()!r}")`} />
+
+      <Terminal command="python languages.py" output={`python      success=True 'from python'
+javascript  success=True 'from node'
+bash        success=True 'from bash'`} />
+
+      <ParamTable
+        nameLabel="Parameter"
+        params={[
+          { name: 'code', type: 'string', required: true, description: 'The source to run.' },
+          {
+            name: 'language',
+            type: 'string',
+            default: "'python'",
+            description: 'One of: python, javascript, bash. Node is required for javascript.',
+          },
+          {
+            name: 'timeout',
+            type: 'integer',
+            default: '10',
+            description: (
+              <>
+                Seconds before the run is killed. Overrides <code>EFFGEN_SANDBOX_TIMEOUT</code> for
+                this call.
+              </>
+            ),
+          },
+          {
+            name: 'memory_limit',
+            type: 'string',
+            default: "'256m'",
+            description: 'Docker-style size — 256m, 1g. Enforced by cgroups under Docker, advisory otherwise.',
+          },
+          {
+            name: 'network_enabled',
+            type: 'boolean',
+            default: 'False',
+            description: 'Whether the code may reach the network. Leave it off unless the task genuinely needs it.',
+          },
         ]}
+        caption={<><code>CodeExecutor().execute(...)</code>, from its own metadata.</>}
       />
 
-      <h2>Code Executor</h2>
-
-      <CodeBlock
-        code={`from effgen.execution import CodeExecutor, SandboxConfig
-import asyncio
-
-# Sandbox configuration goes inside SandboxConfig
-config = SandboxConfig(
-    timeout=30,                  # Execution timeout (seconds)
-    memory_limit="512M",         # Memory limit
-    allow_network=False,         # Disable network access
-    allow_file_ops=False,        # Disable file operations
-)
-
-# CodeExecutor picks the sandbox; config is shared between local & docker
-executor = CodeExecutor(sandbox_type="local", config=config)  # "local" | "docker"
-
-async def run_code():
-    result = await executor.execute(
-        code='''
-def fibonacci(n):
-    if n <= 1:
-        return n
-    return fibonacci(n-1) + fibonacci(n-2)
-
-print([fibonacci(i) for i in range(10)])
-''',
-        language="python",
-    )
-
-    print(f"Status: {result.status.value}")
-    print(f"Output:\\n{result.output}")
-    print(f"Execution time: {result.execution_time:.2f}s")
-
-asyncio.run(run_code())`}
-        language="python"
-        filename="code_executor.py"
-      />
-
-      <h2>Sandbox Configuration</h2>
-
-      <CodeBlock
-        code={`from effgen.execution import SandboxConfig, CodeExecutor
-
-# Local sandbox (restricted Python environment, AST validator + subprocess)
-local_config = SandboxConfig(
-    timeout=30,
-    memory_limit="256M",
-    allow_network=False,
-    allow_file_ops=False,
-    custom_allow_imports={"math", "json", "datetime", "collections", "itertools"},
-)
-
-# Docker sandbox — same SandboxConfig, swap sandbox_type
-docker_config = SandboxConfig(
-    timeout=60,
-    memory_limit="1G",
-    cpu_limit=1.0,             # 1 CPU core
-    allow_network=False,       # network=none
-    allow_file_ops=False,
-    max_output_size=1024 * 1024,
-)
-
-executor = CodeExecutor(sandbox_type="docker", config=docker_config)`}
-        language="python"
-        filename="sandbox_config.py"
-      />
-
-      <h2>Security Validation</h2>
+      <h2>Which sandbox ran it</h2>
       <p>
-        The <code>CodeValidator</code> analyzes code before execution:
+        The backend is chosen at call time: Docker when the daemon is reachable, otherwise a
+        subprocess in an unprivileged user namespace. Rather than assume, read what the run
+        reported.
       </p>
 
-      <CodeBlock
-        code={`from effgen.execution import CodeValidator
+      <CodeBlock filename="sandbox.py" code={`import asyncio
 
-# CodeValidator inspects code for dangerous patterns BEFORE execution.
-# Allow-flags are flipped to permit the corresponding operation when True;
-# custom_allow_imports extends the default safe-imports allow-list.
-validator = CodeValidator(
-    allow_network=False,
-    allow_file_ops=False,
-    custom_allow_imports={"math", "json"},
-)
+from effgen.security.sandbox import SandboxConfig, get_sandbox
 
-code = """
-import os
-import subprocess
-result = subprocess.run(['ls', '-la'], capture_output=True)
-print(result.stdout)
+
+async def main():
+    config = SandboxConfig(
+        backend="auto",          # docker when the daemon is reachable, else subprocess
+        timeout=15,
+        memory_limit="256m",
+        network_enabled=False,
+    )
+    sandbox = await get_sandbox(config)
+    result = await sandbox.run(code="print(sum(range(100)))", language="python", config=config)
+
+    print("stdout                 ", result.stdout.strip())
+    print("backend_used           ", result.backend_used)
+    print("filesystem_confined    ", result.filesystem_confined)
+    print("writable_root          ", result.writable_root)
+    print("credential_reads_masked", result.credential_reads_masked)
+    print("process_table_isolated ", result.process_table_isolated)
+
+
+asyncio.run(main())`} />
+
+      <Terminal
+        command="python sandbox.py"
+        output={`stdout                  4950
+backend_used            subprocess
+filesystem_confined     True
+writable_root           /tmp/effgen-workspace
+credential_reads_masked True
+process_table_isolated  True`}
+        caption="On a host with no reachable Docker daemon, so the subprocess backend was chosen — and said so."
+      />
+
+      <ParamTable
+        nameLabel="Field"
+        params={[
+          { name: 'stdout', type: 'str', description: 'What the code printed.' },
+          { name: 'stderr', type: 'str', description: 'What it wrote to standard error.' },
+          { name: 'backend_used', type: 'str', description: 'docker, subprocess or off — which backend actually ran it.' },
+          {
+            name: 'filesystem_confined',
+            type: 'bool',
+            description: 'Whether writes outside the scratch space were actually refused. False means the isolation could not be set up.',
+          },
+          { name: 'writable_root', type: 'str', description: 'The one directory the code could write to.' },
+          {
+            name: 'credential_reads_masked',
+            type: 'bool',
+            description: 'Whether the named credential stores were covered for this run.',
+          },
+          {
+            name: 'process_table_isolated',
+            type: 'bool',
+            description: 'Whether the run got a private PID namespace, so it could not read another process’s environment.',
+          },
+        ]}
+        caption={<><code>effgen.security.sandbox.SandboxResult</code>. A caller never has to assume what was enforced.</>}
+      />
+
+      <h2>What the sandbox stops</h2>
+
+      <h3>The network</h3>
+
+      <CodeBlock filename="network.py" code={`import asyncio
+
+from effgen.security.sandbox import SandboxConfig, get_sandbox
+
+CODE = """
+import urllib.request
+try:
+    urllib.request.urlopen("https://example.com", timeout=3)
+    print("network reachable")
+except Exception as exc:
+    print("network blocked:", type(exc).__name__)
 """
 
-validation = validator.validate(code, language="python")
 
-print(f"Is safe: {validation.is_safe}")
-print(f"Has critical: {validation.has_critical}")
-print(f"Has errors: {validation.has_errors}")
-for issue in validation.issues:
-    print(f"  - [{issue.severity.value}] {issue.message}")
-    if issue.line_number:
-        print(f"    Line {issue.line_number}: {issue.code_snippet or ''}")`}
-        language="python"
-        filename="code_validator.py"
-      />
+async def main():
+    config = SandboxConfig(backend="auto", timeout=15, network_enabled=False)
+    sandbox = await get_sandbox(config)
+    result = await sandbox.run(code=CODE, language="python", config=config)
+    print(result.stdout.strip())
 
-      <h3>Validation Severity Levels</h3>
+
+asyncio.run(main())`} />
+
+      <Terminal command="python network.py" output={`network blocked: URLError`} />
+
+      <h3>Writes outside one directory</h3>
+
+      <CodeBlock filename="writes.py" code={`import asyncio
+
+from effgen.security.sandbox import SandboxConfig, get_sandbox
+
+CODE = """
+for path in ("scratch.txt", "/etc/effgen-probe"):
+    try:
+        open(path, "w").write("x")
+        print("wrote", path)
+    except OSError as exc:
+        print("refused", path, "-", exc.__class__.__name__)
+"""
+
+
+async def main():
+    config = SandboxConfig(backend="auto", timeout=15, network_enabled=False)
+    sandbox = await get_sandbox(config)
+    result = await sandbox.run(code=CODE, language="python", config=config)
+    print(result.stdout.strip())
+    print("filesystem_confined:", result.filesystem_confined)
+
+
+asyncio.run(main())`} />
+
+      <Terminal command="python writes.py" output={`wrote scratch.txt
+refused /etc/effgen-probe - OSError
+filesystem_confined: True`} />
+
+      <h3>A run that will not end</h3>
+
+      <CodeBlock filename="timeout.py" code={`import asyncio
+
+from effgen.tools.builtin.code_executor import CodeExecutor
+
+result = asyncio.run(CodeExecutor().execute(
+    language="python", code="import time; time.sleep(30)", timeout=3
+))
+print(result.success)
+print(result.error)`} />
+
+      <Terminal command="python timeout.py" output={`False
+Execution timed out after 3s (sandbox 'subprocess' killed the process)`} />
+
+      <h2>The two backends, side by side</h2>
 
       <ApiTable
-        headers={['Severity', 'Description', 'Action']}
+        headers={['Control', 'DockerSandbox', 'SubprocessSandbox']}
         rows={[
-          [<code>INFO</code>, 'Informational annotation', 'Execute normally'],
-          [<code>WARNING</code>, 'Suspicious but allowed', 'Execute with logging'],
-          [<code>ERROR</code>, 'Dangerous pattern', 'Block — execution should not proceed'],
-          [<code>CRITICAL</code>, 'Definite security violation', 'Hard block; alert if needed'],
+          [
+            'Network isolation',
+            <><code>--network=none</code></>,
+            <><code>unshare --map-root-user --net</code> — no privileges needed</>,
+          ],
+          [
+            'Write confinement',
+            <><code>--read-only</code></>,
+            'Every mount remounted read-only except the scratch space, locked by a nested unshare',
+          ],
+          [
+            'Read confinement',
+            <>Yes — <code>--read-only</code>, no host mount</>,
+            'No. The host filesystem stays readable; the credential stores are masked instead',
+          ],
+          ['Memory cap', <><code>--memory=256m</code>, enforced</>, <><code>ulimit -v</code>, advisory</>],
+          ['CPU cap', <><code>--cpus=1</code>, enforced</>, <><code>ulimit -t</code>, advisory</>],
+          ['Process limit', <><code>--pids-limit=100</code></>, <><code>ulimit -u 256</code></>],
+          ['Capability drop', <><code>--cap-drop=ALL</code></>, 'Unprivileged user namespace — no host root'],
+          [
+            'Privilege escalation',
+            <><code>--no-new-privileges</code></>,
+            'User-namespace UID mapping',
+          ],
+          [
+            'Process table',
+            'The container’s own',
+            <>
+              Private PID namespace (<code>--pid --fork --mount-proc</code>) — the run sees one
+              process
+            </>,
+          ],
+        ]}
+        caption="Docker is the one to run in production. The subprocess backend is a development fallback, and every run reports which of these it actually enforced."
+      />
+
+      <Callout type="warning" title="Reads are masked, not confined, on the subprocess backend">
+        <p>
+          Code in the subprocess sandbox can read any ordinary file the calling user can read. What
+          it cannot read are the per-user credential stores — <code>~/.ssh</code>,{' '}
+          <code>~/.aws</code>, <code>~/.gnupg</code>, <code>~/.kube</code>, <code>~/.docker</code>,{' '}
+          <code>~/.azure</code>, <code>~/.config/gcloud</code>, the credential files beside them,{' '}
+          <code>/etc/shadow</code> and the mounted-secret directories. Each is covered by an empty
+          tmpfs or by <code>/dev/null</code>, so a read succeeds and returns nothing rather than
+          confirming the path exists. That is a deny list, reported as{' '}
+          <code>credential_reads_masked</code>. A secret in a location that is not on it is still
+          readable — use Docker when reads have to be confined.
+        </p>
+      </Callout>
+
+      <h3>The other two backends</h3>
+
+      <ApiTable
+        headers={['Backend', 'What it is']}
+        rows={[
+          [
+            <code>off</code>,
+            <>
+              No sandbox at all. Code runs on the host with the effGen process's privileges. Never
+              chosen by auto-resolution, warns loudly on every execution, and is set only by{' '}
+              <code>EFFGEN_SANDBOX_BACKEND=off</code>.
+            </>,
+          ],
+          [
+            <code>firecracker</code>,
+            <>
+              An interface stub for MicroVM isolation. It raises <code>NotImplementedError</code>{' '}
+              if called; it is not a working backend in {version}.
+            </>,
+          ],
         ]}
       />
 
-      <h2>Execution Pool</h2>
-      <p>
-        Run multiple code executions in parallel with resource management:
-      </p>
+      <h2>Configuration</h2>
 
-      <CodeBlock
-        code={`from effgen.execution.sandbox import ExecutionPool, SandboxConfig
-
-# Pool of N CodeExecutors sharing one SandboxConfig
-pool = ExecutionPool(
-    sandbox_type="local",
-    config=SandboxConfig(timeout=30, memory_limit="512M"),
-    pool_size=4,
-)
-
-snippets = ["print(1 + 1)", "print(2 * 3)", "print(10 / 2)"]
-for code in snippets:
-    result = pool.execute(code, language="python")
-    print(result.status.value, result.output)`}
-        language="python"
-        filename="execution_pool.py"
+      <ParamTable
+        nameLabel="Variable"
+        params={[
+          {
+            name: 'EFFGEN_SANDBOX_BACKEND',
+            default: "'auto'",
+            description: 'auto, docker, subprocess, firecracker or off. auto picks Docker when the daemon is reachable.',
+          },
+          { name: 'EFFGEN_SANDBOX_TIMEOUT', default: "'10'", description: 'Execution timeout in seconds.' },
+          { name: 'EFFGEN_SANDBOX_MEMORY', default: "'256m'", description: 'Memory limit, Docker-style.' },
+          {
+            name: 'EFFGEN_SANDBOX_IMAGE',
+            default: "'effgen/sandbox:python-3.11'",
+            description: 'The image DockerSandbox runs. Pin it to a digest in production.',
+          },
+          {
+            name: 'EFFGEN_WORKSPACE',
+            description: 'The scratch space — the one directory executed code may write to. The file and shell tools use the same root.',
+          },
+        ]}
+        caption="Read at call time, so a change takes effect without a restart."
       />
 
-      <h2>Python REPL</h2>
+      <p>Build the image the Docker backend prefers:</p>
+
+      <CodeBlock
+        language="bash"
+        code={`docker build -f deploy/sandbox/Dockerfile.sandbox -t effgen/sandbox:python-3.11 .`}
+      />
+
       <p>
-        Interactive Python with state persistence between calls:
+        Without it the backend falls back to stock <code>python:3.11-slim</code>, which works and
+        carries fewer preinstalled packages.
       </p>
 
-      <InfoBox type="success" title="v0.3.0 — out-of-process timeout &amp; resource caps">
+      <h2>In an agent</h2>
+
+      <CodeBlock filename="analyst.py" code={`from effgen import Agent, AgentConfig
+from effgen.tools.builtin.code_executor import CodeExecutor
+
+agent = Agent(AgentConfig(
+    name="analyst",
+    model="gpt-5-nano",
+    provider="openai",
+    tools=[CodeExecutor()],
+))
+
+response = agent.run("Use the code executor to compute the sum of the first 100 prime numbers. Reply with just the number.")
+print(response.text)`} />
+
+      <Terminal command="python analyst.py" output={`24133`} />
+
+      <Callout type="tip" title="Two other ways to run code">
         <p>
-          As of v0.3.0, <code>PythonREPL</code> runs user code in a worker subprocess with a hard
-          wall-clock timeout, a process-group kill, and memory / output caps enforced{' '}
-          <strong>outside</strong> the executed code — so a <code>while True: pass</code> dies at
-          its timeout instead of ~30 s later. It is part of the broader v0.3.0 tool hardening
-          (shared SSRF guard on URL tools, path-confined file tools, no <code>pickle</code> /{' '}
-          <code>eval</code>) — see <a href="/docs/security">Security</a>.
+          <code>PythonREPL</code> keeps variables between calls in a per-session worker process —
+          useful when a task builds up state. <code>BashTool</code> runs shell commands against an
+          allow list. Both are in <Link to="/tools/gallery">the gallery</Link>, and the
+          provider-hosted interpreters are on{' '}
+          <Link to="/native-provider-tools">Provider-native tools</Link>.
         </p>
-      </InfoBox>
+      </Callout>
 
-      <CodeBlock
-        code={`from effgen.tools.builtin import PythonREPL
+      <h2>What goes wrong</h2>
 
-repl = PythonREPL(
-    timeout=30,
-    memory_limit="512m"
-)
-
-# State persists across calls
-await repl.execute("x = 10")
-await repl.execute("y = 20")
-result = await repl.execute("print(x + y)")
-# Output: 30
-
-# Import and use libraries
-await repl.execute("import math")
-result = await repl.execute("print(math.sqrt(144))")
-# Output: 12.0
-
-# Complex multi-line code
-await repl.execute('''
-def calculate_stats(numbers):
-    return {
-        "mean": sum(numbers) / len(numbers),
-        "max": max(numbers),
-        "min": min(numbers)
-    }
-''')
-
-result = await repl.execute('''
-data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-stats = calculate_stats(data)
-print(stats)
-''')
-
-# Reset state
-repl.reset()`}
-        language="python"
-        filename="python_repl.py"
+      <ApiTable
+        headers={['What you see', 'What it means', 'What to do']}
+        rows={[
+          [
+            <>A startup <code>WARNING</code> naming inactive protections</>,
+            'Docker was unreachable and unprivileged user namespaces are unavailable, so the sandbox degraded to ulimit-only.',
+            <>
+              Install Docker, or enable user namespaces (<code>kernel.unprivileged_userns_clone=1</code>,{' '}
+              <code>user.max_user_namespaces&gt;0</code>). The warning lists exactly what is off.
+            </>,
+          ],
+          [
+            <><code>filesystem_confined</code> is <code>False</code></>,
+            'The write isolation could not be set up, so the previous, unconfined behaviour applies.',
+            'Availability is probed by really writing inside and outside the scratch space. Anything short of both halves leaves confinement off rather than claiming it.',
+          ],
+          [
+            <><code>success</code> is <code>False</code> with a timeout message</>,
+            'The run passed its timeout and was killed.',
+            <>
+              Raise <code>timeout=</code> on the call, or <code>EFFGEN_SANDBOX_TIMEOUT</code>. A
+              loop that never ends is the usual cause.
+            </>,
+          ],
+          [
+            'A permission error writing a file',
+            'The code wrote outside the scratch space.',
+            <>
+              Widen <code>EFFGEN_WORKSPACE</code> to a directory containing the target, or have the
+              task write into the scratch space.
+            </>,
+          ],
+          [
+            'A network call fails inside the sandbox',
+            'The run has no network namespace, which is the default.',
+            <>
+              Pass <code>network_enabled=True</code> only after reading the code that will run.
+            </>,
+          ],
+          [
+            <code>NotImplementedError</code>,
+            <>
+              <code>EFFGEN_SANDBOX_BACKEND=firecracker</code> was set.
+            </>,
+            'That backend is a stub. Use docker, subprocess or auto.',
+          ],
+          [
+            'javascript fails to run at all',
+            'Node is not on PATH.',
+            <>
+              Install Node, or use <code>language="python"</code>.
+            </>,
+          ],
+        ]}
       />
 
-      <h2>Error Handling</h2>
-      <p>
-        <code>CodeExecutor.execute()</code> does NOT raise on validation/timeout/resource
-        failures — those surface through <code>ExecutionResult.status</code> instead. Only
-        unrecoverable internal exceptions propagate.
-      </p>
-
-      <CodeBlock
-        code={`from effgen.execution import ExecutionStatus
-
-result = await executor.execute(
-    code="while True: pass",   # Infinite loop, will hit timeout
-    language="python",
-)
-
-if result.status == ExecutionStatus.SUCCESS:
-    print("OK:", result.output)
-elif result.status == ExecutionStatus.TIMEOUT:
-    print(f"Timed out after {result.execution_time:.1f}s")
-elif result.status == ExecutionStatus.VALIDATION_FAILED:
-    print("Blocked by CodeValidator:")
-    for issue in result.validation_result.issues:
-        print(f"  [{issue.severity.value}] {issue.message}")
-elif result.status == ExecutionStatus.RESOURCE_LIMIT_EXCEEDED:
-    print(f"Resource limit exceeded: {result.error}")
-else:                                   # ExecutionStatus.ERROR
-    print(f"Execution error: {result.error}")
-    print(f"Stderr: {result.metadata.get('stderr', '')}")`}
-        language="python"
-        filename="error_handling.py"
-      />
-
-      <h2>Best Practices</h2>
-
-      <InfoBox type="warning" title="Security Guidelines">
-        <ul>
-          <li><strong>Always validate:</strong> Run CodeValidator before execution</li>
-          <li><strong>Use Docker:</strong> For untrusted code, use Docker sandboxing</li>
-          <li><strong>Set limits:</strong> Always configure timeout and memory limits</li>
-          <li><strong>Disable network:</strong> Unless specifically needed, disable network access</li>
-          <li><strong>Whitelist imports:</strong> Only allow necessary Python imports</li>
-          <li><strong>Log everything:</strong> Keep detailed logs for security auditing</li>
-        </ul>
-      </InfoBox>
-
-      <InfoBox type="success" title="Next Steps">
-        <p>
-          Learn about <Link to="/configuration">Configuration</Link> for deployment settings,
-          or check the <Link to="/api-reference">API Reference</Link> for detailed documentation.
-        </p>
-      </InfoBox>
+      <SeeAlso paths={['/tools/gallery', '/security', '/native-provider-tools']} />
     </DocPage>
   );
 }

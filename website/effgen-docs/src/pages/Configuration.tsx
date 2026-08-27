@@ -1,360 +1,453 @@
-import React from 'react';
+import { Settings } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Cog } from 'lucide-react';
-import DocPage, { InfoBox, ApiTable } from '../components/DocPage';
-import CodeBlock from '../components/CodeBlock';
+import {
+  ApiTable,
+  Callout,
+  CodeBlock,
+  DocPage,
+  ParamTable,
+  SeeAlso,
+  Terminal,
+} from '../components/docs';
+import { siteData, version } from '../siteData';
 
 export default function Configuration() {
   return (
     <DocPage
-      title="Configuration"
-      subtitle="Configure effGen through YAML files, environment variables, and programmatic settings."
-      icon={<Cog size={48} />}
-      breadcrumbs={[
-        { label: 'Docs', path: '/introduction' },
-        { label: 'Advanced', path: '/multi-agent' },
-        { label: 'Configuration' },
-      ]}
+      subtitle="Every setting an agent takes, where it can be set, and which source wins."
+      icon={<Settings size={48} />}
     >
-      <h2>Configuration Files</h2>
       <p>
-        effGen uses YAML configuration files for flexible deployment settings.
+        The same agent can be described in a Python call, in a YAML file, in environment variables
+        or in command-line flags. They are the same settings — the fields of{' '}
+        <code>AgentConfig</code> — reached four ways, and this page says which one wins when two
+        of them disagree.
+      </p>
+
+      <h2>The shortest configured run</h2>
+
+      <CodeBlock
+        language="yaml"
+        filename="effgen.yaml"
+        code={`model: openai:gpt-5-nano
+system_prompt: You are a helpful assistant. Answer concisely and say when you are unsure.
+temperature: 0.2
+max_tokens: 512
+max_iterations: 5`}
+      />
+
+      <CodeBlock
+        language="bash"
+        code={`effgen run "What is 25 * 17?" -c effgen.yaml`}
+      />
+
+      <p>
+        The same file from Python, through <code>ConfigLoader</code>:
       </p>
 
       <CodeBlock
-        code={`# config.yaml
-effgen:
-  # Model configuration
-  model:
-    name: "Qwen/Qwen2.5-7B-Instruct"
-    engine: "vllm"
-    quantization: "4bit"
-    tensor_parallel_size: 2
-    gpu_memory_utilization: 0.9
+        filename="load.py"
+        code={`from effgen import ConfigLoader
 
-  # Agent defaults
-  agent:
-    max_iterations: 10
-    temperature: 0.7
-    enable_memory: true
-    enable_sub_agents: true
-    max_context_length: 8192
-
-  # Tool configuration
-  tools:
-    enabled:
-      - calculator
-      - code_executor
-      - python_repl
-    code_executor:
-      sandbox_type: "docker"
-      timeout: 30
-      memory_limit: "512m"
-
-  # Memory settings
-  memory:
-    short_term:
-      max_tokens: 4096
-      max_messages: 100
-    long_term:
-      backend: "sqlite"
-      db_path: "./data/memory.db"
-
-  # API keys (use environment variables)
-  api_keys:
-    openai: \${OPENAI_API_KEY}
-    anthropic: \${ANTHROPIC_API_KEY}
-
-  # Logging
-  logging:
-    level: "INFO"
-    file: "./logs/effgen.log"
-    format: "json"`}
-        language="yaml"
-        filename="config.yaml"
+config = ConfigLoader().load_config("effgen.yaml")
+print(type(config).__name__)
+print(config)`}
       />
 
-      <h2>Loading Configuration</h2>
+      <Terminal command="python load.py" output={`Config
+Config(data={'model': 'openai:gpt-5-nano', 'system_prompt': 'You are a helpful assistant. Answer concisely.', 'temperature': 0.2, 'max_tokens': 512, 'max_iterations': 5}, _source_file=None, _loaded_at=datetime.datetime(2026, 8, 22, 20, 25, 55, 249004))`} />
 
-      <CodeBlock
-        code={`from effgen.config import ConfigLoader, ConfigValidator
-
-# Initialize config loader
-loader = ConfigLoader()
-
-# Load from file
-config = loader.load_config("config.yaml")
-
-# Access settings using get method
-model_name = loader.get("model.default_model")
-max_iterations = loader.get("agent.max_iterations", default=10)
-
-# Set configuration values
-loader.set("agent.temperature", 0.7)
-
-# Save configuration
-loader.save_config("config.yaml")
-
-# Validate configuration
-validator = ConfigValidator()
-result = validator.validate_all(config.data)
-
-if not result.valid:
-    for error in result.errors:
-        print(f"Config error: {error}")
-for warning in result.warnings:
-    print(f"Config warning: {warning}")
-
-# Reload configuration
-loader.reload()
-
-# v0.3.0: ConfigLoader.load is an additive alias for load_config
-config = loader.load("config.yaml")`}
-        language="python"
-        filename="load_config.py"
-      />
-
-      <h2>Environment Variables</h2>
+      <h2>Which source wins</h2>
 
       <ApiTable
-        headers={['Variable', 'Description', 'Default']}
+        headers={['Source', 'Beats', 'Example']}
         rows={[
-          [<code>EFFGEN_MODEL</code>, 'Default model name', 'Qwen/Qwen2.5-3B-Instruct'],
-          [<code>EFFGEN_ENGINE</code>, 'Model engine', 'transformers'],
-          [<code>EFFGEN_LOG_LEVEL</code>, 'Logging level', 'INFO'],
-          [<code>OPENAI_API_KEY</code>, 'OpenAI API key', '-'],
-          [<code>OPENAI_ORG_ID</code>, 'Optional OpenAI organization ID', '-'],
-          [<code>ANTHROPIC_API_KEY</code>, 'Anthropic API key', '-'],
-          [<code>GOOGLE_API_KEY</code>, 'Google Gemini API key', '-'],
-          [<code>CEREBRAS_API_KEY</code>, 'Cerebras API key', '-'],
-          [<code>GROQ_API_KEY</code>, 'Groq API key', '-'],
-          [<code>TOGETHER_API_KEY</code>, 'Together AI API key', '-'],
-          [<code>FIREWORKS_API_KEY</code>, 'Fireworks API key', '-'],
-          [<code>REPLICATE_API_TOKEN</code>, 'Replicate API token', '-'],
-          [<code>HF_TOKEN</code>, 'HuggingFace Inference token', '-'],
+          [
+            '1. A command-line flag',
+            'everything below it',
+            <code>effgen run "…" -c effgen.yaml -m gemini:gemini-3.1-flash-lite</code>,
+          ],
+          [
+            '2. A keyword on the call',
+            'the config it is passed with',
+            <code>agent.run("…", temperature=0)</code>,
+          ],
+          [
+            '3. A field on AgentConfig',
+            'the YAML file that built it',
+            <code>AgentConfig(model="openai:gpt-5-nano", temperature=0.2)</code>,
+          ],
+          [
+            '4. A configuration file',
+            'the environment',
+            <code>model: openai:gpt-5-nano</code>,
+          ],
+          [
+            '5. A real environment variable',
+            'a .env file',
+            <code>export OPENAI_API_KEY=…</code>,
+          ],
+          ['6. A .env file', 'nothing — it is the floor', <code>~/.effgen/.env</code>],
+        ]}
+        caption="A value already exported in your shell is never overwritten by a file effGen loads."
+      />
+
+      <h2>Where keys come from</h2>
+      <p>
+        effGen loads <code>.env</code> files before running any command, in a fixed order. Earlier
+        entries win, and a real environment variable always beats a file.
+      </p>
+
+      <ApiTable
+        headers={['Order', 'Path', 'What it is for']}
+        rows={[
+          [
+            '1',
+            <code>$EFFGEN_DOTENV</code>,
+            'An explicit path you set. Nothing else is searched ahead of it.',
+          ],
+          [
+            '2',
+            <code>~/.effgen/.env</code>,
+            'Your per-user keys, shared by every project on the machine.',
+          ],
+          [
+            '3',
+            <>
+              <code>./.env</code> and each parent directory
+            </>,
+            "The nearest project .env above your working directory — a checkout's repository root, usually.",
+          ],
         ]}
       />
 
       <CodeBlock
-        code={`# .env file
-EFFGEN_MODEL=Qwen/Qwen2.5-7B-Instruct
-EFFGEN_ENGINE=vllm
-EFFGEN_LOG_LEVEL=DEBUG
-
-OPENAI_API_KEY=sk-...
-OPENAI_ORG_ID=org_...
-ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=...
-CEREBRAS_API_KEY=...
-GROQ_API_KEY=...
-TOGETHER_API_KEY=...
-FIREWORKS_API_KEY=...
-REPLICATE_API_TOKEN=...
-HF_TOKEN=hf_...
-
-# v0.2.3+: verify provider auth
+        language="bash"
+        code={`export EFFGEN_DOTENV=/secure/keys/effgen.env   # look here and nowhere else
 effgen doctor
 
-# Load in Python
-from dotenv import load_dotenv
-load_dotenv()
-
-from effgen import load_model
-import os
-
-model = load_model(os.environ["EFFGEN_MODEL"])`}
-        language="bash"
-        filename=".env"
+export EFFGEN_NO_DOTENV=1                     # or EFFGEN_DOTENV=none
+effgen serve                                  # sees only what the orchestrator injected`}
       />
 
-      <h2>Programmatic Configuration</h2>
+      <Callout type="tip" title="Turn the search off in production">
+        <p>
+          <code>EFFGEN_NO_DOTENV=1</code> stops the filesystem search entirely, so a server process
+          sees only the environment variables it was given and never a stray <code>.env</code> left
+          in a deploy image or a working directory.
+        </p>
+      </Callout>
 
-      <CodeBlock
-        code={`from effgen.config import Config, ConfigLoader
+      <p>
+        The same discovery is available to a script or a notebook through{' '}
+        <code>effgen.load_env()</code>, which returns the paths it loaded and never overwrites a
+        value already in the environment.
+      </p>
 
-# Build configuration programmatically — Config wraps a plain dict
-config = Config(data={
-    "model": {
-        "name": "Qwen/Qwen2.5-7B-Instruct",
-        "engine": "vllm",
-        "tensor_parallel_size": 2,
-    },
-    "agent": {
-        "max_iterations": 15,
-        "temperature": 0.3,
-    },
-    "tools": {
-        "code_executor": {"sandbox_type": "docker", "timeout": 60},
-    },
-})
-
-# Read with dot-paths via ConfigLoader
-loader = ConfigLoader()
-loader.config = config
-print(loader.get("model.name"))         # "Qwen/Qwen2.5-7B-Instruct"
-print(loader.get("agent.max_iterations", 10))
-
-# Use values to build the agent
-from effgen import Agent, AgentConfig, load_model
-model = load_model(loader.get("model.name"), engine=loader.get("model.engine"))
-agent = Agent(AgentConfig(
-    name="from-config",
-    model=model,
-    max_iterations=loader.get("agent.max_iterations", 10),
-    temperature=loader.get("agent.temperature", 0.7),
-))`}
-        language="python"
-        filename="programmatic_config.py"
-      />
-
-      <h2>Deployment Profiles</h2>
-
-      <CodeBlock
-        code={`# config/development.yaml
-effgen:
-  model:
-    engine: "transformers"
-    quantization: "4bit"
-  logging:
-    level: "DEBUG"
-
-# config/production.yaml
-effgen:
-  model:
-    engine: "vllm"
-    tensor_parallel_size: 4
-  logging:
-    level: "INFO"
-    file: "/var/log/effgen/app.log"
-
-# Load based on environment
-import os
-from effgen.config import ConfigLoader
-
-env = os.getenv("ENVIRONMENT", "development")
-loader = ConfigLoader()
-config = loader.load_config(f"config/{env}.yaml")`}
-        language="yaml"
-        filename="profiles.yaml"
-      />
-
-      <h2>Memory Configuration</h2>
-
-      <CodeBlock
-        code={`# config.yaml - Memory section
-effgen:
-  memory:
-    short_term:
-      max_tokens: 4096
-      max_messages: 100
-      summarization_threshold: 0.8
-    long_term:
-      backend: "sqlite"        # "json" or "sqlite"
-      db_path: "./memory.db"
-      max_memories: 10000
-    vector_store:
-      backend: "faiss"         # "faiss" or "chroma"
-      embedding: "sentence-transformers"
-      index_path: "./vectors.faiss"
-    auto_summarize: true
-    persistence_path: "./memory_data/"`}
-        language="yaml"
-        filename="memory_config.yaml"
-      />
-
-      <h2>API Server Configuration</h2>
+      <h3>Provider keys</h3>
 
       <ApiTable
-        headers={['Variable', 'Description', 'Default']}
+        headers={['Provider', 'Environment variable']}
+        rows={siteData.models.providers.map((provider) => [
+          <code>{provider.name}</code>,
+          provider.env_keys.map((key, i) => (
+            <span key={key}>
+              {i > 0 ? ' or ' : ''}
+              <code>{key}</code>
+            </span>
+          )),
+        ])}
+        caption={
+          <>
+            Read from the installed provider registry. <code>openai_compatible</code> reads an
+            endpoint rather than a credential — see{' '}
+            <Link to="/openai-compatible">Any OpenAI-compatible server</Link>.
+          </>
+        }
+      />
+
+      <Terminal
+        command="effgen doctor"
+        output={`               effgen doctor — Provider Status                
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Provider          ┃ Key     ┃ Env Var             ┃ Models ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ anthropic         │ missing │ —                   │     17 │
+│ cerebras          │ present │ CEREBRAS_API_KEY    │      2 │
+│ fireworks         │ present │ FIREWORKS_API_KEY   │     16 │
+│ gemini            │ present │ GOOGLE_API_KEY      │      8 │
+│ groq              │ present │ GROQ_API_KEY        │     15 │
+│ hf                │ present │ HF_TOKEN            │    124 │
+│ openai            │ present │ OPENAI_API_KEY      │     30 │
+│ openai_compatible │ missing │ —                   │      0 │
+│ replicate         │ present │ REPLICATE_API_TOKEN │     37 │
+│ together          │ present │ TOGETHER_API_KEY    │    168 │
+└───────────────────┴─────────┴─────────────────────┴────────┘
+
+System
+┌───────────────────────────┬─────────────────────┐
+│ Physical GPUs (NVML)      │ 8                   │
+│ Driver CUDA               │ 13.3                │
+│ torch CUDA build          │ 13.0                │
+│ torch.cuda.is_available() │ True                │
+│ torch                     │ 2.11.0+cu130        │
+│ vLLM                      │ importable (0.26.0) │
+└───────────────────────────┴─────────────────────┘
+
+Coding (effgen code)
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Check     ┃ Status        ┃ Detail                                           ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ workspace │ ready         │ /tmp/effgen-project (from current directory)     │
+│ sandbox   │ limited       │ subprocess — network isolated, writes confined   │
+│           │               │ to the workspace                                 │
+│ git       │ no repository │ git version 2.34.1; /tmp/effgen-project is not   │
+│           │               │ inside a repository                              │
+└───────────┴───────────────┴──────────────────────────────────────────────────┘
+  sandbox: Install Docker to confine reads as well; the subprocess sandbox is 
+used until then.
+  git: Run effgen code from a repository (or git init the workspace) for 
+branch/status context.
+  Try it: effgen code "write fib.py and run it"
+
+Missing keys — set in ~/.effgen/.env or export:
+  export ANTHROPIC_API_KEY=<your-key>
+  export EFFGEN_BASE_URL or OPENAI_BASE_URL or OPENAI_API_BASE=<your-key>`}
+        caption="doctor reports which keys effGen can see. It never prints a key value."
+      />
+
+      <h2>The configuration file</h2>
+      <p>
+        A configuration file carries only the keys a run applies:{' '}
+        <code>model</code>, <code>provider</code>, <code>system_prompt</code>,{' '}
+        <code>temperature</code>, <code>max_tokens</code>, <code>max_iterations</code> and{' '}
+        <code>guardrails</code>. Any other key that names an <code>AgentConfig</code> field is
+        reported when the file loads, so a setting can never be a silent no-op.
+      </p>
+
+      <ParamTable
+        nameLabel="Key"
+        params={[
+          {
+            name: 'model',
+            type: 'str',
+            required: true,
+            description:
+              'The model id, written provider-prefixed, because a file travels without a --provider flag beside it.',
+          },
+          {
+            name: 'provider',
+            type: 'str',
+            description: 'Provider for a bare model id, when the id is not prefixed.',
+          },
+          {
+            name: 'system_prompt',
+            type: 'str',
+            description: 'System-level instructions for every run that loads this file.',
+          },
+          {
+            name: 'temperature',
+            type: 'float',
+            default: '0.7',
+            description: 'Generation temperature.',
+          },
+          {
+            name: 'max_tokens',
+            type: 'int',
+            description:
+              'Output-token budget for one answer. A reasoning model spends part of it on hidden reasoning before it emits a visible token, so it needs a larger one.',
+          },
+          {
+            name: 'max_iterations',
+            type: 'int',
+            default: '10',
+            description: 'How many steps the agent may take on one task.',
+          },
+          {
+            name: 'guardrails',
+            type: 'str | list',
+            description: (
+              <>
+                A guardrail preset name or chain — see <Link to="/guardrails">Guardrails</Link>.
+              </>
+            ),
+          },
+        ]}
+        caption="The keys effgen.yaml applies. Everything else on AgentConfig is set in Python."
+      />
+
+      <Callout type="warning" title="max_tokens follows the model">
+        <p>
+          A reasoning model spends part of its output budget on hidden reasoning before the first
+          visible token. A budget that is too small can run out before a word is emitted — and
+          that empty answer is still billed. <code>effgen quickstart --init</code> writes the
+          larger budget when it detects such a model, and says why in the file.
+        </p>
+      </Callout>
+
+      <h2>The config command</h2>
+
+      <ParamTable
+        nameLabel="Command"
+        params={[
+          {
+            name: 'effgen config show',
+            type: '-f, --file FILE',
+            description: 'Print the configuration effGen would use.',
+          },
+          {
+            name: 'effgen config validate',
+            type: '-f, --file FILE',
+            required: true,
+            description: 'Check a file and report what is wrong with it. The file is required.',
+          },
+          {
+            name: 'effgen config init',
+            type: '-o, --output FILE · --force',
+            description:
+              'Write a starter configuration. Defaults to config.yaml; --force overwrites an existing one.',
+          },
+          {
+            name: 'effgen config set',
+            type: 'key value',
+            required: true,
+            description: (
+              <>
+                Set one value, such as <code>budget.daily 1.0</code>.
+              </>
+            ),
+          },
+        ]}
+        caption={<><code>effgen config --help</code>, {version}.</>}
+      />
+
+      <Terminal command="effgen config init" output={`✓ Configuration initialized: config.yaml
+Run it with: effgen run "What is 25 * 17?" -c config.yaml
+A whole project — this file, a .env template and a runnable example — comes 
+from: effgen quickstart --init`} />
+
+      <h2>Output and diagnostics</h2>
+
+      <ParamTable
+        nameLabel="Flag"
+        params={siteData.cli.global_options.map((option) => ({
+          name: option.name,
+          description: option.description,
+        }))}
+        caption={<><code>effgen --help</code> — the options every command accepts.</>}
+      />
+
+      <p>
+        By default the command line is quiet: tables and answers print with no library log noise.
+        The live status line while a task runs is TTY-aware and disappears before the answer
+        prints, so redirected output is never corrupted. It turns itself off when output is piped,
+        when a CI environment is detected, and when any of <code>--no-animation</code>,{' '}
+        <code>--quiet</code>, <code>NO_COLOR</code> or <code>EFFGEN_NO_ANIM=1</code> applies.
+      </p>
+
+      <h2>Environment variables</h2>
+      <p>
+        effGen reads its settings from <code>EFFGEN_*</code> variables. The ones that configure
+        the command line and the library are below; the server's, the sandbox's and the coding
+        agent's are documented on their own pages.
+      </p>
+
+      <ApiTable
+        headers={['Variable', 'What it does']}
         rows={[
-          [<code>EFFGEN_API_KEY</code>, 'API key for authenticating requests to the effGen server', '-'],
-          [<code>EFFGEN_RATE_LIMIT</code>, 'Max requests per minute per client', '60'],
-          [<code>EFFGEN_HOST</code>, 'API server bind address', '0.0.0.0'],
-          [<code>EFFGEN_PORT</code>, 'API server port', '8000'],
+          [<code>EFFGEN_DOTENV</code>, <>An explicit <code>.env</code> path, searched ahead of everything else. <code>none</code> disables the search.</>],
+          [<code>EFFGEN_NO_DOTENV</code>, <>Set to <code>1</code> to disable the <code>.env</code> search entirely.</>],
+          [<code>EFFGEN_HOME</code>, <>Where effGen keeps its own state. Defaults to <code>~/.effgen</code>.</>],
+          [<code>EFFGEN_DEFAULT_MODEL</code>, 'The model used when a call names none. Without it, effGen asks rather than picking a paid model for you.'],
+          [<code>EFFGEN_BASE_URL</code>, <>An OpenAI-protocol endpoint, consulted before <code>OPENAI_BASE_URL</code> and <code>OPENAI_API_BASE</code>.</>],
+          [<code>EFFGEN_THEME</code>, <>The command line's colour theme: {siteData.cli.themes.map((theme, i) => (<span key={theme}>{i > 0 ? ', ' : ''}<code>{theme}</code></span>))}.</>],
+          [<code>EFFGEN_NO_ANIM</code>, 'Turn off the live status line and the progress bars.'],
+          [<code>EFFGEN_TIPS</code>, 'Turn the occasional usage tip off.'],
+          [<code>EFFGEN_NO_GPU_WARN</code>, 'Silence the warning that torch cannot use the NVIDIA GPUs it can see.'],
+          [<code>EFFGEN_PLUGINS_DIR</code>, 'Where to look for tool plugins.'],
+          [<code>EFFGEN_DISABLE_PLUGINS</code>, 'Load no plugins at all.'],
+          [<code>EFFGEN_PROMPTS_DIR</code>, 'Where to look for prompt templates of your own.'],
+          [<code>EFFGEN_EXAMPLES_DIR</code>, <>Where the example programs live, for <code>effgen examples</code> outside a checkout.</>],
+          [<code>EFFGEN_SESSIONS_DIR</code>, 'Where stored conversations are kept.'],
+          [<code>EFFGEN_RUN_HISTORY_DIR</code>, <>Where run history is kept. <code>EFFGEN_RUN_HISTORY=0</code> turns recording off, and <code>EFFGEN_RUN_HISTORY_MAX_DAYS</code> ages it out.</>],
+          [<code>EFFGEN_WORKFLOW_DIR</code>, 'Where workflow checkpoints are kept.'],
+          [<code>EFFGEN_HEALTH_REMOTE</code>, <>Allow <code>effgen health</code> to make its network checks, which are otherwise opt-in.</>],
+          [<code>CUDA_VISIBLE_DEVICES</code>, 'Which GPUs a local engine may use. A standard NVIDIA variable, honoured as usual.'],
+        ]}
+        caption={
+          <>
+            Server settings (<code>EFFGEN_API_KEY</code>, <code>EFFGEN_RATE_LIMIT</code>,{' '}
+            <code>EFFGEN_CORS_ORIGINS</code>, the OIDC pair) are on{' '}
+            <Link to="/api-server">API server</Link>; the sandbox's are on{' '}
+            <Link to="/execution">Code execution</Link>.
+          </>
+        }
+      />
+
+      <h2>Memory settings</h2>
+      <p>
+        <code>AgentConfig.memory_config</code> is a dict, and these are its keys. Anything not
+        given keeps the default.
+      </p>
+
+      <ParamTable
+        nameLabel="Key"
+        params={[
+          { name: 'short_term_max_tokens', type: 'int', default: '4096', description: 'Token budget for the working conversation.' },
+          { name: 'short_term_max_messages', type: 'int', default: '100', description: 'How many messages are kept before the oldest are folded away.' },
+          { name: 'summarization_threshold', type: 'float', default: '0.8', description: 'The share of the token budget that triggers summarisation.' },
+          { name: 'keep_recent_messages', type: 'int', default: '4', description: 'Recent messages that are never summarised.' },
+          { name: 'summary_budget_ratio', type: 'float', default: '0.4', description: 'The share of the budget retained summaries may occupy; older summaries are folded together to stay inside it.' },
+          { name: 'long_term_backend', type: 'str', default: '"sqlite"', description: 'Where long-term memory is stored.' },
+          { name: 'long_term_persist_path', type: 'str | None', default: 'None', description: 'Where that store lives on disk.' },
+          { name: 'auto_summarize', type: 'bool', default: 'True', description: 'Whether old context is summarised automatically.' },
+        ]}
+        caption={
+          <>
+            What is <em>dropped</em> when the window fills is a separate choice — see{' '}
+            <Link to="/compaction">Context compaction</Link>.
+          </>
+        }
+      />
+
+      <h2>When configuration goes wrong</h2>
+
+      <ApiTable
+        headers={['What you see', 'What happened', 'What to do']}
+        rows={[
+          [
+            'A key in the file is reported when it loads',
+            <>
+              The key names an <code>AgentConfig</code> field the file format does not apply.
+            </>,
+            'Set it in Python, or remove it. It is reported rather than ignored so it is never a silent no-op.',
+          ],
+          [
+            'The key you exported is not seen',
+            <>
+              A different <code>.env</code> won, or the search is disabled.
+            </>,
+            <>
+              <code>effgen doctor</code> reports what is visible;{' '}
+              <code>EFFGEN_DOTENV</code> pins one file.
+            </>,
+          ],
+          [
+            'An answer arrives empty but billed',
+            <>
+              <code>max_tokens</code> ran out during a reasoning model's hidden reasoning.
+            </>,
+            'Raise it. 4096 is a workable floor for a reasoning model.',
+          ],
+          [
+            <code>effgen config validate</code>,
+            'exits non-zero',
+            'The file has a problem, and the message names it. Fix and re-run — it makes no model call.',
+          ],
         ]}
       />
 
-      <CodeBlock
-        code={`# Start the API server
-effgen serve --port 8000
-
-# Or configure in YAML:
-# config.yaml
-effgen:
-  api:
-    host: "0.0.0.0"
-    port: 8000
-    auth:
-      api_key: "\${EFFGEN_API_KEY}"
-    rate_limit: 60            # requests per minute
-    cors_origins: ["*"]
-    workers: 4`}
-        language="yaml"
-        filename="api_config.yaml"
-      />
-
-      <h2>Streaming Configuration</h2>
-
-      <CodeBlock
-        code={`# Enable streaming in config
-effgen:
-  agent:
-    enable_streaming: true     # Enable token streaming
-  api:
-    streaming:
-      enabled: true
-      ws_endpoint: "/ws"       # WebSocket endpoint path
-      heartbeat_interval: 15   # Seconds between keepalive pings`}
-        language="yaml"
-        filename="streaming_config.yaml"
-      />
-
-      <h2>Secret Management</h2>
-
-      <InfoBox type="warning" title="Security">
-        <p>Never commit API keys or secrets to version control. Use environment variables or secret managers.</p>
-      </InfoBox>
-
-      <CodeBlock
-        code={`import os
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
-
-# Access secrets from environment variables
-openai_key = os.getenv("OPENAI_API_KEY")
-anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-hf_token = os.getenv("HF_TOKEN")
-
-# Use secrets with effgen
-from effgen import load_model
-
-# API keys are automatically picked up from environment
-model = load_model(
-    "gpt-5.4-nano",
-    provider="openai",
-    api_key=openai_key  # Or let it auto-detect from env
-)
-
-# Best practice: Never hardcode secrets
-# ✓ Good: Use environment variables
-# ✗ Bad: api_key = "sk-..."
-
-# Validate configuration has no plaintext secrets
-from effgen.config import ConfigValidator
-validator = ConfigValidator()
-# Add custom validation as needed`}
-        language="python"
-        filename="secrets.py"
-      />
-
-      <InfoBox type="success" title="Next Steps">
-        <p>
-          Check the <Link to="/api-reference">API Reference</Link> for complete documentation,
-          or see <Link to="/examples">Examples</Link> for configuration patterns.
-        </p>
-      </InfoBox>
+      <SeeAlso paths={['/first-project', '/agents', '/generation']} />
     </DocPage>
   );
 }

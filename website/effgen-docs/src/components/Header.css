@@ -244,6 +244,26 @@
   display: block;
 }
 
+/* Version badge. The sidebar carries this beside the logo on a wide screen, so
+   here it appears only below that breakpoint — see the mobile block. Same
+   values as .version-badge, so the two read as one badge that moved. */
+.header-version {
+  display: none;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  background: var(--bg-tertiary);
+  color: var(--accent-primary);
+  padding: 0.2rem 0.5rem;
+  border-radius: 50px;
+  border: 1px solid rgba(0, 255, 136, 0.15);
+}
+
+[data-theme="light"] .header-version {
+  border-color: rgba(0, 137, 74, 0.15);
+}
+
 /* Theme toggle — enhanced with rotation and glow */
 .theme-toggle {
   display: flex;
@@ -308,6 +328,10 @@
 
   .link-text {
     display: none;
+  }
+
+  .header-version {
+    display: inline-flex;
   }
 
   .header-link {

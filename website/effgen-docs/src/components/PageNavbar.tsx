@@ -20,7 +20,10 @@ export default function PageNavbar({ title, items, rightContent }: PageNavbarPro
   return (
     <div className="page-navbar">
       <div className="page-navbar-left">
-        <h2 className="page-navbar-title">{title}</h2>
+        {/* The page's one h1. The two pages that use this bar lay themselves
+            out rather than going through DocPage, so this is where their
+            heading is; the class carries the size, so nothing looks different. */}
+        <h1 className="page-navbar-title">{title}</h1>
         <nav className="page-navbar-nav">
           {items.map((item, index) => (
             <NavLink

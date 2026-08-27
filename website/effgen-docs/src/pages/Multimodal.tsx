@@ -1,230 +1,370 @@
-import React from 'react';
 import { Image } from 'lucide-react';
-import DocPage, { ApiTable, InfoBox, QuickLinks } from '../components/DocPage';
-import CodeBlock from '../components/CodeBlock';
+import { Link } from 'react-router-dom';
+import {
+  ApiTable,
+  Callout,
+  CodeBlock,
+  DocPage,
+  SeeAlso,
+  Terminal,
+} from '../components/docs';
+import { version } from '../siteData';
 
 export default function Multimodal() {
   return (
     <DocPage
-      title="Multimodal Input"
-      subtitle="effGen v0.2.8 makes image, audio, and video first-class input types across 6 cloud providers plus local MLX-VLM. A unified Message content schema, per-provider adapters, automatic preprocessing, and capability gating mean your code only ever speaks effGen — the adapter translates to each provider's format."
+      subtitle="Sending images, audio and video to a model, and what each provider accepts."
       icon={<Image size={48} />}
-      breadcrumbs={[
-        { label: 'Docs', path: '/introduction' },
-        { label: 'Multimodal' },
-      ]}
     >
-      <InfoBox type="success" title="New in v0.2.8">
-        <p>
-          The <strong>Multimodal Input</strong> release adds a typed{' '}
-          <code>ContentPart</code> schema (<code>TextPart</code>, <code>ImagePart</code>,{' '}
-          <code>AudioPart</code>, <code>VideoPart</code>, <code>ToolCallPart</code>,{' '}
-          <code>ToolResultPart</code>), provider adapters for image / audio / video, automatic
-          preprocessing, a new <code>multimodal</code> preset, the{' '}
-          <code>MultimodalDescribeTool</code>, a local <code>MLX-VLM</code> adapter for Apple
-          Silicon, and 5 cookbook walkthroughs. No breaking API changes — the old{' '}
-          <code>Message(role, "text")</code> constructor still works.
-        </p>
-      </InfoBox>
-
-      <h2>Unified Message Schema</h2>
       <p>
-        <code>Message.content</code> is always a typed <code>List[ContentPart]</code>. The
-        constructor remains backwards-compatible: a plain string is auto-wrapped in a{' '}
-        <code>TextPart</code>, and the <code>Message.text</code> property joins all text parts.
+        Providers disagree about how media reaches a model — inline data on Gemini, an image URL on
+        OpenAI, a separate transcription endpoint for audio. effGen gives you one shape:{' '}
+        <code>image_from()</code>, <code>audio_from()</code> and <code>video_from()</code> build a
+        content part, the adapter translates it, and a model that cannot take it says so before the
+        request is sent.
       </p>
-      <CodeBlock
-        code={`from effgen.core.messages import (
-    Message, Role,
-    TextPart, ImagePart, AudioPart, VideoPart,
-    ToolCallPart, ToolResultPart,
-    ContentPart,
-)
 
-# Structured construction
-msg = Message(
+      <h2>Asking about an image</h2>
+
+      <CodeBlock filename="describe.py" code={`from effgen import Agent, AgentConfig, image_from
+
+agent = Agent(AgentConfig(name="vision", model="gemini-3.1-flash-lite", provider="gemini"))
+
+response = agent.run(
+    "What single colour dominates this image?",
+    inputs=[image_from("/tmp/chart.png")],
+)
+print(response.text)`} />
+
+      <Terminal
+        command="python describe.py"
+        output={`The image displays a bar graph with four vertical bars of increasing height, all colored in a dark shade of green. These bars are set against a plain white background, and a single black horizontal line runs along the bottom.
+
+The single color that dominates the image is dark green.`}
+        caption={`Run against effGen ${version}, on a 300×200 PNG bar chart.`}
+      />
+
+      <h2>The three helpers</h2>
+
+      <CodeBlock filename="helpers.py" code={`from effgen import audio_from, image_from
+
+image = image_from("/tmp/chart.png")
+print("image", image.mime, len(image.image), "bytes")
+
+audio = audio_from("/tmp/clip.mp3")
+print("audio", audio.mime, len(audio.audio), "bytes", audio.duration_s, "s")`} />
+
+      <Terminal command="python helpers.py" output={`image image/png 711 bytes
+audio audio/mpeg 12582 bytes None s`} />
+
+      <ApiTable
+        headers={['Helper', 'Takes', 'Returns']}
+        rows={[
+          [
+            <code>image_from(source)</code>,
+            <>
+              bytes, a path, a URL, a <code>PIL.Image.Image</code>, or an{' '}
+              <code>np.ndarray</code> of shape H×W×C
+            </>,
+            <code>ImagePart</code>,
+          ],
+          [<code>audio_from(source)</code>, 'bytes, a path, or a URL', <code>AudioPart</code>],
+          [
+            <code>video_from(source, fps=1)</code>,
+            'bytes, a path, or a URL — keyframes are sampled',
+            <code>VideoPart</code>,
+          ],
+        ]}
+        caption={<>All three are exported from the top-level <code>effgen</code> package.</>}
+      />
+
+      <h2>Three ways to pass it</h2>
+
+      <CodeBlock
+        filename="three_ways.py"
+        code={`from effgen import Agent, AgentConfig, image_from
+from effgen.core.messages import Message, Role
+
+agent = Agent(AgentConfig(name="vision", model="gemini-3.1-flash-lite", provider="gemini"))
+
+# 1) text plus inputs= — the canonical form
+agent.run("What single colour dominates this image?", inputs=[image_from("/tmp/chart.png")])
+
+# 2) a Message as the task; a bare string in the content list is fine
+agent.run(Message(role=Role.USER, content=[image_from("/tmp/chart.png"), "Describe this."]))
+
+# 3) a list of content parts as the task
+agent.run([image_from("/tmp/chart.png"), "What is this?"])`}
+        caption="Form 1 is the one run above. All three reach the same path; inputs= is an explicit keyword parameter of run() and run_async(), so it shows up in autocomplete and in inspect.signature."
+      />
+
+      <Callout type="note" title="Streaming is text only">
+        <p>
+          <code>agent.stream()</code> yields text. Media goes through <code>run()</code> or{' '}
+          <code>run_async()</code>.
+        </p>
+      </Callout>
+
+      <h2>The message schema</h2>
+      <p>
+        <code>Message.content</code> is a typed list of content parts, and a plain string still
+        works everywhere it used to.
+      </p>
+
+      <CodeBlock filename="parts.py" code={`from effgen import image_from
+from effgen.core.messages import ImagePart, Message, Role, TextPart
+
+message = Message(
     role=Role.USER,
-    content=[
-        ImagePart(image=b"...", mime="image/jpeg"),
-        TextPart(text="What is in this image?"),
-    ],
+    content=[image_from("/tmp/chart.png"), TextPart(text="What is in this image?")],
 )
 
-# Backwards-compatible — still works
-msg = Message(role=Role.USER, content="What is in this image?")
-print(msg.text)  # "What is in this image?"`}
-        language="python"
-        filename="message_schema.py"
-      />
+print(message.text)
+for part in message.content:
+    print(" ", type(part).__name__, getattr(part, "mime", ""))`} />
+
+      <Terminal command="python parts.py" output={`What is in this image?
+  ImagePart image/png
+  TextPart `} />
+
       <ApiTable
-        headers={['ContentPart', 'Fields', 'Validation']}
+        headers={['Part', 'Fields', 'Validated']}
         rows={[
-          [<code>TextPart</code>, 'type="text", text: str', '—'],
-          [<code>ImagePart</code>, 'type="image", image: bytes, mime: str, meta: dict', 'MIME ∈ {png, jpeg, gif, webp}'],
-          [<code>AudioPart</code>, 'type="audio", audio: bytes, mime: str, duration_s: float | None', 'MIME ∈ {mp3, wav, flac, ogg, m4a}'],
-          [<code>VideoPart</code>, 'type="video_frames", frames: List[bytes], fps: float, mime: str', 'frames non-empty'],
-          [<code>ToolCallPart</code>, 'type="tool_call", id, name, arguments', '—'],
-          [<code>ToolResultPart</code>, 'type="tool_result", id, content', '—'],
+          [<code>TextPart</code>, <><code>text: str</code></>, '—'],
+          [
+            <code>ImagePart</code>,
+            <>
+              <code>image: bytes</code>, <code>mime: str</code>, <code>meta: dict</code>
+            </>,
+            'MIME is one of png, jpeg, gif, webp',
+          ],
+          [
+            <code>AudioPart</code>,
+            <>
+              <code>audio: bytes</code>, <code>mime: str</code>,{' '}
+              <code>duration_s: float | None</code>
+            </>,
+            'MIME is one of mp3, wav, flac, ogg, m4a',
+          ],
+          [
+            <code>VideoPart</code>,
+            <>
+              <code>frames: list[bytes]</code>, <code>fps: float</code>, <code>mime: str</code>
+            </>,
+            'Frames must be non-empty',
+          ],
+          [
+            <code>ToolCallPart</code>,
+            <>
+              <code>id</code>, <code>name</code>, <code>arguments</code>
+            </>,
+            '—',
+          ],
+          [
+            <code>ToolResultPart</code>,
+            <>
+              <code>id</code>, <code>content</code>
+            </>,
+            '—',
+          ],
         ]}
-      />
-      <p>
-        Invalid MIME types or empty video frames raise{' '}
-        <code>InvalidMultimodalContent</code> at construction time.
-      </p>
-
-      <h2>Multimodal Helpers</h2>
-      <p>
-        <code>image_from</code>, <code>audio_from</code>, and <code>video_from</code> accept
-        bytes, local paths, URLs, and (for images) <code>PIL.Image</code> /{' '}
-        <code>np.ndarray</code>. MIME is sniffed automatically.
-      </p>
-      <CodeBlock
-        code={`from effgen import image_from, audio_from, video_from
-
-# image_from — bytes, path, URL, PIL.Image, np.ndarray
-img = image_from("/tmp/photo.jpg")
-img = image_from("https://example.com/image.png")
-img = image_from(pil_image)          # PIL.Image.Image
-img = image_from(numpy_array)        # np.ndarray HxWxC
-
-# audio_from — bytes, path, URL
-aud = audio_from("/tmp/recording.mp3")
-
-# video_from — bytes, path, URL; samples keyframes at fps via ffmpeg
-vid = video_from("/tmp/clip.mp4", fps=1)   # 1 frame/second, max 16 frames
-
-# v0.3.1: a bare file path in inputs= is auto-wrapped by extension
-agent.run("Describe this", inputs=["/tmp/photo.jpg"])   # → ImagePart`}
-        language="python"
-        filename="helpers.py"
+        caption={
+          <>
+            <code>message.text</code> joins every <code>TextPart</code>, so reading the text of a
+            mixed message is unchanged.
+          </>
+        }
       />
 
-      <h2>Preprocessing Pipeline</h2>
-      <p>
-        Each modality has a per-provider preprocessor that applies the provider's constraints
-        before the request is sent. Every transformation is recorded in{' '}
-        <code>part.meta["preprocessing"]</code> for observability.
-      </p>
-      <ApiTable
-        headers={['Module', 'Responsibility']}
-        rows={[
-          [<code>multimodal/image_pre.py</code>, 'prepare(part, provider, model) → ImagePart. Downscales to provider max pixel dims (e.g. 2048×2048 for Gemini) with PIL Lanczos; converts PNG ↔ JPEG; enforces byte limits.'],
-          [<code>multimodal/audio_pre.py</code>, 'Downsamples to 16 kHz mono when required (OpenAI Whisper); chunks clips longer than the provider max duration into sequential calls and concatenates results (pydub).'],
-          [<code>multimodal/video_pre.py</code>, 'VideoSource(path_or_url).sample_frames(fps, max_frames) → List[ImagePart]; .extract_audio() → AudioPart | None. Requires ffmpeg.'],
-        ]}
-      />
-      <CodeBlock
-        code={`from effgen.multimodal.video_pre import VideoSource
+      <CodeBlock filename="invalid.py" code={`from effgen.core.messages import ImagePart, VideoPart
+from effgen.errors import InvalidMultimodalContent
 
-vs = VideoSource("/tmp/clip.mp4")
-frames = vs.sample_frames(fps=1, max_frames=16)   # → List[ImagePart]
-audio  = vs.extract_audio()                        # → AudioPart | None`}
-        language="python"
-        filename="video_pre.py"
-      />
-      <InfoBox type="warning" title="ffmpeg required for video">
-        <p>
-          Video frame-sampling and audio extraction require <code>ffmpeg</code> on{' '}
-          <code>PATH</code>. When absent, effGen raises{' '}
-          <code>MissingSystemDependency("ffmpeg", install_hint=...)</code> with per-OS
-          install instructions — never a silent failure.
-        </p>
-      </InfoBox>
+for build in (
+    lambda: ImagePart(image=b"\\x89PNG", mime="image/tiff"),
+    lambda: VideoPart(frames=[], fps=1.0, mime="image/jpeg"),
+):
+    try:
+        build()
+    except InvalidMultimodalContent as exc:
+        print(type(exc).__name__, "-", exc)`} />
 
-      <h2>Capability Gating</h2>
+      <Terminal command="python invalid.py" output={`InvalidMultimodalContent - Invalid image content: MIME type 'image/tiff' is not supported. Allowed: ['image/gif', 'image/jpeg', 'image/png', 'image/webp']. Check that the image source is reachable and in a supported format.
+InvalidMultimodalContent - Invalid video_frames content: frames list must be non-empty. Check that the video_frames source is reachable and in a supported format.`} />
+
+      <h2>A model that cannot take it</h2>
       <p>
-        Every adapter checks <code>Capability.vision</code> /{' '}
-        <code>Capability.audio_input</code> / <code>Capability.video_input</code> before
-        sending. No adapter silently downcasts an image to{' '}
-        <code>"[image not supported]"</code> — the error is immediate and explicit.
+        No adapter quietly turns an image into <code>"[image not supported]"</code>. The capability
+        is checked before the request goes out, and the error names a model that would work.
       </p>
-      <CodeBlock
-        code={`from effgen.errors import CapabilityNotSupportedError
-from effgen.models.capabilities import Capability
+
+      <CodeBlock filename="capability.py" code={`from effgen import image_from, load_model
+from effgen.core.messages import Message, Role
+from effgen.errors import CapabilityNotSupportedError
+
+model = load_model("gpt-3.5-turbo", provider="openai")     # a text-only model
+message = Message(role=Role.USER, content=[image_from("/tmp/chart.png"), "Describe this."])
 
 try:
-    result = model.generate(messages_with_image)
-except CapabilityNotSupportedError as e:
-    print(e.capability)   # Capability.vision
-    print(e.provider)     # "cerebras"`}
-        language="python"
-        filename="capability_gating.py"
-      />
+    model.generate([message])
+except CapabilityNotSupportedError as exc:
+    print(type(exc).__name__)
+    print("capability:", exc.capability)
+    print("provider:  ", exc.provider)
+    print(exc)`} />
 
-      <h2>Provider Support Matrix</h2>
+      <Terminal command="python capability.py" output={`CapabilityNotSupportedError
+capability: vision
+provider:   openai
+Capability 'vision' is not supported by provider 'openai'.
+
+Model 'gpt-3.5-turbo' does not support vision. Use 'gpt-4o-mini' or 'gpt-4o' for image inputs.
+
+Choose a model that declares this capability — run \`effgen models list --capability <name>\` to see which do.`} />
+
+      <h2>Which provider takes what</h2>
+
       <ApiTable
         headers={['Provider', 'Image', 'Audio', 'Video (native)', 'Video (frames)']}
         rows={[
-          ['Gemini 2.x/3.x', '✅', '✅', '✅', '✅'],
-          ['OpenAI gpt-4o family', '✅', '✅ (Whisper)', '❌', '✅'],
-          ['Groq (Llama 4 / 3.2-vision)', '✅', '❌', '❌', '✅'],
-          ['Anthropic (code-only, no live key)', '✅', '❌', '❌', '❌'],
-          ['Together (vision models)', '✅', '❌', '❌', '✅'],
-          ['HuggingFace Inference (BLIP/LLaVA)', '✅', '✅ (ASR)', '❌', '✅'],
-          ['Cerebras', '❌', '❌', '❌', '❌'],
-          ['MLX-VLM (Apple Silicon only)', '✅', '❌', '❌', '✅'],
+          ['Gemini 2.x / 3.x', 'Yes', 'Yes', 'Yes', 'Yes'],
+          ['OpenAI gpt-4o family', 'Yes', 'Yes, via Whisper', 'No', 'Yes'],
+          ['Groq (Llama 4, 3.2-vision)', 'Yes', 'No', 'No', 'Yes'],
+          ['Anthropic', 'Yes', 'No', 'No', 'No'],
+          ['Together (vision models)', 'Yes', 'No', 'No', 'Yes'],
+          ['HuggingFace Inference (BLIP, LLaVA)', 'Yes', 'Yes, via ASR', 'No', 'Yes'],
+          ['Cerebras', 'No', 'No', 'No', 'No'],
+          ['MLX-VLM (Apple Silicon)', 'Yes', 'No', 'No', 'Yes'],
         ]}
+        caption={
+          <>
+            "Video (frames)" means effGen samples keyframes and sends them as images, so a
+            vision-only model can still answer about a clip. The catalog knows this per model —{' '}
+            <code>effgen models list --capability vision</code>, and{' '}
+            <Link to="/catalog">The model catalog</Link>.
+          </>
+        }
       />
+
+      <h2>Preprocessing</h2>
       <p>
-        Providers without native video receive a <code>VideoPart</code> as a sequence of
-        sampled <code>ImagePart</code>s (plus an optional <code>AudioPart</code> from the
-        audio track). The local <code>MLX-VLM</code> adapter (
-        <code>effgen/models/mlx_vlm_engine.py</code>) raises{' '}
-        <code>MissingSystemDependency</code> on non-Apple-Silicon hosts.
+        Between your part and the wire, effGen fits the media to what the provider accepts. Every
+        step is recorded in <code>part.meta["preprocessing"]</code>, so a resize is visible rather
+        than assumed.
       </p>
 
-      <h2>The <code>multimodal</code> Preset</h2>
-      <CodeBlock
-        code={`from effgen import load_model
-from effgen.presets import create_agent
-
-model = load_model("gemini-2.0-flash", provider="gemini")
-agent = create_agent("multimodal", model)
-
-# Tools wired in: ImageInfoTool, ImageCaptionTool, OCRTool, AudioTranscribeTool,
-#                 PDFTool, WeatherTool, MultimodalDescribeTool
-result = agent.run("Describe /tmp/chart.png and read off the largest bar.")
-print(result.output)`}
-        language="python"
-        filename="multimodal_preset.py"
-      />
       <ApiTable
-        headers={['Slot', 'Configuration']}
+        headers={['Modality', 'What is done']}
         rows={[
-          ['Primary model', 'Gemini Flash-Lite (vision + audio + video)'],
-          ['Fallback', 'OpenAI gpt-4o-mini (vision), HF BLIP (vision-only)'],
-          ['Tools', 'ImageInfoTool, ImageCaptionTool, OCRTool, AudioTranscribeTool, PDFTool, WeatherTool, MultimodalDescribeTool'],
+          [
+            'Image',
+            <>
+              Downscaled to the provider's pixel maximum with PIL Lanczos (2048×2048 on Gemini),
+              converted between PNG and JPEG when the MIME or the byte limit requires it.
+            </>,
+          ],
+          [
+            'Audio',
+            'Downsampled to 16 kHz mono where the provider requires it, and clips past the provider maximum are chunked into sequential calls whose results are concatenated.',
+          ],
+          [
+            'Video',
+            'Keyframes sampled at the requested fps up to a frame cap; the audio track extracted separately when there is one.',
+          ],
         ]}
       />
+
+      <CodeBlock filename="video.py" code={`from effgen.multimodal.video_pre import VideoSource
+
+source = VideoSource("/tmp/clip.mp4")
+frames = source.sample_frames(fps=1, max_frames=16)
+audio = source.extract_audio()
+
+print(len(frames), "frames sampled;", frames[0].mime)
+print("audio track:", audio.mime if audio else None)`} />
+
+      <Terminal
+        command="python video.py"
+        output={`2 frames sampled; image/jpeg
+audio track: None`}
+        caption="A short clip with no audio track, so extract_audio() returns None rather than raising."
+      />
+
+      <Callout type="warning" title="Video needs ffmpeg">
+        <p>
+          <code>VideoSource</code> requires <code>ffmpeg</code> on <code>PATH</code> and raises{' '}
+          <code>MissingSystemDependency("ffmpeg", …)</code> with per-OS install instructions when
+          it is absent.
+        </p>
+      </Callout>
+
+      <h2>The multimodal preset</h2>
+
+      <CodeBlock filename="preset.py" code={`from effgen import create_agent
+
+agent = create_agent("multimodal", "gemini-3.1-flash-lite", provider="gemini")
+print(sorted(tool.name for tool in agent.config.tools))`} />
+
+      <Terminal command="python preset.py" output={`['audio_transcribe', 'image_caption', 'image_info', 'multimodal_describe', 'ocr', 'pdf', 'weather']`} />
+
       <p>
-        <code>MultimodalDescribeTool</code> inspects the input part type and automatically
-        invokes the right tool (<code>ImageCaption</code>, <code>OCR</code>, or{' '}
-        <code>AudioTranscribe</code>) — no manual routing needed.
+        Seven tools, with Gemini Flash-Lite as the primary model and gpt-4o-mini and HF BLIP as
+        vision fallbacks. <code>multimodal_describe</code> looks at the input's type and calls the
+        right one of the others, so a mixed folder needs no routing of your own.
       </p>
 
-      <h2>Cookbook</h2>
-      <p>
-        Five end-to-end walkthroughs ship in <code>docs/cookbook/</code>:
-      </p>
+      <h2>What goes wrong</h2>
+
       <ApiTable
-        headers={['Walkthrough', 'What it shows']}
+        headers={['What you see', 'What it means', 'What to do']}
         rows={[
-          ['Image Q&A', 'Ask questions about an image with Gemini and OpenAI.'],
-          ['Audio transcribe + reason', 'Transcribe an audio clip then run sentiment / content analysis.'],
-          ['Video summarize', 'Sample keyframes from a video and produce a narrative summary.'],
-          ['OCR + LLM', 'Extract text from an image then apply the contract_summarize_v1 prompt template.'],
-          ['Chart reading', 'Read a bar chart from an image and answer comparison questions.'],
+          [
+            <code>CapabilityNotSupportedError</code>,
+            'The model does not declare the capability the part needs.',
+            <>
+              <code>exc.capability</code> and <code>exc.provider</code> say which and whose, and
+              the message names a model that would work.
+            </>,
+          ],
+          [
+            <code>InvalidMultimodalContent</code>,
+            'The MIME type is not one of the accepted ones, the frame list is empty, or the file is not there.',
+            'The message says which of those it is. It is raised when the part is built, before any request.',
+          ],
+          [
+            <code>MissingSystemDependency</code>,
+            <>
+              <code>ffmpeg</code> is not on <code>PATH</code>.
+            </>,
+            'The error carries per-OS install instructions. Video sampling and audio extraction both need it.',
+          ],
+          [
+            'A very large bill for one image',
+            'A high-resolution image is a lot of tokens.',
+            <>
+              Preprocessing downscales to the provider maximum, not to what you need. Resize first
+              — <code>ImageInfoTool</code> does it locally.
+            </>,
+          ],
+          [
+            'An empty transcription',
+            'The clip has no speech, or the audio track is silent.',
+            <>
+              <code>result.success</code> is <code>True</code> with an empty{' '}
+              <code>text</code>: a silent clip is not an error. Check the file plays.
+            </>,
+          ],
+          [
+            'A truncated answer about a long video',
+            'Frame sampling is capped, so a long clip is represented by a bounded number of frames.',
+            <>
+              Raise <code>fps</code> or <code>max_frames</code> on{' '}
+              <code>sample_frames</code>, or split the clip.
+            </>,
+          ],
         ]}
       />
 
-      <QuickLinks
-        links={[
-          { icon: 'M', title: 'Models', description: 'Local engines, cloud providers, and capability flags', path: '/models' },
-          { icon: 'T', title: 'Tools', description: 'ImageInfo, ImageCaption, OCR, AudioTranscribe, PDF', path: '/tools' },
-          { icon: 'P', title: 'Prompts', description: 'Prompt Library templates used in the OCR cookbook', path: '/prompts' },
-          { icon: 'R', title: 'Release Notes', description: 'v0.2.8 multimodal release details', path: '/releases' },
-        ]}
-      />
+      <SeeAlso paths={['/providers', '/tools/gallery', '/presets']} />
     </DocPage>
   );
 }

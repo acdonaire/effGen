@@ -1,419 +1,483 @@
-import React from 'react';
+import { Brain } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Database } from 'lucide-react';
-import DocPage, { InfoBox, ApiTable, FeatureList } from '../components/DocPage';
-import CodeBlock from '../components/CodeBlock';
-import MermaidDiagram from '../components/MermaidDiagram';
+import {
+  ApiTable,
+  Callout,
+  CodeBlock,
+  DocPage,
+  ParamTable,
+  SeeAlso,
+  Terminal,
+} from '../components/docs';
+import { version } from '../siteData';
 
 export default function Memory() {
-  const memoryDiagram = `
-flowchart TB
-    subgraph STM["Short-Term Memory"]
-        C[Conversation History]
-        S[Auto Summarization]
-        T[Token Management]
-    end
-
-    subgraph LTM["Long-Term Memory"]
-        F[Facts & Knowledge]
-        O[Observations]
-        R[Reflections]
-        B[Storage Backend]
-    end
-
-    subgraph VMS["Vector Memory Store"]
-        V[Semantic Search]
-        E[Embeddings]
-        VB[Vector Backend]
-    end
-
-    A[Agent] --> STM
-    A --> LTM
-    A --> VMS
-    STM --> S
-    S -->|"Overflow"| LTM
-    B --> JSON[(JSON)]
-    B --> SQLite[(SQLite)]
-    VB --> FAISS[(FAISS)]
-    VB --> Chroma[(ChromaDB)]
-`;
-
   return (
     <DocPage
-      title="Memory Systems"
-      subtitle="effGen provides dual memory architecture: short-term for conversation context and long-term for persistent knowledge."
-      icon={<Database size={48} />}
-      breadcrumbs={[
-        { label: 'Docs', path: '/introduction' },
-        { label: 'Core Concepts', path: '/agents' },
-        { label: 'Memory' },
-      ]}
+      subtitle="Short-term and long-term memory, what each stores, and when either is consulted."
+      icon={<Brain size={48} />}
     >
-      <h2>Overview</h2>
       <p>
-        Memory systems allow agents to maintain context across conversations and recall important
-        information. effGen implements a dual memory architecture:
+        An agent's memory is three separate stores with three separate jobs: the conversation it is
+        having now, facts it should keep after the conversation ends, and a vector index for
+        recalling something by meaning rather than by keyword. Only the first is on by default.
       </p>
 
-      <MermaidDiagram chart={memoryDiagram} title="Memory Architecture" />
+      <h2>The conversation an agent is having</h2>
 
-      <FeatureList
-        features={[
-          { icon: '⚡', title: 'Short-Term Memory', description: 'Conversation history with automatic overflow handling and summarization. Always initialized, stores conversation turns.' },
-          { icon: '💾', title: 'Long-Term Memory', description: 'Persistent storage with importance-based retrieval. JSON and SQLite backends.' },
-          { icon: '🔍', title: 'Vector Memory Store', description: 'Semantic search via FAISS or ChromaDB backends with configurable embedding providers.' },
+      <CodeBlock filename="remembers.py" code={`from effgen import Agent, AgentConfig
+
+agent = Agent(AgentConfig(
+    name="assistant",
+    model="gpt-5-nano",
+    provider="openai",
+    enable_memory=True,
+))
+
+agent.run("My dog is named Pixel.")
+print(agent.run("What is my dog's name?").text)`} />
+
+      <Terminal
+        command="python remembers.py"
+        output={`Pixel`}
+        caption={`Run against effGen ${version}.`}
+      />
+
+      <p>
+        <code>enable_memory=True</code> gives the agent a <code>ShortTermMemory</code>, and every
+        turn goes into it. It lives in the process — when the process ends, so does it. To carry a
+        conversation across runs or across machines, use a{' '}
+        <Link to="/sessions">session</Link> instead.
+      </p>
+
+      <h2>Short-term memory</h2>
+
+      <CodeBlock filename="short_term.py" code={`from effgen.memory import ShortTermMemory
+
+memory = ShortTermMemory(max_tokens=4096, max_messages=100, keep_recent_messages=10)
+memory.add_user_message("My dog is named Pixel.")
+memory.add_assistant_message("Noted — Pixel it is.")
+memory.add_tool_message("weather → 18.0 Clear sky")
+
+print(memory.get_token_count(), "tokens over", len(memory.get_messages()), "messages")
+for message in memory.get_messages():
+    print(f"  {message.role.value:9} {message.content[:40]!r}")
+print(memory.get_statistics())`} />
+
+      <Terminal command="python short_term.py" output={`16 tokens over 3 messages
+  user      'My dog is named Pixel.'
+  assistant 'Noted — Pixel it is.'
+  tool      'weather → 18.0 Clear sky'
+{'current_messages': 3, 'current_tokens': 16, 'max_tokens': 4096, 'utilization': 0.00390625, 'total_messages_added': 3, 'total_summarizations': 0, 'summaries_count': 0}`} />
+
+      <ParamTable
+        nameLabel="Argument"
+        params={[
+          {
+            name: 'max_tokens',
+            type: 'int',
+            default: '4096',
+            description: 'The window the history has to fit in. Past a fraction of it, compaction runs.',
+          },
+          { name: 'max_messages', type: 'int', default: '100', description: 'A hard cap on how many messages are held.' },
+          {
+            name: 'summarization_threshold',
+            type: 'float',
+            default: '0.8',
+            description: 'The fraction of max_tokens at which compaction is triggered.',
+          },
+          {
+            name: 'summary_length_ratio',
+            type: 'float',
+            default: '0.3',
+            description: 'How long a generated summary may be, relative to what it replaces.',
+          },
+          {
+            name: 'keep_recent_messages',
+            type: 'int',
+            default: '10',
+            description: 'How many of the most recent turns are never compacted.',
+          },
+          {
+            name: 'summary_budget_ratio',
+            type: 'float',
+            default: '0.4',
+            description: 'The share of the window summaries are allowed to occupy.',
+          },
+          {
+            name: 'model',
+            type: 'Any',
+            default: 'None',
+            description: 'The model that writes summaries. Without one, a strategy that needs a model cannot summarise.',
+          },
+          {
+            name: 'compaction_strategy',
+            type: 'Any',
+            default: 'None',
+            description: (
+              <>
+                Which turns leave and what replaces them — see{' '}
+                <Link to="/compaction">Context compaction</Link>. Defaults to{' '}
+                <code>SummarizeOldest</code>.
+              </>
+            ),
+          },
+          {
+            name: 'tokenizer',
+            type: 'Any',
+            default: 'None',
+            description: 'Anything with count_tokens(text) or encode(text). Without one the history is estimated at four characters per token.',
+          },
         ]}
+        caption={<><code>effgen.memory.ShortTermMemory</code></>}
       />
-
-      <h2>Short-Term Memory</h2>
-      <p>
-        Short-term memory manages conversation context within a session. It automatically handles
-        context window limits through truncation and summarization.
-      </p>
-
-      <CodeBlock
-        code={`from effgen.memory.short_term import ShortTermMemory, MessageRole
-
-# Create memory with limits
-memory = ShortTermMemory(
-    max_tokens=4096,              # Maximum context tokens
-    max_messages=100,             # Maximum messages to keep
-    summarization_threshold=0.8,  # Summarize at 80% capacity
-    keep_recent_messages=10       # Always keep last 10 messages
-)
-
-# Add messages
-memory.add_message(MessageRole.SYSTEM, "You are a helpful assistant.")
-memory.add_message(MessageRole.USER, "Hello, how are you?")
-memory.add_message(MessageRole.ASSISTANT, "I'm doing well! How can I help?")
-
-# Convenience methods
-memory.add_user_message("What's the weather like?")
-memory.add_assistant_message("I don't have weather data.")
-memory.add_system_message("Remember: be concise.")
-
-# Get recent messages
-recent = memory.get_recent_messages(n=10)
-for msg in recent:
-    print(f"[{msg.role.value}]: {msg.content[:50]}...")
-
-# Check token count
-token_count = memory.get_token_count()
-print(f"Tokens used: {token_count}/{memory.max_tokens}")
-
-# Clear memory
-memory.clear()`}
-        language="python"
-        filename="short_term_memory.py"
-      />
-
-      <h3>Message Roles</h3>
 
       <ApiTable
-        headers={['Role', 'Description', 'Usage']}
+        headers={['Method', 'What it does']}
         rows={[
-          [<code>SYSTEM</code>, 'System instructions', 'Set agent behavior and constraints'],
-          [<code>USER</code>, 'User messages', 'Store user inputs'],
-          [<code>ASSISTANT</code>, 'Agent responses', 'Store agent outputs'],
-          [<code>TOOL</code>, 'Tool results', 'Store tool execution results'],
+          [
+            <>
+              <code>add_user_message(content)</code>, <code>add_assistant_message(content)</code>,{' '}
+              <code>add_system_message(content)</code>, <code>add_tool_message(content)</code>
+            </>,
+            <>
+              Append one turn. Each returns the <code>Message</code> it stored.
+            </>,
+          ],
+          [
+            <code>add_message(role, content, metadata=None, tokens=None)</code>,
+            <>
+              The general form. <code>role</code> is a <code>MessageRole</code>.
+            </>,
+          ],
+          [<code>get_messages()</code>, 'Everything currently held, in order.'],
+          [<code>get_recent_messages(n)</code>, 'The last n.'],
+          [<code>get_messages_by_role(role)</code>, <>Filtered by <code>MessageRole</code>.</>],
+          [<code>search_messages(text)</code>, 'Every message whose content contains that text.'],
+          [<code>get_conversation_context()</code>, 'The history rendered as prompt text.'],
+          [<code>get_token_count()</code>, 'How large the history currently is.'],
+          [<code>get_statistics()</code>, 'Messages held, tokens, utilisation, and how many times it has compacted.'],
+          [<code>clear()</code>, 'Forget everything.'],
+          [
+            <>
+              <code>save_to_file(path)</code>, <code>ShortTermMemory.load_from_file(path)</code>
+            </>,
+            <>
+              Round-trip to JSON. <code>load_from_file</code> is a class method and returns a new
+              memory.
+            </>,
+          ],
+          [<>
+            <code>to_dict()</code>, <code>from_dict(data)</code>
+          </>, 'The same, without touching the filesystem.'],
         ]}
       />
 
-      <h3>Auto-Summarization</h3>
+      <h3>Finding something in it</h3>
+
+      <CodeBlock filename="search.py" code={`from effgen.memory import MessageRole, ShortTermMemory
+
+memory = ShortTermMemory()
+memory.add_user_message("My dog is named Pixel.")
+memory.add_user_message("My cat is named Mote.")
+memory.add_assistant_message("Two pets noted.")
+
+for message in memory.search_messages("dog"):
+    print(message.role.value, "|", message.content)
+print([m.content for m in memory.get_messages_by_role(MessageRole.USER)])`} />
+
+      <Terminal command="python search.py" output={`user | My dog is named Pixel.
+['My dog is named Pixel.', 'My cat is named Mote.']`} />
+
+      <h3>Saving and restoring it</h3>
+
+      <CodeBlock filename="persist.py" code={`from effgen.memory import ShortTermMemory
+
+memory = ShortTermMemory()
+memory.add_user_message("My dog is named Pixel.")
+memory.save_to_file("/tmp/effgen-short-term.json")
+
+restored = ShortTermMemory.load_from_file("/tmp/effgen-short-term.json")
+print([m.content for m in restored.get_messages()])`} />
+
+      <Terminal command="python persist.py" output={`['My dog is named Pixel.']`} />
+
+      <Callout type="note" title="load_from_file is a class method">
+        <p>
+          It returns a new <code>ShortTermMemory</code> rather than filling one in place, so{' '}
+          <code>ShortTermMemory.load_from_file(path)</code> is the call. Assigning it to an
+          existing memory does nothing to that memory.
+        </p>
+      </Callout>
+
+      <h2>Long-term memory</h2>
       <p>
-        When memory approaches capacity, older messages are automatically summarized:
+        A store for facts that outlive one conversation, with a type and an importance on every
+        entry, kept in SQLite or JSON. It is not consulted automatically — you write to it and read
+        from it.
       </p>
 
-      <CodeBlock
-        code={`memory = ShortTermMemory(
-    max_tokens=4096,
-    summarization_threshold=0.8  # Trigger at 80% capacity
+      <CodeBlock filename="long_term.py" code={`from effgen.memory import (
+    ImportanceLevel, LongTermMemory, MemoryType, SQLiteStorageBackend,
 )
 
-# After many messages, older content is summarized
-# [Original]: 100 detailed messages
-# [After summarization]: Summary block + recent messages
+memory = LongTermMemory(backend=SQLiteStorageBackend("/tmp/effgen-memories.db"))
+memory.start_session("user-123")
 
-# Check how many summarisation passes ran
-print(f"Summarisations: {memory.total_summarizations}")
-print(f"Summary blocks: {len(memory.summaries)}")`}
-        language="python"
-        filename="summarization.py"
-      />
-
-      <h2>Long-Term Memory</h2>
-      <p>
-        Long-term memory provides persistent storage across sessions with multiple backend options.
-      </p>
-
-      <CodeBlock
-        code={`from effgen.memory.long_term import (
-    LongTermMemory,
-    JSONStorageBackend,
-    SQLiteStorageBackend,
-    MemoryType,
-    ImportanceLevel
-)
-
-# Create with JSON backend (simple, file-based)
-json_backend = JSONStorageBackend(filepath="./memory.json")
-memory = LongTermMemory(backend=json_backend, max_memories=10000)
-
-# Or use SQLite backend (better for large datasets)
-sqlite_backend = SQLiteStorageBackend(db_path="./memory.db")
-memory = LongTermMemory(backend=sqlite_backend)
-
-# Start a session
-session = memory.start_session(name="research_session")
-
-# Add memories with metadata
 memory.add_memory(
-    content="Python was created by Guido van Rossum in 1991",
+    content="Pixel is the user's dog, a border collie.",
     memory_type=MemoryType.FACT,
     importance=ImportanceLevel.HIGH,
-    tags=["python", "programming", "history"],
-    metadata={"source": "wikipedia", "verified": True}
+    tags=["pets"],
 )
 
-memory.add_memory(
-    content="User prefers detailed technical explanations",
-    memory_type=MemoryType.OBSERVATION,
-    importance=ImportanceLevel.MEDIUM,
-    tags=["user_preference"]
-)
+for entry in memory.search("dog", limit=3):
+    print(entry.memory_type.value, entry.importance.name, "|", entry.content)
 
-# End session
-memory.end_session()`}
-        language="python"
-        filename="long_term_memory.py"
+print(memory.get_statistics())
+memory.end_session()
+memory.close()`} />
+
+      <Terminal command="python long_term.py" output={`fact HIGH | Pixel is the user's dog, a border collie.
+{'total_memories': 1, 'max_memories': 10000, 'current_session_id': 'c8252769-69b3-440d-aa5a-8fc0dc03b3d3', 'total_consolidations': 0, 'memories_by_type': {'fact': 1}, 'memories_by_importance': {'HIGH': 1}}`} />
+
+      <ParamTable
+        nameLabel="Argument"
+        params={[
+          {
+            name: 'backend',
+            type: 'StorageBackend',
+            required: true,
+            description: 'SQLiteStorageBackend(path) or JSONStorageBackend(path). There is no default.',
+          },
+          {
+            name: 'consolidation_interval',
+            type: 'int',
+            default: '100',
+            description: 'How many additions between consolidation passes.',
+          },
+          { name: 'max_memories', type: 'int', default: '10000', description: 'The cap. Past it, the least important go first.' },
+          {
+            name: 'min_importance_to_keep',
+            type: 'ImportanceLevel',
+            default: 'ImportanceLevel.LOW',
+            description: 'The floor consolidation keeps. Anything below it can be dropped.',
+          },
+        ]}
+        caption={<><code>effgen.memory.LongTermMemory</code></>}
       />
 
-      <h3>Memory Types</h3>
-
       <ApiTable
-        headers={['Type', 'Description', 'Example']}
+        headers={['Call', 'What it does']}
         rows={[
-          [<code>FACT</code>, 'Verified information', '"Python was created in 1991"'],
-          [<code>OBSERVATION</code>, 'Observed patterns', '"User prefers code examples"'],
-          [<code>CONVERSATION</code>, 'Important exchanges', 'Key discussion points'],
-          [<code>TASK</code>, 'Task-related info', '"Current project: web scraper"'],
-          [<code>TOOL_RESULT</code>, 'Tool outputs', 'Search results, calculations'],
-          [<code>REFLECTION</code>, 'Agent insights', 'Learning from interactions'],
+          [
+            <code>add_memory(content, memory_type, importance=…, tags=None, metadata=None)</code>,
+            <>
+              Store one fact and return the <code>MemoryEntry</code>. Note that these are keyword
+              arguments, not a constructed entry.
+            </>,
+          ],
+          [
+            <code>search(query=None, memory_type=None, session_id=None, tags=None, min_importance=None, limit=50)</code>,
+            <>
+              Every filter is optional and they combine. Returns a list of{' '}
+              <code>MemoryEntry</code>.
+            </>,
+          ],
+          [<code>get_memory(entry_id)</code>, 'One entry by id, bumping its access count.'],
+          [
+            <>
+              <code>start_session(id)</code>, <code>end_session()</code>
+            </>,
+            'Tag everything added between the two with a session, so it can be searched back out.',
+          ],
+          [<code>consolidate()</code>, 'Merge duplicates and drop what is below the importance floor.'],
+          [<code>get_statistics()</code>, 'Totals, and the breakdown by type and by importance.'],
+          [<code>clear_all()</code>, 'Empty the store.'],
+          [<code>close()</code>, 'Close the backend. Do this, or a SQLite file can be left locked.'],
         ]}
       />
 
-      <h3>Importance Levels</h3>
+      <ApiTable
+        headers={['MemoryType', 'For']}
+        rows={[
+          [<code>conversation</code>, 'A turn worth keeping past the conversation.'],
+          [<code>fact</code>, 'Something true about the user or the domain.'],
+          [<code>observation</code>, 'Something the agent noticed.'],
+          [<code>task</code>, 'Work in progress, or work that was done.'],
+          [<code>tool_result</code>, 'Output worth not fetching twice.'],
+          [<code>reflection</code>, 'The agent’s own note about how a run went.'],
+        ]}
+        caption={
+          <>
+            <code>ImportanceLevel</code> is <code>LOW</code> (1), <code>MEDIUM</code> (2),{' '}
+            <code>HIGH</code> (3) or <code>CRITICAL</code> (4), and decides what survives
+            consolidation.
+          </>
+        }
+      />
+
+      <h2>Vector memory</h2>
+      <p>
+        For recall by meaning: the entry that answers the question, not the one that repeats its
+        words. Backed by FAISS or Chroma, with embeddings from whichever provider you give it.
+      </p>
+
+      <CodeBlock filename="vector.py" code={`from effgen.memory import VectorMemoryStore
+
+store = VectorMemoryStore(backend_type="faiss", persist_directory="/tmp/effgen-vec")
+store.add("The deploy runs at 02:00 UTC.")
+store.add("Pixel is a border collie.")
+
+for hit in store.search("when does the release go out?", k=1):
+    print(hit.rank, round(hit.similarity, 3), "|", hit.entry.content)`} />
+
+      <Terminal
+        command="python vector.py"
+        output={`0 0.414 | The deploy runs at 02:00 UTC.`}
+        caption="The query shares no words with the entry it found. That is the difference from a keyword search."
+      />
+
+      <ParamTable
+        nameLabel="Argument"
+        params={[
+          {
+            name: 'backend_type',
+            type: 'str',
+            default: "'faiss'",
+            description: 'faiss or chroma. Each needs its own package installed.',
+          },
+          {
+            name: 'embedding_provider',
+            type: 'EmbeddingProvider | None',
+            default: 'None',
+            description: 'What turns text into vectors. Defaults to the bundled sentence-transformer embedding.',
+          },
+          {
+            name: 'persist_directory',
+            type: 'str | Path | None',
+            default: 'None',
+            description: 'Where the index is written. Without one it lives in memory only.',
+          },
+          {
+            name: 'consolidation_threshold',
+            type: 'int',
+            default: '1000',
+            description: 'How many entries before a consolidation pass.',
+          },
+          { name: 'max_entries', type: 'int', default: '10000', description: 'The cap on stored entries.' },
+        ]}
+        caption={<><code>effgen.memory.VectorMemoryStore</code></>}
+      />
 
       <ApiTable
-        headers={['Level', 'Retention', 'Use Case']}
+        headers={['Call', 'What it does']}
         rows={[
-          [<code>CRITICAL</code>, 'Never delete', 'Core facts, user identity'],
-          [<code>HIGH</code>, 'Long retention', 'Important context'],
-          [<code>MEDIUM</code>, 'Normal retention', 'General information'],
-          [<code>LOW</code>, 'Short retention', 'Temporary data'],
+          [
+            <code>add(content, entry_id=None, metadata=None)</code>,
+            <>
+              Embed and store one string. Note it takes text, not a <code>MemoryEntry</code>.
+            </>,
+          ],
+          [<code>add_batch(items)</code>, 'The same for many, in one embedding pass.'],
+          [
+            <code>search(query, k=10, min_similarity=0.0)</code>,
+            <>
+              Returns <code>SearchResult</code> records — <code>entry</code>,{' '}
+              <code>similarity</code>, <code>rank</code>.
+            </>,
+          ],
+          [<>
+            <code>get(entry_id)</code>, <code>delete(entry_id)</code>
+          </>, 'One entry by id.'],
+          [<>
+            <code>save()</code>, <code>load()</code>
+          </>, 'Write the index to persist_directory, or read it back.'],
+          [<code>consolidate()</code>, 'Drop near-duplicates.'],
+          [<code>get_statistics()</code>, 'Entry count, dimension and backend.'],
         ]}
       />
 
-      <h3>Searching Memory</h3>
-
-      <CodeBlock
-        code={`# Search by query
-results = memory.search(
-    query="python programming",
-    limit=10,
-)
-
-# Search with filters
-results = memory.search(
-    query="user preferences",
-    tags=["user_preference"],
-    min_importance=ImportanceLevel.MEDIUM,
-    memory_type=MemoryType.OBSERVATION,
-    limit=5,
-)
-
-# Get a specific memory by id
-specific = memory.get_memory(memory_id="abc123")
-
-# Filter by type — search returns MemoryEntry objects
-facts = memory.search(memory_type=MemoryType.FACT, limit=100)
-
-# Process results
-for mem in results:
-    print(f"[{mem.memory_type.value}] {mem.content}")
-    print(f"  Importance: {mem.importance.value}")
-    print(f"  Tags: {mem.tags}")
-    print(f"  Created: {mem.created_at}")`}
-        language="python"
-        filename="search_memory.py"
-      />
-
-      <h3>Memory Consolidation</h3>
-      <p>
-        Consolidate and optimize stored memories:
-      </p>
-
-      <CodeBlock
-        code={`# Consolidate when over capacity — keeps top N memories by
-# importance + access frequency - recency, drops the rest.
-removed = memory.consolidate()
-print(f"Consolidation removed {removed} memories")
-
-# Filter via search() with min_importance / memory_type / tags
-high_importance = memory.search(
-    min_importance=ImportanceLevel.HIGH,
-    limit=100,
-)
-print(f"High-importance memories: {len(high_importance)}")`}
-        language="python"
-        filename="consolidation.py"
-      />
-
-      <h2>Integration with Agents</h2>
-
-      <CodeBlock
-        code={`from effgen import Agent, load_model
-from effgen.core.agent import AgentConfig
-
-model = load_model("Qwen/Qwen2.5-7B-Instruct", quantization="4bit")
-
-# Memory is wired in via AgentConfig.memory_config — flat keys, not nested
-config = AgentConfig(
-    name="memory_agent",
-    model=model,
-    enable_memory=True,
-    memory_config={
-        "short_term_max_tokens": 4096,
-        "short_term_max_messages": 100,
-        "long_term_backend": "sqlite",                   # "json" | "sqlite"
-        "long_term_persist_path": "./agent_memory",  # directory; backend appends long_term.db / long_term.json
-        "auto_summarize": True,
-    },
-)
-agent = Agent(config=config)
-
-# Multi-turn conversation with memory
-agent.run("My name is Alice and I'm a data scientist")
-agent.run("I work primarily with Python and pandas")
-
-# Agent remembers context
-result = agent.run("What tools should I learn next?")
-# Agent considers: name is Alice, data scientist, uses Python/pandas
-
-# Direct access to the underlying memory buffers
-print(f"STM messages: {len(agent.short_term_memory.messages)}")
-if agent.long_term_memory:
-    print(f"LTM total: {agent.long_term_memory.get_statistics()['total_memories']}")`}
-        language="python"
-        filename="agent_memory.py"
-      />
-
-      <h2>Vector Memory Store</h2>
-      <p>
-        The VectorMemoryStore provides semantic search capabilities using vector embeddings.
-        It supports FAISS and ChromaDB backends:
-      </p>
-
-      <CodeBlock
-        code={`from effgen.memory.vector_store import (
-    VectorMemoryStore,
-    SentenceTransformerEmbedding,
-    SimpleEmbedding,
-)
-
-# FAISS backend (recommended for local use)
-store = VectorMemoryStore(
-    backend_type="faiss",                                      # "faiss" | "chroma"
-    embedding_provider=SentenceTransformerEmbedding("all-MiniLM-L6-v2"),
-    persist_directory="./vector_store/",
-)
-
-# Or use simple TF-IDF embeddings (no extra dependencies)
-store = VectorMemoryStore(
-    backend_type="faiss",
-    embedding_provider=SimpleEmbedding(),
-)
-
-# Add entries
-store.add("Python is great for data science", metadata={"topic": "python"})
-store.add("JavaScript powers the web", metadata={"topic": "javascript"})
-
-# Semantic search — k results above the optional similarity floor
-results = store.search("best language for ML", k=3, min_similarity=0.2)
-for result in results:
-    print(f"Score: {result.similarity:.2f} | {result.entry.content}")`}
-        language="python"
-        filename="vector_memory.py"
-      />
-
-      <h2>Multi-Turn Conversation with Memory</h2>
-      <CodeBlock
-        code={`from effgen import load_model
-from effgen.presets import create_agent
-
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-agent = create_agent("general", model)
-
-# Memory automatically tracks conversation turns
-agent.run("My name is Alice and I'm a data scientist")
-agent.run("I work primarily with Python and pandas")
-agent.run("I'm interested in deep learning frameworks")
-
-# Agent remembers all previous context
-result = agent.run("Based on my background, what should I learn next?")
-print(result.output)
-# Agent considers: name is Alice, data scientist, Python/pandas, deep learning interest
-
-# Access conversation history through the short-term memory buffer
-print(f"Total messages: {len(agent.short_term_memory.messages)}")
-for msg in agent.short_term_memory.messages:
-    print(f"[{msg.role.value}]: {msg.content[:60]}...")`}
-        language="python"
-        filename="multi_turn_memory.py"
-      />
-
-      <h2>Memory Configuration</h2>
-      <p>
-        <code>AgentConfig.memory_config</code> is a flat dict with the following keys.
-        Defaults shown are what the agent uses when you do not override them.
-      </p>
-      <CodeBlock
-        code={`from effgen.core.agent import AgentConfig
-
-config = AgentConfig(
-    name="memory_agent",
-    model=model,
-    enable_memory=True,
-    memory_config={
-        "short_term_max_tokens": 4096,
-        "short_term_max_messages": 100,
-        "long_term_backend": "sqlite",          # "json" | "sqlite"
-        "long_term_persist_path": None,         # path for backend (uses default if None)
-        "auto_summarize": True,
-    },
-)`}
-        language="python"
-        filename="memory_config.py"
-      />
-
-      <h2>Best Practices</h2>
-
-      <InfoBox type="info" title="Memory Guidelines">
-        <ul>
-          <li><strong>Set appropriate limits:</strong> Match max_tokens to your model's context window</li>
-          <li><strong>Use importance levels:</strong> Mark critical information appropriately</li>
-          <li><strong>Tag memories:</strong> Use tags for efficient retrieval</li>
-          <li><strong>Consolidate regularly:</strong> Merge similar memories to reduce redundancy</li>
-          <li><strong>Choose the right backend:</strong> JSON for simple use, SQLite for larger datasets</li>
-        </ul>
-      </InfoBox>
-
-      <InfoBox type="success" title="Next Steps">
+      <Callout type="tip" title="For documents, use RAG rather than vector memory">
         <p>
-          Learn about <Link to="/prompts">Prompt Management</Link> for optimizing agent instructions,
-          or explore <Link to="/multi-agent">Multi-Agent Systems</Link> for complex workflows.
+          Vector memory is for things the agent should remember. Indexing a corpus you want it to
+          answer from is <Link to="/rag">RAG</Link>, which adds chunking, hybrid search, reranking
+          and citations back to the source.
         </p>
-      </InfoBox>
+      </Callout>
+
+      <h2>What goes wrong</h2>
+
+      <ApiTable
+        headers={['What you see', 'What it means', 'What to do']}
+        rows={[
+          [
+            'The agent does not remember the previous turn',
+            <>
+              <code>enable_memory</code> is off, or each turn built a new agent.
+            </>,
+            <>
+              Set <code>enable_memory=True</code> and reuse the agent, or pass a{' '}
+              <Link to="/sessions">session</Link> so the history survives the process.
+            </>,
+          ],
+          [
+            'Old turns have quietly become a summary',
+            'The history passed the compaction threshold, which is what is supposed to happen.',
+            <>
+              <code>get_statistics()["total_summarizations"]</code> says how often. Choose what is
+              dropped with a <Link to="/compaction">compaction strategy</Link>.
+            </>,
+          ],
+          [
+            <><code>TypeError: add_memory() missing 1 required positional argument: 'memory_type'</code></>,
+            <>
+              A <code>MemoryEntry</code> was passed where the arguments were expected.
+            </>,
+            <>
+              <code>add_memory(content=…, memory_type=…)</code>. The entry is what comes back, not
+              what goes in.
+            </>,
+          ],
+          [
+            <><code>ValueError: Unsupported input type: MemoryEntry</code></>,
+            <>
+              A <code>MemoryEntry</code> was handed to <code>VectorMemoryStore.add()</code>, which
+              takes text.
+            </>,
+            <>
+              <code>store.add("the text")</code>. The embedder needs a string.
+            </>,
+          ],
+          [
+            <><code>ImportError</code> naming faiss or chromadb</>,
+            'The vector backend is not installed.',
+            <>
+              <code>pip install effgen[rag]</code>, or install the backend you asked for.
+            </>,
+          ],
+          [
+            'A locked SQLite file',
+            <>
+              A <code>LongTermMemory</code> was left open.
+            </>,
+            <>
+              Call <code>close()</code>, or open the store in a <code>with</code> block.
+            </>,
+          ],
+          [
+            'A token count that does not match the provider’s',
+            'The history was estimated at four characters per token.',
+            <>
+              Pass <code>tokenizer=</code> — anything with <code>count_tokens</code> or{' '}
+              <code>encode</code>. One that raises falls back to the estimate rather than failing
+              the run.
+            </>,
+          ],
+        ]}
+      />
+
+      <SeeAlso paths={['/sessions', '/compaction', '/rag']} />
     </DocPage>
   );
 }

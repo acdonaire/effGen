@@ -64,6 +64,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Narrow enough and a long filename would push the copy button off the edge
+     of the block, where `overflow: hidden` would cut it in half. It wraps to a
+     second line instead. */
+  flex-wrap: wrap;
+  row-gap: 0.5rem;
   padding: 0.75rem 1rem;
   background: linear-gradient(135deg, rgba(0, 255, 136, 0.03), var(--bg-tertiary));
   border-bottom: 1px solid var(--border-color);
@@ -92,6 +97,8 @@
 .code-header-left {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 0.75rem;
 }
 
@@ -122,6 +129,8 @@
   font-size: 0.85rem;
   font-family: 'JetBrains Mono', monospace;
   opacity: 0.7;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* ============================================
@@ -193,11 +202,61 @@
 }
 
 /* ============================================
+   MULTI-TAB — one task, several ways to do it
+   ============================================ */
+.code-tabs {
+  margin: 1.5rem 0;
+}
+
+.code-tablist {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  margin-bottom: -1px;
+}
+
+.code-tab {
+  padding: 0.45rem 0.9rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  color: var(--text-tertiary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.code-tab:hover {
+  color: var(--accent-primary);
+}
+
+.code-tab.active {
+  background: var(--bg-tertiary);
+  border-color: var(--border-color);
+  color: var(--accent-primary);
+}
+
+.code-tabs .code-block {
+  margin-top: 0;
+  border-top-left-radius: 0;
+}
+
+/* ============================================
    CODE CONTENT
    ============================================ */
+/* One scroll container, and one only. A wide line scrolls inside this box; the
+   page itself never moves sideways because of it. `tabIndex` on the element is
+   what gives a keyboard a way to reach that scroll. */
 .code-content {
-  display: flex;
   overflow-x: auto;
+  padding: 1.25rem 0;
+}
+
+.code-content:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
 }
 
 /* Custom scrollbar for code blocks */
@@ -218,119 +277,190 @@
   background: rgba(0, 255, 136, 0.3);
 }
 
-/* Line numbers with green tint */
-.line-numbers {
-  display: flex;
-  flex-direction: column;
-  padding: 1.25rem 0;
-  background: rgba(0, 255, 136, 0.02);
-  border-right: 1px solid rgba(0, 255, 136, 0.06);
-  user-select: none;
-  min-width: 48px;
-  text-align: right;
-}
-
-[data-theme="light"] .line-numbers {
-  background: rgba(0, 0, 0, 0.03);
-  border-right-color: rgba(0, 0, 0, 0.06);
-}
-
-.line-numbers span {
-  padding: 0 1rem;
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  font-family: 'JetBrains Mono', monospace;
-  line-height: 1.7;
-  transition: color 0.2s ease;
-}
-
-.line-numbers span:hover {
-  color: var(--accent-primary);
-}
-
-.code-block pre {
-  flex: 1;
-  padding: 1.25rem 1.5rem;
+/* `width: max-content` with `min-width: 100%` is what makes every line as wide
+   as the widest one, so a marked line's band runs the full width of the block
+   however far it is scrolled. */
+.code-block pre.code-lines {
+  min-width: 100%;
+  width: max-content;
   margin: 0;
-  overflow-x: auto;
-}
-
-.code-block pre.with-line-numbers {
-  padding-left: 1rem;
-}
-
-.code-block code {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  overflow: visible;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.9rem;
   line-height: 1.7;
   color: var(--text-primary);
+}
+
+.code-block .code-lines code {
+  display: block;
   background: none;
-  padding: 0;
   border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  text-shadow: none;
+}
+
+.code-block .code-lines code:hover {
+  border: none;
+  box-shadow: none;
+}
+
+.code-line {
+  display: flex;
+  width: 100%;
+}
+
+/* Line numbers with green tint. Sticky, so the gutter stays put while the code
+   scrolls under it rather than sliding out of the frame. */
+.code-line-number {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: 0 0 48px;
+  padding: 0 1rem;
+  text-align: right;
+  color: var(--text-muted);
+  user-select: none;
+  background-color: #080e0b;
+  background-image: linear-gradient(rgba(0, 255, 136, 0.02), rgba(0, 255, 136, 0.02));
+  border-right: 1px solid rgba(0, 255, 136, 0.06);
+}
+
+.code-line-text {
+  padding: 0 1.5rem;
+  white-space: pre;
+  flex: 1 1 auto;
 }
 
 /* ============================================
-   PRISM.JS THEME — Enhanced syntax colors with glow
+   LINE HIGHLIGHTING
    ============================================ */
-.token.comment,
-.token.prolog,
-.token.doctype,
-.token.cdata {
-  color: #4a5f52;
+.code-line.marked {
+  background: rgba(0, 255, 136, 0.07);
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+}
+
+.code-line.marked .code-line-number {
+  color: var(--accent-primary);
+  background-image: linear-gradient(rgba(0, 255, 136, 0.09), rgba(0, 255, 136, 0.09));
+}
+
+/* ============================================
+   FRAGMENT — a block that carries on from the one above
+   ============================================ */
+.code-block.continues {
+  margin-top: -0.75rem;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.code-block.continues::before {
+  display: none;
+}
+
+.code-continues {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.25rem 0.6rem 0.25rem 0.35rem;
+  border: 1px dashed var(--border-hover);
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.code-caption {
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+/* ============================================
+   SYNTAX COLOURS
+   ============================================ */
+/* The order of these rules is the whole design. Every one of them has the same
+   specificity, so the last one that matches wins — which is how a token that
+   carries two classes gets the more specific of the two. `syn-keyword syn-
+   shell-builtin` reads as a builtin, `syn-builtin syn-keyword` reads as a
+   keyword, `syn-class syn-boolean` reads as a boolean. Moving a rule up or down
+   this list changes what those tokens look like.
+   See shared/syntaxHighlight.ts for why a token carries more than one class. */
+.code-block .syn-comment {
+  color: #64806e;
   font-style: italic;
 }
 
-.token.punctuation {
+.code-block .syn-punct,
+.code-block .syn-decorator {
   color: #7a8a82;
 }
 
-.token.property,
-.token.tag,
-.token.boolean,
-.token.number,
-.token.constant,
-.token.symbol,
-.token.deleted {
+.code-block .syn-operator {
+  color: #79c0ff;
+}
+
+.code-block .syn-number,
+.code-block .syn-property {
   color: #00e5ff;
   text-shadow: 0 0 10px rgba(0, 229, 255, 0.18);
 }
 
-.token.selector,
-.token.attr-name,
-.token.string,
-.token.char,
-.token.builtin,
-.token.inserted {
+.code-block .syn-string {
   color: #7ee787;
   text-shadow: 0 0 10px rgba(126, 231, 135, 0.12);
 }
 
-.token.operator,
-.token.entity,
-.token.url,
-.language-css .token.string,
-.style .token.string {
-  color: #79c0ff;
+.code-block .syn-builtin {
+  color: #7ee787;
+  text-shadow: 0 0 10px rgba(126, 231, 135, 0.12);
 }
 
-.token.atrule,
-.token.attr-value,
-.token.keyword {
+/* A capitalised word and a call are only names being *used*; the two places a
+   name is introduced — `def name`, `class Name` — are picked out below. */
+.code-block .syn-function,
+.code-block .syn-class {
+  color: inherit;
+  text-shadow: none;
+}
+
+.code-block .syn-keyword {
   color: #ff7b72;
   text-shadow: 0 0 12px rgba(255, 123, 114, 0.15);
 }
 
-.token.function,
-.token.class-name {
+.code-block .syn-boolean {
+  color: #00e5ff;
+  text-shadow: 0 0 10px rgba(0, 229, 255, 0.18);
+}
+
+.code-block .syn-shell-builtin,
+.code-block .syn-def,
+.code-block .syn-command {
   color: #d2a8ff;
   text-shadow: 0 0 10px rgba(210, 168, 255, 0.12);
 }
 
-.token.regex,
-.token.important,
-.token.variable {
+.code-block .syn-variable,
+.code-block .syn-flag,
+.code-block .syn-assign {
   color: #ffa657;
   text-shadow: 0 0 8px rgba(255, 166, 87, 0.1);
+}
+
+/* A mapping key in YAML is the one place the two syntaxes disagree about which
+   colour a key takes; this keeps it where it has always been. */
+.code-block .language-yaml .syn-property,
+.code-block[data-language='yaml'] .syn-property {
+  color: #ff7b72;
 }
 
 /* ============================================
@@ -341,83 +471,94 @@
   border-color: #e2e2e2;
 }
 
-[data-theme="light"] .line-numbers {
-  background: rgba(0, 0, 0, 0.03);
+[data-theme="light"] .code-block pre.code-lines {
+  color: #24292f;
 }
 
-[data-theme="light"] .token.comment,
-[data-theme="light"] .token.prolog,
-[data-theme="light"] .token.doctype,
-[data-theme="light"] .token.cdata {
-  color: #6e7681;
+[data-theme="light"] .code-line-number {
+  background-color: #f5f5f5;
+  background-image: linear-gradient(rgba(0, 0, 0, 0.03), rgba(0, 0, 0, 0.03));
+  border-right-color: rgba(0, 0, 0, 0.06);
 }
 
-[data-theme="light"] .token.punctuation {
+[data-theme="light"] .code-line.marked {
+  background: rgba(0, 137, 74, 0.08);
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+}
+
+[data-theme="light"] .code-line.marked .code-line-number {
+  background-image: linear-gradient(rgba(0, 137, 74, 0.1), rgba(0, 137, 74, 0.1));
+}
+
+[data-theme="light"] .code-block .syn-comment {
+  color: #6a717c;
+}
+
+[data-theme="light"] .code-block .syn-punct,
+[data-theme="light"] .code-block .syn-decorator {
   color: #57606a;
 }
 
-[data-theme="light"] .token.property,
-[data-theme="light"] .token.tag,
-[data-theme="light"] .token.boolean,
-[data-theme="light"] .token.number,
-[data-theme="light"] .token.constant,
-[data-theme="light"] .token.symbol,
-[data-theme="light"] .token.deleted {
+[data-theme="light"] .code-block .syn-operator {
+  color: #0550ae;
+}
+
+[data-theme="light"] .code-block .syn-number,
+[data-theme="light"] .code-block .syn-property {
   color: #cf222e;
   text-shadow: none;
 }
 
-[data-theme="light"] .token.selector,
-[data-theme="light"] .token.attr-name,
-[data-theme="light"] .token.string,
-[data-theme="light"] .token.char,
-[data-theme="light"] .token.builtin,
-[data-theme="light"] .token.inserted {
+[data-theme="light"] .code-block .syn-string,
+[data-theme="light"] .code-block .syn-builtin {
   color: #116329;
   text-shadow: none;
 }
 
-[data-theme="light"] .token.atrule,
-[data-theme="light"] .token.attr-value,
-[data-theme="light"] .token.keyword {
+[data-theme="light"] .code-block .syn-keyword {
   color: #cf222e;
   text-shadow: none;
 }
 
-[data-theme="light"] .token.function,
-[data-theme="light"] .token.class-name {
+[data-theme="light"] .code-block .syn-boolean {
+  color: #cf222e;
+  text-shadow: none;
+}
+
+[data-theme="light"] .code-block .syn-shell-builtin,
+[data-theme="light"] .code-block .syn-def,
+[data-theme="light"] .code-block .syn-command {
   color: #8250df;
   text-shadow: none;
 }
 
-[data-theme="light"] .code-block code {
-  color: #24292f;
+[data-theme="light"] .code-block .syn-variable,
+[data-theme="light"] .code-block .syn-flag,
+[data-theme="light"] .code-block .syn-assign {
+  color: #953800;
+  text-shadow: none;
 }
 
-[data-theme="light"] .token.regex,
-[data-theme="light"] .token.important,
-[data-theme="light"] .token.variable {
-  text-shadow: none;
+[data-theme="light"] .code-block .language-yaml .syn-property,
+[data-theme="light"] .code-block[data-language='yaml'] .syn-property {
+  color: #cf222e;
 }
 
 /* ============================================
    RESPONSIVE
    ============================================ */
 @media (max-width: 768px) {
-  .code-block pre {
-    padding: 1rem;
-  }
-
-  .code-block code {
+  .code-lines {
     font-size: 0.85rem;
   }
 
-  .line-numbers {
-    min-width: 40px;
-  }
-
-  .line-numbers span {
+  .code-line-number {
+    flex-basis: 40px;
     padding: 0 0.5rem;
     font-size: 0.8rem;
+  }
+
+  .code-line-text {
+    padding: 0 1rem;
   }
 }

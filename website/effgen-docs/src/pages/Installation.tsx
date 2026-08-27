@@ -1,423 +1,364 @@
-import React from 'react';
+import { Package } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Settings } from 'lucide-react';
-import DocPage, { InfoBox, ApiTable } from '../components/DocPage';
-import CodeBlock from '../components/CodeBlock';
+import {
+  ApiTable,
+  Callout,
+  CodeBlock,
+  CodeTabs,
+  DocPage,
+  SeeAlso,
+  Terminal,
+} from '../components/docs';
+import { pythonVersions, version } from '../siteData';
 
 export default function Installation() {
   return (
     <DocPage
-      title="Installation"
-      subtitle="Get effGen up and running in your environment. Supports pip, conda, and development installations."
-      icon={<Settings size={48} />}
-      breadcrumbs={[
-        { label: 'Docs', path: '/introduction' },
-        { label: 'Installation' },
-      ]}
+      subtitle="Installing effGen and picking the extras your work needs, on CPU, Apple Silicon or a GPU."
+      icon={<Package size={48} />}
     >
-      <h2>Quick Installation</h2>
       <p>
-        The fastest way to get started with effGen is via pip:
+        The base install is one line and carries the agent loop, the tool registry, the command
+        line and every provider adapter. The heavy optional stacks — vLLM, vector databases, OCR,
+        OpenCV, the speech models — are left out of it deliberately, and each is an extra you add
+        when you need it.
       </p>
 
-      <CodeBlock
-        code="pip install effgen"
-        language="bash"
-        filename="terminal"
+      <CodeBlock language="bash" code={`pip install effgen`} />
+
+      <Terminal
+        command={'python -c "import effgen; print(effgen.__version__)"'}
+        output={version}
+        caption="If this prints a version, the install is done."
       />
 
-      <h3>Conda-Forge</h3>
-      <CodeBlock
-        code="conda install -c conda-forge effgen"
-        language="bash"
-        filename="terminal"
-      />
-
-      <h2>Automated Installation (Recommended for Development)</h2>
+      <h2>Supported Python versions</h2>
       <p>
-        We provide a comprehensive installation script that automates the entire setup process.
-        This script handles conda environment creation, dependency installation, configuration,
-        and verification tests with a beautiful CLI interface.
+        effGen supports Python {pythonVersions.join(', ')}. 3.10 was dropped for {version}:{' '}
+        <code>tomllib</code>, <code>asyncio.timeout</code>, <code>datetime.UTC</code> and the{' '}
+        <code>TimeoutError</code> unification are all standard library from 3.11, and effGen
+        carried a hand-written fallback for each.
       </p>
 
-      <CodeBlock
-        code={`# Clone the repository
-git clone https://github.com/ctrl-gaurav/effGen.git
-cd effGen
-
-# Run the automated installer
-bash scripts/install_effgen.sh
-
-# Or with options:
-bash scripts/install_effgen.sh --install-vllm --download-models --dev`}
-        language="bash"
-        filename="terminal"
-      />
-
-      <InfoBox type="success" title="What the Installer Does">
-        <ul>
-          <li><strong>Environment Management:</strong> Creates and activates a conda environment named 'effgen'</li>
-          <li><strong>Dependency Installation:</strong> Installs all required packages and dependencies</li>
-          <li><strong>Framework Setup:</strong> Runs pip install -e . in development mode</li>
-          <li><strong>Configuration:</strong> Creates default config files and .env for API keys</li>
-          <li><strong>Verification:</strong> Runs tests to ensure everything is working correctly</li>
-          <li><strong>Beautiful CLI:</strong> Provides colored, step-by-step progress output</li>
-        </ul>
-      </InfoBox>
-
-      <h3>Installation Script Options</h3>
-      <ApiTable
-        headers={['Option', 'Description']}
-        rows={[
-          [<code>--skip-conda</code>, 'Use system Python instead of creating conda environment'],
-          [<code>--install-vllm</code>, 'Install vLLM for 5-10x faster inference'],
-          [<code>--download-models</code>, 'Download recommended models during installation'],
-          [<code>--dev</code>, 'Install development dependencies (pytest, black, etc.)'],
-          [<code>--minimal</code>, 'Install only core dependencies'],
-          [<code>--skip-verification</code>, 'Skip verification tests'],
-          [<code>--help</code>, 'Show all available options'],
-        ]}
-      />
-
-      <h2>Installation with vLLM (Recommended for Production)</h2>
-      <p>
-        For maximum performance in production environments, install with vLLM support.
-        vLLM provides 5-10x faster inference through continuous batching and PagedAttention:
-      </p>
-
-      <CodeBlock
-        code="pip install effgen[vllm]"
-        language="bash"
-        filename="terminal"
-      />
-
-      <InfoBox type="success" title="Real GPU support &amp; the torch constraints flow (v0.3.0)">
+      <Callout type="warning" title="Python 3.14 needs a lock file for the [all] extra">
         <p>
-          v0.3.0 documents CPU / CUDA-12.4 / CUDA-13 / vLLM install matrices and selects a{' '}
-          <strong>driver-compatible torch</strong>. A runtime guard warns once when NVML sees GPUs
-          but <code>torch.cuda</code> cannot use them (so an ABI / CUDA mismatch is loud, not
-          silent). Use the matching <code>constraints-cu1xx.txt</code> when installing extras so a
-          re-install never replaces a working torch:
+          The base install, the command line, <code>[dev]</code> and every provider extra install
+          normally on 3.14. <code>effgen[all]</code> is the exception, and the reason is pip's
+          resolver rather than any one package: <code>all</code> pulls <code>vllm</code> on a wide
+          range, and when pip backtracks over an unrelated conflict it walks that range backwards
+          until it reaches a release pinned to <code>numba==0.61</code>, which predates 3.14 and
+          whose source build refuses to run there. Pin the whole set instead.
         </p>
         <CodeBlock
-          code={`# Pin a working CUDA torch while installing extras
-pip install -e ".[all]" -c constraints-cu124.txt   # or constraints-cu130.txt
-# CPU-only
-pip install -e ".[all]" -c constraints-cpu.txt`}
           language="bash"
-          filename="terminal"
+          showLineNumbers={false}
+          code={`pip install -r requirements-all-py314-lock.txt
+pip install --no-deps effgen`}
         />
-      </InfoBox>
+      </Callout>
 
-      <h2>Apple Silicon (MLX)</h2>
+      <h2>Extras</h2>
       <p>
-        On Apple Silicon (M1/M2/M3/M4) effGen can use the MLX backend directly — no CUDA required.
-        <code>MLXEngine</code> handles text models; <code>MLXVLMEngine</code> handles vision-language models
-        across 30+ architectures. Both are optional deps and only install on <code>darwin/arm64</code>.
+        Install the slice you need rather than the everything-extra. Several extras can be
+        combined in one bracket — <code>pip install "effgen[rag,tools-docs]"</code>.
       </p>
-      <CodeBlock
-        code={`pip install effgen[mlx]        # text generation on Apple Silicon
-pip install effgen[mlx-vlm]    # vision-language models`}
-        language="bash"
-        filename="terminal"
-      />
 
-      <h2>GGUF (llama-cpp)</h2>
-      <p>
-        For <code>.gguf</code> quantized models the <code>GGUFEngine</code> wraps <code>llama-cpp-python</code>.
-        The model loader auto-routes any <code>.gguf</code> path to this engine.
-      </p>
-      <CodeBlock
-        code="pip install effgen[gguf]"
-        language="bash"
-        filename="terminal"
-      />
-
-      <h2>Other Optional Extras</h2>
+      <h3>Models and providers</h3>
       <ApiTable
-        headers={['Extra', 'Purpose']}
+        headers={['Extra', 'What it adds']}
         rows={[
-          [<code>effgen[vllm]</code>, '5-10× faster CUDA inference (PagedAttention, continuous batching)'],
-          [<code>effgen[cerebras]</code>, 'v0.2.1: Cerebras Cloud SDK backend with 4 registered models, 2 reliably free-tier callable models, streaming, model-dependent native tools, and rate limits'],
-          [<code>effgen[groq]</code>, 'v0.2.3+: Groq backend with 16 chat models, streaming, native tool-calling support, and rate-limit windows'],
-          [<code>effgen[together]</code>, 'v0.2.3+: Together AI backend with a 163-model catalog, streaming, refresh_models(), and drift detection'],
-          [<code>effgen[fireworks]</code>, 'v0.2.3+: Fireworks backend with 80 OpenAI-compatible chat models, 54 tool-capable models, and pricing metadata'],
-          [<code>effgen[replicate]</code>, 'v0.2.3+: Replicate backend with 38 models, 34 streaming-capable models, async prediction polling, SSE streaming, and timeout cancellation'],
-          [<code>effgen[hf]</code>, 'v0.2.3+: HuggingFace Inference Router backend with 124 bundled models and custom Inference Endpoint URLs'],
-          [<code>effgen[dev]</code>, 'pytest, pytest-asyncio, coverage, pytest-timeout, black, isort, flake8, mypy, bitsandbytes'],
-          [<code>effgen[mlx]</code>, 'MLX backend for Apple Silicon text generation'],
-          [<code>effgen[mlx-vlm]</code>, 'MLX-VLM for vision-language models on Apple Silicon'],
-          [<code>effgen[gguf]</code>, 'GGUF quantized models via llama-cpp-python'],
-          [<code>effgen[vector-db]</code>, 'faiss-cpu, chromadb, and qdrant-client; VectorMemoryStore currently supports faiss and chroma backends'],
-          [<code>effgen[rag]</code>, 'sentence-transformers + faiss-cpu for embeddings & hybrid search'],
-          [<code>effgen[finance]</code>, 'yfinance for StockPriceTool'],
-          [<code>effgen[data]</code>, 'matplotlib + plotly for PlotTool / DataFrame visualisations'],
-          [<code>effgen[documents]</code>, 'v0.2.6: pypdf + pdfplumber + python-docx + openpyxl + pandas (PDFTool, DOCXTool, ExcelTool)'],
-          [<code>effgen[audio]</code>, 'v0.2.6: faster-whisper + huggingface_hub (AudioTranscribeTool — auto-detects CPU/GPU and falls back to HF Inference)'],
-          [<code>effgen[tools]</code>, 'v0.2.6: pytesseract + Pillow (OCRTool, ImageInfoTool) — install Tesseract via apt/brew for the local primary path'],
-          [<code>effgen[geo]</code>, 'v0.2.6: staticmap + Pillow for MapsTool (OSM static PNG renderer). WeatherTool + GeocodeTool need no extras (stdlib + httpx).'],
-          [<code>effgen[rss]</code>, 'v0.2.5: feedparser for RSSFeedTool and NewsTool'],
-          [<code>effgen[youtube]</code>, 'v0.2.5: youtube-transcript-api + yt-dlp (YouTubeTranscriptTool, YouTubeMetadataTool)'],
-          [<code>effgen[translate]</code>, 'v0.2.5: argostranslate offline fallback + langdetect (TranslateTool, LanguageDetectTool)'],
-          [<code>effgen[qr]</code>, 'v0.2.5: qrcode[pil] + pyzbar + opencv-python-headless (QRGenerateTool, QRReadTool — fully local)'],
-          [<code>effgen[eval]</code>, 'rouge-score + nltk for evaluation scoring'],
-          [<code>effgen[monitoring]</code>, 'wandb + tensorboard experiment tracking'],
-          [<code>effgen[flash-attn]</code>, 'Flash Attention for faster transformer inference'],
-          [<code>effgen[search]</code>, 'Google / SerpAPI web-search backends'],
-          [<code>effgen[cloud-secrets]</code>, 'AWS Secrets Manager / Vault / Azure Key Vault'],
-          [<code>effgen[all]</code>, 'Most feature and provider extras bundled (excludes dev, flash-attn, and Apple Silicon MLX extras)'],
+          [<code>api</code>, 'Every hosted-inference SDK at once — Groq, Together, Fireworks, Replicate, Cerebras and the HuggingFace hub client.'],
+          [<code>groq</code>, 'The Groq SDK on its own.'],
+          [<code>together</code>, 'The Together SDK on its own.'],
+          [<code>fireworks</code>, 'The Fireworks SDK on its own.'],
+          [<code>replicate</code>, 'The Replicate SDK on its own.'],
+          [<code>cerebras</code>, 'The Cerebras Cloud SDK on its own.'],
+          [<code>hf</code>, 'The HuggingFace hub client, for the Inference API and for downloads.'],
+        ]}
+        caption={
+          <>
+            OpenAI and Gemini need no extra — their clients are base dependencies. Nothing here is
+            needed to talk to a server of your own; see{' '}
+            <Link to="/openai-compatible">Any OpenAI-compatible server</Link>.
+          </>
+        }
+      />
+
+      <h3>Running weights locally</h3>
+      <ApiTable
+        headers={['Extra', 'What it adds']}
+        rows={[
+          [<code>vllm</code>, 'The vLLM engine, for NVIDIA GPUs. Read the version table below before installing it.'],
+          [<code>local</code>, 'Quantization and GGUF: bitsandbytes and llama-cpp-python.'],
+          [<code>gguf</code>, 'llama-cpp-python on its own, for GGUF weights.'],
+          [<code>mlx</code>, 'The MLX engine, for Apple Silicon.'],
+          [<code>mlx-vlm</code>, 'MLX plus vision-language model support.'],
+          [<code>flash-attn</code>, 'FlashAttention. Installed separately — see below.'],
+          [<code>grammar</code>, 'Constrained decoding through outlines.'],
         ]}
       />
 
-      <h2>Cloud Provider Extras (v0.2.1-v0.2.3)</h2>
-      <p>
-        Cloud adapters are optional where they need provider SDKs. Install only the
-        providers you use, or install <code>effgen[all]</code> for most extras.
-      </p>
-      <CodeBlock
-        code={`pip install "effgen[cerebras]"
-pip install "effgen[groq]"
-pip install "effgen[together]"
-pip install "effgen[fireworks]"
-pip install "effgen[replicate]"
-pip install "effgen[hf]"`}
-        language="bash"
-        filename="terminal"
-      />
-
-      <InfoBox type="info" title="vLLM Benefits">
-        <ul>
-          <li><strong>5-10x faster inference</strong> compared to standard Transformers</li>
-          <li><strong>Automatic multi-GPU support</strong> with tensor parallelism</li>
-          <li><strong>PagedAttention</strong> for efficient memory management</li>
-          <li><strong>Continuous batching</strong> for high throughput</li>
-        </ul>
-      </InfoBox>
-
-      <h2>Full Installation with All Features</h2>
-      <p>
-        To install effGen with the bundled feature extras:
-      </p>
-
-      <CodeBlock
-        code="pip install effgen[all]"
-        language="bash"
-        filename="terminal"
-      />
-
-      <p>This includes most optional feature dependencies:</p>
-      <ul>
-        <li>vLLM for fast inference</li>
-        <li>Vector stores for long-term memory and RAG</li>
-        <li>Search, cloud secrets, monitoring, finance, data, eval, GGUF, and cloud provider extras</li>
-        <li>Not included: <code>dev</code>, <code>flash-attn</code>, <code>mlx</code>, and <code>mlx-vlm</code></li>
-      </ul>
-
-      <h2>Development Installation</h2>
-      <p>
-        For contributors or those who want the latest features from the main branch:
-      </p>
-
-      <CodeBlock
-        code={`git clone https://github.com/ctrl-gaurav/effGen.git
-cd effGen
-pip install -e ".[dev]"`}
-        language="bash"
-        filename="terminal"
-      />
-
-      <h2>System Requirements</h2>
-
+      <h3>Retrieval, documents and media</h3>
       <ApiTable
-        headers={['Requirement', 'Minimum', 'Recommended']}
+        headers={['Extra', 'What it adds']}
         rows={[
-          ['Python', '3.11+', '3.12+'],
-          ['RAM', '8GB', '16GB+'],
-          ['GPU VRAM', '4GB (for 3B models)', '16GB+ (for 7B+ models)'],
-          ['CUDA', '11.8+ (optional)', '12.1+'],
-          ['Disk Space', '10GB', '50GB+'],
+          [<code>rag</code>, 'sentence-transformers and faiss-cpu — enough to index and search a corpus.'],
+          [<code>vector-db</code>, 'faiss-cpu plus the Chroma and Qdrant clients.'],
+          [<code>documents</code>, 'PDF, DOCX and XLSX reading, pandas and reportlab.'],
+          [<code>tools-docs</code>, 'The document-parsing tools only — the same readers without reportlab.'],
+          [<code>tools-web</code>, 'The web-search and browsing tools.'],
+          [<code>search</code>, 'tools-web plus the DuckDuckGo client.'],
+          [<code>tools</code>, 'OCR through pytesseract and Pillow.'],
+          [<code>qr</code>, 'QR generation and reading, with OpenCV.'],
+          [<code>audio</code>, 'faster-whisper and pydub, for the transcription tools.'],
+          [<code>youtube</code>, 'Transcript and metadata tools for YouTube.'],
+          [<code>rss</code>, 'The RSS reader.'],
+          [<code>translate</code>, 'Offline translation and language detection.'],
+          [<code>geo</code>, 'Static map rendering.'],
+          [<code>finance</code>, 'yfinance, for the market-data tools.'],
+          [<code>data</code>, 'matplotlib and plotly, for the plotting tool.'],
+          [<code>prompts-data</code>, 'SQL parsing for the data-domain prompt templates.'],
         ]}
       />
 
-      <InfoBox type="warning" title="GPU Requirements">
-        <ul>
-          <li><strong>No GPU:</strong> Use CPU mode with smaller models (0.5B-1.5B) - slower but functional</li>
-          <li><strong>4GB VRAM:</strong> Run 3B models with 4-bit quantization</li>
-          <li><strong>8GB VRAM:</strong> Run 7B models with 4-bit quantization</li>
-          <li><strong>16GB+ VRAM:</strong> Run larger models with full precision</li>
-        </ul>
-      </InfoBox>
+      <h3>Serving, operating and developing</h3>
+      <ApiTable
+        headers={['Extra', 'What it adds']}
+        rows={[
+          [<code>server</code>, 'OIDC/JWT authentication and Prometheus metrics for the API server.'],
+          [<code>monitoring</code>, 'Weights & Biases, TensorBoard and gitpython.'],
+          [<code>cloud-secrets</code>, 'Secret backends: AWS, Vault and Azure Key Vault.'],
+          [<code>lambda</code>, 'The Mangum adapter, for running the server on AWS Lambda.'],
+          [<code>jupyter</code>, 'IPython, a kernel and the Jupyter console.'],
+          [<code>eval</code>, 'rouge-score and nltk, for the evaluation metrics.'],
+          [<code>dev</code>, 'The test and lint stack: pytest and its plugins, ruff, mypy.'],
+          [<code>all</code>, 'Every optional dependency, so the full test suite runs. Large, slow to resolve, and needs the lock below.'],
+        ]}
+      />
 
-      <h2>Verify Installation</h2>
+      <h2>Installing the all extra</h2>
       <p>
-        After installation, verify everything is working correctly:
+        <code>[all]</code> pulls vLLM plus every provider SDK and the full Google client stack.
+        Under the <code>protobuf&gt;=5.29.5</code> security floor that dependency graph is too deep
+        for pip to resolve on its own, and the install ends in{' '}
+        <code>resolution-too-deep</code>. Install it with the committed constraints lock, which
+        pins one consistent solution:
+      </p>
+
+      <CodeTabs
+        tabs={[
+          {
+            label: 'From a clone',
+            language: 'bash',
+            code: `pip install -e ".[all]" -c requirements-all-lock.txt`,
+          },
+          {
+            label: 'From PyPI',
+            language: 'bash',
+            code: `pip install "effgen[all]" -c https://raw.githubusercontent.com/ctrl-gaurav/effGen/main/requirements-all-lock.txt`,
+          },
+          {
+            label: 'On Python 3.14',
+            language: 'bash',
+            code: `pip install -r requirements-all-py314-lock.txt
+pip install --no-deps effgen`,
+          },
+        ]}
+      />
+
+      <p>
+        The two locks are not interchangeable: the 3.11 lock pins{' '}
+        <code>torch==2.2.1</code> and <code>vllm==0.4.1</code>, neither of which has a 3.14 wheel.
+        Regenerate a lock after changing dependencies with{' '}
+        <code>uv pip compile pyproject.toml --extra all --output-file requirements-all-lock.txt</code>.
+      </p>
+
+      <h2>NVIDIA GPUs: matching torch to your driver</h2>
+      <p>
+        PyTorch wheels are built against a specific CUDA runtime, and an NVIDIA driver is forward
+        compatible only. A driver reporting <code>CUDA Version: 12.4</code> can run a torch built
+        for CUDA 12.x but not one built for CUDA 13 — and the failure is quiet:{' '}
+        <code>torch.cuda.is_available()</code> is <code>False</code> while{' '}
+        <code>nvidia-smi</code> still lists the GPUs, and everything runs slowly on the CPU.
       </p>
 
       <CodeBlock
-        code={`python -c "import effgen; print(f'effGen v{effgen.__version__}')"
-
-# Test model loading
-python -c "
-from effgen import load_model
-model = load_model('Qwen/Qwen2.5-0.5B-Instruct', engine='transformers')
-result = model.generate('Hello, world!')
-print(result.text)
-"`}
         language="bash"
-        filename="terminal"
+        code={`nvidia-smi    # top right: "CUDA Version: 12.4"`}
       />
 
-      <h2>Environment Setup</h2>
-
-      <h3>API Keys (Optional)</h3>
-      <p>
-        If you plan to use external API providers, set up your environment variables.
-        On v0.2.3 and later, verify them with <code>effgen doctor</code>:
-      </p>
+      <ApiTable
+        headers={['Your environment', 'Index URL', 'Install']}
+        rows={[
+          ['CPU only', <code>cpu</code>, <code>pip install torch --index-url https://download.pytorch.org/whl/cpu</code>],
+          ['CUDA 12.1–12.7 driver', <code>cu124</code>, <code>pip install "torch&gt;=2.0,&lt;3" --index-url https://download.pytorch.org/whl/cu124</code>],
+          ['CUDA 12.8+ driver', <code>cu128</code>, <code>pip install "torch&gt;=2.0,&lt;3" --index-url https://download.pytorch.org/whl/cu128</code>],
+          ['CUDA 13.x driver', <code>cu130</code>, <code>pip install "torch&gt;=2.0,&lt;3" --index-url https://download.pytorch.org/whl/cu130</code>],
+        ]}
+        caption="Install the matching torch wheel before installing effGen. The repository's ./install.sh detects the driver and does this for you."
+      />
 
       <CodeBlock
-code={`# OpenAI
-export OPENAI_API_KEY="your-openai-key"
-export OPENAI_ORG_ID="optional-openai-org-id"
-
-# Anthropic
-export ANTHROPIC_API_KEY="your-anthropic-key"
-
-# Google (Gemini)
-export GOOGLE_API_KEY="your-google-key"
-
-# Cerebras
-export CEREBRAS_API_KEY="your-cerebras-key"
-
-# Groq
-export GROQ_API_KEY="your-groq-key"
-
-# Together AI
-export TOGETHER_API_KEY="your-together-key"
-
-# Fireworks
-export FIREWORKS_API_KEY="your-fireworks-key"
-
-# Replicate
-export REPLICATE_API_TOKEN="your-replicate-token"
-
-# HuggingFace Inference
-export HF_TOKEN="your-hf-token"
-
-# v0.2.3+: check ProviderRegistry auth readiness
-effgen doctor
-
-# v0.2.4+: persistent cost dashboard + budget guardrails
-effgen cost today
-effgen cost set-budget 1.0
-
-# Or use a .env file
-echo 'OPENAI_API_KEY=your-openai-key' >> .env
-echo 'ANTHROPIC_API_KEY=your-anthropic-key' >> .env
-echo 'GROQ_API_KEY=your-groq-key' >> .env`}
         language="bash"
-        filename=".bashrc or .env"
+        code={`# a host with a CUDA 12.4 driver
+pip install "torch>=2.0,<3" --index-url https://download.pytorch.org/whl/cu124
+pip install effgen
+python -c "import torch; print(torch.cuda.is_available())"   # True`}
       />
 
-      <h3>State Directory (v0.2.4+)</h3>
+      <h3>Keeping the GPU torch when you install an extra</h3>
       <p>
-        v0.2.4 writes persistent cost + rate-limit state under
-        <code> ~/.effgen/</code>:
-      </p>
-      <ul>
-        <li><code>~/.effgen/costs.sqlite</code> — every paid API call (SQLiteCostStore)</li>
-        <li><code>~/.effgen/rate_limits.sqlite</code> — cross-process rate-limit budgets (SQLiteRateLimitStore, WAL mode)</li>
-        <li><code>~/.effgen/budget.json</code> — daily / monthly budget caps used by <code>effgen cost</code></li>
-        <li><code>~/.effgen/.env</code> — optional shared API keys; loaded by <code>effgen doctor</code> and the CLI before any command runs</li>
-      </ul>
-
-      <h3>HuggingFace Token (Optional)</h3>
-      <p>
-        For gated models on HuggingFace:
+        Installing the wrong wheel is half the trap. The other half is that once you have a
+        working GPU torch, a later extras install that pulls a torch-pinning dependency can let
+        pip's resolver upgrade torch back to a newer-CUDA wheel with no warning. A constraints
+        file per CUDA line prevents it:
       </p>
 
       <CodeBlock
-        code={`# Login to HuggingFace
-huggingface-cli login
-
-# Or set the token directly
-export HF_TOKEN="your-huggingface-token"`}
         language="bash"
-        filename="terminal"
+        code={`pip install "torch>=2.0,<3" --index-url https://download.pytorch.org/whl/cu124
+pip install -e ".[local]" -c constraints-cu124.txt
+python -c "import torch; print(torch.cuda.is_available())"   # still True`}
       />
 
-      <h2>Docker Installation</h2>
-      <p>
-        For containerized deployments:
-      </p>
-
-      <CodeBlock
-        code={`# Build the production server image (multi-stage; non-root; HEALTHCHECK on /health)
-docker build -f deploy/docker/Dockerfile --build-arg EXTRAS=server -t effgen:0.3.1 .
-
-# Run (dev mode — auth disabled, for local testing only)
-docker run --rm -p 8080:8080 -e EFFGEN_DEV_MODE=1 effgen:0.3.1
-curl http://localhost:8080/health   # {"status":"ok"}
-
-# Or build the base image from the repo root Dockerfile
-docker build -t effgen .
-docker run --gpus all -it effgen`}
-        language="bash"
-        filename="terminal"
-      />
-      <p>
-        See the <a href="/docs/deployment">Deployment</a> guide for Helm, AWS Lambda, and the
-        Cloudflare Worker edge proxy, plus production OIDC-auth configuration.
-      </p>
-
-      <h2>Troubleshooting</h2>
-
-      <h3>CUDA Not Found</h3>
-      <CodeBlock
-        code={`# Check CUDA installation
-nvidia-smi
-
-# If not found, install CUDA toolkit
-# Ubuntu/Debian:
-sudo apt install nvidia-cuda-toolkit
-
-# Or use conda:
-conda install -c conda-forge cudatoolkit=11.8`}
-        language="bash"
-        filename="terminal"
+      <ApiTable
+        headers={['Driver CUDA version', 'Constraints file']}
+        rows={[
+          ['12.1–12.7', <code>constraints-cu124.txt</code>],
+          ['12.8+', <code>constraints-cu128.txt</code>],
+          ['13.x', <code>constraints-cu130.txt</code>],
+          ['CPU only', <code>constraints-cpu.txt</code>],
+        ]}
+        caption="Each file carries its own --extra-index-url, so it also works on a fresh environment with no torch installed."
       />
 
-      <h3>Out of Memory Errors</h3>
-      <CodeBlock
-        code={`# Use quantization to reduce memory usage
-from effgen import load_model
-
-model = load_model(
-    "Qwen/Qwen2.5-7B-Instruct",
-    engine="transformers",
-    quantization="4bit"  # or "8bit"
-)`}
-        language="python"
-        filename="reduce_memory.py"
-      />
-
-      <h3>Slow Model Loading</h3>
-      <CodeBlock
-        code={`# Pre-download models
-from huggingface_hub import snapshot_download
-
-snapshot_download("Qwen/Qwen2.5-7B-Instruct")
-
-# Models are cached in ~/.cache/huggingface/`}
-        language="python"
-        filename="predownload.py"
-      />
-
-      <InfoBox type="success" title="Next Steps">
+      <Callout type="note" title="effGen tells you when torch and the driver disagree">
         <p>
-          Installation complete! Head to the <Link to="/quickstart">Quick Start guide</Link> to build your first agent.
+          When effGen sees physical NVIDIA GPUs but <code>torch.cuda</code> cannot use them, it
+          prints one warning naming the torch CUDA build against the driver's CUDA version, rather
+          than running silently on the CPU. Set <code>EFFGEN_NO_GPU_WARN=1</code> to silence it if
+          CPU-only on a GPU box is what you meant.
         </p>
-      </InfoBox>
+      </Callout>
+
+      <h2>Installing vLLM</h2>
+      <p>
+        vLLM gives much higher throughput than the transformers engine and is the trickiest
+        optional stack to install, because each vLLM release pins one exact torch version and that
+        torch build decides the CUDA runtime. The latest vLLM pins a CUDA-13 torch, so a plain{' '}
+        <code>pip install effgen[vllm]</code> on a CUDA-12 driver pulls{' '}
+        <code>torch ...+cu130</code>, which then fails to import vLLM's compiled extension with{' '}
+        <code>libcudart.so.13: cannot open shared object file</code>.
+      </p>
+
+      <ApiTable
+        headers={['Driver CUDA', 'torch build', 'Known-good vLLM']}
+        rows={[
+          ['12.1–12.7', <code>torch==2.6.0+cu124</code>, <code>vllm==0.8.5.post1</code>],
+          ['12.8+', <code>torch==2.7.1+cu128</code>, <code>vllm==0.10.1.1</code>],
+          ['13.x (driver ≥ 580)', <code>torch&gt;=2.11+cu130</code>, <>latest — <code>pip install effgen[vllm]</code> works directly</>],
+        ]}
+      />
+
+      <CodeBlock
+        language="bash"
+        code={`# CUDA 12.4 box: a CUDA-12.4 torch first, then a matching vLLM
+pip install effgen
+pip install "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" \\
+    --index-url https://download.pytorch.org/whl/cu124
+pip install "vllm==0.8.5.post1"
+python -c "import torch; from vllm import LLM; print('vLLM ready:', torch.cuda.is_available())"`}
+      />
+
+      <p>
+        <code>pip check</code> must report no conflicts afterwards; if vLLM and torch disagree on
+        versions, the pair is mismatched. Two behaviours make a mismatch diagnosable rather than
+        mysterious: <code>VLLMEngine.load()</code> reports an ABI or CUDA import failure as exactly
+        that instead of "vLLM is not installed", and{' '}
+        <code>load_model(..., engine="auto-fast")</code> uses vLLM only when it imports and a GPU
+        is usable, falling back to the transformers engine otherwise.
+      </p>
+
+      <h2>Installing flash-attn</h2>
+      <p>
+        <code>flash-attn</code> is kept out of <code>[all]</code> on purpose. Its own{' '}
+        <code>setup.py</code> imports <code>torch</code> while pip is generating wheel metadata,
+        and pip's isolated build environment has no torch at that moment — so any package that
+        lists it as a dependency breaks <code>pip install</code> for everyone. Install it in a
+        second step with build isolation off:
+      </p>
+
+      <CodeBlock
+        language="bash"
+        code={`pip install -e ".[all]" -c requirements-all-lock.txt
+pip install flash-attn --no-build-isolation`}
+      />
+
+      <p>It needs an NVIDIA GPU of compute capability 7.5 or newer (Turing and later), a{' '}
+        <code>nvcc</code> matching your torch CUDA version, GCC 9 or newer, and a few GB of RAM for
+        a compile that can take 10–30 minutes. If the build fails, prefer the pre-built wheel from
+        the FlashAttention releases page matching your exact Python, torch and CUDA triple.
+      </p>
+
+      <h2>Apple Silicon</h2>
+      <p>
+        MLX is the local engine for Apple Silicon; <code>[mlx-vlm]</code> adds vision-language
+        models on top. Neither needs CUDA, and neither is installed by the base package.
+      </p>
+      <CodeBlock language="bash" code={`pip install "effgen[mlx]"
+pip install "effgen[mlx-vlm]"   # also vision-language models`} />
+      <p>
+        effGen picks the engine for you when you do not name one —{' '}
+        <Link to="/local-models">Local models and engines</Link> shows how to check what it chose.
+      </p>
+
+      <h2>Checking the install</h2>
+      <CodeBlock
+        language="bash"
+        code={`python -c "import effgen; print(effgen.__version__)"
+python -c "from effgen import Agent; print(Agent)"
+effgen --version
+effgen doctor`}
+      />
+      <p>
+        <code>effgen doctor</code> reports which provider keys effGen can see and prints a system
+        report. It prints no key value.{' '}
+        <Link to="/configuration">Configuration</Link> covers where it looks for them.
+      </p>
+
+      <h2>When it goes wrong</h2>
+      <ApiTable
+        headers={['What you see', 'What it means', 'What to do']}
+        rows={[
+          [
+            <code>resolution-too-deep</code>,
+            <>pip could not resolve <code>[all]</code> on its own.</>,
+            <>Install it with the constraints lock, as above.</>,
+          ],
+          [
+            <code>torch.cuda.is_available() == False</code>,
+            'The torch wheel is built for a newer CUDA runtime than the driver supports.',
+            'Install the torch wheel matching the driver, then reinstall extras under the matching constraints file.',
+          ],
+          [
+            <code>libcudart.so.13: cannot open shared object file</code>,
+            'vLLM was built against a CUDA-13 torch that the driver cannot run.',
+            'Pin the vLLM/torch pair from the table above.',
+          ],
+          [
+            <>a <code>flash-attn</code> build failing on <code>import torch</code></>,
+            "pip's isolated build environment has no torch.",
+            <>Install it separately with <code>--no-build-isolation</code>.</>,
+          ],
+          [
+            <><code>ModuleNotFoundError</code> for an optional dependency at run time</>,
+            'The feature you used lives behind an extra.',
+            'The error names the extra to install. The tables above say what each one carries.',
+          ],
+        ]}
+      />
+
+      <SeeAlso paths={['/quickstart', '/first-project', '/local-models']} />
     </DocPage>
   );
 }

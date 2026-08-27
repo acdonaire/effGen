@@ -252,6 +252,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
+  text-align: left;
   width: 100%;
   padding: 0.75rem 1.5rem;
   background: none;
@@ -271,6 +273,10 @@
 }
 
 .nav-section-title span {
+  /* A two-line group name reads as one left-aligned block, like the one-line
+     names beside it, rather than centring itself between the chevron and the
+     edge. */
+  text-align: left;
   background: linear-gradient(90deg, var(--text-tertiary), var(--accent-primary));
   background-size: 200% 100%;
   -webkit-background-clip: text;
@@ -508,6 +514,10 @@
 }
 
 [data-theme="light"] .nav-section-title span {
+  /* A two-line group name reads as one left-aligned block, like the one-line
+     names beside it, rather than centring itself between the chevron and the
+     edge. */
+  text-align: left;
   background: linear-gradient(90deg, var(--text-tertiary), var(--accent-primary));
   background-size: 200% 100%;
   -webkit-background-clip: text;
@@ -554,4 +564,71 @@
   .sidebar-close {
     display: flex;
   }
+}
+
+/* ============================================
+   SEARCH RESULTS
+   ============================================ */
+/* The search box looks across page titles and the headings inside them, so a
+   result can be a page or a section of one. A section result carries the page
+   it belongs to underneath it, because "Rate limiting" on its own does not say
+   which page it is on. */
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.search-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.search-result:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.search-result-icon {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+  color: var(--text-tertiary);
+}
+
+.search-result:hover .search-result-icon {
+  color: var(--accent-primary);
+}
+
+.search-result-text {
+  min-width: 0;
+}
+
+.search-result-title {
+  display: block;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.search-result-page {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.search-empty {
+  padding: 0.75rem;
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+  line-height: 1.6;
 }

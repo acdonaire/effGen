@@ -1,307 +1,501 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
-import { BookOpen } from 'lucide-react';
-import DocPage, { InfoBox, ApiTable, FeatureList } from '../components/DocPage';
-import CodeBlock from '../components/CodeBlock';
-import MermaidDiagram from '../components/MermaidDiagram';
+import { Library } from 'lucide-react';
+import {
+  ApiTable,
+  Callout,
+  CodeBlock,
+  DocPage,
+  ParamTable,
+  SeeAlso,
+  Terminal,
+} from '../components/docs';
+import { version } from '../siteData';
 
 export default function RAG() {
-  const pipeline = `
-flowchart LR
-    D[Documents] --> I[DocumentIngester]
-    I --> C[Chunkers]
-    C --> S[HybridSearchEngine]
-    S --> R[Reranker]
-    R --> B[ContextBuilder]
-    B --> A[Agent]
-    A --> O[Answer + Citations]
-`;
-
   return (
     <DocPage
-      title="RAG Pipeline"
-      subtitle="Hybrid dense + BM25 + keyword search with RRF fusion, semantic/code/table/hierarchical chunkers, rerankers, and inline [N] citations."
-      icon={<BookOpen size={48} />}
-      breadcrumbs={[
-        { label: 'Docs', path: '/introduction' },
-        { label: 'Advanced', path: '/multi-agent' },
-        { label: 'RAG' },
-      ]}
+      subtitle="Indexing documents, retrieving passages, and answering with citations back to them."
+      icon={<Library size={48} />}
     >
-      <h2>Overview</h2>
       <p>
-        <code>effgen.rag</code> is a production-grade retrieval pipeline built on top of the
-        <code> Retrieval</code> tool. Core formats (txt, md, json, jsonl, csv, html) work with no
-        external dependencies; pdf/docx/epub and sentence-transformers embeddings are opt-in.
+        Point an agent at a directory and it answers from what is in it, with a citation on every
+        claim. Underneath that is a pipeline you can take apart — ingestion, chunking, hybrid
+        search, reranking, context building and attribution — and use one stage of on its own.
       </p>
 
-      <MermaidDiagram chart={pipeline} title="RAG Pipeline" />
+      <h2>The whole thing, as one preset</h2>
 
-      <InfoBox type="success" title="New in v0.3.1 — connected memory, honest PDFs, traceable answers">
-        <p>
-          A RAG agent now accepts a pre-built <code>VectorMemoryStore</code> as its{' '}
-          <code>knowledge_base</code> (single, or mixed in a list with paths/text), folding its
-          stored entries into the retrieval index — so a vector knowledge base built with the
-          memory tools connects straight to retrieval-augmented answering (an empty store still
-          fails loudly). <strong>PDFs ingest out of the box</strong>: ingestion falls back to{' '}
-          <code>pypdf</code> / <code>pdfplumber</code> when <code>pymupdf</code> is absent, and a
-          skipped file&apos;s error now names <em>why</em> each was skipped instead of a bare
-          &quot;0 documents to index&quot;. <code>response.sources</code> and{' '}
-          <code>response.citations</code> are populated from the retrieved chunks.
-        </p>
-      </InfoBox>
-      <CodeBlock
-        code={`from effgen import create_agent
-from effgen.memory import VectorMemoryStore
+      <CodeBlock filename="rag.py" code={`import pathlib
 
-# Build (or persist + reopen) a vector knowledge base, then hand it to RAG
-store = VectorMemoryStore(persist_directory="./kb")
-agent = create_agent("rag", "openai:gpt-5-nano", knowledge_base=store)
-print(agent.run("What is our breach-notification window?").text)`}
-      />
+from effgen import create_agent
 
-      <h2>Quickest Path — the <code>rag</code> Preset</h2>
-      <CodeBlock
-        code={`from effgen import load_model
-from effgen.presets import create_agent
+docs = pathlib.Path("/tmp/effgen-kb")
+docs.mkdir(exist_ok=True)
+(docs / "architecture.md").write_text(
+    "# Scaling\\n\\n"
+    "effGen scales horizontally: run one server per replica behind a load balancer.\\n"
+    "State lives in the session store, so any replica can answer any request.\\n"
+)
+(docs / "storage.md").write_text(
+    "# Storage\\n\\nSessions are JSON files under ~/.effgen/sessions.\\n"
+)
 
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-agent = create_agent("rag", model, knowledge_base="./docs/")
+agent = create_agent("rag", "gpt-5-nano", provider="openai", knowledge_base=str(docs))
 
-answer = agent.run("How do I configure guardrails?")
-print(answer.output)
-for c in answer.citations:      # list[Citation]
-    print(f"  [{c.index}] {c.source}  (score={c.relevance_score:.3f})")
-print(answer.sources)           # de-duplicated source list`}
-        language="python"
-        filename="rag_preset.py"
-      />
+response = agent.run("What does the architecture document say about scaling?")
+print(response.text)
+print("sources:", response.sources)`} />
 
-      <InfoBox type="info" title="Why a preset?">
-        <p>
-          The <code>rag</code> preset auto-ingests the knowledge base on construction, populates
-          the <code>Retrieval</code> tool, and sets a system prompt that instructs the model to
-          cite inline with <code>[N]</code> markers and say "I don't know" when the KB has no
-          match — rather than hallucinate.
-        </p>
-      </InfoBox>
-
-      <h2>Document Ingestion</h2>
-      <p>
-        <code>DocumentIngester</code> walks a directory (or takes a list of paths), loads each
-        file, normalises text, and emits <code>IngestedChunk</code> objects with a SHA-256
-        content hash for deduplication.
-      </p>
-
-      <CodeBlock
-        code={`from effgen.rag import DocumentIngester
-
-ingester = DocumentIngester(show_progress=True)
-chunks = ingester.ingest("./docs/")
-print(f"Ingested {len(chunks)} chunks")
-for c in chunks[:3]:
-    print(c.id, c.source, c.metadata)`}
-        language="python"
-        filename="ingest.py"
+      <Terminal
+        command="python rag.py"
+        output={`The architecture document describes horizontal scaling for effGen: run one server per replica behind a load balancer, with state stored in a session store so any replica can handle requests. [1]
+sources: ['/tmp/effgen-kb/architecture.md']`}
+        caption={`Run against effGen ${version}. The [1] marker is the agent's own citation, and response.sources names the file it came from.`}
       />
 
       <ApiTable
-        headers={['Format', 'Built-in', 'Requires']}
+        headers={['On the response', 'What it holds']}
         rows={[
-          ['txt / md', '✓', 'stdlib'],
-          ['json / jsonl', '✓', 'stdlib'],
-          ['csv', '✓', 'stdlib'],
-          ['html', '✓', 'stdlib html.parser'],
-          ['pdf', 'optional', 'pymupdf'],
-          ['docx', 'optional', 'python-docx'],
-          ['epub', 'optional', 'ebooklib + bs4'],
+          [<code>response.text</code>, 'The answer, with inline [1], [2] markers where a passage was used.'],
+          [
+            <code>response.citations</code>,
+            <>
+              One <code>Citation</code> per marker — <code>index</code>, <code>source</code>,{' '}
+              <code>chunk_id</code>, <code>relevance_score</code>, <code>quote</code>,{' '}
+              <code>page</code>, <code>section</code>.
+            </>,
+          ],
+          [<code>response.sources</code>, 'The source files, deduplicated.'],
         ]}
       />
 
-      <h2>Chunking Strategies</h2>
-      <FeatureList
-        features={[
-          { icon: '🧠', title: 'SemanticChunker', description: 'Splits at natural sentence / paragraph boundaries within a target size.' },
-          { icon: '💻', title: 'CodeChunker', description: 'Respects function / class boundaries for py, js, ts, go, rust, java.' },
-          { icon: '📊', title: 'TableChunker', description: 'Keeps markdown / CSV tables intact rather than splitting rows.' },
-          { icon: '🌳', title: 'HierarchicalChunker', description: 'Preserves heading hierarchy (H1 → H2 → H3) as chunk context.' },
+      <h2>Ingesting documents</h2>
+
+      <CodeBlock filename="ingest.py" code={`from effgen.rag import DocumentIngester
+
+# dedupe is on by default; it drops chunks with an identical content hash.
+chunks = DocumentIngester(chunk_size=500, chunk_overlap=100).ingest(
+    "/tmp/effgen-kb", recursive=True
+)
+
+print(len(chunks), "chunks")
+for chunk in chunks:
+    print(" ", chunk.source, "|", chunk.content[:60].replace("\\n", " "))`} />
+
+      <Terminal command="python ingest.py" output={`2 chunks
+  /tmp/effgen-kb/storage.md | # Storage  Sessions are JSON files under ~/.effgen/sessions.
+  /tmp/effgen-kb/architecture.md | # Scaling  effGen scales horizontally: run one server per re`} />
+
+      <ParamTable
+        nameLabel="Argument"
+        params={[
+          {
+            name: 'chunker',
+            type: 'Any',
+            default: 'None',
+            description: 'A chunker instance. Without one, fixed-size chunking is used.',
+          },
+          { name: 'chunk_size', type: 'int', default: '500', description: 'Target characters per chunk.' },
+          { name: 'chunk_overlap', type: 'int', default: '100', description: 'How much of the previous chunk each one repeats.' },
+          {
+            name: 'dedupe',
+            type: 'bool',
+            default: 'True',
+            description: 'Drop chunks with an identical content hash. On by default.',
+          },
+          { name: 'show_progress', type: 'bool', default: 'True', description: 'Draw a progress bar while reading. Turn it off in a script.' },
+        ]}
+        caption={
+          <>
+            <code>DocumentIngester(...)</code>; then{' '}
+            <code>ingest(source, recursive=True)</code>, which takes a path or a list of paths.
+          </>
+        }
+      />
+
+      <ApiTable
+        headers={['Formats', 'Which']}
+        rows={[
+          ['Built in', <><code>txt</code>, <code>md</code>, <code>json</code>, <code>jsonl</code>, <code>csv</code>, <code>html</code></>],
+          [
+            'With an extra package',
+            <>
+              <code>pdf</code> (pypdf), <code>docx</code> (python-docx), <code>epub</code>{' '}
+              (ebooklib)
+            </>,
+          ],
+        ]}
+        caption={
+          <>
+            Each chunk carries <code>id</code>, <code>content</code>, <code>source</code>,{' '}
+            <code>metadata</code> and <code>content_hash</code>.
+          </>
+        }
+      />
+
+      <h3>Chunking that knows what it is reading</h3>
+
+      <CodeBlock filename="chunking.py" code={`from effgen.rag.chunking import CodeChunker, HierarchicalChunker, TextChunker
+
+SOURCE = (open("/tmp/effgen-kb/architecture.md").read() + "\\n") * 6
+
+for chunker in (
+    TextChunker(chunk_size=200, overlap=20),
+    HierarchicalChunker(max_chunk_size=200),
+    CodeChunker(language="python", max_chunk_size=200),
+):
+    chunks = chunker.chunk(SOURCE)
+    print(f"{type(chunker).__name__:20} {len(chunks):2} chunks, "
+          f"longest {max(len(c.content) for c in chunks)} chars")`} />
+
+      <Terminal
+        command="python chunking.py"
+        output={`TextChunker           6 chunks, longest 173 chars
+HierarchicalChunker   6 chunks, longest 160 chars
+CodeChunker           1 chunks, longest 982 chars`}
+        caption="The same text through three chunkers. CodeChunker looks for Python structure, finds none in a Markdown file, and falls back to one chunk — which is the right answer for the wrong input."
+      />
+
+      <ApiTable
+        headers={['Chunker', 'Splits on']}
+        rows={[
+          [<code>TextChunker</code>, 'A fixed size, with overlap. The default.'],
+          [<code>SemanticChunker</code>, 'Semantic boundaries rather than a character count.'],
+          [
+            <code>CodeChunker</code>,
+            <>
+              Functions, classes and blocks. <code>language=</code> takes py, js, ts, go, rust or
+              java.
+            </>,
+          ],
+          [<code>TableChunker</code>, 'Table boundaries, so a table is not cut in half.'],
+          [<code>HierarchicalChunker</code>, 'Document structure, keeping the heading a chunk sits under.'],
         ]}
       />
 
-      <CodeBlock
-        code={`from effgen.rag import SemanticChunker, CodeChunker
-
-semantic = SemanticChunker(max_chunk_size=1000, similarity_threshold=0.6)
-code = CodeChunker(language="python", max_chunk_size=1500)
-
-# Each chunker exposes .chunk(text, doc_id) -> list[Document]
-sem_chunks = semantic.chunk("long document text here ...", doc_id="doc1")
-code_chunks = code.chunk(open("agent.py").read(), doc_id="agent_py")`}
-        language="python"
-        filename="chunking.py"
-      />
-
-      <h2>Hybrid Search</h2>
+      <h2>Hybrid search</h2>
       <p>
-        <code>HybridSearchEngine</code> combines multiple retrieval signals and fuses them via
-        <strong> Reciprocal Rank Fusion (RRF)</strong>:
+        Dense retrieval, BM25, keyword matching and metadata filtering, fused with reciprocal rank
+        fusion. Every result says what each of those contributed.
       </p>
-      <ul>
-        <li><strong>Dense</strong> — sentence-transformers embeddings + cosine similarity</li>
-        <li><strong>Sparse</strong> — BM25 term-frequency scoring</li>
-        <li><strong>Keyword</strong> — exact substring / phrase match</li>
-        <li><strong>Metadata filter</strong> — restrict by source, type, date, etc.</li>
-      </ul>
 
-      <CodeBlock
-        code={`from effgen.rag import HybridSearchEngine
+      <CodeBlock filename="search.py" code={`from effgen.rag import DocumentIngester, HybridSearchEngine
 
+chunks = DocumentIngester(show_progress=False).ingest("/tmp/effgen-kb", recursive=True)
+engine = HybridSearchEngine(chunks)
+
+for result in engine.search("how does it scale", top_k=2):
+    print(result.rank, round(result.relevance_score, 3), "|", result.source)
+    print("   dense", round(result.dense_score, 3),
+          "sparse", round(result.sparse_score, 3),
+          "keyword", round(result.keyword_score, 3))`} />
+
+      <Terminal command="python search.py" output={`1 1.0 | /tmp/effgen-kb/architecture.md
+   dense 1.0 sparse 0.0 keyword 0.0
+2 0.984 | /tmp/effgen-kb/storage.md
+   dense 0.021 sparse 0.0 keyword 0.0`} />
+
+      <ParamTable
+        nameLabel="Field"
+        params={[
+          { name: 'chunk_id', type: 'str', description: 'Which chunk this is.' },
+          { name: 'content', type: 'str', description: 'The passage itself.' },
+          { name: 'source', type: 'str', description: 'The file it came from.' },
+          { name: 'metadata', type: 'dict', description: 'Whatever the ingester recorded about it.' },
+          { name: 'relevance_score', type: 'float', description: 'The fused score — what the ranking is on.' },
+          { name: 'dense_score', type: 'float', description: 'The embedding similarity alone.' },
+          { name: 'sparse_score', type: 'float', description: 'The BM25 score alone.' },
+          { name: 'keyword_score', type: 'float', description: 'The literal keyword match alone.' },
+          { name: 'rank', type: 'int', description: 'Its position in this result set.' },
+        ]}
+        caption={<><code>effgen.rag.SearchResult</code>. A result that scored on one signal and not the others is visible rather than hidden behind one number.</>}
+      />
+
+      <h3>Weighting the signals</h3>
+
+      <CodeBlock filename="weights.py" code={`from effgen.rag import DocumentIngester, HybridSearchEngine
+
+chunks = DocumentIngester(show_progress=False).ingest("/tmp/effgen-kb", recursive=True)
+
+# The weights belong to the engine, not to a single search.
 engine = HybridSearchEngine(
-    weights={"dense": 1.0, "sparse": 1.0, "keyword": 0.5},  # set any to 0 to disable
-    rrf_k=60,
+    chunks,
+    weights={"dense": 0.4, "bm25": 0.3, "keyword": 0.2, "metadata": 0.1},
 )
-engine.index(chunks)
+for result in engine.search("how does it scale", top_k=2):
+    print(round(result.relevance_score, 3), "|", result.source)`} />
 
-results = engine.search(
-    "how to wire guardrails",
-    top_k=10,
-    filter_metadata={"type": "markdown"},
-)
-for r in results:
-    print(r.relevance_score, r.source, r.chunk_id)`}
-        language="python"
-        filename="hybrid_search.py"
-      />
+      <Terminal command="python weights.py" output={`1.0 | /tmp/effgen-kb/architecture.md
+0.984 | /tmp/effgen-kb/storage.md`} />
 
-      <h2>Rerankers</h2>
-      <FeatureList
-        features={[
-          { icon: '🎯', title: 'CrossEncoderReranker', description: 'Highest quality — runs a cross-encoder over (query, chunk) pairs. Optional dep: sentence-transformers.' },
-          { icon: '🤖', title: 'LLMReranker', description: 'Uses the agent\'s own LLM to score relevance. Free if you already have a model loaded.' },
-          { icon: '⚙️', title: 'RuleBasedReranker', description: 'Deterministic: recency, authority (source weights), keyword boosts, title match.' },
-        ]}
-      />
-
-      <CodeBlock
-        code={`from effgen.rag import LLMReranker, RuleBasedReranker
-
-# LLM rerank (free — reuses your agent's model)
-llm_rr = LLMReranker(model=agent.config.model)
-reranked = llm_rr.rerank(query, results, top_k=5)
-
-# Rule-based (pure Python, zero deps)
-rules_rr = RuleBasedReranker(
-    recency_weight=0.2,
-    keyword_weight=0.15,
-    authority_weight=0.25,
-    title_weight=0.1,
-    authority_map={"docs/internal/": 1.5, "docs/archive/": 0.5},
-)
-reranked = rules_rr.rerank(query, results, top_k=5)`}
-        language="python"
-        filename="rerank.py"
-      />
-
-      <h2>Context Builder &amp; Citations</h2>
-      <p>
-        <code>ContextBuilder</code> assembles the final LLM context window: it fits sources into
-        a token budget, deduplicates near-identical chunks, orders by relevance or chronology,
-        and inserts <code>[N]</code> citation markers wired to the returned
-        <code> Citation</code> list.
-      </p>
-
-      <CodeBlock
-        code={`from effgen.rag import ContextBuilder
-
-builder = ContextBuilder(
-    max_tokens=3000,
-    per_source_limit=1,        # max chunks per source (0 = unlimited)
-    order="relevance",         # or "chronological"
-    include_citations=True,    # inject [N] markers
-)
-
-built = builder.build(reranked)        # BuiltContext
-context_text = built.text              # prompt-ready text
-citations    = built.citations         # list[Citation] for AgentResponse.citations`}
-        language="python"
-        filename="context_builder.py"
-      />
-
-      <h2>Citation Tracking</h2>
-      <CodeBlock
-        code={`from effgen.rag import CitationTracker
-
-tracker = CitationTracker(citations=citations)
-# Or build incrementally: tracker = CitationTracker(); tracker.add(c1); tracker.add(c2)
-
-# Parse [N] markers actually referenced in the answer
-indices = tracker.extract_used_indices(agent_response.output)
-
-# Filter to only the citations referenced in the answer
-used = tracker.filter_used(agent_response.output)
-
-# Heuristic claim verification — citations whose quote token-overlaps the claim
-supporting = tracker.verify("Guardrails block injection by default", min_overlap=0.3)
-
-# De-duplicated source list
-print(tracker.sources())`}
-        language="python"
-        filename="citations.py"
-      />
-
-      <InfoBox type="success" title="Where citations surface">
+      <Callout type="note" title="The weights belong to the engine">
         <p>
-          When a RAG-enabled agent runs, its <code>AgentResponse.citations</code> is a list of
-          <code> Citation</code> dataclasses ({'{'}index, source, chunk_id, relevance_score, quote, page, section{'}'})
-          and <code> AgentResponse.sources</code> is a de-duplicated string list of sources backing
-          the answer. Both are serialised by <code>.to_dict()</code>.
+          They are a constructor argument on <code>HybridSearchEngine</code>, not an argument to{' '}
+          <code>search()</code>. <code>search(query, top_k=5, filter_metadata=None, min_score=0.0)</code>{' '}
+          is the whole of the search signature.
         </p>
-      </InfoBox>
+      </Callout>
 
-      <h2>Building a RAG Pipeline From Scratch</h2>
-      <CodeBlock
-        code={`from effgen import Agent, AgentConfig, load_model
-from effgen.rag import (
-    DocumentIngester, SemanticChunker, HybridSearchEngine,
-    LLMReranker, ContextBuilder,
-)
-from effgen.tools.builtin import Retrieval
+      <h2>Reranking</h2>
 
-# 1. Ingest + chunk
-chunks = DocumentIngester().ingest("./knowledge_base/")
+      <CodeBlock filename="rerank.py" code={`from effgen.rag import DocumentIngester, HybridSearchEngine
+from effgen.rag.reranker import RuleBasedReranker
 
-# 2. Index
-engine = HybridSearchEngine(
-    weights={"dense": 1.0, "sparse": 1.0, "keyword": 0.5},
-)
-engine.index(chunks)
+chunks = DocumentIngester(show_progress=False).ingest("/tmp/effgen-kb", recursive=True)
+results = HybridSearchEngine(chunks).search("how does it scale", top_k=4)
 
-# 3. Wrap as a tool
-retrieval = Retrieval()
-retrieval.add_documents(
-    [{"id": c.id, "content": c.content, "metadata": c.metadata} for c in chunks],
-    chunk=False,
-)
+reranker = RuleBasedReranker(keyword_weight=0.4, authority_weight=0.1, recency_weight=0.0)
+for result in reranker.rerank("how does it scale", results):
+    print(round(result.relevance_score, 3), "|", result.source)`} />
 
-# 4. Build the agent
-model = load_model("Qwen/Qwen2.5-3B-Instruct", quantization="4bit")
-agent = Agent(AgentConfig(
-    name="custom_rag",
-    model=model,
-    tools=[retrieval],
-    system_prompt="Answer ONLY from the retrieved context. Cite with [N] markers.",
-))
+      <Terminal command="python rerank.py" output={`1.133 | /tmp/effgen-kb/architecture.md
+0.984 | /tmp/effgen-kb/storage.md`} />
 
-answer = agent.run("Explain the guardrail presets")`}
-        language="python"
-        filename="custom_rag.py"
+      <ApiTable
+        headers={['Reranker', 'How it scores', 'Cost']}
+        rows={[
+          [
+            <code>RuleBasedReranker</code>,
+            <>
+              Weighted signals: <code>recency_weight</code>, <code>keyword_weight</code>,{' '}
+              <code>authority_weight</code>, <code>title_weight</code>, plus an{' '}
+              <code>authority_map</code> per source.
+            </>,
+            'Free, no model',
+          ],
+          [
+            <code>LLMReranker</code>,
+            <>
+              Asks a model to order the passages. Takes the model, and{' '}
+              <code>max_passage_chars</code>.
+            </>,
+            'One model call',
+          ],
+          [
+            <code>CrossEncoderReranker</code>,
+            <>
+              A cross-encoder, <code>cross-encoder/ms-marco-MiniLM-L-6-v2</code> by default.
+            </>,
+            <>Local inference; needs <code>sentence-transformers</code></>,
+          ],
+        ]}
+        caption={
+          <>
+            All three share one signature:{' '}
+            <code>rerank(query, results, top_k=None)</code> — the query first.
+          </>
+        }
       />
 
-      <h2>See Also</h2>
+      <h2>Building the context, and the citations</h2>
+
+      <CodeBlock filename="context.py" code={`from effgen.rag import ContextBuilder, DocumentIngester, HybridSearchEngine
+
+chunks = DocumentIngester(show_progress=False).ingest("/tmp/effgen-kb", recursive=True)
+results = HybridSearchEngine(chunks).search("how does it scale", top_k=2)
+
+built = ContextBuilder(max_tokens=2048).build(results)
+print(built.text[:200])
+print("---", built.total_tokens, "tokens, truncated:", built.truncated)
+for citation in built.citations:
+    print(f"[{citation.index}]", citation.source, "|", round(citation.relevance_score, 3))`} />
+
+      <Terminal command="python context.py" output={`[1] Source: /tmp/effgen-kb/architecture.md
+# Scaling
+
+effGen scales horizontally: run one server per replica behind a load balancer.
+State lives in the session store, so any replica can answer any req
+--- 77 tokens, truncated: False
+[1] /tmp/effgen-kb/architecture.md | 1.0
+[2] /tmp/effgen-kb/storage.md | 0.984`} />
+
+      <ParamTable
+        nameLabel="Argument"
+        params={[
+          { name: 'max_tokens', type: 'int', default: '2000', description: 'The budget the assembled context has to fit in.' },
+          {
+            name: 'token_counter',
+            type: 'Callable | None',
+            default: 'None',
+            description: 'How tokens are counted. Falls back to an estimate.',
+          },
+          {
+            name: 'per_source_limit',
+            type: 'int',
+            default: '1',
+            description: 'How many chunks one source may contribute, so one document cannot crowd out the rest.',
+          },
+          {
+            name: 'order',
+            type: 'str',
+            default: "'relevance'",
+            description: 'The order passages are laid out in.',
+          },
+          { name: 'include_citations', type: 'bool', default: 'True', description: 'Whether [n] markers are written into the text.' },
+          { name: 'separator', type: 'str', default: "'\\n\\n---\\n\\n'", description: 'What goes between passages.' },
+        ]}
+        caption={
+          <>
+            <code>build(results)</code> returns a <code>BuiltContext</code> — <code>text</code>,{' '}
+            <code>citations</code>, <code>used_chunks</code>, <code>total_tokens</code>,{' '}
+            <code>truncated</code>. It is one object, not a tuple.
+          </>
+        }
+      />
+
+      <h3>Checking the citations against the answer</h3>
+
+      <CodeBlock
+        filename="attribution.py"
+        continues
+        code={`from effgen.rag.attribution import CitationTracker
+
+tracker = CitationTracker(built.citations)
+
+answer = "effGen scales horizontally, one server per replica behind a load balancer [1]."
+
+used = tracker.extract_used_indices(answer)
+print("cited:", used)
+for citation in tracker.filter_used(answer):
+    print(f"  [{citation.index}]", citation.source)
+
+supported = tracker.verify("effGen scales horizontally behind a load balancer")
+print("passages supporting that claim:", [c.index for c in supported])
+print("sources:", tracker.sources())`}
+        caption="Carries on from context.py above, which builds the citations. Verification is what catches a model citing a passage it did not use."
+      />
+
+      <Terminal
+        command="python attribution.py"
+        output={`cited: [1]
+  [1] /tmp/effgen-kb/architecture.md
+passages supporting that claim: [1]
+sources: ['/tmp/effgen-kb/architecture.md', '/tmp/effgen-kb/storage.md']`}
+      />
+
       <p>
-        <Link to="/tools">Tools</Link> · <Link to="/memory">Memory</Link> ·
-        {' '}<Link to="/guardrails">Guardrails</Link>
+        <code>verify()</code> takes one claim and returns the citations that support it, not a
+        boolean — a claim nothing backs comes back as an empty list. The threshold it compares
+        against is <code>min_overlap</code>, which defaults to <code>0.3</code>.
       </p>
+
+      <h2>Retrieval as a tool</h2>
+      <p>
+        The same index, exposed to an agent as an ordinary tool it can decide to call — rather than
+        as context that is always prepended.
+      </p>
+
+      <CodeBlock filename="retrieval_tool.py" code={`import asyncio
+
+from effgen.tools.builtin.retrieval import Retrieval
+
+tool = Retrieval(knowledge_base_path="/tmp/effgen-kb", default_top_k=2)
+result = asyncio.run(tool.execute(query="how does effGen scale"))
+
+if not result.success:
+    raise SystemExit(result.error)
+for hit in result.output["results"]:
+    print(round(hit["score"], 3), "|", hit["content"][:70].replace("\\n", " "))`} />
+
+      <Terminal command="python retrieval_tool.py" output={`0.885 | # Scaling  effGen scales horizontally: run one server per replica behi
+0.646 | # Storage  Sessions are JSON files under ~/.effgen/sessions. `} />
+
+      <ParamTable
+        nameLabel="Argument"
+        params={[
+          { name: 'embedding_provider', type: 'EmbeddingProvider | None', default: 'None', description: 'What turns text into vectors.' },
+          { name: 'chunk_size', type: 'int', default: '500', description: 'Target characters per chunk.' },
+          { name: 'chunk_overlap', type: 'int', default: '100', description: 'Overlap between chunks.' },
+          { name: 'chunking_strategy', type: 'str', default: "'fixed'", description: 'How documents are split.' },
+          { name: 'index_path', type: 'str | None', default: 'None', description: 'Where a built index is cached.' },
+          { name: 'knowledge_base_path', type: 'str | None', default: 'None', description: 'The documents to index.' },
+          { name: 'enable_hybrid_search', type: 'bool', default: 'True', description: 'Combine dense and sparse retrieval rather than dense alone.' },
+          { name: 'hybrid_alpha', type: 'float', default: '0.7', description: 'How the two are weighted against each other.' },
+          {
+            name: 'allow_pickle',
+            type: 'bool',
+            default: 'False',
+            description: 'Whether a pickled index may be loaded. Off, because a pickle from an untrusted source executes code.',
+          },
+          { name: 'default_top_k', type: 'int', default: '5', description: 'How many passages a call returns unless it asks for more.' },
+          { name: 'diversity', type: 'float', default: '0.0', description: 'How much to penalise near-duplicate passages in one result set.' },
+        ]}
+        caption={
+          <>
+            <code>effgen.tools.builtin.retrieval.Retrieval</code>. The companion{' '}
+            <code>agentic_search</code> tool does the same job with exact string matching, which
+            beats semantic search for a number, a formula or an identifier.
+          </>
+        }
+      />
+
+      <h2>What goes wrong</h2>
+
+      <ApiTable
+        headers={['What you see', 'What it means', 'What to do']}
+        rows={[
+          [
+            'Zero chunks from ingestion',
+            'The path is wrong, or nothing in it is in a supported format.',
+            <>
+              Check the path, and pass <code>recursive=True</code> for subdirectories. PDF, DOCX
+              and EPUB each need their own package.
+            </>,
+          ],
+          [
+            <><code>TypeError: cannot unpack non-iterable BuiltContext object</code></>,
+            <>
+              <code>build()</code> was unpacked as a tuple.
+            </>,
+            <>
+              It returns one object: <code>built.text</code>, <code>built.citations</code>.
+            </>,
+          ],
+          [
+            <><code>TypeError: search() got an unexpected keyword argument 'weights'</code></>,
+            'The weights were passed to the search rather than to the engine.',
+            <>
+              <code>HybridSearchEngine(chunks, weights=&#123;…&#125;)</code>.
+            </>,
+          ],
+          [
+            'The reranker returns nothing useful',
+            <>
+              Its arguments are the other way round: <code>rerank(query, results)</code>.
+            </>,
+            'The query comes first on all three rerankers.',
+          ],
+          [
+            'The answer has no citations',
+            <>
+              <code>include_citations</code> is off, or the model was given plain context.
+            </>,
+            <>
+              The <code>rag</code> preset wires the markers and the citation list. Check{' '}
+              <code>response.citations</code> before concluding it did not cite.
+            </>,
+          ],
+          [
+            'Retrieval finds nothing for an exact term',
+            'Semantic search is the wrong instrument for an identifier, a number or a formula.',
+            <>
+              Use the <code>agentic_search</code> tool, which matches literally, or raise{' '}
+              <code>keyword</code> in the engine weights.
+            </>,
+          ],
+          [
+            'One document dominates every answer',
+            <>
+              <code>per_source_limit</code> is doing less than you want.
+            </>,
+            <>
+              Raise <code>diversity</code> on the retrieval tool, or lower{' '}
+              <code>per_source_limit</code> on the context builder.
+            </>,
+          ],
+        ]}
+      />
+
+      <SeeAlso paths={['/memory', '/tools/gallery', '/presets']} />
     </DocPage>
   );
 }

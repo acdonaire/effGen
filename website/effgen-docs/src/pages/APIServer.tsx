@@ -1,260 +1,625 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
 import { Server } from 'lucide-react';
-import DocPage, { InfoBox, ApiTable, FeatureList } from '../components/DocPage';
-import CodeBlock from '../components/CodeBlock';
+import { Link } from 'react-router-dom';
+import {
+  ApiTable,
+  Callout,
+  CodeBlock,
+  DocPage,
+  ParamTable,
+  SeeAlso,
+  Terminal,
+} from '../components/docs';
+import { siteData, version } from '../siteData';
+
+const serveOptions = siteData.cli.command_options['serve'] ?? [];
+const serveEnv = siteData.cli.serve_env ?? [];
+const roles = siteData.production.rbac_roles;
+
+/** What each `serve` flag and environment setting is for, in one sentence. */
+const SERVE_TYPES: Record<string, string> = {
+  '--host HOST': 'str',
+  '-p PORT, --port PORT': 'int',
+  '--rate-limit N': 'int',
+  '--trust-proxy': 'flag',
+};
+
+const SERVE_DEFAULTS: Record<string, string> = {
+  '--host HOST': '127.0.0.1',
+  '-p PORT, --port PORT': '8000',
+  '--rate-limit N': 'EFFGEN_RATE_LIMIT',
+  '--trust-proxy': 'off',
+};
 
 export default function APIServer() {
   return (
     <DocPage
-      title="API Server v2"
-      subtitle="OpenAI-compatible production gateway with streaming, priority queue, auto-scaling agent pool, multi-tenant API keys, and embeddings."
+      subtitle="Running `effgen serve`: authentication, roles, audit logging and rate limits."
       icon={<Server size={48} />}
-      breadcrumbs={[
-        { label: 'Docs', path: '/introduction' },
-        { label: 'Deployment', path: '/api-server' },
-        { label: 'API Server' },
-      ]}
     >
-      <h2>Running the Server</h2>
-      <CodeBlock
-        code={`# Start the gateway
-effgen serve --host 0.0.0.0 --port 8000
+      <p>
+        <code>effgen serve</code> runs the same application the{' '}
+        <code>effgen.server.app:create_app</code> factory builds — the{' '}
+        <Link to="/openai-api">OpenAI-compatible <code>/v1</code> routes</Link>, authentication,
+        roles and budgets, the audit log, <Link to="/metrics">metrics</Link>, the{' '}
+        <Link to="/dashboard">dashboard</Link> and the playground, from one place. It is
+        authenticated by default: with no key and no issuer configured it mints an ephemeral key at
+        startup and prints it once, so there is no configuration in which the server is open.
+      </p>
 
-# With a pre-loaded default model
-effgen serve --model Qwen/Qwen2.5-3B-Instruct --quantization 4bit`}
+      <h2>Start it</h2>
+
+      <CodeBlock
         language="bash"
         filename="terminal"
+        code={`effgen serve --port 8000`}
+        caption={
+          <>
+            Binds <code>127.0.0.1</code>. Nothing outside the machine can reach it until you pass{' '}
+            <code>--host 0.0.0.0</code>.
+          </>
+        }
       />
 
-      <h2>Endpoints</h2>
+      <Terminal command="curl -s http://127.0.0.1:8000/health" output={`{"status":"ok","version":"1.0.0"}`} />
+
+      <p>
+        That is one of the handful of public routes. Everything else needs a credential, and says so
+        in the same error envelope the rest of the API uses:
+      </p>
+
+      <Terminal
+        command={`curl -s -o /dev/null -w 'HTTP %{http_code}\\n' http://127.0.0.1:8000/v1/models
+curl -s http://127.0.0.1:8000/v1/models`}
+        output={`HTTP 401
+{"error": {"message": "Missing API key (send 'Authorization: Bearer <key>' or 'X-API-Key: <key>')", "type": "invalid_request_error", "param": null, "code": "invalid_api_key"}}`}
+        title="curl"
+      />
+
+      <Terminal
+        command={`curl -s -H "Authorization: Bearer $EFFGEN_API_KEY" http://127.0.0.1:8000/v1/models \\
+  | python -c "import json,sys; [print(m['id']) for m in json.load(sys.stdin)['data']]"`}
+        output={`gpt-4
+gpt-4-turbo
+gpt-4o
+gpt-4o-mini
+gpt-3.5-turbo
+gpt-3.5-turbo-instruct
+default
+effgen-default
+Qwen/Qwen2.5-3B-Instruct
+openai:gpt-5-nano`}
+        title="curl"
+        caption={
+          <>
+            Captured against effGen {version}. <code>/v1/models</code> lists the aliases plus every
+            id this process has already served — it is not the catalogue. Any{' '}
+            <code>provider:model</code> id the server can reach is callable whether or not it
+            appears there; <Link to="/catalog">the model catalog</Link> is the full list.
+          </>
+        }
+      />
+
+      <h2>What it serves</h2>
+
       <ApiTable
-        headers={['Endpoint', 'Compatibility', 'Features']}
+        headers={['Method', 'Path', 'What it is']}
         rows={[
-          [<code>POST /v1/chat/completions</code>, 'OpenAI Chat', 'tools, stream=true (SSE), model aliases'],
-          [<code>POST /v1/completions</code>, 'OpenAI Completions', 'stream=true (SSE), model aliases'],
-          [<code>POST /v1/embeddings</code>, 'OpenAI Embeddings', 'SentenceTransformers + TFIDF fallback, LRU + SQLite cache'],
-          [<code>GET  /health</code>, 'effGen', 'Liveness + readiness (public, no auth)'],
-          [<code>GET  /metrics</code>, 'effGen', 'Prometheus histograms + counters (v0.2.9); requires auth by default in v0.3.0 unless explicitly opened'],
-          [<code>GET  /slo</code>, 'effGen', 'SLO burn-rate tracking (v0.2.9)'],
-          [<code>GET  /dashboard</code>, 'effGen', 'Live local dashboard SPA + /dashboard/data.json + SSE /dashboard/spans (v0.2.10); requires auth by default in v0.3.0'],
+          [
+            'POST',
+            <>
+              <code>/v1/chat/completions</code>, <code>/v1/completions</code>,{' '}
+              <code>/v1/embeddings</code>
+            </>,
+            <>
+              The OpenAI protocol. <Link to="/openai-api">The OpenAI-compatible API</Link> is the
+              page for these.
+            </>,
+          ],
+          [
+            'GET',
+            <>
+              <code>/v1/models</code>, <code>/v1/models/catalog</code>
+            </>,
+            'What this process has served, and the bundled catalogue.',
+          ],
+          [
+            'POST',
+            <code>/run</code>,
+            <>
+              effGen's own shape: a task in, an <code>output</code> / <code>success</code> /{' '}
+              <code>metadata</code> object out — the same fields an{' '}
+              <Link to="/agents"><code>AgentResponse</code></Link> carries.
+            </>,
+          ],
+          [
+            'GET',
+            <code>/tools</code>,
+            <>
+              Every tool the server can run, with its parameters. The{' '}
+              <Link to="/tools/gallery">gallery</Link> is the same list documented.
+            </>,
+          ],
+          [
+            'GET',
+            <code>/whoami</code>,
+            'The principal the current credential resolves to, and its roles.',
+          ],
+          [
+            'GET',
+            <>
+              <code>/rbac/policy</code>, <code>/rbac/roles</code>
+            </>,
+            'The effective policy for the caller, and every defined role.',
+          ],
+          [
+            'GET',
+            <>
+              <code>/metrics</code>, <code>/slo</code>
+            </>,
+            <>
+              Prometheus text and error-budget status. <Link to="/metrics">Metrics</Link> and{' '}
+              <Link to="/slos">SLOs and alerting</Link>.
+            </>,
+          ],
+          [
+            'GET',
+            <>
+              <code>/health</code>, <code>/healthz</code>, <code>/livez</code>,{' '}
+              <code>/ready</code>, <code>/readyz</code>
+            </>,
+            'Liveness and readiness. Public, and exempt from the rate limit.',
+          ],
+          [
+            'GET',
+            <>
+              <code>/dashboard</code>, <code>/playground</code>
+            </>,
+            <>
+              The two web surfaces and their data endpoints. See{' '}
+              <Link to="/dashboard">Dashboard</Link>.
+            </>,
+          ],
+          [
+            'GET',
+            <>
+              <code>/openapi.json</code>, <code>/docs</code>, <code>/redoc</code>
+            </>,
+            'The schema and the two schema viewers. Public — schema only, no data.',
+          ],
         ]}
+        caption="Read from the running server's own /openapi.json."
       />
-      <InfoBox type="success" title="v0.2.9 / v0.2.10 — auth, observability & dashboard">
-        <p>
-          As of <strong>v0.2.10</strong> the server validates <strong>Bearer JWTs</strong> via
-          OIDC on every non-public endpoint, enforces <strong>RBAC</strong> with daily cost caps,
-          and writes a per-request <strong>audit log</strong> — see{' '}
-          <a href="/docs/security">Security</a>. <strong>v0.2.9</strong> added the Prometheus{' '}
-          <code>/metrics</code> and <code>/slo</code> endpoints — see{' '}
-          <a href="/docs/observability">Observability</a>. The v0.2.10 live{' '}
-          <a href="/docs/dx">dashboard</a> is served at <code>/dashboard</code>. For
-          containerised and serverless deploys (Docker, Helm, Lambda, Cloudflare) see{' '}
-          <a href="/docs/deployment">Deployment</a>.
-        </p>
-      </InfoBox>
 
-      <InfoBox type="success" title="v0.3.0 — the server fails closed">
-        <p>
-          v0.3.0 closes the gaps around auth and error reporting. With no configured issuer / JWKS
-          outside dev mode, the server now <strong>rejects all bearer tokens</strong> — a forged
-          HS256 JWT can no longer reach <code>/whoami</code> or <code>/v1/chat/completions</code>,
-          and <code>/v1/*</code> return <code>401</code> without credentials. Production CORS no
-          longer combines a wildcard origin with credentials; <code>/metrics</code> and the
-          dashboard require auth unless explicitly opened; the <code>viewer</code> role can no
-          longer run tools and unknown roles are rejected (strict mode). Budget enforcement{' '}
-          <strong>reserves then reconciles</strong> so failed calls are not charged, request bodies
-          are size-limited before buffering, and upstream / provider-auth / missing-key failures map
-          to <strong>502/503</strong> — <code>401</code> is reserved for genuine client-auth
-          failures. The reported server version is sourced from <code>effgen.__version__</code>.
-        </p>
-      </InfoBox>
+      <Terminal
+        command={`curl -s -H "Authorization: Bearer $EFFGEN_API_KEY" http://127.0.0.1:8000/whoami
+curl -s -H "Authorization: Bearer $EFFGEN_API_KEY" http://127.0.0.1:8000/tools | …
+curl -s -H "Authorization: Bearer $EFFGEN_API_KEY" http://127.0.0.1:8000/run \\
+  -H 'Content-Type: application/json' \\
+  -d '{"task":"Reply with the single word ok.","model":"openai:gpt-5-nano"}'`}
+        output={`{"sub":"api-key","iss":"static-api-key","roles":["admin"],"email":""}
+66 tools: agentic_search, anthropic_bash, anthropic_computer, anthropic_text_editor, arxiv, audio_transcribe ...
+{"output":"ok","success":true,"metadata":{"mode":"single","iterations":1,"tool_calls":[],"execution_time":0.7195723056793213}}`}
+        title="curl"
+      />
 
-      <InfoBox type="success" title="v0.3.1 — an honest OpenAI-compatible surface">
-        <p>
-          v0.3.1 seals two silent quality downgrades. A client-defined function tool the server
-          does not host is no longer dropped silently — it is rejected with a clear{' '}
-          <code>400</code> (<code>unknown_tool</code>) naming it; built-in tools still resolve and
-          run server-side. <code>/v1/embeddings</code> strips a <code>provider:</code> prefix so{' '}
-          <code>openai:text-embedding-3-small</code> reaches the real neural model, and when that
-          backend can&apos;t load it reflects the lexical fallback to the caller (or fails closed
-          with <code>503</code> under <code>EFFGEN_EMBEDDINGS_STRICT=1</code>) instead of quietly
-          serving near-zero hash vectors. Auth / validation / rate-limit / budget errors now share
-          the same <code>{'{"error":{message,type,code}}'}</code> envelope as model errors, an
-          empty <code>messages</code> array returns <code>400</code>, per-call <code>cost_usd</code>{' '}
-          is surfaced in the <code>effgen</code> response extension, and <code>effgen serve --help</code>{' '}
-          documents the operational env knobs and adds <code>--rate-limit</code>.
-        </p>
-      </InfoBox>
+      <h2>Options</h2>
 
-      <h3>Model Aliases</h3>
-      <p>
-        Callers can use OpenAI-style model names. The server resolves them to local SLMs:
-      </p>
+      <ParamTable
+        nameLabel="Flag"
+        params={serveOptions.map((option) => ({
+          name: option.name,
+          type: SERVE_TYPES[option.name],
+          default: SERVE_DEFAULTS[option.name],
+          description: option.description,
+        }))}
+        caption={
+          <>
+            Every flag <code>effgen serve --help</code> declares, read from the binary. Four flags is
+            the whole command-line surface — everything else is an environment variable, below.
+          </>
+        }
+      />
+
+      <Callout type="warning" title="One worker">
+        <p>
+          <code>effgen serve</code> runs a single worker. For more, run the app factory under your
+          own server — <code>uvicorn effgen.server.app:create_app --factory --workers 4 --port 8000</code>{' '}
+          — which builds the identical application, auth and all. <Link to="/deployment">Deployment</Link>{' '}
+          covers the container and cluster shapes.
+        </p>
+      </Callout>
+
+      <h2>Environment</h2>
+
+      <ParamTable
+        nameLabel="Variable"
+        params={serveEnv.map((setting) => ({
+          name: setting.name,
+          description: setting.description,
+        }))}
+        caption={
+          <>
+            The operational settings <code>effgen serve --help</code> documents in its own epilog.
+          </>
+        }
+      />
+
+      <h2>Authentication</h2>
+
+      <p>Pick one posture. There is no fourth option in which requests arrive unauthenticated.</p>
+
       <ApiTable
-        headers={['Alias', 'Resolves to']}
+        headers={['Posture', 'How', 'What the client sends']}
         rows={[
-          [<code>gpt-4</code>, 'Qwen/Qwen2.5-7B-Instruct'],
-          [<code>gpt-3.5-turbo</code>, 'Qwen/Qwen2.5-3B-Instruct'],
-          [<code>text-embedding-ada-002</code>, 'sentence-transformers/all-MiniLM-L6-v2'],
+          [
+            'Static key',
+            <code>EFFGEN_API_KEY=&lt;key&gt; effgen serve</code>,
+            <>
+              <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key: &lt;key&gt;</code>.
+              Compared in constant time, and mapped to the roles in{' '}
+              <code>EFFGEN_API_KEY_ROLES</code> (default <code>admin</code>).
+            </>,
+          ],
+          [
+            'OIDC / JWT',
+            <code>EFFGEN_OIDC_ISSUER=… EFFGEN_OIDC_CLIENT_ID=…</code>,
+            <>
+              A bearer JWT, validated against the issuer's JWKS. The JWKS is discovered from{' '}
+              <code>/.well-known/openid-configuration</code> unless{' '}
+              <code>EFFGEN_OIDC_JWKS_URI</code> names it.
+            </>,
+          ],
+          [
+            'Nothing configured',
+            <code>effgen serve</code>,
+            'An ephemeral key is minted and printed once at startup. Restarting the server mints a new one.',
+          ],
+          [
+            'Dev mode',
+            <code>EFFGEN_DEV_MODE=1 effgen serve</code>,
+            <>
+              No credential. Every request is the <code>dev-user</code> principal with the{' '}
+              <code>admin</code> role, and a warning is printed to stderr. Local only.
+            </>,
+          ],
         ]}
       />
 
-      <h2>Calling the Server</h2>
+      <p>
+        A JWT is read for <code>sub</code>, <code>iss</code>, <code>aud</code>, <code>exp</code> and{' '}
+        <code>roles</code>; when <code>roles</code> is absent the space-separated <code>scope</code>{' '}
+        claim is used instead. Expired tokens and audience or issuer mismatches are always rejected,
+        the JWKS is cached for an hour, and the <code>Authorization</code> header value is never
+        written to a log or an audit record.
+      </p>
 
-      <h3>With the effGen Python Client</h3>
       <CodeBlock
-        code={`from effgen.client import EffGenClient
+        continues
+        filename="verify.py"
+        code={`from effgen.server.auth import TokenPayload, verify_jwt
 
-client = EffGenClient(base_url="http://localhost:8000", api_key="sk-demo")
-
-# Sync chat
-resp = client.chat("What is 2+2?", tools=["calculator"])
-print(resp.content)
-
-# Sync streaming
-for chunk in client.chat_stream_sync("Tell me a story"):
-    print(chunk, end="")
-
-# Async streaming
-import asyncio
-async def main():
-    async for chunk in client.chat_stream("Tell me a story"):
-        print(chunk, end="")
-asyncio.run(main())
-
-# Embeddings — embed() takes a list and returns a list of vectors
-vecs = client.embed(["Hello world"])
-print(len(vecs), len(vecs[0]))       # 1, 384 (depending on model)
-
-# Health
-print(client.health())`}
-        language="python"
-        filename="python_client.py"
-      />
-
-      <h3>With the Official OpenAI SDK</h3>
-      <CodeBlock
-        code={`from openai import OpenAI
-
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="sk-demo")
-
-resp = client.chat.completions.create(
-    model="gpt-3.5-turbo",      # → Qwen2.5-3B
-    messages=[{"role": "user", "content": "What is 2+2?"}],
-    stream=True,
+payload: TokenPayload = verify_jwt(
+    raw_token,
+    issuer="https://your-issuer/",
+    client_id="your-client-id",
+    jwks_uri="https://your-issuer/.well-known/jwks.json",   # optional; discovered if omitted
 )
-for chunk in resp:
-    print(chunk.choices[0].delta.content or "", end="")`}
-        language="python"
-        filename="openai_sdk.py"
+print(payload.sub, payload.roles)`}
+        caption={
+          <>
+            The same check <code>AuthMiddleware</code> runs. After it, a handler reads{' '}
+            <code>request.state.user</code>.
+          </>
+        }
       />
 
-      <h3>With the TypeScript / JavaScript Client</h3>
-      <CodeBlock
-        code={`// clients/typescript/
-import { EffGenClient } from "effgen-client";
+      <h3>Public routes</h3>
 
-const client = new EffGenClient({ baseUrl: "http://localhost:8000", apiKey: "sk-demo" });
-
-const resp = await client.chat("What is 2+2?");
-console.log(resp.content);
-
-// Streaming
-for await (const chunk of client.chatStream("Tell me a story")) {
-  process.stdout.write(chunk);
-}`}
-        language="typescript"
-        filename="client.ts"
-      />
-
-      <h2>Under the Hood</h2>
-
-      <h3>Request Queue</h3>
       <p>
-        <code>RequestQueue</code> is a priority queue with fair scheduling, deadlines, and
-        backpressure. When full, it raises <code>QueueFullError</code> rather than silently
-        dropping requests.
+        These need no credential, and a trailing slash names the same route:{' '}
+        <code>/health</code>, <code>/healthz</code>, <code>/livez</code>, <code>/ready</code>,{' '}
+        <code>/readyz</code>, <code>/slo</code>, <code>/openapi.json</code>, <code>/docs</code>,{' '}
+        <code>/redoc</code>, and the page shells for <code>/dashboard</code> and{' '}
+        <code>/playground</code> so they can load and ask for a key. Everything else — every{' '}
+        <code>/v1</code> route, and the data endpoints behind those two pages — needs credentials.
       </p>
 
-      <h3>Agent Pool</h3>
-      <p>
-        <code>AgentPool</code> manages pre-warmed agents with min / max size, idle TTL, health
-        checking, and acquire / release semantics. Sits behind the request handler so each
-        request gets an already-initialised agent.
-      </p>
-
-      <h3>Multi-Tenancy</h3>
-      <p>
-        <code>TenantManager</code> enforces rate limits, allowed model lists, and tool
-        permissions per tenant. <code>APIKey</code> management uses hashed storage with
-        constant-time resolution (safe against timing attacks).
-      </p>
-
-      <CodeBlock
-        code={`from effgen.api import TenantManager
-
-tm = TenantManager()
-tenant = tm.create_tenant(
-    name="acme",
-    tenant_id="acme",                        # optional — auto-generated when omitted
-    allowed_models=["Qwen/Qwen2.5-3B-Instruct"],
-    allowed_tools=["calculator", "web_search"],
-    rate_limit_per_min=60,
-)
-
-# create_api_key returns (record, raw_key). The raw key is shown ONCE.
-record, raw_key = tm.create_api_key(tenant_id=tenant.id)
-print(raw_key)  # → "eg-..."`}
-        language="python"
-        filename="tenancy.py"
-      />
-
-      <h3>Production Middleware</h3>
-      <FeatureList
-        features={[
-          { icon: '🆔', title: 'Request IDs', description: 'Every request gets an X-Request-ID for log correlation.' },
-          { icon: '🌐', title: 'CORS', description: 'Configurable CORS origins.' },
-          { icon: '📦', title: 'GZip', description: 'Response compression.' },
-          { icon: '🛑', title: 'Graceful shutdown', description: 'Drains the queue and closes pooled agents cleanly.' },
+      <ApiTable
+        headers={['Setting', 'What it opens']}
+        rows={[
+          [
+            <code>EFFGEN_PUBLIC_METRICS=1</code>,
+            <>
+              Serves <code>/metrics</code> without auth. It is protected by default;{' '}
+              <code>EFFGEN_METRICS_AUTH=1</code> forces auth back on.
+            </>,
+          ],
+          [
+            <code>EFFGEN_PUBLIC_DASHBOARD=1</code>,
+            <>
+              Serves <code>/dashboard/data.json</code> and <code>/dashboard/spans</code> without
+              auth, for local viewing.
+            </>,
+          ],
+          [
+            <code>EFFGEN_PUBLIC_PLAYGROUND=1</code>,
+            <>
+              The same for <code>/playground/bootstrap</code>.
+            </>,
+          ],
+          [
+            <code>EFFGEN_CORS_ORIGINS</code>,
+            'Comma-separated allowed origins. Empty by default — cross-origin is fail-closed for a backend API.',
+          ],
         ]}
       />
 
-      <h2>Embeddings</h2>
+      <h2>Roles and budgets</h2>
+
       <p>
-        <code>/v1/embeddings</code> is backed by <code>EmbeddingEngine</code> with two backends:
-        <code> SentenceTransformerEmbedder</code> (when installed) and <code>TFIDFEmbedder</code>
-        as a zero-dep fallback. Results are cached via <code>LRUCache</code> and optionally a
-        durable <code>SQLiteCache</code>.
+        Every authenticated request carries role names, and the server resolves an effective policy
+        from them. Five roles ship. A role restricts by listing what is <em>permitted</em>, so an
+        empty <code>allowed_tools</code> means all tools; a role that is meant to run nothing at all
+        sets <code>deny_tools</code> instead.
       </p>
 
-      <CodeBlock
-        code={`from effgen.api.embeddings import EmbeddingEngine
-
-engine = EmbeddingEngine(lru_size=2048, persistent_cache=True)
-# embed() takes a list of texts and returns a list of vectors.
-# When sentence-transformers is installed, the configured embedder is used;
-# otherwise the engine falls back to the built-in TFIDFEmbedder automatically.
-vecs = engine.embed(["hello world", "another sentence"])
-print(len(vecs), len(vecs[0]))`}
-        language="python"
-        filename="embeddings_engine.py"
+      <ApiTable
+        headers={['Role', 'Tools', 'Models', 'Cost cap per day']}
+        rows={roles.map((role) => [
+          <code>{role.name}</code>,
+          role.tools === 'none' ? 'none' : 'all',
+          role.models === 'all' ? 'all' : (role.models as string[]).join(', '),
+          role.max_cost_per_day === 0 ? 'unlimited' : `$${role.max_cost_per_day}`,
+        ])}
+        caption={
+          <>
+            Read from <code>effgen.server.rbac.list_roles()</code> in the installed package.
+          </>
+        }
       />
 
-      <InfoBox type="success" title="Guardrails at the boundary">
+      <CodeBlock filename="roles.py" code={`from effgen.server.rbac import PolicyDenied, list_roles, resolve_policy
+
+for role in list_roles():
+    cap = "unlimited" if role.max_cost_per_day == 0.0 else f"\${role.max_cost_per_day:g}/day"
+    print(f"{role.name:14} tools={'none' if role.deny_tools else 'all':5} cap={cap}")
+
+print()
+print("reader alone       ->", resolve_policy(["reader"]).allows_tool("web_search"))
+print("reader+researcher  ->", resolve_policy(["reader", "researcher"]).allows_tool("web_search"))
+try:
+    resolve_policy(["nobody"])
+except PolicyDenied as exc:
+    print("an unknown role    ->", exc)`} />
+
+      <Terminal command="python roles.py" output={`admin          tools=all   cap=unlimited
+researcher     tools=all   cap=$50/day
+limited_user   tools=all   cap=$5/day
+viewer         tools=none  cap=$5/day
+reader         tools=none  cap=$1/day
+
+reader alone       -> False
+reader+researcher  -> True
+an unknown role    -> unknown role 'nobody'; known roles: ['admin', 'limited_user', 'reader', 'researcher', 'viewer']. Request only what the principal's roles allow, or grant the role the missing permission in the policy configuration.`} />
+
+      <p>
+        Several roles resolve to the most permissive of them: a tool is allowed if any granted role
+        permits it, a model likewise, and the cost cap is the maximum across the roles — where a cap
+        of <code>0.0</code> means unlimited, so any unlimited role makes the effective cap unlimited.
+        An <em>unknown</em> role is refused rather than ignored.
+      </p>
+
+      <CodeBlock filename="denied.py" code={`from effgen.server.rbac import PolicyDenied, resolve_policy
+
+policy = resolve_policy(["reader"])
+try:
+    policy.check_tool("python_repl")
+except PolicyDenied as exc:
+    print(type(exc).__name__, "->", exc)`} />
+
+      <Terminal command="python denied.py" output={`PolicyDenied -> role reader does not permit tool python_repl (roles=['reader']). Request only what the principal's roles allow, or grant the role the missing permission in the policy configuration.`} />
+
+      <p>
+        Two routes report the same thing over HTTP: <code>GET /rbac/policy</code> for the current
+        principal's effective policy, and <code>GET /rbac/roles</code> for every defined role.
+      </p>
+
+      <Terminal
+        command={`curl -s -H "Authorization: Bearer $EFFGEN_API_KEY" http://127.0.0.1:8000/rbac/policy`}
+        output={`{"roles":["admin"],"allowed_tools":["*"],"allowed_models":["*"],"max_cost_per_day":0.0}`}
+      />
+
+      <h3>Cost caps</h3>
+
+      <p>
+        <code>max_cost_per_day</code> is USD, tracked per principal for the current UTC day. The
+        model-invoking routes charge a per-call estimate — <code>EFFGEN_PER_CALL_COST_USD</code>,
+        default <code>$0.01</code> — against it. Once the accrued spend meets the cap, further calls
+        are answered <strong>HTTP 429</strong> with a <code>BudgetExceeded</code> detail.{' '}
+        <code>EFFGEN_BUDGET_PERSIST=0</code> keeps the tally in memory only and{' '}
+        <code>EFFGEN_BUDGET_DIR</code> moves the snapshot. This is the server's per-principal cap;{' '}
+        <Link to="/cost">cost and budgets</Link> covers the process-wide spend gate, which is a
+        different thing.
+      </p>
+
+      <h3>A policy file of your own</h3>
+
+      <CodeBlock
+        filename="policy.json"
+        language="json"
+        code={`[
+  {
+    "name": "ops",
+    "allowed_tools": ["bash", "docker"],
+    "allowed_models": [],
+    "max_cost_per_day": 100.0
+  },
+  {
+    "name": "readonly",
+    "allowed_tools": [],
+    "allowed_models": ["gpt-5-nano"],
+    "max_cost_per_day": 1.0,
+    "deny_tools": true
+  }
+]`}
+        caption={
+          <>
+            Point <code>EFFGEN_RBAC_POLICY_FILE</code> at it to replace the built-in roles. In
+            process, <code>reset_registry([Role(...), ...])</code> does the same.
+          </>
+        }
+      />
+
+      <h2>Rate limiting</h2>
+
+      <p>
+        <code>--rate-limit N</code> (or <code>EFFGEN_RATE_LIMIT</code>) caps requests per minute per
+        client IP; <code>0</code> disables it. Health probes are always exempt. The client IP is the
+        raw socket peer unless <code>--trust-proxy</code> is set, because any caller can put whatever
+        it likes in <code>X-Forwarded-For</code> — turn it on only behind a proxy that overwrites
+        that header.
+      </p>
+
+      <Callout type="warning" title="A 429 that is a rate limit says so">
         <p>
-          Guardrails configured on the default <code>AgentPool</code> agent run on every
-          request — inbound prompts go through <code>INPUT</code> guardrails and outbound
-          responses through <code>OUTPUT</code> guardrails. See
-          {' '}<Link to="/guardrails">Guardrails</Link>.
+          A limited request is answered <code>429</code> with{' '}
+          <code>code: "rate_limit_exceeded"</code> and a <code>Retry-After</code> header. A{' '}
+          <code>429</code> from a budget cap carries <code>BudgetExceeded</code> instead, so the two
+          are distinguishable without reading the message text.
         </p>
-      </InfoBox>
+      </Callout>
 
-      <h2>See Also</h2>
+      <h2>The audit log</h2>
+
       <p>
-        <Link to="/clients">Clients &amp; SDKs</Link> · <Link to="/guardrails">Guardrails</Link> ·
-        {' '}<Link to="/workflows">Workflows</Link>
+        Every request and response pair is appended as one JSON line to a daily file under{' '}
+        <code>~/.effgen/audit/&lt;YYYY-MM-DD&gt;.jsonl</code>, or{' '}
+        <code>EFFGEN_AUDIT_DIR</code> if you move it.
       </p>
+
+      <ApiTable
+        headers={['Field', 'Type', 'What it holds']}
+        rows={[
+          [<code>ts</code>, 'str', 'ISO-8601 UTC timestamp.'],
+          [<code>principal</code>, 'str', <>The JWT <code>sub</code> claim, or <code>"anonymous"</code>.</>],
+          [<code>roles</code>, 'list[str]', 'The roles at the time of the request.'],
+          [<code>endpoint</code>, 'str', <><code>"METHOD /path"</code>.</>],
+          [<code>request_summary</code>, 'str', 'Method, path and scrubbed query string.'],
+          [<code>response_summary</code>, 'str', <><code>"HTTP &lt;status&gt; (&lt;content-type&gt;)"</code>.</>],
+          [
+            <code>outcome</code>,
+            'str',
+            <>
+              <code>ok</code> for 1xx–3xx, <code>denied</code> for 401, 403 and a 429 budget cap,{' '}
+              <code>error</code> for any other 4xx or 5xx.
+            </>,
+          ],
+          [<code>request_id</code>, 'str', <>The <code>X-Request-ID</code> header value.</>],
+          [<code>duration_ms</code>, 'float', 'Handler wall-clock time.'],
+          [<code>extra</code>, 'object', 'Reserved.'],
+        ]}
+        caption={
+          <>
+            What is <em>not</em> in a record matters as much: no request or response body, no{' '}
+            <code>Authorization</code> value, and query parameters that look like secrets —{' '}
+            <code>key</code>, <code>token</code>, <code>secret</code>, <code>password</code>,{' '}
+            <code>auth</code>, <code>api_key</code>, <code>api-key</code>, <code>bearer</code> —
+            scrubbed to <code>[REDACTED]</code>.
+          </>
+        }
+      />
+
+      <CodeBlock
+        filename="read_audit.py"
+        code={`from effgen.server.audit import AuditRecord, read_audit_records
+
+records: list[AuditRecord] = read_audit_records()          # today
+yesterday = read_audit_records("2026-08-22")               # any day
+
+for record in records[-3:]:
+    print(record.outcome, record.endpoint, f"{record.duration_ms:.1f}ms")`}
+        caption="The files are JSONL, so anything that tails a log file also works."
+      />
+
+      <h2>What goes wrong</h2>
+
+      <ApiTable
+        headers={['What you see', 'What it means', 'What to do']}
+        rows={[
+          [
+            <>
+              <code>401</code> with <code>code: "invalid_api_key"</code>
+            </>,
+            'No credential, or one the server does not accept.',
+            <>
+              Send <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key</code>. With
+              nothing configured, the key you want is the ephemeral one printed at startup — and it
+              changes on every restart, so set <code>EFFGEN_API_KEY</code> for anything that runs
+              more than once.
+            </>,
+          ],
+          [
+            <>
+              <code>403</code> from a route that worked yesterday
+            </>,
+            "The principal's roles no longer permit that tool or model.",
+            <>
+              Read <code>GET /rbac/policy</code> as that principal. A role granting no tools cannot
+              be fixed by adding a second read-only role; it needs one that grants tools.
+            </>,
+          ],
+          [
+            <>
+              <code>429</code> with a <code>BudgetExceeded</code> detail
+            </>,
+            "The principal's daily cost cap is spent.",
+            <>
+              Raise <code>max_cost_per_day</code> for that role, or wait for the UTC day to roll.
+              This is per principal, not per process.
+            </>,
+          ],
+          [
+            'Every client shares one rate-limit bucket',
+            <>
+              The server is behind a proxy and <code>--trust-proxy</code> is off, so every request
+              looks like it came from the proxy's IP.
+            </>,
+            <>
+              Turn it on — but only if the proxy overwrites <code>X-Forwarded-For</code>, or callers
+              can spoof their way past the limit.
+            </>,
+          ],
+          [
+            <>
+              <code>/metrics</code> answers <code>401</code> to Prometheus
+            </>,
+            'It is protected by default.',
+            <>
+              Give the scrape job a bearer token, or set <code>EFFGEN_PUBLIC_METRICS=1</code>{' '}
+              deliberately. <Link to="/metrics">Metrics</Link> shows both.
+            </>,
+          ],
+          [
+            'A loud warning about dev mode in the logs',
+            <>
+              <code>EFFGEN_DEV_MODE=1</code> is set, so auth is off entirely.
+            </>,
+            'Unset it. Every request is currently an admin.',
+          ],
+        ]}
+      />
+
+      <Callout type="note" title="New in 1.0.0">
+        <p>
+          Two of these changed. <code>X-Forwarded-For</code> is now trusted only when you enable it,
+          so a rate limit cannot be defeated by a header a caller sets — and <code>effgen serve</code>{' '}
+          no longer lets uvicorn rewrite the client address behind that setting. The server also
+          stays responsive during a long generation: a non-streaming completion used to block the
+          event loop, so <code>/health</code> timed out for the length of the call.
+        </p>
+      </Callout>
+
+      <SeeAlso paths={['/openai-api', '/deployment', '/metrics']} />
     </DocPage>
   );
 }

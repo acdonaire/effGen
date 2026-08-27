@@ -2,15 +2,15 @@
   <defs>
     <!-- Main gradient -->
     <linearGradient id="mainGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#667eea"/>
-      <stop offset="50%" stop-color="#764ba2"/>
-      <stop offset="100%" stop-color="#f093fb"/>
+      <stop offset="0%" stop-color="#00ff88"/>
+      <stop offset="50%" stop-color="#00c96e"/>
+      <stop offset="100%" stop-color="#00e5ff"/>
     </linearGradient>
 
     <!-- Glow gradient -->
     <linearGradient id="glowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#a78bfa"/>
-      <stop offset="100%" stop-color="#f0abfc"/>
+      <stop offset="0%" stop-color="#00ff88"/>
+      <stop offset="100%" stop-color="#69ffb4"/>
     </linearGradient>
 
     <!-- Inner glow filter -->
@@ -31,8 +31,8 @@
     <!-- Radial gradient for center -->
     <radialGradient id="centerGlow" cx="50%" cy="50%" r="50%">
       <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="40%" stop-color="#e0e7ff"/>
-      <stop offset="100%" stop-color="#a78bfa"/>
+      <stop offset="40%" stop-color="#ccffe6"/>
+      <stop offset="100%" stop-color="#00ff88"/>
     </radialGradient>
   </defs>
 
