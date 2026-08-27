@@ -65,6 +65,15 @@ jobs:
           DOCS_BASE_PATH: ${{ env.DOCS_BASE_PATH }}
         run: npm run build
 
+      # The landing site's sitemap lists the 72 documentation pages, and it reads
+      # them from data/docsRoutes.json because effgen-docs/ is outside its
+      # TypeScript project. `npm run build` regenerates that file; this job runs
+      # `next build` directly, so it checks the checked-in copy instead of
+      # letting the sitemap and the step below quietly fall behind the docs.
+      - name: Check the documentation route list is current
+        working-directory: website
+        run: node scripts/gen_docs_routes.mjs --check
+
       - name: Build the landing site
         working-directory: website
         env:
@@ -77,18 +86,42 @@ jobs:
         run: |
           # The docs are a single-page app: the browser routes /docs/agents
           # client-side, but a static host has to answer that URL with something
-          # first. The routes are read from the app itself, so a page added
-          # there is picked up here without this list going stale.
-          routes=$(grep -oE '<Route path="[^"]+"' effgen-docs/src/App.tsx \
-                   | sed 's/.*path="//; s/"//' | grep -vE '^/?$' | sort -u)
-          count=0
-          for route in $routes; do
-            mkdir -p "out/docs/$route"
-            cp out/docs/index.html "out/docs/$route/index.html"
-            count=$((count + 1))
-          done
-          echo "materialised $count documentation routes"
-          test "$count" -gt 0 || { echo "no routes found — the app's shape changed"; exit 1; }
+          # first. The list comes from data/docsRoutes.json, which the generator
+          # above writes out of the documentation's own table of contents, so a
+          # page added there is picked up here without this list going stale.
+          #
+          # It is read as JSON rather than scraped out of the JSX. The router
+          # builds its routes from that table of contents in a loop, so there is
+          # no literal path in App.tsx to scrape: a text search finds the
+          # catch-all "*" and nothing else, and the shell then expands it into a
+          # directory listing. Every page still returns 200 and every deep link
+          # 404s, which is the failure this step exists to prevent.
+          node -e '
+            const { mkdirSync, copyFileSync, readFileSync } = require("node:fs");
+            const routes = JSON.parse(readFileSync("data/docsRoutes.json", "utf8"));
+            const paths = [
+              ...routes.pages.map((p) => p.path),
+              // Retired addresses. The app answers each with a redirect, so it
+              // needs a file here too or an old bookmark never reaches it.
+              ...routes.redirects.map((r) => r.path),
+            ];
+            if (paths.length === 0) {
+              console.error("no documentation routes — data/docsRoutes.json is empty");
+              process.exit(1);
+            }
+            for (const path of paths) {
+              if (!path.startsWith("/")) {
+                console.error(`route ${path} is not site-absolute`);
+                process.exit(1);
+              }
+              mkdirSync(`out/docs${path}`, { recursive: true });
+              copyFileSync("out/docs/index.html", `out/docs${path}/index.html`);
+            }
+            console.log(
+              `materialised ${routes.pages.length} documentation routes ` +
+              `and ${routes.redirects.length} retired addresses`
+            );
+          '
 
       - name: Check both entry points made it into the export
         working-directory: website
