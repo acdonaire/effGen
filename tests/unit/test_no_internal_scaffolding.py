@@ -294,6 +294,11 @@ ALLOWLIST: list[tuple[str, str]] = [
     ("CONTRIBUTING.md", "without a tracking issue"),
     # Historical release-notes entry (changelog is human narrative, not source).
     ("CHANGELOG.md", "ACP TODO"),
+    # A @font-face Unicode subset descriptor, not a tracking id. Splitting
+    # identifiers on the CamelCase hump turns "U+1E00-1E9F" into "U+1 E00-1 E9F",
+    # and "E00-1" then matches the E<n>-<n> form. The two lines are the Latin and
+    # Latin-Extended subsets of the self-hosted faces the documentation renders in.
+    ("website/effgen-docs/src/styles/globals.css", "unicode-range:"),
 ]
 
 # Documented allowlist for the editorializing check: genuinely-legitimate domain
