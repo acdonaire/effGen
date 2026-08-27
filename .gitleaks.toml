@@ -154,6 +154,13 @@ regexes = [
     # detection depend on how a provider is spelled. Matched as a family so a
     # newly documented provider cannot reintroduce it.
     '''your[_\-][a-z0-9]+[_\-](?:key|token|secret)''',
+    # Key-shaped strings whose body is a visibly synthetic run — a sequential
+    # alphabet or a repeated-character block. The site's redaction and error
+    # pages have to print something key-shaped to show what the redactor turns
+    # it into, so their placeholders are written to be unmistakable. Matched as
+    # a family, the way the "your-<provider>-<key>" placeholders above are, so a
+    # newly written example cannot reintroduce the failure.
+    '''(?:abcdefghij|0123456789abcdef|AAAABBBBCCCC)[A-Za-z0-9]*''',
     # Standard test fixture patterns
     '''sk-ant-api03-FAKE''',
     '''AIzaFAKE''',
