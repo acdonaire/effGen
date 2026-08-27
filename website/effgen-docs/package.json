@@ -1,20 +1,19 @@
 {
   "name": "effgen-docs",
   "private": true,
-  "version": "0.3.1",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/gen-search-index.mjs && tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "search-index": "node scripts/gen-search-index.mjs"
   },
   "dependencies": {
-    "@types/prismjs": "^1.26.5",
     "@types/react-router-dom": "^5.3.3",
     "lucide-react": "^0.561.0",
     "mermaid": "^11.12.2",
-    "prismjs": "^1.30.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.10.1"

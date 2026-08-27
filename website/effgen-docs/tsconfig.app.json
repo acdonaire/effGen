@@ -12,6 +12,9 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": { "@data/*": ["../data/*"], "@shared/*": ["../shared/*"] },
     "noEmit": true,
     "jsx": "react-jsx",
 
