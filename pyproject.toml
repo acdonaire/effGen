@@ -793,6 +793,13 @@ ignore = [
 "scripts/**/*.py" = ["E402"]
 "validation/**/*.py" = ["E402"]
 "tests/conftest.py" = ["E402"]  # sys.path manipulation must precede effgen imports
+# The scorers and tools under this directory are byte-for-byte copies of the
+# harness that produced the benchmark records they are used to re-read. They are
+# copies on purpose — a reformatted parser is a changed parser, and a changed
+# parser changes the numbers for reasons that have nothing to do with effGen —
+# so they are linted as data rather than as source. A drift check in the same
+# directory compares them against their origin.
+"tests/benchmarks/agentloop/harness/**" = ["ALL"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["effgen"]
