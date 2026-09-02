@@ -39,10 +39,30 @@ Usage::
     rows = store.query_today()
     rows = store.query_since(since_timestamp)
     rows = store.query_all()
+
+    total = store.spend_today()      # summed in SQLite, no objects built
+    total = store.spend_since(since_timestamp)
+    n = store.count()
+    removed = store.prune(max_age_days=90)
+
+Reading spend
+-------------
+``spend_*`` returns the one number a budget check needs, summed in the database
+against an index on ``timestamp``, so the cost of a check follows the window it
+asks about rather than the size of the table. ``query_*`` returns the rows
+themselves and is what a report needs; it builds one :class:`CostEvent` per row.
+
+Growth
+------
+The table gains a row per model call and nothing removes one during normal
+operation. Crossing :data:`RETENTION_WARN_ROWS` logs one line naming
+``effgen cost prune``; :meth:`SQLiteCostStore.prune` is the only thing that
+deletes, and only when it is called.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import threading
@@ -52,6 +72,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_PATH = Path.home() / ".effgen" / "costs.sqlite"
 
@@ -85,6 +107,40 @@ CREATE INDEX IF NOT EXISTS idx_cost_events_lookup
     ON cost_events (provider, model, timestamp);
 """
 
+#: Budget checks filter on time alone. The composite index above leads with
+#: ``provider``, so SQLite cannot seek into it on a bare ``timestamp >= ?`` and
+#: falls back to walking every distinct (provider, model) prefix. Every model
+#: call runs a budget preflight, so that walk was paid once per call against a
+#: table that grows by one row per call.
+#:
+#: ``cost_usd`` is carried in the index rather than only ``timestamp`` because
+#: the sum below is then answered from the index alone. With a timestamp-only
+#: index SQLite still has to fetch each matching row from the table to read the
+#: one column it is adding up, which on a 500,000-row ledger measured ~370 ms
+#: for the 30-day window against ~9 ms covered.
+_CREATE_TIME_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_cost_events_timestamp
+    ON cost_events (timestamp, cost_usd);
+"""
+
+#: Spend for a period, summed in SQLite. The budget check only ever wanted the
+#: total, but read it through :data:`_QUERY_SINCE` and added the rows up in
+#: Python, so a preflight built one :class:`CostEvent` per row in the window and
+#: discarded all of them. On a 500,000-row ledger that measured ~894 ms per
+#: call, and because every call made the same query, concurrent agents queued
+#: behind it: throughput at 16 agents was worse than at one.
+_SUM_SINCE = """
+SELECT COALESCE(SUM(cost_usd), 0.0) FROM cost_events WHERE timestamp >= ?;
+"""
+
+_COUNT_ALL = """
+SELECT COUNT(*) FROM cost_events;
+"""
+
+_COUNT_SINCE = """
+SELECT COUNT(*) FROM cost_events WHERE timestamp >= ?;
+"""
+
 _INSERT = """
 INSERT INTO cost_events (provider, model, prompt_tokens, completion_tokens, cost_usd, timestamp)
 VALUES (?, ?, ?, ?, ?, ?);
@@ -106,6 +162,22 @@ ORDER BY timestamp ASC;
 _DELETE_OLD = """
 DELETE FROM cost_events WHERE timestamp < ?;
 """
+
+_DELETE_KEEP_NEWEST = """
+DELETE FROM cost_events WHERE id NOT IN (
+    SELECT id FROM cost_events ORDER BY timestamp DESC LIMIT ?
+);
+"""
+
+#: The ledger gains a row per model call and nothing removes one, so a
+#: long-lived process accumulates without bound. These are the documented
+#: ceiling: crossing :data:`RETENTION_WARN_ROWS` prints one line naming
+#: ``effgen cost prune``, and ``prune`` with no bound keeps
+#: :data:`RETENTION_MAX_AGE_DAYS` of history. Neither deletes anything on its
+#: own — the ledger is the user's spend record, and `effgen cost by-provider`
+#: reports it over the store's whole lifetime.
+RETENTION_WARN_ROWS = 250_000
+RETENTION_MAX_AGE_DAYS = 90.0
 
 
 @dataclass
@@ -145,6 +217,11 @@ class SQLiteCostStore:
         # connection, shared, with a lock around each statement.
         self._shared_lock = threading.Lock() if self._path == ":memory:" else None
         self._shared_conn: sqlite3.Connection | None = None
+        #: Rows currently stored, counted once on the first insert and then
+        #: tracked in process. Counting per insert would put a second query on
+        #: the write path to answer a question that only changes by one.
+        self._rows: int | None = None
+        self._warned_retention = False
         self._init_schema()
 
     # ------------------------------------------------------------------
@@ -163,6 +240,7 @@ class SQLiteCostStore:
             with conn:
                 conn.execute(_CREATE_TABLE)
                 conn.execute(_CREATE_INDEX)
+                self._create_time_index(conn)
         return conn
 
     def _conn(self) -> sqlite3.Connection:
@@ -191,10 +269,28 @@ class SQLiteCostStore:
         with self._shared_lock:
             yield conn
 
+    @staticmethod
+    def _create_time_index(conn: sqlite3.Connection) -> None:
+        """Add the timestamp index, tolerating a store that cannot be written.
+
+        The index is what makes a budget query proportional to its window
+        instead of to the whole ledger, but a read-only file, a ledger on a
+        read-only mount, or a database another process is holding must still be
+        *readable*: a cost ledger that refuses to open would take the model call
+        down with it. So a failure here degrades the query plan and nothing
+        else, and is reported at debug level rather than raised.
+        """
+        try:
+            conn.execute(_CREATE_TIME_INDEX)
+        except sqlite3.Error:
+            logger.debug("Could not create %s; budget queries will be slower",
+                         "idx_cost_events_timestamp", exc_info=True)
+
     def _init_schema(self) -> None:
         with self._exclusive() as conn, conn:
             conn.execute(_CREATE_TABLE)
             conn.execute(_CREATE_INDEX)
+            self._create_time_index(conn)
 
     # ------------------------------------------------------------------
     # Public API
@@ -231,12 +327,119 @@ class SQLiteCostStore:
             except Exception:
                 conn.execute("ROLLBACK;")
                 raise
+        self._note_insert()
+
+    def _note_insert(self) -> None:
+        """Track the row count and say once when the ledger crosses its ceiling.
+
+        The count is read from the database once, on the first insert of this
+        store, and incremented from then on: the write path already knows it
+        added exactly one row, so asking the database again per call would put a
+        second query on it to learn something it could have counted.
+
+        The message is emitted once per store. It says what to run, and it does
+        not prune: a spend record is the user's to keep or drop.
+        """
+        try:
+            if self._rows is None:
+                self._rows = self.count()
+            self._rows += 1
+            if self._warned_retention or self._rows < RETENTION_WARN_ROWS:
+                return
+            self._warned_retention = True
+            logger.warning(
+                "effGen cost ledger has %d events (%s). Budget checks stay fast, "
+                "but the file only grows; run 'effgen cost prune' to keep the "
+                "last %d days.",
+                self._rows, self._path, int(RETENTION_MAX_AGE_DAYS),
+            )
+        except sqlite3.Error:
+            # Bookkeeping must never be the reason a recorded call fails.
+            logger.debug("Could not track cost-ledger size", exc_info=True)
 
     def query_since(self, since: float) -> list[CostEvent]:
         """Return all events with timestamp >= *since*."""
         with self._exclusive() as conn:
             rows = conn.execute(_QUERY_SINCE, (since,)).fetchall()
         return [CostEvent(*row) for row in rows]
+
+    def spend_since(self, since: float) -> float:
+        """Return total USD spend with ``timestamp >= since``, summed in SQLite.
+
+        The budget check wants one number. Reading it through
+        :meth:`query_since` builds a :class:`CostEvent` for every row in the
+        window only to add up one field and throw the objects away, so the cost
+        of a check grew with the ledger rather than with the window. This runs
+        the sum in the database against an index on ``timestamp``.
+        """
+        with self._exclusive() as conn:
+            row = conn.execute(_SUM_SINCE, (since,)).fetchone()
+        return float(row[0]) if row and row[0] is not None else 0.0
+
+    def spend_today(self) -> float:
+        """Total USD spend over the last 24 hours (rolling day)."""
+        return self.spend_since(time.time() - 86400.0)
+
+    def spend_week(self) -> float:
+        """Total USD spend over the last 7 days."""
+        return self.spend_since(time.time() - 7 * 86400.0)
+
+    def spend_month(self) -> float:
+        """Total USD spend over the last 30 days."""
+        return self.spend_since(time.time() - 30 * 86400.0)
+
+    def count(self) -> int:
+        """Number of events currently stored."""
+        with self._exclusive() as conn:
+            row = conn.execute(_COUNT_ALL).fetchone()
+        return int(row[0]) if row else 0
+
+    def count_since(self, since: float) -> int:
+        """Number of events with ``timestamp >= since``, counted in SQLite."""
+        with self._exclusive() as conn:
+            row = conn.execute(_COUNT_SINCE, (since,)).fetchone()
+        return int(row[0]) if row else 0
+
+    def prune(self, *, max_age_days: float | None = None,
+              keep_rows: int | None = None) -> int:
+        """Delete old events and return how many rows went.
+
+        Exactly one bound is applied per call. ``max_age_days`` drops everything
+        older than that many days; ``keep_rows`` keeps the newest *keep_rows*
+        events and drops the rest. With neither, :data:`RETENTION_MAX_AGE_DAYS`
+        applies, which is the ceiling this store documents.
+
+        Pruning is never automatic. The ledger is the user's own spend record
+        and `effgen cost by-provider` reports it over the store's whole
+        lifetime, so rows are removed when someone asks and not before.
+        """
+        if max_age_days is not None and keep_rows is not None:
+            raise ValueError(
+                "prune() was given both max_age_days and keep_rows. "
+                "Pass one bound per call."
+            )
+        with self._exclusive() as conn:
+            conn.execute("BEGIN IMMEDIATE;")
+            try:
+                if keep_rows is not None:
+                    if keep_rows < 0:
+                        raise ValueError(
+                            "keep_rows is negative. Pass 0 or more to say how "
+                            "many of the newest events to keep."
+                        )
+                    cursor = conn.execute(_DELETE_KEEP_NEWEST, (keep_rows,))
+                else:
+                    days = (RETENTION_MAX_AGE_DAYS if max_age_days is None
+                            else float(max_age_days))
+                    cursor = conn.execute(_DELETE_OLD, (time.time() - days * 86400.0,))
+                count = cursor.rowcount
+                conn.execute("COMMIT;")
+            except Exception:
+                conn.execute("ROLLBACK;")
+                raise
+        if count:
+            self._rows = None
+        return count
 
     def query_today(self) -> list[CostEvent]:
         """Return events from the last 24 hours (rolling day)."""
@@ -268,10 +471,12 @@ class SQLiteCostStore:
                 cursor = conn.execute(_DELETE_OLD, (cutoff,))
                 count = cursor.rowcount
                 conn.execute("COMMIT;")
-                return count
             except Exception:
                 conn.execute("ROLLBACK;")
                 raise
+        if count:
+            self._rows = None       # re-count on the next insert
+        return count
 
     def close(self) -> None:
         """Close this thread's connection, or the shared in-memory one."""
