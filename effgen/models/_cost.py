@@ -480,6 +480,9 @@ class CostTracker:
     _instance: "CostTracker | None" = None
     _lock: threading.Lock = threading.Lock()
 
+    #: How long a period-spend reading stays usable, in seconds.
+    _PERIOD_SPEND_TTL_S = 1.0
+
     def __init__(
         self,
         storage: "SQLiteCostStore | None" = None,
@@ -487,6 +490,10 @@ class CostTracker:
         self._data: dict[tuple[str, str], _ModelStats] = {}
         self._lock = threading.Lock()
         self._storage = storage
+        #: period -> (monotonic time of the reading, spend). See
+        #: :meth:`_period_spend` for why a reading may be reused.
+        self._period_spend_cache: dict[str, tuple[float, float]] = {}
+        self._period_spend_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Singleton access
@@ -593,6 +600,14 @@ class CostTracker:
             except Exception as exc:
                 logger.warning("CostStore insert failed: %s", exc)
 
+        # Spend just landed. Folding it into every cached period reading —
+        # before :meth:`_check_budget` reads it below — is what keeps the cache
+        # in :meth:`_period_spend` a latency optimization rather than a hole in
+        # the budget: the post-spend check sees this call's cost at once, and
+        # no ledger read is paid to learn a number this process already knows.
+        if cost:
+            self._add_period_spend(cost)
+
         logger.debug(
             "CostTracker.record %s/%s: prompt=%d completion=%d cost=%s",
             provider, model, prompt_tokens, completion_tokens,
@@ -667,12 +682,69 @@ class CostTracker:
                 )
 
     def _period_spend(self, period: str) -> float:
-        """Return spend for *period* using storage when available."""
+        """Return spend for *period*, from a reading at most a second old.
+
+        The caller is the per-call budget check, and a run with several agents
+        in flight asks this same question many times a second. The ledger is
+        read at most once a second per process; between readings, spend this
+        process records is added to the cached number (see :meth:`record`), so
+        the total the post-spend check sees is exact for everything this
+        process has spent and at most a second behind what other processes
+        writing the same ledger have added.
+
+        Reusing a reading is safe because of what the preflight is. It guards
+        spend that has **already** happened — it cannot know what the call it
+        is about to allow will cost — and it is backed by the check inside
+        :meth:`record`, which runs after the real cost is known against a total
+        that already includes it. So the cap is enforced on the number that
+        matters either way; the cache only decides whether a call that was
+        going to be allowed pays a database round trip to find that out. What
+        a reading can miss is spend another process landed within the last
+        second, which is the same window the preflight has anyway, and
+        :meth:`_check_budget` still refuses the next call.
+
+        The ledger read runs under the lock, so a burst of callers arriving as
+        a reading expires pays for one read, not one each.
+        """
+        import time
+
+        with self._period_spend_lock:
+            cached = self._period_spend_cache.get(period)
+            if cached is not None and time.monotonic() - cached[0] < self._PERIOD_SPEND_TTL_S:
+                logger.debug("budget preflight: period spend served from cache (%s)",
+                             period)
+                return cached[1]
+            spend = self._period_spend_uncached(period)
+            self._period_spend_cache[period] = (time.monotonic(), spend)
+            return spend
+
+    def _period_spend_uncached(self, period: str) -> float:
+        """Read spend for *period* from storage, falling back to memory.
+
+        Prefers the store's aggregate, which returns the one number the budget
+        check needs. A store that does not implement it — a third-party
+        implementation of the same duck type — keeps working through the
+        row-returning queries, at the cost of building an object per row.
+        """
         if self._storage is not None:
             try:
                 if period == "daily":
+                    spend_today = getattr(self._storage, "spend_today", None)
+                    if spend_today is not None:
+                        logger.debug("budget preflight: period spend summed in store "
+                                     "(%s)", period)
+                        return float(spend_today())
+                    logger.debug("budget preflight: period spend summed from rows (%s)",
+                                 period)
                     return sum(e.cost_usd for e in self._storage.query_today())
                 if period == "monthly":
+                    spend_month = getattr(self._storage, "spend_month", None)
+                    if spend_month is not None:
+                        logger.debug("budget preflight: period spend summed in store "
+                                     "(%s)", period)
+                        return float(spend_month())
+                    logger.debug("budget preflight: period spend summed from rows (%s)",
+                                 period)
                     query_month = getattr(self._storage, "query_month", None)
                     if query_month is not None:
                         return sum(e.cost_usd for e in query_month())
@@ -684,6 +756,24 @@ class CostTracker:
             except Exception:
                 logger.warning("CostStore budget query failed; falling back to memory")
         return self.total_cost()
+
+    def _add_period_spend(self, cost: float) -> None:
+        """Fold spend this process just recorded into every cached reading.
+
+        A recorded call is stamped with the current time, so it falls inside
+        every period window; adding its cost keeps each cached total exact for
+        this process without a ledger read. If the insert behind it failed,
+        the reading overstates by one call's cost until it next expires, which
+        is the safe direction for a cap.
+        """
+        with self._period_spend_lock:
+            for period, (taken, spend) in self._period_spend_cache.items():
+                self._period_spend_cache[period] = (taken, spend + cost)
+
+    def _invalidate_period_spend(self) -> None:
+        """Drop every cached period reading, forcing the next one to the ledger."""
+        with self._period_spend_lock:
+            self._period_spend_cache.clear()
 
     def total_cost(self, provider: str | None = None, model: str | None = None) -> float:
         """Return total USD cost accumulated in memory, optionally filtered.
