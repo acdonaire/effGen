@@ -79,6 +79,7 @@ types-setuptools>=69.0.0
 # Additional Testing Tools
 # ==============================================================================
 hypothesis>=6.92.0
+nltk>=3.8.0
 faker>=21.0.0
 responses>=0.24.0
 

@@ -55,6 +55,16 @@ class ScorerDrift(RuntimeError):
     """The copied scorer no longer reproduces the scores stored in the records."""
 
 
+class ScorerUnavailable(RuntimeError):
+    """The copied scorer cannot run here because a package it imports is missing.
+
+    Distinct from a scoring failure: the run scored a sample its scorer choked
+    on as 0.0, and a replay reproduces that. A scorer that cannot import at all
+    would score *every* sample 0.0 and report the whole cell as drift, which
+    reads as a broken instrument rather than a missing package.
+    """
+
+
 # --------------------------------------------------------------------- pieces
 
 
@@ -334,6 +344,13 @@ class Cell:
         """Score an answer for this record's sample, with this cell's scorer."""
         try:
             score, _prediction = self.benchmark.score(self.rebuild_sample(record), output)
+        except ImportError as exc:
+            missing = getattr(exc, "name", None) or str(exc)
+            raise ScorerUnavailable(
+                f"NOT MEASURED: the {self.key.bench} scorer imports {missing!r}, which is "
+                f"not installed. Install the eval extra (pip install 'effgen[eval]') "
+                f"and re-run."
+            ) from exc
         except Exception:
             # The run recorded a failed scoring as 0.0 rather than dropping the
             # sample, so a replay has to do the same or the two disagree on n.

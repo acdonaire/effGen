@@ -176,6 +176,9 @@ dev = [
     "mypy>=1.7.0",
     "bitsandbytes>=0.46.1",
     "hypothesis>=6.100.0",
+    # The benchmark replay instrument (tests/benchmarks/agentloop) scores memory
+    # sets with a stemmer from nltk; without it those cells refuse to score.
+    "nltk>=3.8.0",
     "cyclonedx-bom>=4.0.0",
     # Local supply-chain auditing so the security gate (tests/security/
     # test_vuln_audit.py) is runnable from a dev install, matching the CI gate.

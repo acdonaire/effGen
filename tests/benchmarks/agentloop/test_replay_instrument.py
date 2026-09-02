@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
 from pathlib import Path
 
 import pytest
@@ -215,6 +216,27 @@ def test_partial_credit_is_averaged_over_scores_not_over_the_correct_flag():
     )
     assert expected["records_with_partial_credit"] > 0
     assert stats.exact_correct / stats.n * 100 == expected["accuracy_from_correct_flags"]
+
+
+def test_a_scorer_missing_its_package_refuses_instead_of_scoring_zero(monkeypatch):
+    """A scorer that cannot import must say so, not report every record as drift.
+
+    The memory scorer stems with ``nltk``. Without it, scoring raised, the
+    replay read the raise as a score of 0.0, and the cell reported six of eight
+    records as scorer drift — a broken instrument, when the truth was a package.
+    """
+    from .harness.benchmarks import memory
+
+    monkeypatch.setitem(sys.modules, "nltk", None)
+    monkeypatch.setitem(sys.modules, "nltk.stem", None)
+    memory._stemmer.cache_clear()
+    try:
+        cell = fixture_cell("fractional_scores", bench="locomo")
+        with pytest.raises(RuntimeError, match="nltk") as raised:
+            cell.stats()
+        assert raised.type.__name__ == "ScorerUnavailable"
+    finally:
+        memory._stemmer.cache_clear()
 
 
 # --------------------------------------------------------- 7: the ragged cell
