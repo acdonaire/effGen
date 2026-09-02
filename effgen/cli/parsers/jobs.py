@@ -324,6 +324,18 @@ def add_cost_parser(subparsers: argparse._SubParsersAction) -> None:
                                   help=_cost_output_help)
         _cost_period.add_argument('--report', metavar='PATH.html',
                                   default=argparse.SUPPRESS, help=_cost_report_help)
+    cost_prune = cost_subparsers.add_parser(
+        'prune', help='Delete old events from the local spend ledger')
+    cost_prune.add_argument('--older-than-days', type=float, metavar='DAYS',
+                            help='Delete events older than DAYS (default: 90).')
+    cost_prune.add_argument('--keep-rows', type=int, metavar='N',
+                            help='Keep the newest N events and delete the rest.')
+    cost_prune.add_argument('--dry-run', action='store_true',
+                            help='Report what would be deleted without deleting it.')
+    cost_prune.add_argument('--json', dest='output_json', action='store_true',
+                            default=argparse.SUPPRESS,
+                            help='Output as JSON')
+
     cost_set_budget = cost_subparsers.add_parser('set-budget', help='Set a daily spend budget')
     cost_set_budget.add_argument('amount', type=float, help='Daily budget in USD (e.g. 1.0)')
     cost_subparsers.add_parser('clear-budget', help='Remove configured budget limits')

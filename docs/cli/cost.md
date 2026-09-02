@@ -9,6 +9,7 @@ The `effgen cost` subcommand gives you a live view of your API spend and lets yo
 | `effgen cost today` | Per-provider/model summary for the last 24 hours |
 | `effgen cost week` | Rolling 7-day spend summary |
 | `effgen cost by-provider` | Lifetime totals grouped by provider |
+| `effgen cost prune` | Delete old events from the local ledger |
 | `effgen cost set-budget <amount>` | Set a daily budget in USD |
 | `effgen cost clear-budget` | Remove configured budget limits |
 
@@ -150,6 +151,30 @@ cost_events(provider, model, prompt_tokens, completion_tokens, cost_usd, timesta
 
 The file is written automatically when you use `CostTracker.get()` (the default singleton).
 
+### Keeping the ledger bounded
+
+The ledger gains one row per model call and normal operation removes none, so it
+grows for as long as you use effGen. Budget checks read a total summed in SQLite
+against an index on `timestamp`, so their cost follows the window they ask about
+rather than the size of the file, and a reading is reused for up to a second and
+updated in place with the spend this process records, so a burst of calls pays for
+one read — but the file itself keeps growing.
+
+Once the ledger passes **250,000 events**, effGen logs one line naming
+`effgen cost prune`. Nothing is deleted for you: these are your own spend
+records, and `effgen cost by-provider` reports them over the ledger's whole
+lifetime.
+
+```bash
+effgen cost prune --dry-run          # what would go, keeping the last 90 days
+effgen cost prune                    # keep the last 90 days
+effgen cost prune --older-than-days 30
+effgen cost prune --keep-rows 100000 # keep the newest 100,000 events
+```
+
+`--dry-run` and `--json` work together, so a scheduled job can report before it
+deletes.
+
 ## Programmatic access
 
 ```python
@@ -167,6 +192,14 @@ events = store.query_all()         # lifetime
 
 for ev in events:
     print(f"{ev.provider}/{ev.model}: ${ev.cost_usd:.6f}")
+
+# Totals without materialising the rows behind them — this is what the budget
+# check uses, and its cost follows the window rather than the whole ledger.
+store.spend_today()                # USD over the last 24 hours
+store.spend_week()                 # USD over the last 7 days
+store.spend_month()                # USD over the last 30 days
+store.count()                      # events stored
+store.prune(max_age_days=90)       # returns how many rows were deleted
 
 # In-memory tracker (no persistence, back-compat)
 mem_tracker = CostTracker(storage=None)

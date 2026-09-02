@@ -58,6 +58,84 @@ def configured_daily_budget() -> float | None:
     return value if value > 0 else None
 
 
+def _handle_cost_prune(args, cli: "CLIInterface", store) -> int:
+    """Handle ``effgen cost prune``: bound the size of the local spend ledger.
+
+    The ledger gains a row per model call and normal operation removes none, so
+    it grows for as long as effGen is used. Pruning is a command rather than
+    something that happens on its own, because the rows are the user's own
+    record of what they spent: ``--dry-run`` reports what would go, and nothing
+    is deleted without the user asking.
+    """
+    import json as _json
+
+    from effgen.models._cost_store import RETENTION_MAX_AGE_DAYS
+
+    keep_rows = getattr(args, 'keep_rows', None)
+    older_than = getattr(args, 'older_than_days', None)
+    if keep_rows is not None and older_than is not None:
+        cli.print_error("Pass --older-than-days or --keep-rows, not both.")
+        return 1
+
+    try:
+        before = store.count()
+    except Exception as e:  # noqa: BLE001 - an unreadable ledger is reported, not raised
+        cli.print_error(f"Could not read the cost ledger: {e}")
+        return 1
+
+    if keep_rows is not None:
+        bound = f"keeping the newest {keep_rows:,} events"
+    else:
+        days = RETENTION_MAX_AGE_DAYS if older_than is None else float(older_than)
+        bound = f"keeping the last {days:g} days"
+
+    if getattr(args, 'dry_run', False):
+        try:
+            if keep_rows is not None:
+                would_go = max(0, before - int(keep_rows))
+            else:
+                import time as _time
+                days = RETENTION_MAX_AGE_DAYS if older_than is None else float(older_than)
+                cutoff = _time.time() - days * 86400.0
+                would_go = before - store.count_since(cutoff)
+        except Exception as e:  # noqa: BLE001
+            cli.print_error(f"Could not read the cost ledger: {e}")
+            return 1
+        document = {"pruned": 0, "would_prune": would_go, "events_before": before,
+                    "events_after": before, "dry_run": True, "bound": bound}
+    else:
+        try:
+            if keep_rows is not None:
+                deleted = store.prune(keep_rows=int(keep_rows))
+            else:
+                deleted = store.prune(max_age_days=older_than)
+        except ValueError as e:
+            cli.print_error(str(e))
+            return 1
+        except Exception as e:  # noqa: BLE001
+            cli.print_error(f"Could not prune the cost ledger: {e}")
+            return 1
+        document = {"pruned": deleted, "events_before": before,
+                    "events_after": before - deleted, "dry_run": False, "bound": bound}
+
+    if getattr(args, 'output_json', False):
+        print(_json.dumps(document, indent=2))
+        return 0
+
+    if document["dry_run"]:
+        cli.print(f"Cost ledger: {before:,} events. Pruning {bound} would remove "
+                  f"{document['would_prune']:,}.")
+    elif document["pruned"]:
+        cli.print_success(
+            f"Removed {document['pruned']:,} events from the cost ledger, {bound}. "
+            f"{document['events_after']:,} remain."
+        )
+    else:
+        cli.print(f"Cost ledger: {before:,} events, none older than the bound "
+                  f"({bound}). Nothing removed.")
+    return 0
+
+
 def _handle_cost_command(args, cli: "CLIInterface") -> int:
     """Handle the 'effgen cost' subcommand: spend dashboard and budget management."""
     import json as _json
@@ -102,6 +180,9 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
     # Spend-report subcommands
     store = SQLiteCostStore()
 
+    if cost_cmd == 'prune':
+        return _handle_cost_prune(args, cli, store)
+
     # period_days is the window the spend covers, so a budget comparison can be
     # scaled to it. Lifetime spans no fixed window, so it carries None.
     if cost_cmd == 'today' or cost_cmd is None:
@@ -118,7 +199,8 @@ def _handle_cost_command(args, cli: "CLIInterface") -> int:
         period_days = None
     else:
         cli.print_error(f"Unknown cost command: {cost_cmd}")
-        cli.print("Usage: effgen cost [today|week|by-provider|set-budget|clear-budget]")
+        cli.print("Usage: effgen cost "
+                  "[today|week|by-provider|prune|set-budget|clear-budget]")
         return 1
 
     # Aggregate events by (provider, model), except by-provider which intentionally
