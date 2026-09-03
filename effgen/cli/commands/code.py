@@ -269,8 +269,8 @@ def _report(cli: "CLIInterface", result: CodeRunResult, *, quiet: bool) -> None:
         title = "Review"
     else:
         title = "Coding Agent"
-    if result.recovered_answer:
-        title = "Recovered answer"
+    if stopped:
+        title = "Stopped"
     if not result.success and not result.partial:
         cli.print_error_panel(result.answer or "The run produced no answer.", title="Error")
     elif console:

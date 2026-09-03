@@ -108,14 +108,20 @@ def _run_body(data: dict[str, Any]) -> tuple[str, str, str]:
     if provider:
         target = f"{target} ({provider})"
 
-    # A run stopped at its iteration cap has no answer but is not an outright
-    # failure: it reads as its own outcome so the progress below is not taken
-    # for a result.
-    stopped = not success and bool(metadata.get("partial"))
+    # A run the loop stopped has no answer but is not an outright failure: it
+    # reads as its own outcome, naming what stopped it, so the progress below is
+    # not taken for a result.
+    run_outcome = str(data.get("outcome") or "")
+    stop_reason = str(data.get("stop_reason") or metadata.get("reason") or "")
+    stopped = run_outcome == "stopped" or (
+        not success and bool(metadata.get("partial"))
+    )
     if success:
         verdict = _badge("succeeded", "ok")
     elif stopped:
-        verdict = _badge("stopped at the iteration cap", "warn")
+        verdict = _badge(
+            f"stopped ({stop_reason})" if stop_reason else "stopped", "warn"
+        )
     else:
         verdict = _badge("failed", "err")
 

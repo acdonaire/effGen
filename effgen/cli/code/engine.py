@@ -77,17 +77,16 @@ REVIEW_PROMPT = (
     "would make; do not attempt to make it."
 )
 
-#: ``answer_source`` values that mean the loop recovered an answer rather than
-#: the model writing one: the last tool observation after a repeated call, or
-#: the loop's own text after the model returned none. A run reporting one of
-#: these completed, but its answer is not what the model wrote, so the coding
-#: surfaces label it. ``direct_calculator_result`` is not here — that is a
-#: computed result the loop returned deliberately.
+#: Stop reasons that end a run holding a tool result the model never wrote up:
+#: the last observation after a repeated call, or what the run had reached when
+#: the model returned no answer. The coding surfaces name which one it was, so a
+#: repeated file read is not mistaken for a review. ``direct_calculator_result``
+#: is not here — that is a computed result the loop returned deliberately.
 RECOVERED_ANSWER_SOURCES: frozenset[str] = frozenset(
     {"loop_detected", "repeated_tool_result", "null_final_from_model"}
 )
 
-#: How each recovered source reads in the run report.
+#: How each of those reads in the run report.
 RECOVERED_ANSWER_LABELS: dict[str, str] = {
     "loop_detected": "the last tool result, after the model repeated the same call",
     "repeated_tool_result": "a tool result the model asked for twice",
@@ -101,8 +100,6 @@ REVIEW_TASK = (
     "else worth raising."
 )
 
-#: What a read-only run reports when the loop had no answer to hand back but the
-#: last thing it read. Returning that would present the file as the review.
 #: What the run reports when every action it took failed and nothing was
 #: written. The model's own paragraph travels under ``partial_output``.
 _ALL_ACTIONS_FAILED = (
@@ -121,14 +118,6 @@ def _every_action_failed(actions: list[Any]) -> bool:
     """
     ran = [a for a in actions if a.decision == "allowed"]
     return bool(ran) and all(a.outcome == "error" for a in ran)
-
-
-REVIEW_NO_ANSWER = (
-    "The model did not produce a review. The run ended with the last thing it "
-    "read rather than with an answer, and that is not a review. Re-run it, "
-    "raise the output budget with --max-tokens (a reasoning model can spend the "
-    "whole budget before writing anything), or use a different model."
-)
 
 
 def resolve_workspace(explicit: str | None = None) -> Path:
@@ -280,6 +269,9 @@ class CodeRunResult:
     #: model writing it (``loop_detected``, ``repeated_tool_result``, ...).
     #: Empty when the model wrote the answer.
     answer_source: str = ""
+    #: What ended the agent run, as the response reported it. Empty when the
+    #: result was assembled from something that carries no stop reason.
+    stop_reason: str = ""
     #: True when the run held no tool that writes, runs or executes anything.
     read_only: bool = False
     #: What a read-only review was asked to look at, or ``None``.
@@ -290,8 +282,9 @@ class CodeRunResult:
     cost_usd: float | None = None
     duration_s: float = 0.0
     partial: bool = False
-    #: What the run had reached when its iteration cap stopped it — tool output
-    #: and reasoning, never an answer. Empty for every other outcome.
+    #: What the run had reached when the loop stopped it — tool output and
+    #: reasoning, never an answer. Empty when the run answered or failed
+    #: outright.
     partial_output: str = ""
     actions: list[ActionRecord] = field(default_factory=list)
     files_written: list[str] = field(default_factory=list)
@@ -335,13 +328,29 @@ class CodeRunResult:
         return self.reason in ("max_iterations_partial", "max_iterations_exhausted")
 
     @property
+    def outcome(self) -> str:
+        """``"answered"``, ``"stopped"`` or ``"failed"`` for this run.
+
+        The same three words :attr:`effgen.core.agent.AgentResponse.outcome`
+        uses, so a script reading ``effgen code --json`` branches the same way
+        it would on a library run.
+        """
+        if self.success:
+            return "answered"
+        stopped = {
+            "max_iterations_partial", "max_iterations_exhausted", "loop_detected",
+            "repeated_tool_result", "null_final_from_model",
+        }
+        return "stopped" if (self.stop_reason or self.reason) in stopped else "failed"
+
+    @property
     def recovered_answer(self) -> bool:
         """True when the loop recovered the answer instead of the model writing it.
 
-        The loop hands back the last tool observation when a model keeps
-        repeating a call, and hands back its own text when the model returns
-        none. Both are reported as a completed run, so the surfaces label them
-        rather than showing an ordinary success.
+        The run stops holding the last tool observation when a model keeps
+        repeating a call, and holding its own text when the model returns none.
+        Neither is an answer, so the surfaces name which one the run was
+        holding rather than showing it as a result.
         """
         return self.answer_source in RECOVERED_ANSWER_SOURCES
 
@@ -353,6 +362,8 @@ class CodeRunResult:
             "partial_output": self.partial_output,
             "success": self.success,
             "reason": self.reason,
+            "stop_reason": self.stop_reason,
+            "outcome": self.outcome,
             "model": self.model,
             "provider": self.provider,
             "workspace": self.workspace,
@@ -728,23 +739,6 @@ class CodeEngine:
         answer_source = str(metadata.get("answer_source", "") or "")
         error = metadata.get("error")
 
-        if self.read_only and answer_source in RECOVERED_ANSWER_SOURCES and success:
-            # In a review the recovered "answer" is the file the model just
-            # read. Handing that back would present the source as the review,
-            # so the run reports what happened and keeps the text as progress.
-            success = False
-            partial = True
-            partial_output = answer
-            answer = REVIEW_NO_ANSWER
-            reason = answer_source
-            error = error or {
-                "type": "NoReviewProduced",
-                "category": "loop_recovery",
-                "message": REVIEW_NO_ANSWER,
-                "answer_source": answer_source,
-                "retryable": True,
-            }
-
         actions = list(self.gate.actions)
         if success and _every_action_failed(actions) and not self.gate.files_written:
             # Every action the turn decided on came back an error and nothing
@@ -781,6 +775,7 @@ class CodeEngine:
             permission_mode=self.mode.value,
             tool_calling=str(metadata.get("tool_calling_strategy", "") or ""),
             answer_source=answer_source,
+            stop_reason=str(getattr(response, "stop_reason", "") or ""),
             read_only=self.read_only,
             review=self.review.to_dict() if self.review is not None else None,
             iterations=int(getattr(response, "iterations", 0) or 0),

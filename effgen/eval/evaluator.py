@@ -131,6 +131,9 @@ class EvalResult:
             model is unreachable, the id does not exist, the key is rejected),
             otherwise ``None``. A case with an ``error`` scored zero because it
             never produced an answer — not because the answer was wrong.
+        stop_reason: What ended the run, when the response carried it — so a
+            case that scored zero because the loop stopped it is told apart from
+            one that scored zero on a wrong answer.
     """
     test_case: TestCase
     agent_output: str = ""
@@ -144,6 +147,7 @@ class EvalResult:
     scoring_mode: ScoringMode = ScoringMode.CONTAINS
     details: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    stop_reason: str | None = None
 
 
 def _md_cell(text: str, limit: int = 120) -> str:
@@ -221,6 +225,7 @@ class SuiteResults:
                     "query": r.test_case.query,
                     "expected_output": r.test_case.expected_output,
                     "agent_output": r.agent_output,
+                    "stop_reason": r.stop_reason,
                     "score": round(r.score, 4),
                     "passed": r.passed,
                     "latency": round(r.latency, 4),
@@ -485,8 +490,10 @@ class AgentEvaluator:
         """Evaluate a single test case."""
         start = time.perf_counter()
         error: str | None = None
+        stop_reason: str | None = None
         try:
             response = self.agent.run(tc.query)
+            stop_reason = getattr(response, "stop_reason", None)
             output = response.output if hasattr(response, "output") else str(response)
             tokens = response.tokens_used if hasattr(response, "tokens_used") else 0
             metadata = getattr(response, "metadata", None) or {}
@@ -502,6 +509,7 @@ class AgentEvaluator:
         except Exception as exc:
             logger.warning("Agent error on query %r: %s", tc.query[:60], exc)
             error = str(exc)
+            stop_reason = getattr(exc, "stop_reason", None)
             output = f"ERROR: {exc}"
             tokens = 0
             cost_usd = None
@@ -520,6 +528,7 @@ class AgentEvaluator:
                 latency=latency,
                 scoring_mode=self.scoring,
                 error=error,
+                stop_reason=stop_reason,
             )
 
         score, details = self._score(tc, output)
@@ -537,6 +546,7 @@ class AgentEvaluator:
             tools_called=tools_called,
             scoring_mode=self.scoring,
             details=details,
+            stop_reason=stop_reason,
         )
 
     # ------------------------------------------------------------------

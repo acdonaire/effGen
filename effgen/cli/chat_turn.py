@@ -189,9 +189,9 @@ class ChatTurnMixin:
 
         answer = response.output or ""
         meta = response.metadata or {}
-        # A turn stopped at the iteration cap has no answer: the reply says what
-        # stopped it, and what the turn had reached follows under its own label,
-        # so the tool output it recovered is not read as the reply.
+        # A turn the loop stopped has no answer: the reply says what stopped it,
+        # and what the turn had reached follows under its own label, so the tool
+        # output it recovered is not read as the reply.
         progress = (
             str(meta.get("partial_output") or "")
             if not response.success and meta.get("partial")

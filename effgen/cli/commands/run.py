@@ -66,18 +66,21 @@ def present_response(cli: "CLIInterface", response: Any) -> None:
     """Print a finished run: its answer, or what stopped it.
 
     Three outcomes read differently. A success is framed as the answer. A run
-    stopped at its iteration cap has no answer, so the panel carries what
-    stopped it and what to do, and the tool output and reasoning it had reached
-    follows in its own panel under :data:`PARTIAL_PROGRESS_TITLE` — labelled as
-    progress, so retrieved passages are not read as a result. Any other failure
-    reads as a red "Error" panel, the same as a model-load failure.
+    the loop stopped — at its iteration cap, on a repeated call, on a repeated
+    result, or on an empty final answer — has no answer, so the panel carries
+    what stopped it and what to do, and the tool output and reasoning it had
+    reached follows in its own panel under :data:`PARTIAL_PROGRESS_TITLE` —
+    labelled as progress, so tool output is not read as a result. Any other
+    failure reads as a red "Error" panel, the same as a model-load failure.
     """
     metadata = getattr(response, "metadata", None) or {}
     partial = bool(metadata.get("partial"))
-    stopped = not response.success and partial
+    stopped = getattr(response, "outcome", None) == "stopped" or (
+        not response.success and partial
+    )
     progress = str(metadata.get("partial_output") or "") if stopped else ""
 
-    if not response.success and not partial:
+    if not response.success and not stopped:
         cli.print_error_panel(_failure_text(response), title="Error")
         return
     if cli.console:

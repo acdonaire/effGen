@@ -365,13 +365,20 @@ def summary_line(
     if success:
         plain = f"{g_ok} Done in {body}"
         markup = f"[green]{g_ok}[/green] Done in {body}"
-    elif meta.get("partial"):
-        # A run cut off at the iteration cap is not a completed success, but the
-        # recovered text is still shown: mark it distinctly from an outright
-        # failure so the partial result is not read as finished.
+    elif getattr(response, "outcome", None) == "stopped" or meta.get("partial"):
+        # A run the loop stopped is not a completed success, but what it had
+        # reached is still shown: mark it distinctly from an outright failure so
+        # the progress is not read as finished. The footer names what stopped
+        # it, since the iteration cap is only one of the reasons.
         tail = f" · {body}" if body else ""
-        plain = f"{g_warn} Stopped at max iterations — partial result{tail}"
-        markup = f"[yellow]{g_warn}[/yellow] Stopped at max iterations — partial result{tail}"
+        reason = getattr(response, "stop_reason", None) or meta.get(
+            "reason", "max_iterations_partial"
+        )
+        plain = f"{g_warn} Stopped ({reason}) — partial result{tail}"
+        markup = (
+            f"[yellow]{g_warn}[/yellow] Stopped ([yellow]{reason}[/yellow])"
+            f" — partial result{tail}"
+        )
     else:
         reason = meta.get("reason", "failed")
         tail = f" · {body}" if body else ""

@@ -388,10 +388,12 @@ class BatchRunner:
         """Build one output row, carrying cost/tokens/parsed/error when present.
 
         The core columns (``index``/``query``/``output``/``success``/
-        ``execution_time``) are always written; ``cost_usd``, token counts, the
-        validated ``parsed`` object, and a failure ``error`` are added only when
-        the row actually has them, so a downstream job never loses spend, token,
-        or failure-reason data that the run produced.
+        ``outcome``/``stop_reason``/``execution_time``) are always written;
+        ``cost_usd``, token counts, the validated ``parsed`` object, and a
+        failure ``error`` are added only when the row actually has them, so a
+        downstream job never loses spend, token, or failure-reason data that the
+        run produced. ``outcome`` separates a row the loop stopped without an
+        answer from one that could not be run at all.
         """
         row: dict[str, Any] = {"index": index}
         if query is not None:
@@ -399,10 +401,16 @@ class BatchRunner:
         if resp is not None:
             row["output"] = resp.output
             row["success"] = bool(resp.success)
+            row["outcome"] = getattr(resp, "outcome", None) or (
+                "answered" if resp.success else "failed"
+            )
+            row["stop_reason"] = getattr(resp, "stop_reason", None)
             row["execution_time"] = round(resp.execution_time, 3)
         else:
             row["output"] = ""
             row["success"] = False
+            row["outcome"] = "failed"
+            row["stop_reason"] = None
             row["execution_time"] = 0.0
         for key, val in _row_metrics(resp).items():
             row[key] = round(val, 8) if key == "cost_usd" else val
@@ -568,6 +576,7 @@ class BatchRunner:
             output=f"Failed after {attempts} attempts: {last_exc}",
             success=False,
             metadata={"error": str(last_exc)},
+            stop_reason="run_failed",
         )
 
     @staticmethod

@@ -189,6 +189,8 @@ def _handle_eval_command(args, cli) -> int:
                 cli.print(f"    - {r.test_case.query[:60]}...")
                 cli.print(f"      Expected: {r.test_case.expected_output[:40]}")
                 cli.print(f"      Got:      {r.agent_output[:40]}")
+                if r.stop_reason and r.stop_reason != "final_answer":
+                    cli.print(f"      Ended:    {r.stop_reason}")
 
         # Save baseline — keyed on the resolved suite name (a custom dataset's
         # name is the file stem, never the full path) so a baseline file for a

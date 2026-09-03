@@ -92,6 +92,8 @@ def record_run(
     duration_s: float | None = None,
     cost_usd: float | None = None,
     error: str | None = None,
+    stop_reason: str | None = None,
+    outcome: str | None = None,
     run_id: str | None = None,
     task: str | None = None,
     output: str | None = None,
@@ -121,6 +123,13 @@ def record_run(
     error:
         Message if the run failed; ``None`` on success. Stored truncated to
         ``PREVIEW_CHARS``, so a caller may pass the whole message.
+    stop_reason:
+        What ended the run, when the caller knows it (``"final_answer"``,
+        ``"loop_detected"``, …). Stored as given.
+    outcome:
+        ``"answered"``, ``"stopped"`` or ``"failed"``. A stopped run is
+        recorded with ``status="stopped"`` rather than ``"error"``: the run was
+        carried out, it just never reached an answer.
     run_id:
         Identifier shared with the run's trace spans, so a record can be
         opened and joined to its trace.
@@ -161,7 +170,10 @@ def record_run(
     record: dict[str, Any] = {
         "ts": _now_iso(),
         "run_id": run_id,
-        "status": "error" if error else "ok",
+        "status": (
+            "stopped" if outcome == "stopped" else ("error" if error else "ok")
+        ),
+        "stop_reason": stop_reason,
         "model": model,
         "provider": provider,
         "agent": agent,
@@ -401,7 +413,9 @@ def read_executions(*, limit: int = 10, scan: int = 400) -> list[dict[str, Any]]
             except (TypeError, ValueError):
                 # As above: an unusable token count is left out of the sum.
                 pass
-        if record.get("status") == "error":
+        # A stopped run reached no answer either, so it counts here — the
+        # status word distinguishes the two, the tally does not need to.
+        if record.get("status") in ("error", "stopped"):
             entry["failed"] += 1
         if entry["kind"] is None:
             entry["kind"] = record.get("execution_kind")

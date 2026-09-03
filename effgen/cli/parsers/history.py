@@ -80,8 +80,10 @@ def add_runs_parser(subparsers: argparse._SubParsersAction) -> None:
     runs_subparsers = runs_parser.add_subparsers(dest='runs_command', help='Runs command')
     rl = runs_subparsers.add_parser('list', help='List recent runs')
     rl.add_argument('--json', dest='output_json', action='store_true', help='Output as JSON')
-    rl.add_argument('--status', choices=['ok', 'error', 'failed'],
-                    help="Only runs with this status ('failed' is an alias for 'error')")
+    rl.add_argument('--status', choices=['ok', 'stopped', 'error', 'failed'],
+                    help="Only runs with this status ('failed' is an alias for "
+                         "'error'; 'stopped' is a run the loop ended before the "
+                         "model wrote an answer)")
     rl.add_argument('-m', '--model', help='Only runs on a model matching this text')
     rl.add_argument('--search', help='Only runs whose task, answer, id or error match this text')
     rl.add_argument('--session-id', dest='session_filter', help='Only runs from this session')

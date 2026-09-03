@@ -97,8 +97,11 @@ def chat_sse_iter(
         if _reported_prompt is not None:
             _prompt_tokens = int(_reported_prompt)
         _stream_cost = _stream_usage.get("cost_usd")
+    # A runner that ended the run without an answer reports it here, so the
+    # last chunk says the generation was cut short rather than completed.
+    _finish_reason = str(getattr(result, "finish_reason", "stop") or "stop")
     final = _compat.build_chat_chunk(
-        model, "", chat_id=chat_id, finish_reason="stop"
+        model, "", chat_id=chat_id, finish_reason=_finish_reason
     )
     yield f"data: {json.dumps(final)}\n\n"
     # Emit a final usage-only chunk when the client opts in via

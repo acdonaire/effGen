@@ -434,8 +434,15 @@ def create_openai_router(
             # the server ran — ``{tool, args, result_summary, ok, duration_ms}``
             # — so a caller can show what the agent did; ``tool_calls`` is the
             # count. Absent when the run used no tools.
+            # ``stop_reason``/``outcome``/``partial`` say whether the model
+            # finished. A run the loop stopped is served as a completed request
+            # whose generation was cut short (``finish_reason="length"``), and
+            # these three are how a caller tells that apart from an answer
+            # without parsing the content.
             extra = result.metadata or {}
-            for key in ("trace", "tool_calls", "run_id"):
+            for key in (
+                "trace", "tool_calls", "run_id", "stop_reason", "outcome", "partial",
+            ):
                 value = extra.get(key)
                 if value:
                     effgen_meta = {**effgen_meta, key: value}

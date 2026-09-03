@@ -14,6 +14,8 @@ import threading
 from collections import OrderedDict
 from typing import Any
 
+from effgen.errors import RunStoppedError
+
 logger = logging.getLogger(__name__)
 
 # Known provider prefixes — stable fallback when the dynamic ProviderRegistry
@@ -235,9 +237,12 @@ class _StreamWithUsage:
 
     The OpenAI-compatible route reads ``usage`` after the last token to fill the
     ``stream_options.include_usage`` chunk, so a streamed request reports the
-    same token counts and cost a non-streamed one does. Iterating closes the
-    ephemeral agent (releasing its memory handles and circuit breakers, but not
-    the pooled model, which is shared and stays loaded).
+    same token counts and cost a non-streamed one does. It also reads
+    ``finish_reason``, which is ``"length"`` when the loop stopped the run before
+    the model wrote an answer — the same thing the non-streamed path reports.
+    Iterating closes the ephemeral agent (releasing its memory handles and
+    circuit breakers, but not the pooled model, which is shared and stays
+    loaded).
     """
 
     def __init__(self, agent: Any, prompt: str, resolved_model: str) -> None:
@@ -245,6 +250,7 @@ class _StreamWithUsage:
         self._prompt = prompt
         self._resolved_model = resolved_model
         self.usage: dict[str, Any] | None = None
+        self.finish_reason: str = "stop"
 
     def __iter__(self) -> Any:
         served = False
@@ -253,6 +259,9 @@ class _StreamWithUsage:
                 served = True
                 yield chunk
             self.usage = self._agent.last_stream_usage
+            record = getattr(self._agent, "last_stream_response", None)
+            if getattr(record, "outcome", None) == "stopped":
+                self.finish_reason = "length"
         finally:
             self._agent.close()
             if served:
@@ -317,8 +326,18 @@ def _build_default_runner() -> Any:
 
         try:
             # A failure raises here (raise_on_error=True above), so a response
-            # that reaches this point is always a success.
-            response = agent.run(prompt)
+            # that reaches this point is always a success — except for a run the
+            # loop stopped, which is served below as a completed request whose
+            # generation was cut short.
+            try:
+                response = agent.run(prompt)
+                finish_reason = "stop"
+            except RunStoppedError as stopped:
+                # The request was valid and the server did its job; the model
+                # did not finish. That is a 200 with OpenAI's own vocabulary for
+                # "cut off by a limit", not a 5xx blaming the server.
+                response = stopped.response
+                finish_reason = "length"
             _record_served_model(resolved_model)
             prompt_tokens, completion_tokens = _extract_usage(response)
             tool_trace = _extract_tool_trace(response)
@@ -335,13 +354,22 @@ def _build_default_runner() -> Any:
             run_id = run_meta.get("run_id")
             if run_id:
                 extra_meta["run_id"] = run_id
+            stop_reason = getattr(response, "stop_reason", None)
+            if stop_reason:
+                extra_meta["stop_reason"] = stop_reason
+            outcome = getattr(response, "outcome", None)
+            if outcome:
+                extra_meta["outcome"] = outcome
+            partial = getattr(response, "partial", None)
+            if partial is not None:
+                extra_meta["partial"] = partial.to_dict()
             return RunnerResult(
                 text=getattr(response, "output", "") or "",
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 resolved_model=resolved_model,
                 cost_usd=_extract_cost(response),
-                finish_reason="stop",
+                finish_reason=finish_reason,
                 metadata=extra_meta,
             )
         finally:

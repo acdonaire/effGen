@@ -161,12 +161,12 @@ def print_summary(cli: "CLIInterface", result: "CodeRunResult") -> None:
 
 
 def recovered_answer_note(result: "CodeRunResult") -> str:
-    """Return the line naming a recovered answer, or ``""`` for a written one.
+    """Return the line naming what a stopped run held, or ``""`` otherwise.
 
-    When a model will not write a final answer the loop hands back what it has —
-    the last tool result, or its own text. The run completed, so the footer
-    reads as a success; this says where the answer actually came from, so a
-    repeated file read is not mistaken for a review.
+    When a model will not write a final answer the run stops holding what its
+    tools returned — the last tool result, or the text it had reached. That is
+    progress, not an answer; this line says which, so a repeated file read is
+    not mistaken for a review.
     """
     from .engine import RECOVERED_ANSWER_LABELS
 
@@ -174,6 +174,6 @@ def recovered_answer_note(result: "CodeRunResult") -> str:
         return ""
     source = getattr(result, "answer_source", "")
     return (
-        f"The model did not write this answer; it is "
+        f"The model did not write an answer; what the run had is "
         f"{RECOVERED_ANSWER_LABELS.get(source, source)}."
     )

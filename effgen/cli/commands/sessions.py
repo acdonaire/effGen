@@ -238,6 +238,8 @@ def _handle_runs_command(args, cli) -> int:
         cli.print_line(f"Run:      {record.get('run_id') or '—'}")
         cli.print_line(f"When:     {record.get('ts') or '—'}")
         cli.print_line(f"Status:   {record.get('status') or '—'}")
+        if record.get("stop_reason"):
+            cli.print_line(f"Ended:    {record['stop_reason']}")
         cli.print_line(f"Model:    {record.get('model') or '—'}"
                        + (f" ({record['provider']})" if record.get("provider") else ""))
         if record.get("agent"):
