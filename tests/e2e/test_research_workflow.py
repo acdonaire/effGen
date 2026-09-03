@@ -52,6 +52,9 @@ class TestResearchWorkflow:
             max_iterations=10,
             enable_memory=False,
             enable_sub_agents=False,
+            # A run the loop stops is one of the outcomes under test, so it is
+            # read from the response rather than raised.
+            raise_on_error=False,
         ))
         result = agent.run("What is the current date?", max_tokens=128)
         _assert_reached_answer(result, "202")
@@ -64,6 +67,9 @@ class TestResearchWorkflow:
             max_iterations=10,
             enable_memory=False,
             enable_sub_agents=False,
+            # A run the loop stops is one of the outcomes under test, so it is
+            # read from the response rather than raised.
+            raise_on_error=False,
         ))
         result = agent.run(
             "Count the words in: 'The quick brown fox jumps over the lazy dog'",

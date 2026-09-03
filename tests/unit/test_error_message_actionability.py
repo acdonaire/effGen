@@ -28,6 +28,10 @@ Exempt, with the reason each time:
 * **:mod:`effgen.reliability.chaos`.** Fault injection synthesizes provider
   failures on purpose, and a synthetic fault that did not read like the real
   one would not exercise the handling under test.
+* **:class:`effgen.errors.RunStoppedError`.** Its ``__init__`` attaches the run
+  it carries and forwards the run's own outcome statement as the message, so
+  there is nothing here for it to compose. That statement is built by the loop
+  and checked where it is built.
 """
 
 from __future__ import annotations
@@ -52,6 +56,10 @@ _UNIMPORTABLE = {"effgen.models.mlx_engine", "effgen.models.mlx_vlm_engine"}
 # Fault injection imitates a provider failure deliberately; see the module
 # docstring.
 _EXEMPT_MODULES = {"effgen.reliability.chaos"}
+
+# Classes whose ``__init__`` attaches structured data and forwards a message
+# built elsewhere; see the module docstring.
+_FORWARDS_ITS_MESSAGE = {"effgen.errors.RunStoppedError"}
 
 # Parameters that carry text produced somewhere else — a provider body, an SDK
 # message, a parser complaint. These are the values that can arrive long or
@@ -164,6 +172,12 @@ def _discover_error_classes() -> dict[str, type[BaseException]]:
 
 ERROR_CLASSES = _discover_error_classes()
 
+# The forwarding classes are named, so a typo in the set is a failure rather
+# than a silent exemption.
+assert _FORWARDS_ITS_MESSAGE <= set(ERROR_CLASSES), sorted(
+    _FORWARDS_ITS_MESSAGE - set(ERROR_CLASSES)
+)
+
 
 def _composes_its_message(cls: type[BaseException]) -> bool:
     """True when *cls* builds its message rather than forwarding what it is given.
@@ -179,10 +193,16 @@ def _composes_its_message(cls: type[BaseException]) -> bool:
 
 
 #: Classes that build their own message, and so are checked by construction.
-COMPOSING = {n: c for n, c in ERROR_CLASSES.items() if _composes_its_message(c)}
+COMPOSING = {
+    n: c for n, c in ERROR_CLASSES.items()
+    if _composes_its_message(c) and n not in _FORWARDS_ITS_MESSAGE
+}
 
 #: Classes whose message comes from the ``raise`` statement instead.
-PASS_THROUGH = {n: c for n, c in ERROR_CLASSES.items() if not _composes_its_message(c)}
+PASS_THROUGH = {
+    n: c for n, c in ERROR_CLASSES.items()
+    if not _composes_its_message(c) and n not in _FORWARDS_ITS_MESSAGE
+}
 
 
 def _synthesize(name: str, param: inspect.Parameter, upstream: str) -> object:

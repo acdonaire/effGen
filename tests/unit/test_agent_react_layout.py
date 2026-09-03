@@ -43,6 +43,7 @@ OWNERS = {
     "_model_advertises_tool_calling": "effgen.core.agent_react_parsing",
     "_model_tool_call_support": "effgen.core.agent_react_parsing",
     "_extract_partial_answer": "effgen.core.agent_react_parsing",
+    "_partial_result": "effgen.core.agent_react_parsing",
     "_should_return_direct_calculator_result": "effgen.core.agent_react_parsing",
     # provider-native tool loops
     "_has_native_tools": "effgen.core.agent_native_tools",
@@ -70,6 +71,8 @@ KEPT = (
     "_continuation_instruction",
     "_written_tool_call_detail",
     "_written_tool_call_response",
+    "_stopped_outcome_response",
+    "_repeated_tool_detail",
     "_iteration_cap_detail",
 )
 

@@ -8,8 +8,9 @@ on a question they have already answered:
   ("15 squared", "cube of 3", "square root of 144").
 - Result-based short-circuit: when a tool reproduces a result it already
   returned — with a *different* input, so the exact-input loop guard does not
-  fire — the loop stops and returns that confident answer
-  (``answer_source="repeated_tool_result"``).
+  fire — the loop stops the run. The model never wrote an answer, so the run
+  reports ``outcome="stopped"`` and carries the results it had under
+  ``partial``.
 - A clean ``Final Answer:`` after one tool call stops immediately.
 - The guardrails never change a correct answer.
 - A repeated action with no usable partial answer (every attempt failed or was
@@ -138,10 +139,13 @@ def test_repeated_result_short_circuits_with_different_input():
     ])
     agent = _make_agent(model)
     resp = agent.run("Explain step by step and compute 15 squared")
-    assert resp.success is True
+    assert resp.outcome == "stopped"
+    assert resp.stop_reason == "repeated_tool_result"
     assert resp.tool_calls == 2, f"expected 2 tool calls, got {resp.tool_calls}"
-    assert resp.metadata.get("answer_source") == "repeated_tool_result"
-    assert "225" in (resp.output or "")
+    # The result the tool computed is progress, not the answer the caller asked
+    # for — so it travels under ``partial``, not in ``output``.
+    assert "225" in resp.partial.text
+    assert "225" not in (resp.output or "")
 
 
 class _FixedRetrievalTool(BaseTool):
@@ -188,19 +192,23 @@ def test_repeated_retrieval_dump_is_flagged_partial():
     assert resp.metadata.get("partial") is True
 
 
-def test_loop_detected_fallback_is_flagged_partial():
-    """A repeated action that falls back to the last observation is marked
-    partial, so a caller can tell a synthesized answer apart from a raw
-    context dump even though the run still succeeds."""
+def test_loop_detected_fallback_is_reported_as_a_stopped_run():
+    """A repeated action ends the run without an answer, and says so.
+
+    What the tool returned is progress the caller can read, so it travels under
+    ``partial`` while ``output`` states what stopped the run.
+    """
     model = _ScriptedModel([
         _calc_action("15^2"),   # -> 225, recorded
-        _calc_action("15^2"),   # exact repeat -> loop detected, returns partial
+        _calc_action("15^2"),   # exact repeat -> loop detected
     ])
     agent = _make_agent(model)
     resp = agent.run("Explain step by step and compute 15 squared")
-    assert resp.success is True
-    assert resp.metadata.get("answer_source") == "loop_detected"
+    assert resp.success is False
+    assert resp.outcome == "stopped"
+    assert resp.stop_reason == "loop_detected"
     assert resp.metadata.get("partial") is True
+    assert resp.metadata.get("partial_output") == resp.partial.text
 
 
 def test_clean_final_answer_after_one_call_stops():
@@ -382,14 +390,20 @@ def _review_agent(*, context_retrieval: bool) -> Agent:
     ))
 
 
-def test_a_repeated_read_returns_the_file_when_the_tool_says_nothing():
-    """The shipped behaviour for a plain file tool is unchanged."""
+def test_a_repeated_read_keeps_the_file_as_progress_not_as_the_answer():
+    """A plain file tool that repeats leaves the run stopped, holding the file.
+
+    The model never reviewed the file, so the file's contents are not the review
+    the caller asked for: they are what the run had reached.
+    """
     resp = _review_agent(context_retrieval=False).run(
         "Review calc.py and report any correctness risk."
     )
-    assert resp.metadata.get("answer_source") == "loop_detected"
+    assert resp.outcome == "stopped"
+    assert resp.stop_reason == "loop_detected"
     assert resp.metadata.get("partial") is True
-    assert " ".join((resp.output or "").split()) == " ".join(FILE_BODY.split())
+    assert " ".join(resp.partial.text.split()) == " ".join(FILE_BODY.split())
+    assert resp.output != resp.partial.text
 
 
 def test_a_tool_that_declares_retrieved_context_gets_the_synthesis_turn():
@@ -499,17 +513,20 @@ class TestUnsynthesizedRetrievalIsNotASuccess:
         ), resp.metadata.get("reason")
         assert resp.metadata.get("reason") != "final_answer"
 
-    def test_a_computed_result_that_repeats_is_still_a_success(self):
-        """The case the change must not break.
+    def test_a_computed_result_that_repeats_is_reported_the_same_way(self):
+        """A computing tool that repeats reports the stop, like a retrieval one.
 
-        A calculator returning the same number twice is a confident answer, not
-        an unsynthesized passage, so it stays a success — with ``reason`` now
-        naming the fallback instead of claiming a final answer.
+        A calculator returning the same number twice is a confident
+        *computation*; it is not an answer to the question, because the model
+        never wrote one. Both categories therefore report the same shape and
+        differ only in the wording of the statement.
         """
         model = _ScriptedModel([_calc_action("15^2"), _calc_action("15^2")])
         resp = _make_agent(model).run("Explain step by step and compute 15 squared")
 
-        assert resp.success is True
+        assert resp.success is False
+        assert resp.outcome == "stopped"
+        assert resp.stop_reason == "loop_detected"
         assert resp.metadata.get("partial") is True
-        assert resp.metadata.get("reason") == "loop_detected"
-        assert "225" in (resp.output or "")
+        assert "225" in resp.partial.text
+        assert "calculator" in (resp.output or "")

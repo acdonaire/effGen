@@ -197,7 +197,7 @@ def test_run_card_reports_the_stop_and_the_progress_separately(capped):
         },
     }
     html = build_html_report(document, kind="run")
-    assert "stopped at the iteration cap" in html
+    assert "stopped (max_iterations_partial)" in html
     assert "Partial progress" in html
     assert "30 days of the charge" in html
     assert ">failed<" not in html
@@ -264,7 +264,10 @@ def test_run_history_keeps_the_stop_message_and_no_passage(tmp_path, monkeypatch
     assert files, "the run was not recorded in the history store"
     records = [json.loads(line) for f in files for line in f.read_text().splitlines()]
     record = records[-1]
-    assert record["status"] == "error"
+    # A run that was carried out but never reached an answer reads as its own
+    # status, distinct from a run that could not be carried out at all.
+    assert record["status"] == "stopped"
+    assert record["stop_reason"] == "max_iterations_partial"
     assert record["output"] is None
     assert "30 days of the charge" not in (record["error"] or "")
     # The whole message is kept, not a mid-sentence slice of it.

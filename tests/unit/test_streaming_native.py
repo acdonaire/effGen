@@ -450,7 +450,12 @@ def test_the_same_call_repeated_does_not_run_to_the_iteration_cap():
     response = agent.last_stream_response
     assert response.iterations < 6
     assert len(tool.calls) == 1
-    assert "".join(_answers(events)) == response.output
+    # The run stopped without an answer, so nothing is streamed as an answer:
+    # the outcome arrives as the status event the iteration cap also uses.
+    assert not _answers(events)
+    assert response.outcome == "stopped"
+    assert events[-2].kind == "status"
+    assert events[-2].text == response.output
 
 
 def test_several_calls_in_one_turn_are_dispatched_as_a_batch():
@@ -497,6 +502,46 @@ def test_both_loops_build_the_same_prompts_for_the_same_turns():
 
     assert streamed_model.prompts == blocking_model.prompts
     assert streamed_model.tool_kwargs == blocking_model.tool_kwargs
+
+
+@pytest.mark.parametrize(
+    ("script", "max_iterations", "reason"),
+    [
+        (
+            [_turn("", [("calculator", {"expression": "4817*236"})])] * 4,
+            6, "loop_detected",
+        ),
+        (
+            [
+                _turn("", [("calculator", {"expression": "1+1"})]),
+                _turn("", [("calculator", {"expression": "2+2"})]),
+                _turn("", [("calculator", {"expression": "3+3"})]),
+            ],
+            2, "max_iterations_partial",
+        ),
+    ],
+    ids=["loop_detected", "max_iterations_partial"],
+)
+def test_both_loops_report_the_same_stopped_record(script, max_iterations, reason):
+    """The same scripted turns end the same way whether streamed or not."""
+    streamed_agent = _agent(
+        _ScriptedModel([dict(t) for t in script]), max_iterations=max_iterations
+    )
+    list(streamed_agent.stream(TASK, include_events=True))
+    streamed = streamed_agent.last_stream_response
+
+    blocking = _agent(
+        _ScriptedModel([dict(t) for t in script]),
+        max_iterations=max_iterations, raise_on_error=False,
+    ).run(TASK)
+
+    assert streamed.stop_reason == blocking.stop_reason == reason
+    assert streamed.outcome == blocking.outcome == "stopped"
+    assert streamed.output == blocking.output
+    assert streamed.partial is not None and blocking.partial is not None
+    assert streamed.partial.text == blocking.partial.text
+    assert streamed.partial.observations == blocking.partial.observations
+    assert streamed.metadata["partial_output"] == blocking.metadata["partial_output"]
 
 
 # --------------------------------------------------------------------------- #

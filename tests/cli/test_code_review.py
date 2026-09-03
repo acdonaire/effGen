@@ -341,7 +341,7 @@ def test_a_recovered_answer_is_labelled(source, recovered):
     note = recovered_answer_note(result)
     assert bool(note) is recovered
     if recovered:
-        assert "did not write this answer" in note
+        assert "did not write an answer" in note
 
 
 # --------------------------------------------------------------------------
@@ -519,10 +519,26 @@ def test_a_review_turn_with_nothing_to_review_says_so(tmp_path, monkeypatch):
 # A review that produced no review
 # --------------------------------------------------------------------------
 
+FILE_READ_BACK = "def add(a, b):\n    return a + b\n"
+
+
 def _recovered_response(source="loop_detected"):
-    return SimpleNamespace(
-        output="def add(a, b):\n    return a + b\n", success=True,
-        metadata={"reason": "final_answer", "answer_source": source, "partial": True},
+    """The response the loop produces when it stops holding a tool result.
+
+    The run has what a tool returned and no answer, so it reports the stop and
+    carries the text as progress — which is what these assertions read.
+    """
+    from effgen.core.agent import AgentResponse
+
+    return AgentResponse(
+        output=f"'m' did not write an answer: the run stopped ({source}).",
+        success=False,
+        metadata={
+            "reason": source, "answer_source": source, "partial": True,
+            "partial_output": FILE_READ_BACK,
+            "error": {"type": "UnsynthesizedToolResult", "category": source,
+                      "message": "stopped", "retryable": False},
+        },
         iterations=3, tool_calls=1, tokens_used=99, execution_time=0.2,
     )
 
@@ -534,20 +550,22 @@ def test_a_review_never_answers_with_the_file_it_read(repo, source):
     result = engine.result_from_response("review it", _recovered_response(source))
 
     assert result.success is False
+    assert result.outcome == "stopped"
     assert result.partial is True
-    assert "did not produce a review" in result.answer
+    assert result.answer != FILE_READ_BACK
     assert result.partial_output.startswith("def add")
     assert result.reason == source
-    assert result.error["type"] == "NoReviewProduced"
-    assert result.error["answer_source"] == source
+    assert result.stop_reason == source
 
 
-def test_a_run_that_is_not_a_review_keeps_the_recovered_answer(repo):
-    """Only a read-only run reclassifies; every other run is untouched."""
+def test_a_run_that_is_not_a_review_reports_the_stop_the_same_way(repo):
+    """A writing run reads the same: the file it read is progress, not an answer."""
     result = _engine(repo).result_from_response("do it", _recovered_response())
 
-    assert result.success is True
-    assert result.answer.startswith("def add")
+    assert result.success is False
+    assert result.outcome == "stopped"
+    assert result.answer != FILE_READ_BACK
+    assert result.partial_output.startswith("def add")
     assert result.answer_source == "loop_detected"
     assert result.recovered_answer is True
 
