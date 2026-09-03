@@ -64,9 +64,11 @@ def decide(
     )
     body = [
         "",
-        f"{len(refused)} of {total} cases never reached the model. A refused "
-        "request produced no answer to score, so the suite accuracy is not a "
-        "measurement of effGen and the cases that ran are used instead.",
+        (
+            f"{len(refused)} of {total} cases never reached the model. A refused "
+            "request produced no answer to score, so the suite accuracy is not a "
+            "measurement of effGen and the cases that ran are used instead."
+        ),
         "",
         f"- cases that ran: **{len(answered)}** of {total}",
         f"- of those, passed: **{passed}** (accuracy {accuracy:.2f})",
