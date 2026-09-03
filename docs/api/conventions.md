@@ -60,6 +60,9 @@ result.output            # the answer string
 result.text              # read-only alias of .output
 result.content           # read-only alias of .output
 result.success           # bool — never True with an empty answer
+result.outcome           # "answered" | "stopped" | "failed"
+result.stop_reason       # what ended the run; never None
+result.partial           # what a stopped run had reached, or None
 result.tokens_used       # int
 result.execution_time    # float seconds
 result.to_dict()         # full structured detail (trace, cost, metadata)
@@ -69,6 +72,74 @@ On failure, `success` is `False`, the message is clear and redacted, and
 `result.metadata["error"]` is a structured `{type, category, provider, model,
 message, retryable}` dict — identical whether the failure came from the direct
 or the tool path.
+
+### Answered, stopped, failed
+
+A run ends in one of three states, and `result.outcome` names which without you
+having to read `output`:
+
+| `outcome` | what it means | `output` | `partial` |
+|---|---|---|---|
+| `answered` | the model wrote an answer | the answer | `None` |
+| `stopped` | the loop ended the run before the model wrote one | what happened, and what to do | the progress, when there was any |
+| `failed` | the run could not be carried out | the classified failure | `None` |
+
+`stop_reason` says which exit it took, and is present on **every** response — an
+answered run reports `"final_answer"`. It is always equal to
+`metadata["reason"]`, which earlier releases already carried. The vocabulary is
+closed and published as `effgen.core.agent_response.STOP_REASONS`; the five
+reasons that mean *stopped* are in `STOPPED_REASONS`:
+`max_iterations_partial`, `max_iterations_exhausted`, `loop_detected`,
+`repeated_tool_result`, `null_final_from_model`.
+
+A **stopped** run has tool results and reasoning but no answer, so those never
+go where the answer goes. They travel in `result.partial`, a `PartialResult`:
+
+```python
+result.partial.observations      # every tool result, in call order
+result.partial.last_observation  # the final one
+result.partial.last_thought      # the model's last reasoning line
+result.partial.text              # the flattened form, one line
+result.partial.iterations, result.partial.tool_calls
+```
+
+`result.metadata["partial_output"]` carries `partial.text` under the key earlier
+releases used, and `metadata["partial"]` is `True` whenever there is progress.
+
+```python
+if result.outcome == "answered":
+    print(result.output)
+elif result.outcome == "stopped":
+    print("no answer:", result.stop_reason)
+    if result.partial:
+        print("what it had:", result.partial.observations)
+else:
+    print("failed:", result.stop_reason, result.metadata["error"]["message"])
+```
+
+### `raise_on_error` and a stopped run
+
+`AgentConfig.raise_on_error` defaults to `True`, so a run that produced no
+answer raises rather than returning something that reads like one. For a
+**stopped** run that exception is `effgen.RunStoppedError`, which subclasses
+`RuntimeError` — anything already catching `RuntimeError` around the iteration
+cap keeps working — and carries the run with it:
+
+```python
+from effgen import RunStoppedError
+
+try:
+    print(agent.run(task).output)
+except RunStoppedError as exc:
+    print(exc.stop_reason)                     # e.g. "loop_detected"
+    print(exc.partial.text if exc.partial else "")
+    print(exc.response.tool_calls)             # the calls it did make
+```
+
+With `raise_on_error=False` the same run comes back as a response with
+`success=False` and `outcome == "stopped"`. Batch evaluation still wants the
+flag off, so a stopped row is a row rather than an exception. A **failed** run
+raises what it always raised: the typed provider error, or `RuntimeError`.
 
 ### Cost on the response
 
@@ -196,10 +267,12 @@ assert answer == response.output          # a turn that answered
 ```
 
 For a turn that answered, joining the `answer` events reproduces
-`response.output` exactly. A turn that stopped at its iteration cap, or whose
-model wrote its tool call out as text instead of making it, has no answer to
+`response.output` exactly. A turn the loop stopped — at its iteration cap, on a
+repeated call, on a tool that reproduced its own result — and a turn whose model
+wrote its tool call out as text instead of making it both have no answer to
 stream: `output` carries the typed outcome and it arrives as a `status` event,
-not as answer deltas.
+not as answer deltas. `response.outcome`, `response.stop_reason` and
+`response.partial` read the same as they do after `run()`.
 
 ### Usage after a stream
 

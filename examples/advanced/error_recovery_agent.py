@@ -384,7 +384,7 @@ def test_p7_t3_all_tools_fail(model, model_name):
 
 
 def test_p7_t4_max_iterations(model, model_name):
-    """Max iterations — max_iterations=2, returns partial answer not crash."""
+    """Max iterations — max_iterations=2, reports the stop instead of crashing."""
     from effgen.tools.builtin.calculator import Calculator
     from effgen.tools.builtin.python_repl import PythonREPL
 
@@ -396,15 +396,23 @@ def test_p7_t4_max_iterations(model, model_name):
         temperature=0.1,
         max_iterations=2,  # Very limited!
         enable_sub_agents=False,
+        # The stop is what this case is about, so it is read from the response
+        # rather than raised.
+        raise_on_error=False,
     ))
 
     return run_test(
-        agent, "T4", "Max iterations — returns partial answer at iteration limit",
+        agent, "T4", "Max iterations — reports the stop at the iteration limit",
         "Calculate 15 + 27, then multiply the result by 3, then divide by 7. Show each step.",
         check_fn=lambda out, resp: (
-            # Should return something (partial or complete), not crash
-            len(out) > 5
-            and resp.iterations <= 2
+            resp.iterations <= 2
+            and resp.outcome in ("answered", "stopped")
+            # A stop is reported as one, and whatever the run had reached is
+            # under `partial` rather than presented as the answer.
+            and (
+                resp.outcome == "answered"
+                or (resp.partial is None or resp.partial.text != resp.output)
+            )
         ),
     )
 

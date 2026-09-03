@@ -27,6 +27,9 @@ agent = Agent(config)
 Run a task synchronously. Returns `AgentResponse` with:
 - `output: str` — Final response text
 - `success: bool` — Whether execution succeeded
+- `outcome: str` — `"answered"`, `"stopped"` or `"failed"`
+- `stop_reason: str` — What ended the run; present on every response
+- `partial: PartialResult | None` — What a stopped run had reached
 - `iterations: int` — ReAct iterations performed
 - `tool_calls: ToolCallList` — The tool calls the run made
 - `tool_call_count: int` — How many calls that was

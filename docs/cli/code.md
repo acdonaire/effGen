@@ -161,24 +161,27 @@ In a session, `/review [TARGET]` runs one read-only turn — the tools and the m
 are swapped for that turn and put back afterwards, including when it fails, so
 the next turn can write again.
 
-## When the answer is not what the model wrote
+## When the run stops without an answer
 
 A model that keeps repeating the same call, or returns no final answer, leaves
 the loop with nothing to report but what it already has: the last tool result, or
-its own recovered text. The run completed, so the footer says so — and the line
-under it names where the answer came from:
+its own recovered text. That is progress, not an answer, so the run stops and
+says so. The panel is titled **Stopped**, the answer panel carries what happened
+and what to do, and the line under it names what the run was holding:
 
 ```
-The model did not write this answer; it is the last tool result, after the model
-repeated the same call.
+The model did not write an answer; what the run had is the last tool result,
+after the model repeated the same call.
 ```
 
-`answer_source` carries the same fact in `--json` (`loop_detected`,
-`repeated_tool_result`, `null_final_from_model`; empty when the model wrote the
-answer). This matters most in a review, where reading the same file twice is a
-natural second move: a tool whose output is source material rather than a
-computed result now gets the model one tool-free turn to write the answer from
-what it has, instead of the file being handed back as the review.
+`--json` carries `outcome: "stopped"` and `stop_reason` (`loop_detected`,
+`repeated_tool_result`, `null_final_from_model`, `max_iterations_partial`,
+`max_iterations_exhausted`), with the text under `partial_output` and
+`answer_source` naming the same exit. This matters most in a review, where
+reading the same file twice is a natural second move: the file is never handed
+back as the review, and a tool whose output is source material rather than a
+computed result gets the model one tool-free turn to write the answer from what
+it has first.
 
 ## Continuing a session
 
@@ -339,9 +342,11 @@ in `diffs`; the ones that reached disk carry `"applied": true`, so
 `tool_calling` names the path the model's tool calls travelled on — `hybrid` and
 `native` send the tool definitions to the provider's tool-calling API, `react`
 reads the calls out of the model's text — and the report prints the same line
-under its summary. `answer_source` names where the answer came from when the loop
-recovered one, `read_only` and `review` describe a `--review` run, and
-`coding_suitability` carries the note about the chosen model.
+under its summary. `outcome` and `stop_reason` say whether the run answered,
+stopped without an answer or failed outright, `answer_source` names the exit the
+loop took when it stopped holding a tool result, `read_only` and `review`
+describe a `--review` run, and `coding_suitability` carries the note about the
+chosen model.
 
 ## When the model describes a call instead of making one
 
