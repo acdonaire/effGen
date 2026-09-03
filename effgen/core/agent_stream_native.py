@@ -42,7 +42,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..models.base import (
     GenerationConfig,
@@ -51,7 +51,7 @@ from ..models.base import (
     get_stream_tool_calls,
 )
 from .agent_config import AgentMode
-from .agent_response import AgentResponse, StreamEvent
+from .agent_response import AgentResponse, PartialResult, StreamEvent
 from .agent_runtime import (
     NUDGE_ALREADY_COMPUTED,
     NUDGE_CONTINUE,
@@ -203,6 +203,34 @@ class _AnswerStream:
 
 class AgentNativeStreamMixin:
     """The streamed tool loop, and the record it leaves behind."""
+
+    if TYPE_CHECKING:
+        # Contributed by the sibling mixins this one is combined with on
+        # :class:`~effgen.core.agent.Agent`. Declared for the type checker only
+        # — at run time they arrive through the MRO, and these statements do
+        # not execute.
+        def _extract_partial_answer(self, scratchpad: str) -> str | None: ...
+
+        def _partial_result(
+            self,
+            scratchpad: str,
+            *,
+            text: str,
+            calls: Any = (),
+            iterations: int = 0,
+            tool_calls: int = 0,
+        ) -> PartialResult: ...
+
+        def _is_context_retrieval_tool(self, action: str) -> bool: ...
+
+        def _repeated_tool_detail(
+            self,
+            action: str | None,
+            reason: str,
+            *,
+            retrieval: bool = True,
+            answer: str | None = None,
+        ) -> dict[str, Any]: ...
 
     # ------------------------------------------------------------------
     # Eligibility
@@ -447,7 +475,7 @@ class AgentNativeStreamMixin:
                             self._last_stream_response = self._native_written_call(
                                 task, guards, raw, iterations=iterations,
                                 tool_calls=tool_calls, usage_acc=_usage_acc,
-                                started=started,
+                                started=started, scratchpad=scratchpad,
                             )
                             yield from self._yield_outcome(
                                 self._last_stream_response, include_events
@@ -462,7 +490,7 @@ class AgentNativeStreamMixin:
                     self._last_stream_response = self._native_written_call(
                         task, guards, raw, iterations=iterations,
                         tool_calls=tool_calls, usage_acc=_usage_acc,
-                        started=started, written=written,
+                        started=started, written=written, scratchpad=scratchpad,
                     )
                     yield from self._yield_outcome(
                         self._last_stream_response, include_events
@@ -559,13 +587,16 @@ class AgentNativeStreamMixin:
                     )
                     continue
                 if partial:
-                    yield from self._finish_with_recovered(
-                        task, partial, guards, iterations=iterations,
+                    retrieval = self._is_context_retrieval_tool(action)
+                    yield from self._finish_stopped(
+                        task,
+                        partial if retrieval else (
+                            sanitize_final_answer(partial) or partial
+                        ),
+                        guards, scratchpad=scratchpad, action=action,
+                        reason="loop_detected", iterations=iterations,
                         tool_calls=tool_calls, usage_acc=_usage_acc,
                         started=started, include_events=include_events,
-                        on_answer=on_answer, answer_stream=answer,
-                        answer_source="loop_detected", repeated_action=action,
-                        partial=True,
                     )
                     return
                 guards.force_text_answer = True
@@ -615,6 +646,7 @@ class AgentNativeStreamMixin:
                     tool_calls=tool_calls, usage_acc=_usage_acc, started=started,
                     include_events=include_events, on_answer=on_answer,
                     answer_stream=answer, answer_source="direct_calculator_result",
+                    scratchpad=scratchpad,
                 )
                 return
 
@@ -626,15 +658,16 @@ class AgentNativeStreamMixin:
                     guards.force_text_answer = True
                     scratchpad += f"\n{NUDGE_HAVE_RESULTS}"
                     continue
-                extra: dict[str, Any] = (
-                    {"partial": True} if self._is_context_retrieval_tool(action) else {}
-                )
-                yield from self._finish_with_recovered(
-                    task, observation, guards, iterations=iterations,
+                retrieval = self._is_context_retrieval_tool(action)
+                yield from self._finish_stopped(
+                    task,
+                    observation if retrieval else (
+                        sanitize_final_answer(observation) or observation
+                    ),
+                    guards, scratchpad=scratchpad, action=action,
+                    reason="repeated_tool_result", iterations=iterations,
                     tool_calls=tool_calls, usage_acc=_usage_acc, started=started,
-                    include_events=include_events, on_answer=on_answer,
-                    answer_stream=answer, answer_source="repeated_tool_result",
-                    **extra,
+                    include_events=include_events,
                 )
                 return
             guards.record_result(action, observation)
@@ -650,25 +683,33 @@ class AgentNativeStreamMixin:
         if guards.written_call and not partial_answer:
             self._last_stream_response = self._native_written_call(
                 task, guards, "", iterations=iterations, tool_calls=tool_calls,
-                usage_acc=_usage_acc, started=started,
+                usage_acc=_usage_acc, started=started, scratchpad=scratchpad,
             )
             yield from self._yield_outcome(self._last_stream_response, include_events)
             return
         if partial_answer:
             partial_answer = sanitize_final_answer(partial_answer) or partial_answer
         detail = self._iteration_cap_detail(max_iterations, partial_answer)
-        meta: dict[str, Any] = {
-            "reason": (
-                "max_iterations_partial" if partial_answer else "max_iterations_exhausted"
-            ),
-            "error": detail,
-        }
+        reason = (
+            "max_iterations_partial" if partial_answer else "max_iterations_exhausted"
+        )
+        meta: dict[str, Any] = {"reason": reason, "error": detail}
+        cap_partial = None
         if partial_answer:
+            cap_partial = self._partial_result(
+                scratchpad, text=partial_answer, calls=guards.calls,
+                iterations=iterations, tool_calls=tool_calls,
+            )
             meta["partial"] = True
             meta["partial_output"] = partial_answer
+        logger.info(
+            "outcome stopped: stop_reason=%s observations=%d",
+            reason, len(cap_partial.observations) if cap_partial else 0,
+        )
         self._last_stream_response = self._native_stream_response(
             task, output=detail["message"], success=False, iterations=iterations,
             tool_calls=tool_calls, usage_acc=_usage_acc, started=started, meta=meta,
+            calls=guards.calls, partial=cap_partial,
         )
         yield from self._yield_outcome(self._last_stream_response, include_events)
 
@@ -704,6 +745,7 @@ class AgentNativeStreamMixin:
         on_answer: Callable[[str], None] | None,
         answer_stream: _AnswerStream,
         answer_source: str,
+        scratchpad: str = "",
         **extra_meta: Any,
     ) -> "Iterator[str] | Iterator[StreamEvent]":
         """End the run on an answer the loop recovered rather than streamed.
@@ -721,6 +763,7 @@ class AgentNativeStreamMixin:
             self._last_stream_response = self._native_written_call(
                 task, guards, text, iterations=iterations, tool_calls=tool_calls,
                 usage_acc=usage_acc, started=started, written=written,
+                scratchpad=scratchpad,
             )
             yield from self._yield_outcome(self._last_stream_response, include_events)
             return
@@ -739,7 +782,59 @@ class AgentNativeStreamMixin:
         self._last_stream_response = self._native_stream_response(
             task, output=final, success=True, iterations=iterations,
             tool_calls=tool_calls, usage_acc=usage_acc, started=started, meta=meta,
+            calls=guards.calls,
         )
+
+    def _finish_stopped(
+        self,
+        task: str,
+        text: str,
+        guards: NativeToolLoop,
+        *,
+        scratchpad: str,
+        action: str | None,
+        reason: str,
+        iterations: int,
+        tool_calls: int,
+        usage_acc: dict[str, Any] | None,
+        started: float,
+        include_events: bool,
+    ) -> "Iterator[str] | Iterator[StreamEvent]":
+        """End a streamed run the loop stopped before the model wrote an answer.
+
+        The blocking loop's counterpart is
+        :meth:`~effgen.core.agent_react.AgentReActMixin._stopped_outcome_response`,
+        and the two report the same thing: the outcome statement in ``output``,
+        the tool results under ``partial``. The statement is not an answer, so it
+        is not streamed as answer deltas — it travels as the ``status`` event the
+        iteration cap already uses, and the stream ends.
+        """
+        retrieval = self._is_context_retrieval_tool(action) if action else False
+        detail = self._repeated_tool_detail(action, reason, retrieval=retrieval)
+        partial = self._partial_result(
+            scratchpad, text=text, calls=guards.calls,
+            iterations=iterations, tool_calls=tool_calls,
+        )
+        meta: dict[str, Any] = {
+            "reason": reason,
+            "error": detail,
+            "answer_source": reason,
+            "repeated_action": action,
+            "partial": True,
+            "partial_output": text,
+        }
+        logger.info(
+            "outcome stopped: stop_reason=%s tool=%s category=%s observations=%d",
+            reason, action or "-",
+            "INFORMATION_RETRIEVAL" if retrieval else "COMPUTATION",
+            len(partial.observations),
+        )
+        self._last_stream_response = self._native_stream_response(
+            task, output=detail["message"], success=False, iterations=iterations,
+            tool_calls=tool_calls, usage_acc=usage_acc, started=started, meta=meta,
+            calls=guards.calls, partial=partial,
+        )
+        yield from self._yield_outcome(self._last_stream_response, include_events)
 
     def _native_stream_fallback(
         self,
@@ -801,17 +896,38 @@ class AgentNativeStreamMixin:
         usage_acc: dict[str, Any] | None,
         started: float,
         written: str | None = None,
+        scratchpad: str = "",
     ) -> AgentResponse:
-        """Build the record for a turn that wrote its tool call out as text."""
+        """Build the record for a turn that wrote its tool call out as text.
+
+        The model did not do the work, so this stays a failure. When tools had
+        run earlier in the run, what they returned travels as partial progress
+        rather than being dropped.
+        """
         name = written or guards.written_call or ""
         detail = self._written_tool_call_detail(
             name, text, tool_ran=guards.tool_ran(name)
         )
         logger.warning("Tool call was written as text, not made: %s", detail["message"])
+        meta: dict[str, Any] = {"reason": "written_tool_call", "error": detail}
+        partial = None
+        if guards.calls:
+            candidate = self._partial_result(
+                scratchpad, text=self._extract_partial_answer(scratchpad) or "",
+                calls=guards.calls, iterations=iterations, tool_calls=tool_calls,
+            )
+            if candidate.text.strip():
+                partial = candidate
+                meta["partial"] = True
+                meta["partial_output"] = partial.text
+        logger.info(
+            "outcome failed: stop_reason=written_tool_call tool=%s observations=%d",
+            name or "-", len(partial.observations) if partial else 0,
+        )
         return self._native_stream_response(
             task, output=detail["message"], success=False, iterations=iterations,
             tool_calls=tool_calls, usage_acc=usage_acc, started=started,
-            meta={"reason": "written_tool_call", "error": detail},
+            meta=meta, calls=guards.calls, partial=partial,
         )
 
     def _native_stream_failure(
@@ -843,6 +959,8 @@ class AgentNativeStreamMixin:
         usage_acc: dict[str, Any] | None,
         started: float,
         meta: dict[str, Any],
+        calls: Any = (),
+        partial: PartialResult | None = None,
     ) -> AgentResponse:
         """Assemble the :class:`AgentResponse` a streamed turn reconstructs."""
         usage = dict(usage_acc or {})
@@ -859,13 +977,14 @@ class AgentNativeStreamMixin:
             success=success,
             mode=AgentMode.SINGLE,
             iterations=iterations,
-            tool_calls=ToolCallList(total=tool_calls),
+            tool_calls=ToolCallList(list(calls), total=tool_calls),
             tokens_used=int(usage.get("total_tokens") or 0),
             execution_time=time.perf_counter() - started,
             metadata=metadata,
             task=task,
             model=getattr(self.model, "model_name", None) or self.model_name,
             provider=self._model_provider(self.model),
+            partial=partial,
         )
 
 

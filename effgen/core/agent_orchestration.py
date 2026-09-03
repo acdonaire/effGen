@@ -475,7 +475,15 @@ class AgentOrchestrationMixin:
                             task=task,
                             iteration=getattr(response, "iterations", 0),
                             scratchpad="",
-                            partial_output=response.output,
+                            # A stopped run's ``output`` states what stopped
+                            # it; resuming from that prose would re-seed the
+                            # run with a report about itself, so the progress
+                            # it had reached is checkpointed instead.
+                            partial_output=(
+                                response.partial.text
+                                if getattr(response, "partial", None)
+                                else response.output
+                            ),
                             tool_calls=response.tool_calls,
                             tokens_used=response.tokens_used,
                             metadata={"final": True, "success": response.success},
@@ -494,12 +502,12 @@ class AgentOrchestrationMixin:
                 # solve the task, which is how a whole batch completes against
                 # nothing and looks healthy in the summary.
                 if not response.success and _never_reached_the_backend(response):
-                    raise self._reconstruct_error(response.metadata)
+                    raise self._reconstruct_error(response.metadata, response)
 
                 # raise_on_error contract: surface a typed error on any failure
                 # instead of returning success=False (same on both run paths).
                 if not response.success and self.config.raise_on_error:
-                    raise self._reconstruct_error(response.metadata)
+                    raise self._reconstruct_error(response.metadata, response)
 
                 return self._stamp_run_identity(
                     response, task=task, started_at=started_at

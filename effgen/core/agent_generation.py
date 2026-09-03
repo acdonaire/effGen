@@ -151,14 +151,13 @@ class AgentGenerationMixin:
         # (one call) before any text reprompt, and surface the attempt count so
         # callers can see when/how much repair happened.
         if self.model is None:
-            response.success = False
             response.metadata["structured_output"] = False
             response.metadata["structured_output_attempts"] = 0
             response.metadata["structured_output_error"] = (
                 "structured output requested but no model is available to produce it"
             )
             response.metadata["raw_output"] = raw_output
-            response.metadata["reason"] = "structured_output_failed"
+            response.mark_failed("structured_output_failed")
             return response
 
         structured_prompt = (
@@ -194,14 +193,13 @@ class AgentGenerationMixin:
                 "Structured output constraint failed after %d attempt(s): %s",
                 outcome.attempts, outcome.error,
             )
-            response.success = False
             response.output = raw_output
             response.metadata["structured_output"] = False
             response.metadata["structured_output_error"] = (
                 outcome.error or "could not produce schema-valid output"
             )
             response.metadata["raw_output"] = raw_output
-            response.metadata["reason"] = "structured_output_failed"
+            response.mark_failed("structured_output_failed")
             if outcome.raw_text:
                 response.metadata["structured_output_raw_attempt"] = outcome.raw_text
 
@@ -962,13 +960,24 @@ class AgentGenerationMixin:
         )
 
     @staticmethod
-    def _reconstruct_error(metadata: dict[str, Any] | None) -> Exception:
+    def _reconstruct_error(
+        metadata: dict[str, Any] | None, response: Any = None
+    ) -> Exception:
         """Rebuild a typed exception from a failure response's metadata.
 
         Used by ``raise_on_error`` so callers get a typed error rather than a
         bare AgentResponse. Falls back to ``RuntimeError`` when the failure was
         not a classified provider error (e.g. guardrail block, max-iterations).
+
+        When *response* is given and the loop stopped the run before the model
+        wrote an answer, the exception is a
+        :class:`~effgen.errors.RunStoppedError` carrying that response, so the
+        progress the run had reached survives the raise.
         """
+        if response is not None and getattr(response, "outcome", None) == "stopped":
+            from effgen.errors import RunStoppedError
+
+            return RunStoppedError(response)
         metadata = metadata or {}
         detail = metadata.get("error")
         if not isinstance(detail, dict):

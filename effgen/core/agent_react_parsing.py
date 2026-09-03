@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .agent_runtime import (
     _SCAFFOLD_LITERAL_RES,
@@ -24,6 +24,11 @@ from .tool_calling import (
     name_positional_arguments,
     parse_call_syntax,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from .agent_response import PartialResult
 
 # The parsers log to the ReAct stream they serve.
 logger = logging.getLogger("effgen.core.agent_react")
@@ -168,6 +173,58 @@ class AgentReActParsingMixin:
                 return last_thought
 
         return None
+
+    def _partial_result(
+        self,
+        scratchpad: str,
+        *,
+        text: str,
+        calls: "Sequence[Any]" = (),
+        iterations: int = 0,
+        tool_calls: int = 0,
+    ) -> "PartialResult":
+        """Assemble what a run had reached when it stopped without an answer.
+
+        *text* is the flattened one-line form the run would otherwise have
+        returned; the observations come from the tool-call records, so they are
+        the same calls :attr:`AgentResponse.tool_calls` reports, one for one,
+        with each tool's own words rather than a joined rewrite of them.
+
+        Args:
+            scratchpad: The accumulated scratchpad, read for the last thought.
+            text: The flattened partial text.
+            calls: The run's tool-call records, in call order.
+            iterations: Iterations the run had made.
+            tool_calls: Tool calls the run had made.
+
+        Returns:
+            The payload for :attr:`AgentResponse.partial`.
+        """
+        from .agent_response import PartialResult
+
+        observations: list[str] = []
+        for call in calls or ():
+            result = getattr(call, "result", None)
+            if result is None:
+                result = getattr(call, "error", None)
+            observations.append("" if result is None else str(result))
+        thoughts = re.findall(
+            r"Thought:\s*(.+?)(?=\nAction:|\nObservation:|\Z)", scratchpad or "", re.DOTALL
+        )
+        last_thought = None
+        for candidate in reversed(thoughts):
+            stripped = candidate.strip()
+            if stripped:
+                last_thought = stripped
+                break
+        return PartialResult(
+            observations=tuple(observations),
+            last_observation=observations[-1] if observations else None,
+            last_thought=last_thought,
+            text=text,
+            iterations=iterations,
+            tool_calls=tool_calls,
+        )
 
     def _should_return_direct_calculator_result(
         self,

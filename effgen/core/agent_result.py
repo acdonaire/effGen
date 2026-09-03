@@ -75,6 +75,7 @@ class AgentResultMixin:
         meta: dict[str, Any] = {
             "model": str(getattr(self, "model_name", None) or "unknown"),
             "run_id": run_id,
+            "stop_reason": getattr(response, "stop_reason", None),
             "latency_ms": round(response.execution_time * 1000, 1) if response.execution_time else None,
         }
         provider = metadata.get("provider") or getattr(self.config, "provider", None)
@@ -125,6 +126,8 @@ class AgentResultMixin:
                 # ellipsis — a stop or classification message is a sentence or
                 # two and reaches the history file intact.
                 error=error if error is not None else (None if response.success else response.output),
+                stop_reason=getattr(response, "stop_reason", None),
+                outcome=getattr(response, "outcome", None),
                 run_id=metadata.get("run_id"),
                 task=task,
                 output=response.output if response.success else None,
