@@ -369,6 +369,8 @@ def run_cell(plan: LiveRun) -> RunOutcome:
             "latency_s": 0.0,
             "error": None,
             "stop_reason": None,
+            "success": None,
+            "outcome": None,
         }
         # The agent is built inside the timed block on purpose: building it is
         # part of what the framework costs per task, and it is rebuilt per sample
@@ -377,13 +379,20 @@ def run_cell(plan: LiveRun) -> RunOutcome:
             try:
                 agent = build.agent()
                 response = agent.run(benchmark.user_prompt(sample, bool(tool_specs)))
-                from .agent_binding import read_response, read_stop_reason
+                from .agent_binding import (
+                    read_outcome,
+                    read_response,
+                    read_stop_reason,
+                )
 
                 text, calls, count = read_response(response)
                 attempt["output"] = text or ""
                 attempt["tool_calls"] = calls
                 attempt["tool_call_count"] = count
                 attempt["stop_reason"] = read_stop_reason(response)
+                success = getattr(response, "success", None)
+                attempt["success"] = None if success is None else bool(success)
+                attempt["outcome"] = read_outcome(response)
                 if plan.capture_prompts:
                     attempt["messages"] = _captured_prompts(response)
             except Exception as exc:

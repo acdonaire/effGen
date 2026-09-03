@@ -201,6 +201,29 @@ def read_stop_reason(response) -> str | None:
     return None
 
 
+def read_outcome(response) -> str | None:
+    """What became of the run: ``answered``, ``stopped`` or ``failed``.
+
+    Read from the response when it reports one. A response from a build that
+    does not carry the field is classified from what it does carry, so a cell
+    recorded before and a cell recorded after can be compared like for like.
+    """
+    outcome = getattr(response, "outcome", None)
+    if isinstance(outcome, str) and outcome:
+        return outcome
+    success = getattr(response, "success", None)
+    if success is None:
+        return None
+    if success:
+        return "answered"
+    reason = (getattr(response, "metadata", None) or {}).get("reason")
+    stopped = {
+        "max_iterations_partial", "max_iterations_exhausted", "loop_detected",
+        "repeated_tool_result", "null_final_from_model",
+    }
+    return "stopped" if reason in stopped else "failed"
+
+
 def _calls_from_trace(trace) -> list[dict[str, Any]]:
     calls = []
     for event in trace:
@@ -225,6 +248,7 @@ __all__ = [
     "agent_config_kwargs",
     "answer_text",
     "build_tools",
+    "read_outcome",
     "read_response",
     "read_stop_reason",
 ]

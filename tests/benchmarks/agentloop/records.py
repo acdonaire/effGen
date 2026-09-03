@@ -151,6 +151,16 @@ class Record:
         return self.prompt_tokens + self.completion_tokens
 
     @property
+    def outcome(self) -> str | None:
+        """``answered`` / ``stopped`` / ``failed``, when the run recorded it.
+
+        ``None`` for a record written before a run carried the field, which is
+        what makes a strict accuracy unavailable rather than wrong for it.
+        """
+        value = (self.raw.get("attempt") or {}).get("outcome")
+        return None if value is None else str(value)
+
+    @property
     def tools_used(self) -> int:
         if self.tool_call_count is not None:
             return self.tool_call_count
@@ -238,6 +248,11 @@ class CellStats:
     complete: bool
     partial_reason: str | None
     accuracy: float
+    #: Accuracy counting only runs that answered — a run the loop stopped scores
+    #: zero however good the progress it kept was. ``None`` for a cell whose
+    #: records predate the outcome being carried.
+    accuracy_strict: float | None
+    answered: int | None
     exact_correct: int
     mean_llm_calls: float
     mean_tool_calls: float
@@ -412,6 +427,16 @@ class Cell:
             complete=self.partial_reason is None,
             partial_reason=self.partial_reason,
             accuracy=sum(r.score for r in self.records) / n * 100,
+            accuracy_strict=(
+                sum(r.score for r in self.records if r.outcome == "answered") / n * 100
+                if any(r.outcome is not None for r in self.records)
+                else None
+            ),
+            answered=(
+                sum(1 for r in self.records if r.outcome == "answered")
+                if any(r.outcome is not None for r in self.records)
+                else None
+            ),
             exact_correct=sum(1 for r in self.records if r.correct),
             mean_llm_calls=sum(r.llm_calls for r in self.records) / n,
             mean_tool_calls=sum(r.tools_used for r in self.records) / n,
