@@ -370,4 +370,4 @@ def test_public_surface_anchor_unchanged():
     # the compaction strategies, and the workflow checkpoint stores. Growing
     # this number is a deliberate act — update it in the same commit that
     # widens the surface, and say why.
-    assert len(effgen.__all__) == 223
+    assert len(effgen.__all__) == 225

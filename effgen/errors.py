@@ -13,6 +13,11 @@ else so it is redacted and cut to a bounded length, and
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from effgen.core.agent_response import AgentResponse, PartialResult
+
 #: How much of a value produced elsewhere an error message quotes. A provider
 #: echoes the rejected request back in its error body, a parser reports the
 #: input it choked on, and an SDK wraps both — so an unbounded quote buries the
@@ -363,3 +368,40 @@ class AudioBackendUnavailable(EffGenError):
             msg += f"\n\n{quote_for_message(extra)}"
         msg += f"\n\n{self._DEFAULT_INSTALL}"
         super().__init__(msg)
+
+
+class RunStoppedError(RuntimeError):
+    """The loop stopped a run before the model wrote an answer.
+
+    Raised by ``Agent.run()`` under the default ``raise_on_error=True`` when a
+    run ends with ``outcome == "stopped"`` — the iteration cap, a repeated tool
+    call, a tool that reproduced its own result, or an empty final answer after
+    tools ran. The run made progress but never produced an answer, so there is
+    nothing to return in its place.
+
+    It subclasses :class:`RuntimeError`, which is what the iteration cap has
+    always raised, so ``except RuntimeError`` keeps catching it. What is new is
+    that the run comes with it: :attr:`response` is the full response and
+    :attr:`partial` is what the run had reached, so reading the progress is one
+    ``except`` clause rather than a configuration change.
+
+    ::
+
+        try:
+            print(agent.run(task).output)
+        except RunStoppedError as exc:
+            print(exc.stop_reason, exc.partial.text if exc.partial else "")
+
+    Attributes:
+        response: The :class:`~effgen.core.agent_response.AgentResponse` the run
+            produced, with ``success=False``.
+        stop_reason: What stopped the run, copied from the response.
+        partial: What the run had reached, or ``None`` when it had reached
+            nothing.
+    """
+
+    def __init__(self, response: "AgentResponse") -> None:
+        super().__init__(response.output)
+        self.response = response
+        self.stop_reason: str | None = response.stop_reason
+        self.partial: "PartialResult | None" = response.partial

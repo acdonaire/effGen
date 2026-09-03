@@ -27,6 +27,7 @@ from .multimodal import audio_from, image_from, video_from
 
 # Agent
 from .agent import Agent, AgentConfig, AgentMode, AgentResponse
+from .agent_response import PartialResult
 
 # Result Aggregation
 from .aggregation import AggregatedResult, MergeStrategy, ResultAggregator, ToolResultCache
@@ -143,6 +144,7 @@ __all__ = [
     "Agent",
     "AgentConfig",
     "AgentResponse",
+    "PartialResult",
     "AgentMode",
 
     # Router

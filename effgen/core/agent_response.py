@@ -24,7 +24,103 @@ from .tool_call_record import ToolCall, ToolCallList, coerce_tool_calls
 if TYPE_CHECKING:
     from .router import RoutingDecision
 
-__all__ = ["AgentResponse", "StreamEvent", "ToolCall", "ToolCallList"]
+__all__ = [
+    "STOPPED_REASONS",
+    "STOP_REASONS",
+    "AgentResponse",
+    "PartialResult",
+    "StreamEvent",
+    "ToolCall",
+    "ToolCallList",
+]
+
+#: Every value :attr:`AgentResponse.stop_reason` can take. The vocabulary is
+#: closed: a run either answered (``final_answer``), was stopped by the loop
+#: before the model wrote an answer, or failed outright.
+STOP_REASONS = (
+    # answered
+    "final_answer",
+    # stopped — the loop ended the run before the model wrote an answer
+    "max_iterations_partial",
+    "max_iterations_exhausted",
+    "loop_detected",
+    "repeated_tool_result",
+    "null_final_from_model",
+    # failed — the run could not be carried out
+    "written_tool_call",
+    "generation_failed",
+    "structured_output_failed",
+    "empty_task",
+    "guardrail_blocked",
+    "run_failed",
+    "sub_agent_failed",
+)
+
+#: The subset of :data:`STOP_REASONS` that means the loop stopped a run which
+#: was otherwise proceeding. These are the responses whose
+#: :attr:`AgentResponse.outcome` is ``"stopped"``.
+STOPPED_REASONS = frozenset({
+    "max_iterations_partial",
+    "max_iterations_exhausted",
+    "loop_detected",
+    "repeated_tool_result",
+    "null_final_from_model",
+})
+
+
+@dataclass(frozen=True)
+class PartialResult:
+    """What a run had reached when it stopped without an answer.
+
+    Progress, not an answer. A run that ends at the iteration cap, on a repeated
+    tool call, or on a tool that reproduced its own result has tool observations
+    and reasoning but nothing the model wrote as its answer. Those observations
+    travel here so a caller can use them deliberately, instead of arriving in
+    :attr:`AgentResponse.output` where an answer would be.
+
+    Attributes:
+        observations: Every tool result of the run, in call order, exactly as
+            the tools returned them (bounded only by the tool-call record's own
+            cap). Not deduplicated and not reworded.
+        last_observation: The final entry of :attr:`observations`, or ``None``
+            when the run made no tool call.
+        last_thought: The model's last substantive reasoning line, when the run
+            left one.
+        text: The flattened one-line form, also carried as
+            ``metadata["partial_output"]``.
+        iterations: How many loop iterations the run had made.
+        tool_calls: How many tool calls the run had made.
+    """
+
+    observations: tuple[str, ...] = ()
+    last_observation: str | None = None
+    last_thought: str | None = None
+    text: str = ""
+    iterations: int = 0
+    tool_calls: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the payload as plain data, for JSON output and saved runs."""
+        return {
+            "observations": list(self.observations),
+            "last_observation": self.last_observation,
+            "last_thought": self.last_thought,
+            "text": self.text,
+            "iterations": self.iterations,
+            "tool_calls": self.tool_calls,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PartialResult":
+        """Rebuild a payload from :meth:`to_dict` output."""
+        return cls(
+            observations=tuple(data.get("observations") or ()),
+            last_observation=data.get("last_observation"),
+            last_thought=data.get("last_thought"),
+            text=data.get("text") or "",
+            iterations=int(data.get("iterations") or 0),
+            tool_calls=int(data.get("tool_calls") or 0),
+        )
 
 
 @dataclass
@@ -87,8 +183,18 @@ class AgentResponse:
         model: Model id the run was answered on
         provider: Provider that served the model, when one is known
         started_at: UTC ISO-8601 timestamp of when the run started
+        stop_reason: What ended the run, one of :data:`STOP_REASONS`. Present on
+            every response — a run that answered reports ``"final_answer"`` —
+            and always equal to ``metadata["reason"]``. Read
+            :attr:`outcome` to branch on the three cases without listing the
+            reasons yourself.
+        partial: What the run had reached when it stopped without writing an
+            answer, as a :class:`PartialResult`; ``None`` on an answered run and
+            on a stopped run that had reached nothing. Its ``text`` is also
+            carried as ``metadata["partial_output"]``.
         routing_decision: Routing decision (if sub-agents used)
-        metadata: Additional metadata. Always includes ``reason``, one of:
+        metadata: Additional metadata. Always includes ``reason``, which is
+            :attr:`stop_reason` under its original key, one of:
 
             - ``"final_answer"`` — the model produced an answer (``success=True``).
               A finer ``answer_source`` may also be present (e.g.
@@ -127,10 +233,22 @@ class AgentResponse:
             ``"openai_native"`` or ``"gemini_native"`` — naming the tool-calling
             path that produced the result.
 
+            - ``"loop_detected"`` — the model kept asking for the same tool
+              call and the loop stopped the run (``success=False``,
+              ``partial=True``). Whatever the tools had returned is in
+              :attr:`partial` and ``metadata["partial_output"]``.
+            - ``"repeated_tool_result"`` — a tool returned a result it had
+              already returned and the loop stopped the run (``success=False``),
+              carrying the same payload.
+            - ``"null_final_from_model"`` — the model answered with nothing
+              usable ("N/A", "none") after using tools (``success=False``),
+              carrying the same payload.
+
             Success rule: ``success`` is ``True`` only when a run finished with a
-            real answer (``final_answer``); a run truncated at the iteration cap
-            (``max_iterations_partial``) reports ``success=False`` and never puts
-            the text it recovered where an answer goes. ``success`` is never
+            real answer (``final_answer``); a run the loop stopped — at the
+            iteration cap, on a repeated call, on a repeated result, or on an
+            empty final answer — reports ``success=False`` and never puts the
+            text it recovered where an answer goes. ``success`` is never
             ``True`` with empty output.
     """
     output: str
@@ -150,15 +268,71 @@ class AgentResponse:
     model: str | None = None
     provider: str | None = None
     started_at: str | None = None
+    stop_reason: str | None = None
+    partial: PartialResult | None = None
 
     def __post_init__(self) -> None:
-        """Accept a count or records for ``tool_calls`` and store records.
+        """Normalize ``tool_calls`` and settle ``stop_reason``.
 
         Every path that builds a response, including a saved run read back and
         the many that report only a count, arrives here, so the field a caller
         sees is always the same type.
+
+        ``stop_reason`` is settled here rather than at each of the two dozen
+        places a response is built, so it is never ``None`` on a response a
+        caller receives. An explicit value wins; otherwise it is taken from
+        ``metadata["reason"]``, and failing that derived from what the response
+        already says. The two are then kept equal, because ``metadata["reason"]``
+        is what earlier releases read.
         """
         self.tool_calls = coerce_tool_calls(self.tool_calls)
+        metadata = self.metadata if isinstance(self.metadata, dict) else None
+        if not self.stop_reason:
+            recorded = metadata.get("reason") if metadata else None
+            if recorded:
+                self.stop_reason = str(recorded)
+            elif self.success:
+                self.stop_reason = "final_answer"
+            elif metadata and metadata.get("guardrail_blocked"):
+                self.stop_reason = "guardrail_blocked"
+            else:
+                self.stop_reason = "run_failed"
+        if metadata is not None and not metadata.get("reason"):
+            metadata["reason"] = self.stop_reason
+
+    @property
+    def outcome(self) -> str:
+        """What became of the run: ``"answered"``, ``"stopped"`` or ``"failed"``.
+
+        - ``"answered"`` — :attr:`output` is the answer the model wrote.
+        - ``"stopped"`` — the loop ended the run before the model wrote an
+          answer. :attr:`output` says what happened; :attr:`partial` holds what
+          the run had reached, when it had reached anything.
+        - ``"failed"`` — the run could not be carried out at all (a provider
+          failure, an empty task, a blocked run, a model that wrote its tool
+          call out instead of making it).
+
+        Derived from :attr:`success` and :attr:`stop_reason` rather than stored,
+        so it cannot drift from them.
+        """
+        if self.success:
+            return "answered"
+        return "stopped" if self.stop_reason in STOPPED_REASONS else "failed"
+
+    def mark_failed(self, reason: str, error: dict[str, Any] | None = None) -> None:
+        """Turn an assembled response into a failure with *reason*.
+
+        A few paths decide a run failed after the response was built — the
+        structured-output step is one. Recording that means changing
+        :attr:`success`, :attr:`stop_reason` and ``metadata["reason"]`` together;
+        doing it here keeps them from disagreeing.
+        """
+        self.success = False
+        self.stop_reason = reason
+        if isinstance(self.metadata, dict):
+            self.metadata["reason"] = reason
+            if error is not None:
+                self.metadata["error"] = error
 
     @property
     def tool_call_count(self) -> int:
@@ -260,6 +434,9 @@ class AgentResponse:
             "started_at": self.started_at,
             "output": self.output,
             "success": self.success,
+            "stop_reason": self.stop_reason,
+            "outcome": self.outcome,
+            "partial": self.partial.to_dict() if self.partial else None,
             "mode": self.mode.value,
             "iterations": self.iterations,
             # The count stays an int under its original key so a reader of a
