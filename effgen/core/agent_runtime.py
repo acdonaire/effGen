@@ -203,12 +203,18 @@ CONTINUE_INSTRUCTION = (
 # Closes a tool prompt when the last observation was retrieved source passages.
 # The passages sit immediately above and read like a finished answer, so the
 # close states what to do with them: answer from them, do not return them.
+#
+# It says nothing about the *form* of the answer. The framework describes the
+# machinery it inserted -- an observation block the model did not ask for -- and
+# leaves the shape of the answer to whoever knows the question: a declared
+# ``output_schema``, then the task and the caller's system prompt. This line is
+# the last thing the model reads, so a form demand here silently overrules a
+# caller who asked for a letter, a number or a value, and buys several times the
+# output tokens for an answer that was already stated.
 CONTEXT_ANSWER_INSTRUCTION = (
-    "The passages above are source material, not the answer. Write the answer "
-    "yourself, in your own sentences, covering only what the question asks. "
-    "Do not copy sentences from the passages, and do not repeat a passage "
-    "that does not answer the question. If the passages do not answer it, say so "
-    "and name what is missing."
+    "The passages above are source material, not the answer. Use them to answer "
+    "the question in the form the question asks for, and do not return a passage "
+    "as the answer. If they do not answer it, say so and name what is missing."
 )
 # Appended to the line above only when the caller asked for inline citations
 # (``cite_sources``) and the passages were presented to the model as a numbered

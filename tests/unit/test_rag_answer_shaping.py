@@ -6,6 +6,12 @@ search tool that observation is a block of source passages; the closing line
 restates the answer contract there so the passages are not returned as the
 answer. Every other tool keeps the original wording.
 
+The line says what the passages are and what not to do with them, and nothing
+about the form of the answer: it is the last thing the model reads, so a form
+demand there overrules the task, which is the one statement of shape that knows
+the question. A schema the caller declared is stated in the same closing
+position, ahead of it.
+
 Inline ``[1]`` markers are part of that line only when the caller asked for
 them: a marker the caller did not request ends up inside the answer text.
 """
@@ -51,13 +57,35 @@ class TestContinuationInstruction:
         text = _instruction(_StubAgent(), action)
         assert text != GENERIC
         low = text.lower()
-        # Names the passages as source material, asks for the model's own
-        # wording, and forbids copying.
+        # Names the passages as source material and forbids returning one as
+        # the answer -- the two things only the framework knows.
         assert "source material" in low
-        assert "your own sentences" in low
-        assert "do not copy" in low
+        assert "do not return a passage as the answer" in low
         # Keeps the fail-closed instruction for an unanswerable question.
         assert "do not answer it" in low or "not answer it" in low or "missing" in low
+
+    @pytest.mark.parametrize(
+        "action", ["retrieval", "web_search", "search", "knowledge_base"]
+    )
+    def test_retrieval_close_states_no_form_of_its_own(self, action):
+        """The close describes the passages, never the shape of the answer.
+
+        It is the last thing the model reads, so a form demand here overrules
+        a task that already asked for a letter, a number or a value -- and
+        buys several times the output tokens for an answer already stated.
+        """
+        low = _instruction(_StubAgent(), action).lower()
+        for demand in (
+            "your own sentences",
+            "in your own words",
+            "do not copy",
+            "covering only what the question asks",
+            "be concise",
+            "as few words",
+        ):
+            assert demand not in low, demand
+        # It defers instead: the question decides the form.
+        assert "in the form the question asks for" in low
 
     @pytest.mark.parametrize(
         "action", ["retrieval", "web_search", "search", "knowledge_base"]
