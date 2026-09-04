@@ -38,7 +38,7 @@ from ..utils.structured_logging import (
 )
 from .agent_config import _RUN_KWARGS, AgentMode
 from .agent_response import AgentResponse
-from .agent_runtime import sanitize_final_answer
+from .agent_runtime import _strip_run_citation_markers, sanitize_final_answer
 from .execution_tracker import EventType, ExecutionEvent
 
 if TYPE_CHECKING:
@@ -121,6 +121,15 @@ class AgentOrchestrationMixin:
                 the config. See :mod:`effgen.core.middleware`.
 
                 ``debug=True`` attaches a DebugTrace.
+
+                ``cite_sources`` — ask the model for inline ``[1]``, ``[2]``
+                markers when it answers from retrieved passages, overriding
+                ``AgentConfig.cite_sources`` for this call. Off by default: a
+                marker becomes part of ``response.output``. With it on, the
+                passages are shown to the model as a numbered list and marker
+                ``n`` is ``response.citations[n - 1]``.
+                ``response.citations`` and ``response.sources`` are populated
+                either way.
 
         Returns:
             AgentResponse with results
@@ -210,6 +219,11 @@ class AgentOrchestrationMixin:
         )
 
         debug = kwargs.pop("debug", False)
+        # Inline citation markers are requested, never assumed. Popped here so
+        # it never reaches the model layer as a generation kwarg, and resolved
+        # once inside the call scope below so both loops and the answer funnel
+        # read the same answer.
+        _cite_requested = kwargs.pop("cite_sources", None)
         # A max_tokens set on the config is the default output budget for every
         # run(); an explicit run(max_tokens=...) still overrides it per call.
         if "max_tokens" not in kwargs and self.config.max_tokens is not None:
@@ -285,6 +299,7 @@ class AgentOrchestrationMixin:
             _slog.agent_event(self.name, "task_start", task=_task_preview, mode=mode.value, run_id=run_id)
             _obs_log.agent_event("run.started", agent=self.name, task=_task_preview, mode=mode.value, run_id=run_id)
 
+            _cite_sources = self._resolve_cite_sources(_cite_requested)
             try:
                 # Pass debug flag through kwargs
                 if debug:
@@ -314,6 +329,23 @@ class AgentOrchestrationMixin:
                 # assembly sites also sanitize so direct callers stay clean.
                 if response.success and isinstance(response.output, str):
                     response.output = sanitize_final_answer(response.output)
+                    # Nobody asked for inline citation markers, so the answer
+                    # should not carry any. The instruction no longer requests
+                    # them; this removes a trailing run a model produced anyway,
+                    # and only for a run that actually retrieved context and an
+                    # index one of its observations could have offered.
+                    if not _cite_sources and self._retrieval_observations:
+                        _passages = self._retrieval_passages
+                        _stripped, _n_markers = _strip_run_citation_markers(
+                            response.output, passages=_passages,
+                        )
+                        if _n_markers:
+                            response.output = _stripped
+                            response.metadata["citation_markers_stripped"] = _n_markers
+                            logger.info(
+                                "citation markers stripped from the answer: "
+                                "n=%d passages=%d", _n_markers, _passages,
+                            )
                     # If this run used a retrieval tool and the model echoed the
                     # raw result dict as its answer (small models sometimes paste
                     # the tool observation), render it as readable passage text.

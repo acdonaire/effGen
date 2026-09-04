@@ -206,10 +206,18 @@ CONTINUE_INSTRUCTION = (
 CONTEXT_ANSWER_INSTRUCTION = (
     "The passages above are source material, not the answer. Write the answer "
     "yourself, in your own sentences, covering only what the question asks. "
-    "Cite each passage you used inline as [1], [2], ... numbered by its order "
-    "above. Do not copy sentences from the passages, and do not repeat a passage "
+    "Do not copy sentences from the passages, and do not repeat a passage "
     "that does not answer the question. If the passages do not answer it, say so "
     "and name what is missing."
+)
+# Appended to the line above only when the caller asked for inline citations
+# (``cite_sources``) and the passages were presented to the model as a numbered
+# list. Asking for markers changes what the answer *is* — a model that obeys
+# ends a one-word answer with "[1]" — so it is never added on the caller's
+# behalf, and never when there is no numbered list for a marker to point at.
+CONTEXT_CITATION_INSTRUCTION = (
+    "Cite each passage you used inline as [1], [2], ... numbered by its order "
+    "above."
 )
 
 # Literal loop-bookkeeping strings to strip — every injectable nudge above, plus a
@@ -612,6 +620,51 @@ def sanitize_final_answer(text: str | None) -> str | None:
         s = re.sub(r"^\|[ \t]*", "", s)
         s = re.sub(r"[ \t]*\|$", "", s)
     return s.strip()
+
+
+# A run of reference markers at the very END of an answer: "C [1]",
+# "D [1], [2]", "D [1][2][3]", "C [1] , [2] ". Trailing only — a bracketed
+# number inside a sentence ("...are called dormant [1].") is part of what the
+# model wrote and is left alone.
+_TRAILING_CITATION_RUN_RE = re.compile(r"(?:\s*\[\d+\]\s*,?)+\s*$")
+_CITATION_INDEX_RE = re.compile(r"\[(\d+)\]")
+
+
+def _strip_run_citation_markers(
+    text: str | None, *, passages: int = 0
+) -> tuple[str | None, int]:
+    """Remove a trailing run of ``[n]`` reference markers from an answer.
+
+    A pure function, kept apart from :func:`sanitize_final_answer` so the
+    sanitizer stays a ``(str) -> str`` transform with no run state in it. The
+    caller owns the two facts this cannot know: whether the run retrieved
+    context at all, and whether the caller asked for inline citations. It is
+    only correct to call when the run did retrieve and the caller did not ask.
+
+    ``passages`` is how many passages the run's retrieval observations offered.
+    When it is non-zero every index in the marker run must fall inside it, so an
+    answer ending in ``[9]`` after three passages keeps its bracket — that is a
+    number the answer is about, not a reference to a passage. When the
+    observations offered nothing countable, the bound is not applied.
+
+    Returns the text and how many markers were removed; ``(text, 0)`` means
+    nothing changed. An answer that is *only* markers is returned untouched,
+    since removing them would leave no answer at all.
+    """
+    if not text or not isinstance(text, str):
+        return text, 0
+    match = _TRAILING_CITATION_RUN_RE.search(text)
+    if not match:
+        return text, 0
+    indices = [int(i) for i in _CITATION_INDEX_RE.findall(match.group(0))]
+    if not indices:
+        return text, 0
+    if passages and any(i < 1 or i > passages for i in indices):
+        return text, 0
+    stripped = _TRAILING_CITATION_RUN_RE.sub("", text).strip()
+    if not stripped:
+        return text, 0
+    return stripped, len(indices)
 
 
 class AgentRuntimeMixin:

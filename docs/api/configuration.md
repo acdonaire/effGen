@@ -18,6 +18,7 @@
 | `verbose_tools` | `bool \| None` | `None` | Verbose tool descriptions |
 | `fallback_chain` | `Dict \| None` | `None` | Tool fallback mapping |
 | `enable_fallback` | `bool` | `True` | Enable fallback chains |
+| `cite_sources` | `bool` | `False` | Ask for inline `[1]` citation markers when answering from retrieved passages |
 
 ## Memory Config
 

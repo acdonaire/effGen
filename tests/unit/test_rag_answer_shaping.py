@@ -5,6 +5,9 @@ line is the final thing a model reads before it answers. After a retrieval or
 search tool that observation is a block of source passages; the closing line
 restates the answer contract there so the passages are not returned as the
 answer. Every other tool keeps the original wording.
+
+Inline ``[1]`` markers are part of that line only when the caller asked for
+them: a marker the caller did not request ends up inside the answer text.
 """
 
 from __future__ import annotations
@@ -29,8 +32,8 @@ class _StubAgent(AgentReActMixin):
         self.tools = tools or {}
 
 
-def _instruction(agent, *actions):
-    return agent._continuation_instruction([(a, "{}") for a in actions])
+def _instruction(agent, *actions, **kwargs):
+    return agent._continuation_instruction([(a, "{}") for a in actions], **kwargs)
 
 
 class TestContinuationInstruction:
@@ -49,13 +52,40 @@ class TestContinuationInstruction:
         assert text != GENERIC
         low = text.lower()
         # Names the passages as source material, asks for the model's own
-        # wording, asks for inline citations, and forbids copying.
+        # wording, and forbids copying.
         assert "source material" in low
         assert "your own sentences" in low
-        assert "[1]" in text
         assert "do not copy" in low
         # Keeps the fail-closed instruction for an unanswerable question.
         assert "do not answer it" in low or "not answer it" in low or "missing" in low
+
+    @pytest.mark.parametrize(
+        "action", ["retrieval", "web_search", "search", "knowledge_base"]
+    )
+    def test_inline_markers_are_not_asked_for_by_default(self, action):
+        """A caller who said nothing about citations is not asked for markers."""
+        text = _instruction(_StubAgent(), action)
+        assert "[1]" not in text
+        assert "cite each passage" not in text.lower()
+
+    @pytest.mark.parametrize(
+        "action", ["retrieval", "web_search", "search", "knowledge_base"]
+    )
+    def test_inline_markers_are_asked_for_when_requested(self, action):
+        text = _instruction(
+            _StubAgent(), action, cite_sources=True, numbered_passages=3
+        )
+        assert "[1]" in text
+        assert "cite each passage" in text.lower()
+        # The request is added to the default line, not swapped for it.
+        assert "source material" in text.lower()
+
+    def test_markers_are_not_asked_for_with_nothing_numbered(self):
+        """A retrieval tool that offered no numbered passage is not cited."""
+        text = _instruction(
+            _StubAgent(), "retrieval", cite_sources=True, numbered_passages=0
+        )
+        assert "[1]" not in text
 
     def test_category_marks_a_custom_tool_as_retrieval(self):
         agent = _StubAgent(

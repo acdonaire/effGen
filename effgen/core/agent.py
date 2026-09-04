@@ -90,6 +90,16 @@ class _AgentCallState:
     current_depth: int = 0
     collected_citations: list[dict[str, Any]] = field(default_factory=list)
     run_cost_accum: dict[str, Any] = field(default_factory=dict)
+    # Whether this call asked for inline citation markers. ``None`` means no
+    # call resolved it, so the agent's configured value applies (a stream never
+    # enters this scope and reads the config directly).
+    cite_sources: bool | None = None
+    # What the run's context-retrieval observations offered: how many such
+    # observations were appended, and how many passages they carried. Together
+    # they gate the trailing-marker strip, so a run that never retrieved cannot
+    # have a bracketed number taken off its answer.
+    retrieval_observations: int = 0
+    retrieval_passages: int = 0
 
 
 # Per-call state for the three attributes above. Set for the duration of one
@@ -561,6 +571,47 @@ class Agent(
     @_run_cost_accum.setter
     def _run_cost_accum(self, value: dict[str, Any]) -> None:
         self._get_call_state().run_cost_accum = value
+
+    @property
+    def _retrieval_observations(self) -> int:
+        return self._get_call_state().retrieval_observations
+
+    @_retrieval_observations.setter
+    def _retrieval_observations(self, value: int) -> None:
+        self._get_call_state().retrieval_observations = value
+
+    @property
+    def _retrieval_passages(self) -> int:
+        return self._get_call_state().retrieval_passages
+
+    @_retrieval_passages.setter
+    def _retrieval_passages(self, value: int) -> None:
+        self._get_call_state().retrieval_passages = value
+
+    def _resolve_cite_sources(self, requested: bool | None) -> bool:
+        """Fix this call's citation-marker setting and record it on the run state.
+
+        ``requested`` is the ``run(cite_sources=...)`` keyword, or ``None`` when
+        the call said nothing and the agent's configured value applies.
+        """
+        value = bool(
+            getattr(self.config, "cite_sources", False) if requested is None
+            else requested
+        )
+        self._get_call_state().cite_sources = value
+        return value
+
+    def _cite_sources_requested(self) -> bool:
+        """True when this run should ask the model for inline citation markers.
+
+        A ``run(cite_sources=...)`` keyword decides the call; without one the
+        agent's configured value applies, which is what a stream reads (it does
+        not open a per-call scope).
+        """
+        override = self._get_call_state().cite_sources
+        if override is None:
+            return bool(getattr(self.config, "cite_sources", False))
+        return bool(override)
 
     @property
     def execution_tracker(self) -> ExecutionTracker:

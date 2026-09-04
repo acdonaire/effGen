@@ -45,6 +45,10 @@
       "maximum": 2,
       "description": "Generation temperature override"
     },
+    "cite_sources": {
+      "type": "boolean",
+      "description": "Ask the model for inline [1], [2] markers when it answers from retrieved passages. Off by default; the markers become part of the answer text."
+    },
     "memory": {
       "type": "object",
       "description": "Memory configuration",

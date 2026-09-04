@@ -254,8 +254,9 @@ class AgentToolExecutionMixin:
             # Capture retrieved evidence (RAG/search) so the final answer can
             # surface its sources and inline citations (AgentResponse.sources /
             # .citations). Best-effort: never let bookkeeping break tool output.
+            mined_passages: list[dict[str, Any]] = []
             try:
-                self._collect_citations(tool, tool_name, result)
+                mined_passages = self._collect_citations(tool, tool_name, result) or []
             except Exception as _cite_err:  # pragma: no cover - defensive
                 logger.debug("Citation capture skipped for %s: %s", tool_name, _cite_err)
 
@@ -320,6 +321,24 @@ class AgentToolExecutionMixin:
                 result_str = str(result.result)
             else:
                 result_str = str(result)
+
+            # Record what this run retrieved. The two counters gate the answer
+            # side: an answer only loses a trailing "[1]" when a context
+            # observation was appended, and only for an index that observation
+            # could have offered. Best-effort, like the citation capture above.
+            try:
+                if self._is_context_retrieval_tool(tool_name):
+                    self._retrieval_observations += 1
+                    self._retrieval_passages += len(mined_passages)
+                    if mined_passages and self._cite_sources_requested():
+                        # Show the passages the way the markers index them, so
+                        # "numbered by its order above" is a real list and not
+                        # something the model has to count for itself.
+                        numbered = self._numbered_passage_block(mined_passages)
+                        if numbered:
+                            result_str = numbered
+            except Exception as _ret_err:  # pragma: no cover - defensive
+                logger.debug("Retrieval bookkeeping skipped for %s: %s", tool_name, _ret_err)
 
             # Check if result indicates a tool-level failure
             if result_str.startswith("Tool execution failed:"):

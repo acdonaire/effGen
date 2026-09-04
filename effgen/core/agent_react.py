@@ -51,6 +51,7 @@ _obs_log = _get_obs_logger(__name__)
 from .agent import AgentMode, AgentResponse  # noqa: E402
 from .agent_runtime import (  # noqa: E402
     CONTEXT_ANSWER_INSTRUCTION,
+    CONTEXT_CITATION_INSTRUCTION,
     CONTINUE_INSTRUCTION,
     NUDGE_ALREADY_COMPUTED,
     NUDGE_CONTINUE,
@@ -196,6 +197,7 @@ class AgentReActMixin(
             )
 
             # Build prompt
+            _cite_sources, _numbered_passages = self._citation_prompt_state()
             gen_kwargs = dict(kwargs)
             # After 2 multi-tool batches, or once a loop with no usable partial
             # answer was detected, stop passing tools to force synthesis.
@@ -210,7 +212,7 @@ class AgentReActMixin(
                     prompt = (
                         f"{task}\n\n"
                         f"Previous steps:\n{scratchpad}\n\n"
-                        f"{self._continuation_instruction(guards.previous_actions)}"
+                        f"{self._continuation_instruction(guards.previous_actions, cite_sources=_cite_sources, numbered_passages=_numbered_passages)}"
                     )
                 else:
                     prompt = task
@@ -258,7 +260,11 @@ class AgentReActMixin(
                     conversation_history=conversation_history,
                     system_prompt=self.config.system_prompt,
                     verbose=self._verbose_tools,
-                    closing_instruction=self._context_answer_instruction(guards.previous_actions),
+                    closing_instruction=self._context_answer_instruction(
+                        guards.previous_actions,
+                        cite_sources=_cite_sources,
+                        numbered_passages=_numbered_passages,
+                    ),
                 )
 
             # Debug: log first iteration prompt to see if history is included
@@ -1180,7 +1186,11 @@ class AgentReActMixin(
         return action in {"retrieval", "web_search", "search", "knowledge_base"}
 
     def _context_answer_instruction(
-        self, previous_actions: list[tuple[str, str]]
+        self,
+        previous_actions: list[tuple[str, str]],
+        *,
+        cite_sources: bool = False,
+        numbered_passages: int = 0,
     ) -> str:
         """Return the answer-shaping line when the latest observation is
         retrieved context, or ``""`` for every other tool.
@@ -1190,19 +1200,48 @@ class AgentReActMixin(
         retrieval/search tool that observation is a block of source passages, and
         a generic close leaves the strongest recent signal a wall of text that
         reads like a finished answer: the smallest models return it verbatim,
-        dropping the citation markers and the question's scope along the way.
-        This line states what to do with the passages instead. Returning ``""``
-        for every other tool keeps those prompts byte-for-byte unchanged.
+        losing the question's scope along the way. This line states what to do
+        with the passages instead. Returning ``""`` for every other tool keeps
+        those prompts byte-for-byte unchanged.
+
+        ``cite_sources`` is the caller's request for inline ``[1]``, ``[2]``
+        markers, and ``numbered_passages`` is how many passages the run has
+        actually numbered for the model. Markers are asked for only when both
+        hold, so a marker always has a numbered list behind it. The flag is a
+        parameter rather than a read of the config, which keeps this a function
+        of what ran and what was asked for.
         """
         if previous_actions and self._is_context_retrieval_tool(previous_actions[-1][0]):
+            if cite_sources and numbered_passages:
+                return f"{CONTEXT_ANSWER_INSTRUCTION} {CONTEXT_CITATION_INSTRUCTION}"
             return CONTEXT_ANSWER_INSTRUCTION
         return ""
 
     def _continuation_instruction(
-        self, previous_actions: list[tuple[str, str]]
+        self,
+        previous_actions: list[tuple[str, str]],
+        *,
+        cite_sources: bool = False,
+        numbered_passages: int = 0,
     ) -> str:
         """Return the line that closes the native/hybrid prompt after a tool ran."""
-        return self._context_answer_instruction(previous_actions) or CONTINUE_INSTRUCTION
+        return self._context_answer_instruction(
+            previous_actions,
+            cite_sources=cite_sources,
+            numbered_passages=numbered_passages,
+        ) or CONTINUE_INSTRUCTION
+
+    def _citation_prompt_state(self) -> tuple[bool, int]:
+        """What the prompt needs to know about citations: whether the caller
+        asked for inline markers, and how many passages carry a number."""
+        try:
+            cite = self._cite_sources_requested()
+            numbered = len(
+                [e for e in self._collected_citations if e.get("cite_index")]
+            )
+        except Exception:  # pragma: no cover - defensive
+            return False, 0
+        return cite, numbered
 
     def _run_with_sub_agents(self,
                             task: str,

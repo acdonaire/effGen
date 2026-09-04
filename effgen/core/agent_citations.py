@@ -13,6 +13,11 @@ if TYPE_CHECKING:
     from .agent_response import AgentResponse
 
 
+def _key_of(entry: dict[str, Any]) -> tuple[str, str, str]:
+    """The identity of one mined passage: same source, chunk and opening text."""
+    return (entry["source"], entry["chunk_id"], entry["quote"][:80])
+
+
 class AgentCitationsMixin:
     """Source-mining and citation-assembly methods for :class:`Agent`."""
 
@@ -36,20 +41,29 @@ class AgentCitationsMixin:
                 return True
         return tool_name.lower() in {"retrieval", "rag", "knowledge_base"}
 
-    def _collect_citations(self, tool: Any, tool_name: str, result: Any) -> None:
+    def _collect_citations(
+        self, tool: Any, tool_name: str, result: Any
+    ) -> list[dict[str, Any]]:
         """
         Mine a retrieval/search tool result for source passages and stash them
         on the per-run accumulator. The actual ``Citation`` objects and the
         deduplicated source list are assembled in :meth:`_attach_citations`.
+
+        Returns the passages this call contributed, in the order they were
+        mined, so the caller can show them to the model. When inline citations
+        were asked for, each passage also carries the number it keeps for the
+        rest of the run (``cite_index``): a passage retrieved twice keeps the
+        number it was first given, so ``[n]`` means one passage and not one
+        retrieval call.
         """
         if not self._is_retrieval_tool(tool, tool_name):
-            return
+            return []
 
         # Unwrap ToolResult → output (skip failed calls).
         output = result
         if hasattr(result, "output"):
             if hasattr(result, "success") and not result.success:
-                return
+                return []
             output = result.output
 
         # Find the list of source items. Tools surface them three ways:
@@ -70,8 +84,11 @@ class AgentCitationsMixin:
             ):
                 items = [output]
         if not items:
-            return
+            return []
 
+        cite_sources = self._cite_sources_requested()
+        collected = self._collected_citations
+        mined: list[dict[str, Any]] = []
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -104,14 +121,44 @@ class AgentCitationsMixin:
                 score = float(item.get("score", meta.get("score", 0.0)) or 0.0)
             except (TypeError, ValueError):
                 score = 0.0
-            self._collected_citations.append({
+            entry: dict[str, Any] = {
                 "source": str(source),
                 "chunk_id": str(item.get("id") or meta.get("chunk_id") or ""),
                 "score": score,
                 "quote": quote,
                 "page": meta.get("page"),
                 "section": meta.get("section"),
-            })
+            }
+            if cite_sources:
+                identity = _key_of(entry)
+                already = next(
+                    (
+                        e for e in collected
+                        if e.get("cite_index") and _key_of(e) == identity
+                    ),
+                    None,
+                )
+                if already is not None:
+                    mined.append(already)
+                    continue
+                entry["cite_index"] = 1 + max(
+                    (e.get("cite_index") or 0 for e in collected), default=0
+                )
+                # The numbered list the model reads is the full passage, not the
+                # short quote the citation entry carries.
+                entry["text"] = str(content).strip()
+            collected.append(entry)
+            mined.append(entry)
+        return mined
+
+    @staticmethod
+    def _numbered_passage_block(entries: list[dict[str, Any]]) -> str:
+        """Render mined passages as the numbered list ``[n]`` markers index."""
+        return "\n\n".join(
+            f"[{e['cite_index']}] Source: {e['source']}\n{e.get('text') or e['quote']}"
+            for e in entries
+            if e.get("cite_index")
+        )
 
     def _attach_citations(self, response: "AgentResponse") -> None:
         """
@@ -140,7 +187,15 @@ class AgentCitationsMixin:
         markers this generic mining path can't reliably map back to one
         item across multiple tool calls, so they keep the previous default
         (cited=True) rather than risk dropping a real citation.
+
+        When the caller asked for inline citations (``cite_sources``) that
+        guesswork is replaced by the numbering the model was actually shown:
+        every passage presented to it as ``[n]`` becomes ``citations[n - 1]``,
+        whichever retrieval call produced it and whether or not its source is a
+        URL. Provider-native grounding chunks are unaffected in both modes —
+        the model never saw a number for those.
         """
+        cite_sources = self._cite_sources_requested()
         raw = list(getattr(self, "_collected_citations", None) or [])
         # Fold provider-native grounding chunks ({url, title}) into the same
         # accumulator shape so the dedup/assembly below handles every path.
@@ -171,19 +226,24 @@ class AgentCitationsMixin:
         sources: list[str] = []
         seen_sources: set[str] = set()
         for entry in raw:
+            # A passage the model was shown as "[n] Source: ..." keeps that
+            # number, so marker n in the answer is citations[n - 1].
+            numbered = entry.get("cite_index") if cite_sources else None
             is_cited = entry.get("cited")
-            if is_cited is None:
+            if numbered is not None:
+                is_cited = True
+            elif is_cited is None:
                 source = entry["source"]
                 if source.startswith(("http://", "https://")):
                     is_cited = source in answer_text
                 else:
                     is_cited = True
             if is_cited:
-                key = (entry["source"], entry["chunk_id"], entry["quote"][:80])
+                key = _key_of(entry)
                 if key not in seen:
                     seen.add(key)
                     citations.append(Citation(
-                        index=len(citations) + 1,
+                        index=numbered if numbered is not None else len(citations) + 1,
                         source=entry["source"],
                         chunk_id=entry["chunk_id"],
                         relevance_score=entry["score"],

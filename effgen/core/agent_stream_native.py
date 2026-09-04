@@ -291,10 +291,11 @@ class AgentNativeStreamMixin:
     ) -> str:
         """Build the turn's prompt, the same way the blocking loop builds it."""
         if scratchpad:
+            cite_sources, numbered_passages = self._citation_prompt_state()
             prompt = (
                 f"{task}\n\n"
                 f"Previous steps:\n{scratchpad}\n\n"
-                f"{self._continuation_instruction(previous_actions)}"
+                f"{self._continuation_instruction(previous_actions, cite_sources=cite_sources, numbered_passages=numbered_passages)}"
             )
         else:
             prompt = task

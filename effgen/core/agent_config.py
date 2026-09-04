@@ -121,6 +121,11 @@ class AgentConfig:
             model's own text is in ``response.metadata["partial_output"]``. Read
             that key rather than ``output`` when a partial answer is what you
             want to score.
+        cite_sources: Ask the model for inline ``[1]``, ``[2]`` markers when it
+            answers from retrieved passages, and number those passages for it so
+            marker ``n`` is ``response.citations[n - 1]``. Off by default,
+            because a marker ends up inside ``response.output``.
+            ``run(cite_sources=...)`` overrides it for a single call.
     """
     name: str = field(default="", kw_only=True)
     model: BaseModel | str
@@ -195,6 +200,16 @@ class AgentConfig:
     # These flags have no effect when the model is not an AnthropicAdapter.
     cache_system_prompt: bool = True
     cache_tools: bool = True
+    # Ask the model for inline [1], [2] citation markers when it answers from
+    # retrieved passages. Off by default: a marker becomes part of ``.output``,
+    # which breaks an exact-match comparison, a structured-output schema, and
+    # any program that reads the answer. ``response.citations`` and
+    # ``response.sources`` are populated either way. When it is on, the passages
+    # are presented to the model as a numbered list and marker ``n`` is
+    # ``response.citations[n - 1]``. One consequence to know about: while it is
+    # off, an answer that ends in a bracketed number after a retrieval tool ran
+    # is read as a marker and removed.
+    cite_sources: bool = False
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -219,7 +234,7 @@ _RUN_KWARGS = frozenset({
     "presence_penalty", "frequency_penalty", "repetition_penalty",
     "stop_sequences", "reasoning_effort", "tools",
     "checkpoint_dir", "checkpoint_interval", "max_iterations",
-    "middleware", "session",
+    "middleware", "session", "cite_sources",
 })
 
 
