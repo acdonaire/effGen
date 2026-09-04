@@ -28,6 +28,12 @@ class PresetConfig:
     temperature: float = 0.7
     enable_sub_agents: bool = False
     enable_memory: bool = True
+    #: Whether agents built from this preset ask the model for inline ``[1]``,
+    #: ``[2]`` markers and number the retrieved passages behind them. Off
+    #: everywhere but ``rag``, whose whole job is answering from a named source;
+    #: without it a preset that asks for markers in its system prompt produces
+    #: them and has them removed again, because markers are opt-in per run.
+    cite_sources: bool = False
     tags: list[str] = field(default_factory=list)
 
 
@@ -167,9 +173,9 @@ _RAG_PRESET = PresetConfig(
     tool_names=["retrieval"],
     system_prompt=(
         "You are a retrieval-augmented assistant. When answering, ALWAYS "
-        "consult the knowledge base first using the retrieval tool, then write "
-        "the answer in your own words and cite sources inline using [1], [2], "
-        "... markers matching the returned citation list. Do not paste raw "
+        "consult the knowledge base first using the retrieval tool, then cite "
+        "sources inline using [1], [2], ... markers matching the returned "
+        "citation list. Do not paste raw "
         "retrieved passages back as the answer. If the retrieved passages do "
         "not contain the information the question asks for, reply that the "
         "knowledge base does not cover it and name what is missing — never "
@@ -177,6 +183,7 @@ _RAG_PRESET = PresetConfig(
     ),
     max_iterations=8,
     temperature=0.3,
+    cite_sources=True,
     tags=["rag", "retrieval", "knowledge-base"],
 )
 
@@ -818,6 +825,7 @@ def create_agent(
         spec_temperature = 0.7
         spec_enable_sub_agents = False
         spec_enable_memory = True
+        spec_cite_sources = False
     else:
         if preset is None:
             raise TypeError(
@@ -833,6 +841,7 @@ def create_agent(
         spec_temperature = cfg.temperature
         spec_enable_sub_agents = cfg.enable_sub_agents
         spec_enable_memory = cfg.enable_memory
+        spec_cite_sources = cfg.cite_sources
 
     if model is None:
         if domain is not None:
@@ -906,6 +915,11 @@ def create_agent(
     # The agent's guardrails: an explicit guardrails= wins, otherwise the spec's
     # (a domain carries its own, presets default to None). config_overrides may
     # also carry guardrails (back-compat); an explicit kwarg takes precedence.
+    # A preset that asks for inline markers in its system prompt turns them on,
+    # since they are opt-in per run and would otherwise be produced and removed.
+    # An explicit cite_sources= still wins.
+    config_overrides.setdefault("cite_sources", spec_cite_sources)
+
     resolved_guardrails = guardrails if guardrails is not None else spec_guardrails
     if "guardrails" in config_overrides:
         if guardrails is None:

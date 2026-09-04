@@ -5,6 +5,7 @@ import pytest
 
 from effgen.presets import registry as _preset_registry
 from effgen.presets.registry import (
+    PRESETS,
     PresetConfig,
     create_agent,
     get_preset,
@@ -227,6 +228,43 @@ class TestDomainAgentBridge:
 
         with pytest.raises(ValueError, match="to_agent"):
             LegalDomain().to_agent()
+
+
+class TestPresetCitationMarkers:
+    """A preset that asks for inline markers must also turn them on.
+
+    Markers are opt-in per run, and a run that did not ask for them has any it
+    produced removed from the answer. A preset whose system prompt orders the
+    model to write ``[1]``, ``[2]`` therefore pays for markers and then loses
+    them, and the caller has no way to keep them.
+    """
+
+    def _mock_model(self):
+        return MockModel(responses=["Thought: done\nFinal Answer: ok"])
+
+    def test_the_rag_preset_asks_for_markers_and_enables_them(self):
+        assert PRESETS["rag"].cite_sources is True
+        assert "[1]" in PRESETS["rag"].system_prompt
+        agent = create_agent(
+            "rag", self._mock_model(), knowledge_base="Canberra is the capital."
+        )
+        assert agent.config.cite_sources is True
+
+    def test_the_rag_prompt_leaves_the_wording_to_the_question(self):
+        assert "in your own words" not in PRESETS["rag"].system_prompt.lower()
+
+    @pytest.mark.parametrize(
+        "name", [n for n in PRESETS if n != "rag"]
+    )
+    def test_every_other_preset_leaves_markers_off(self, name):
+        assert PRESETS[name].cite_sources is False
+
+    def test_an_explicit_setting_still_wins(self):
+        agent = create_agent(
+            "rag", self._mock_model(), knowledge_base="Canberra is the capital.",
+            cite_sources=False,
+        )
+        assert agent.config.cite_sources is False
 
 
 class TestRagKnowledgeBase:
