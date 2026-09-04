@@ -126,6 +126,18 @@ class AgentConfig:
             marker ``n`` is ``response.citations[n - 1]``. Off by default,
             because a marker ends up inside ``response.output``.
             ``run(cite_sources=...)`` overrides it for a single call.
+        output_schema: A JSON Schema (or a Pydantic model class) every run must
+            answer in. It is the one machine-readable statement of answer shape
+            the framework has, so it is stated to the model inside the tool loop
+            and the answer is validated against it afterwards.
+            ``run(output_schema=...)`` / ``run(output_model=...)`` overrides it
+            for a single call.
+
+            The framework describes only the machinery it inserted — a block of
+            retrieved passages the model did not ask for, say — and leaves the
+            form of the answer to whoever knows the question: this schema first,
+            then the task and ``system_prompt``. Nothing effGen appends asks for
+            a shape of its own, so a task that asks for a letter gets a letter.
     """
     name: str = field(default="", kw_only=True)
     model: BaseModel | str
@@ -133,8 +145,10 @@ class AgentConfig:
     system_prompt: str = "You are a helpful AI assistant."
     max_iterations: int = 10
     temperature: float = 0.7
-    # Default output-token budget for every run(). None lets the model pick a
-    # size-aware default; run(max_tokens=...) overrides it for a single call.
+    # Default output-token budget for every run(). None leaves the budget to
+    # the agent loop, which applies default_max_output_tokens(model) — 1024 for
+    # an ordinary model, more for a reasoning family. run(max_tokens=...)
+    # overrides it for a single call.
     max_tokens: int | None = None
     # Sampling controls. Pinned here they apply to every run(); a run(...)
     # kwarg of the same name overrides them for a single call. seed and the

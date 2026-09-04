@@ -297,6 +297,51 @@ Over the OpenAI-compatible server the same numbers arrive on the final
 `stream_options.include_usage` chunk, whose `effgen` object carries `cost_usd`
 alongside the standard `usage` block.
 
+### Who decides what an answer looks like
+
+effGen appends things to a prompt the model never asked for — the observation
+block after a tool ran, most of all. It describes that machinery, because the
+model cannot know what it is. It says nothing about the **form** of the answer,
+because it does not know the question. Form is settled, in this order:
+
+1. **`output_schema` / `output_model`**, when you declared one. This is the only
+   machine-readable statement of shape effGen has, so it is stated to the model
+   inside the loop, while the answer is being written, rather than being applied
+   to prose afterwards. A run that answers in the declared shape on the first
+   attempt costs one model call, not three.
+2. **The task and your `system_prompt`.** Nothing effGen appends contradicts
+   them. A task that ends "answer with the letter of the correct option" gets a
+   letter, including after a retrieval tool has run.
+3. **Nothing.** With no schema and no instruction of your own, the model follows
+   the task as written.
+
+The one thing effGen still says after retrieved passages is what the passages
+are — source material, not the answer — and what to do if they do not answer the
+question. Neither is a statement about length or wording.
+
+```python
+from pydantic import BaseModel
+
+class Verdict(BaseModel):
+    option: str
+    confidence: float
+
+response = agent.run(question, output_model=Verdict)
+response.metadata["structured_output_method"]    # "agent_output" — no repair call
+response.metadata["structured_output_attempts"]  # 0
+```
+
+`structured_output_method` is `"agent_output"` when the answer already matched
+the schema, and `"reprompt"` when effGen had to ask again; `structured_output_attempts`
+counts those extra calls. Both describe how hard the framework had to work, not
+the value you get back.
+
+A schema set on `AgentConfig` is stated on a streamed run too, so the same agent
+answers in the same shape whether you call `run()` or `stream()`. Streaming
+yields the model's tokens as they arrive and does not validate or parse them, so
+a stream gives you the declared shape as text; the parsed value and the
+`structured_output_*` metadata come from `run()`.
+
 ## Tools
 
 The recommended way to author a tool is the `@tool` decorator (it wraps the full
