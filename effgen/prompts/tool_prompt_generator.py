@@ -166,6 +166,7 @@ class ToolPromptGenerator:
         system_prompt: str = "You are a helpful AI assistant.",
         verbose: bool = True,
         closing_instruction: str = "",
+        answer_shape: str = "",
     ) -> str:
         """
         Generate a complete ReAct prompt with enhanced tool descriptions.
@@ -180,6 +181,10 @@ class ToolPromptGenerator:
                 the last thing the model reads. Used to say what to do with a
                 trailing observation the model would otherwise return as-is
                 (retrieved passages). Empty leaves the prompt unchanged.
+            answer_shape: The shape the caller declared for the answer, placed
+                ahead of *closing_instruction*. It carries no "answer now"
+                label of its own, so it can be stated on a turn where the model
+                may still call a tool. Empty leaves the prompt unchanged.
 
         Returns:
             Complete formatted ReAct prompt string.
@@ -194,6 +199,20 @@ class ToolPromptGenerator:
             task=task,
             scratchpad=scratchpad,
         )
+
+        if answer_shape:
+            # The ReAct formats parse an answer off the "Final Answer:" label,
+            # so a statement about what the answer *is* has to carry how it is
+            # marked -- otherwise a model that follows the shape emits the value
+            # with no label, the turn reads as more reasoning, and the loop runs
+            # to its cap on a run that was already answered. When a closing
+            # instruction follows, it restates the label itself.
+            prompt = f"{prompt}\n\n{answer_shape}"
+            if not closing_instruction:
+                prompt = (
+                    f"{prompt}\nGive it after a 'Final Answer:' label once you "
+                    "have it."
+                )
 
         if closing_instruction:
             # The ReAct formats parse an answer off the "Final Answer:" label, so

@@ -100,6 +100,14 @@ class _AgentCallState:
     # have a bracketed number taken off its answer.
     retrieval_observations: int = 0
     retrieval_passages: int = 0
+    # The JSON Schema this call must answer in, resolved once from
+    # ``run(output_schema=)``, ``run(output_model=)`` and the agent's configured
+    # default, so the tool loop and the structured-output funnel read one answer
+    # and a concurrent call on the same Agent cannot see another run's schema.
+    # ``output_schema_resolved`` stays False when no call resolved it (a stream
+    # never enters this scope), and the agent's configured schema applies.
+    output_schema_resolved: bool = False
+    output_schema: dict[str, Any] | None = None
 
 
 # Per-call state for the three attributes above. Set for the duration of one
@@ -600,6 +608,25 @@ class Agent(
         )
         self._get_call_state().cite_sources = value
         return value
+
+    def _set_effective_output_schema(self, schema: dict[str, Any] | None) -> None:
+        """Record the schema this call must answer in on the run state."""
+        state = self._get_call_state()
+        state.output_schema = schema
+        state.output_schema_resolved = True
+
+    def _effective_output_schema(self) -> dict[str, Any] | None:
+        """The JSON Schema this run must answer in, or ``None``.
+
+        A ``run(output_schema=...)`` / ``run(output_model=...)`` keyword decides
+        the call; without one the agent's configured schema applies, which is
+        what a stream reads (it does not open a per-call scope).
+        """
+        state = self._get_call_state()
+        if state.output_schema_resolved:
+            return state.output_schema
+        from .structured_output import normalize_output_schema
+        return normalize_output_schema(getattr(self.config, "output_schema", None))
 
     def _cite_sources_requested(self) -> bool:
         """True when this run should ask the model for inline citation markers.

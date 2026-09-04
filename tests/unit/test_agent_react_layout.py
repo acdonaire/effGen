@@ -68,6 +68,8 @@ KEPT = (
     "_run_with_sub_agents",
     "_is_context_retrieval_tool",
     "_context_answer_instruction",
+    "_answer_shape_instruction",
+    "_compose_closing",
     "_continuation_instruction",
     "_written_tool_call_detail",
     "_written_tool_call_response",

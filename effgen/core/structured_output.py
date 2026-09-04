@@ -531,12 +531,39 @@ def _supports_native_json(model: Any) -> bool:
     return name in _OPENAI_COMPATIBLE_ADAPTERS or name == "GeminiAdapter"
 
 
+def schema_block(schema: dict[str, Any]) -> str:
+    """The schema, rendered as the sentence and fenced JSON a model is shown.
+
+    One rendering for every place a schema is stated to a model — the agent
+    loop, which says it while the answer is still being written, and the
+    JSON-mode and repair calls, which say it when the answer is due — so the
+    two can never describe the same schema differently.
+    """
+    return (
+        "Respond with a single JSON object matching this schema:\n"
+        f"```json\n{json.dumps(schema, indent=2)}\n```"
+    )
+
+
+def schema_answer_instruction(schema: dict[str, Any]) -> str:
+    """State *schema* as the shape the run's final answer must take.
+
+    Used inside a tool loop, where the model may still have tools to call
+    before it answers, so it describes the answer rather than demanding one
+    now. :func:`_schema_prompt` is the same statement for a call whose only
+    job is to produce the object.
+    """
+    return (
+        f"{schema_block(schema)}\n"
+        "When you give the final answer, it must be that JSON object."
+    )
+
+
 def _schema_prompt(prompt: str, schema: dict[str, Any]) -> str:
     """Append a compact schema instruction to *prompt* for JSON-mode calls."""
     return (
         f"{prompt}\n\n"
-        f"Respond with a single JSON object matching this schema:\n"
-        f"```json\n{json.dumps(schema, indent=2)}\n```\n"
+        f"{schema_block(schema)}\n"
         f"Output ONLY the JSON object — no prose, no markdown fences."
     )
 

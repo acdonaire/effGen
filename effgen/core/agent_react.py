@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..observability import get_logger as _get_obs_logger
 from ..observability.spans import ModelAttrs, ToolAttrs
@@ -80,6 +80,12 @@ class AgentReActMixin(
     AgentCitationsMixin,
 ):
     """The ReAct loop, and the surrounding tool-calling surface it inherits."""
+
+    if TYPE_CHECKING:
+        # Contributed by :class:`~effgen.core.agent.Agent`, which owns the
+        # per-call state. Declared for the type checker only — at run time it
+        # arrives through the MRO, and this statement does not execute.
+        def _effective_output_schema(self) -> dict[str, Any] | None: ...
 
     def _run_single_agent(self,
                          task: str,
@@ -198,6 +204,7 @@ class AgentReActMixin(
 
             # Build prompt
             _cite_sources, _numbered_passages = self._citation_prompt_state()
+            _answer_shape = self._answer_shape_instruction()
             gen_kwargs = dict(kwargs)
             # After 2 multi-tool batches, or once a loop with no usable partial
             # answer was detected, stop passing tools to force synthesis.
@@ -208,12 +215,22 @@ class AgentReActMixin(
                 # tool definitions via the chat template's tools parameter.
                 # The model will produce native tool call tokens (e.g.
                 # <tool_call> for Qwen, [TOOL_CALLS] for Mistral).
+                _closing = self._compose_closing(
+                    _answer_shape,
+                    self._continuation_instruction(
+                        guards.previous_actions,
+                        cite_sources=_cite_sources,
+                        numbered_passages=_numbered_passages,
+                    ) if scratchpad else "",
+                )
                 if scratchpad:
                     prompt = (
                         f"{task}\n\n"
                         f"Previous steps:\n{scratchpad}\n\n"
-                        f"{self._continuation_instruction(guards.previous_actions, cite_sources=_cite_sources, numbered_passages=_numbered_passages)}"
+                        f"{_closing}"
                     )
+                elif _closing:
+                    prompt = f"{task}\n\n{_closing}"
                 else:
                     prompt = task
                 # Carry prior conversation turns into the native tool-calling
@@ -265,6 +282,7 @@ class AgentReActMixin(
                         cite_sources=_cite_sources,
                         numbered_passages=_numbered_passages,
                     ),
+                    answer_shape=_answer_shape,
                 )
 
             # Debug: log first iteration prompt to see if history is included
@@ -1212,10 +1230,45 @@ class AgentReActMixin(
         of what ran and what was asked for.
         """
         if previous_actions and self._is_context_retrieval_tool(previous_actions[-1][0]):
+            logger.info("answer shape: retrieval close applied")
             if cite_sources and numbered_passages:
                 return f"{CONTEXT_ANSWER_INSTRUCTION} {CONTEXT_CITATION_INSTRUCTION}"
             return CONTEXT_ANSWER_INSTRUCTION
         return ""
+
+    def _answer_shape_instruction(self) -> str:
+        """Return the schema this run must answer in, stated for the model, or
+        ``""`` when the caller declared no shape.
+
+        ``output_schema`` / ``output_model`` is the one machine-readable
+        statement of shape the framework has, and without this the model never
+        sees it: the answer is written as prose, and the schema is applied
+        afterwards by re-prompting for the same answer in a different form. The
+        line goes into the prompt the answer is written from, so the declaration
+        is honoured on the first attempt rather than repaired on the second.
+
+        Empty for every run without a schema, which keeps those prompts
+        byte-for-byte unchanged.
+        """
+        try:
+            schema = self._effective_output_schema()
+        except Exception:  # pragma: no cover - defensive
+            return ""
+        if not schema:
+            return ""
+        from .structured_output import schema_answer_instruction
+        logger.info("answer shape: declared schema stated in the loop prompt")
+        return schema_answer_instruction(schema)
+
+    @staticmethod
+    def _compose_closing(answer_shape: str, closing: str) -> str:
+        """Join the declared-shape line and the tool close into one block.
+
+        The caller's declared shape comes first so the framework's own line
+        about the machinery it inserted is not the last word on what the
+        answer should look like.
+        """
+        return "\n\n".join(part for part in (answer_shape, closing) if part)
 
     def _continuation_instruction(
         self,

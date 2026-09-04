@@ -223,6 +223,11 @@ class AgentNativeStreamMixin:
 
         def _is_context_retrieval_tool(self, action: str) -> bool: ...
 
+        def _answer_shape_instruction(self) -> str: ...
+
+        @staticmethod
+        def _compose_closing(answer_shape: str, closing: str) -> str: ...
+
         def _repeated_tool_detail(
             self,
             action: str | None,
@@ -290,13 +295,23 @@ class AgentNativeStreamMixin:
         previous_actions: list[tuple[str, str]],
     ) -> str:
         """Build the turn's prompt, the same way the blocking loop builds it."""
+        cite_sources, numbered_passages = self._citation_prompt_state()
+        closing = self._compose_closing(
+            self._answer_shape_instruction(),
+            self._continuation_instruction(
+                previous_actions,
+                cite_sources=cite_sources,
+                numbered_passages=numbered_passages,
+            ) if scratchpad else "",
+        )
         if scratchpad:
-            cite_sources, numbered_passages = self._citation_prompt_state()
             prompt = (
                 f"{task}\n\n"
                 f"Previous steps:\n{scratchpad}\n\n"
-                f"{self._continuation_instruction(previous_actions, cite_sources=cite_sources, numbered_passages=numbered_passages)}"
+                f"{closing}"
             )
+        elif closing:
+            prompt = f"{task}\n\n{closing}"
         else:
             prompt = task
         if conversation_history:

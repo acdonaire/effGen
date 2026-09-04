@@ -1013,18 +1013,28 @@ class AgentRuntimeMixin:
         history and the raw task — exactly the shape that steers reliably across
         cloud and local families.
         """
+        # A schema the caller declared is the one machine-readable statement of
+        # answer shape there is, so state it while the answer is being written.
+        # Without it the model answers in prose and is then asked for the same
+        # answer again in JSON. It goes ahead of the "Answer:" cue, so the cue
+        # stays the last thing the model reads. Empty for every run without a
+        # schema, which leaves those prompts unchanged.
+        _shape = getattr(self, "_answer_shape_instruction", None)
+        shape = _shape() if callable(_shape) else ""
+        block = f"\n\n{shape}" if shape else ""
+
         persona = getattr(self, "_custom_persona", None)
         if persona:
             if conversation_history:
-                return f"{persona}\n\n{conversation_history}\n\n{task}"
-            return f"{persona}\n\n{task}"
+                return f"{persona}\n\n{conversation_history}\n\n{task}{block}"
+            return f"{persona}\n\n{task}{block}"
         if conversation_history:
             return (
                 f"{conversation_history}\n\n"
                 f"Based on the conversation above, answer this question directly "
-                f"and concisely:\n\n{task}\n\nAnswer:"
+                f"and concisely:\n\n{task}{block}\n\nAnswer:"
             )
-        return f"Answer this question directly and concisely:\n\n{task}\n\nAnswer:"
+        return f"Answer this question directly and concisely:\n\n{task}{block}\n\nAnswer:"
 
     @staticmethod
     def _prompt_to_task_hint(prompt: Any) -> str:

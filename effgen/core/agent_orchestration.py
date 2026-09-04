@@ -69,6 +69,14 @@ _obs_log = _get_obs_logger("effgen.core.agent")
 class AgentOrchestrationMixin:
     """The run entry points and the work that surrounds a single task run."""
 
+    if TYPE_CHECKING:
+        # Contributed by :class:`~effgen.core.agent.Agent`, which owns the
+        # per-call state. Declared for the type checker only — at run time it
+        # arrives through the MRO, and this statement does not execute.
+        def _set_effective_output_schema(
+            self, schema: dict[str, Any] | None
+        ) -> None: ...
+
     def run(self,
             task: "str | Message | list[Any]",
             mode: AgentMode | None = None,
@@ -300,6 +308,10 @@ class AgentOrchestrationMixin:
             _obs_log.agent_event("run.started", agent=self.name, task=_task_preview, mode=mode.value, run_id=run_id)
 
             _cite_sources = self._resolve_cite_sources(_cite_requested)
+            # Fix the run's answer shape on the call state so the tool loop can
+            # state it to the model while the answer is being written, instead
+            # of the schema being discovered only after one has been paid for.
+            self._set_effective_output_schema(effective_schema)
             try:
                 # Pass debug flag through kwargs
                 if debug:
